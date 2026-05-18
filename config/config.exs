@@ -1,0 +1,37 @@
+import Config
+
+config :git_hooks,
+  auto_install: true,
+  verbose: true,
+  hooks: [
+    pre_commit: [
+      tasks: [
+        {:cmd, "mix format"},
+        {:cmd, "mix credo --strict"},
+        {:cmd, "cargo check --offline"},
+        {:file, "priv/hooks/stage-cargo-lock.sh"}
+      ]
+    ],
+    pre_push: [
+      tasks: [
+        {:cmd, "mix format --check-formatted"},
+        {:cmd, "mix credo --strict"},
+        {:cmd, "mix test --color"}
+      ]
+    ]
+  ]
+
+config :git_ops,
+  mix_project: Mix.Project.get!(),
+  changelog_file: "CHANGELOG.md",
+  types: [tidbit: [hidden?: true], important: [header: "Important Changes"]],
+  github_handle_lookup?: true,
+  repository_url: "https://github.com/r8/pdf_elixide",
+  version_tag_prefix: "v",
+  manage_mix_version?: true,
+  manage_readme_version: true,
+  managed_files: [
+    {"native/pdf_elixide_nif/Cargo.toml",
+     fn v -> "name = \"pdf_elixide_nif\"\nversion = \"#{v}\"" end,
+     fn v -> "name = \"pdf_elixide_nif\"\nversion = \"#{v}\"" end}
+  ]
