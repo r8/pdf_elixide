@@ -8,4 +8,5 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+pdf_oxide = "0.3.50"
 rustler = "0.37.4"
