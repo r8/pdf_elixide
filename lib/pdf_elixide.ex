@@ -43,6 +43,25 @@ defmodule PdfElixide do
     end
   end
 
+  @doc """
+  Returns the number of pages in the given PDF document.
+  """
+  @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, term()}
+  def page_count(doc) when is_reference(doc) do
+    wrap(fn -> PdfElixide.Native.page_count(doc) end)
+  end
+
+  @doc """
+  Returns the number of pages in the given PDF document, raising an error if it fails.
+  """
+  @spec page_count!(t()) :: non_neg_integer()
+  def page_count!(doc) when is_reference(doc) do
+    case page_count(doc) do
+      {:ok, count} -> count
+      {:error, reason} -> raise "Failed to get page count: #{inspect(reason)}"
+    end
+  end
+
   # NIF result wrapper
   defp wrap(fun) do
     case fun.() do
@@ -54,11 +73,11 @@ defmodule PdfElixide do
       other -> {:ok, other}
     end
   rescue
-    # BadArg from rustler — usually means a Rust panic or argument decode failure
+    # Argument error from Rustler
     ArgumentError -> {:error, :badarg}
     # Structured Rust-side error via Error::Term
     e in ErlangError -> {:error, e.original}
-    # Anything else (RuntimeError, FunctionClauseError, ...) — surface a message
+    # Anything else (RuntimeError, FunctionClauseError, ...)
     e -> {:error, Exception.message(e)}
   end
 end

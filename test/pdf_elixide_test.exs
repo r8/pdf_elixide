@@ -69,4 +69,30 @@ defmodule PdfElixideTest do
       end
     end
   end
+
+  describe "page_count/1" do
+    test "returns {:ok, 3} for the valid fixture" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert {:ok, 3} = PdfElixide.page_count(doc)
+    end
+
+    test "raises FunctionClauseError for non-reference input" do
+      assert_raise FunctionClauseError, fn ->
+        PdfElixide.page_count(:not_a_ref)
+      end
+    end
+  end
+
+  describe "page_count!/1" do
+    test "returns the integer page count for the valid fixture" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert PdfElixide.page_count!(doc) == 3
+    end
+
+    test "raises FunctionClauseError for non-reference input" do
+      assert_raise FunctionClauseError, fn ->
+        PdfElixide.page_count!(:not_a_ref)
+      end
+    end
+  end
 end

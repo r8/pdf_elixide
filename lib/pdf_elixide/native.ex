@@ -8,4 +8,5 @@ defmodule PdfElixide.Native do
   # PdfDocument operations
   def open(_path), do: :erlang.nif_error(:nif_not_loaded)
   def from_bytes(_bytes), do: :erlang.nif_error(:nif_not_loaded)
+  def page_count(_doc), do: :erlang.nif_error(:nif_not_loaded)
 end

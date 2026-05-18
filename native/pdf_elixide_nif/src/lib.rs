@@ -27,6 +27,11 @@ fn to_nif_err(e: impl std::fmt::Display) -> Error {
     Error::Term(Box::new(e.to_string()))
 }
 
+/// Creates a standard "Lock is poisoned" error for poisoned mutexes.
+fn lock_err() -> Error {
+    Error::Term(Box::new("Lock is poisoned".to_string()))
+}
+
 // PdfDocument operations -------------------------------------------------------------------------
 
 /// Opens a PDF document from the specified file path.
@@ -47,6 +52,14 @@ fn from_bytes(bytes: Binary) -> NifResult<ResourceArc<PdfDocumentResource>> {
     Ok(ResourceArc::new(PdfDocumentResource {
         doc: Mutex::new(doc),
     }))
+}
+
+/// Returns the number of pages in the PDF document.
+#[rustler::nif]
+fn page_count(resource: ResourceArc<PdfDocumentResource>) -> NifResult<usize> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    Ok(doc.page_count().map_err(to_nif_err)?)
 }
 
 rustler::init!("Elixir.PdfElixide.Native");
