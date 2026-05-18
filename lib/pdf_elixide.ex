@@ -81,6 +81,28 @@ defmodule PdfElixide do
     end
   end
 
+  @doc """
+  Extracts the text content of the page at the given zero-based index.
+  """
+  @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
+  def extract_text(doc, page_index)
+      when is_reference(doc) and is_integer(page_index) and page_index >= 0 do
+    wrap(fn -> PdfElixide.Native.extract_text(doc, page_index) end)
+  end
+
+  @doc """
+  Extracts the text content of the page at the given zero-based index,
+  raising an error if it fails.
+  """
+  @spec extract_text!(t(), non_neg_integer()) :: binary()
+  def extract_text!(doc, page_index)
+      when is_reference(doc) and is_integer(page_index) and page_index >= 0 do
+    case extract_text(doc, page_index) do
+      {:ok, text} -> text
+      {:error, reason} -> raise "Failed to extract text: #{inspect(reason)}"
+    end
+  end
+
   # NIF result wrapper
   defp wrap(fun) do
     case fun.() do

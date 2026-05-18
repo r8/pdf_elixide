@@ -10,4 +10,5 @@ defmodule PdfElixide.Native do
   def from_bytes(_bytes), do: :erlang.nif_error(:nif_not_loaded)
   def page_count(_doc), do: :erlang.nif_error(:nif_not_loaded)
   def version(_doc), do: :erlang.nif_error(:nif_not_loaded)
+  def extract_text(_doc, _page_index), do: :erlang.nif_error(:nif_not_loaded)
 end

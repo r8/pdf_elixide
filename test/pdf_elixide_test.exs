@@ -121,4 +121,50 @@ defmodule PdfElixideTest do
       end
     end
   end
+
+  describe "extract_text/2" do
+    test "returns {:ok, text} containing the page's text for each page" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert {:ok, p0} = PdfElixide.extract_text(doc, 0)
+      assert {:ok, p1} = PdfElixide.extract_text(doc, 1)
+      assert {:ok, p2} = PdfElixide.extract_text(doc, 2)
+      assert p0 =~ "Page One"
+      assert p1 =~ "Page Two"
+      assert p2 =~ "Page Three"
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert {:error, _reason} = PdfElixide.extract_text(doc, 99)
+    end
+
+    test "raises FunctionClauseError for non-reference doc" do
+      assert_raise FunctionClauseError, fn -> PdfElixide.extract_text(:not_a_ref, 0) end
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> PdfElixide.extract_text(doc, -1) end
+    end
+  end
+
+  describe "extract_text!/2" do
+    test "returns the text for a valid page" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert PdfElixide.extract_text!(doc, 1) =~ "Page Two"
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = PdfElixide.open!(@valid_pdf)
+
+      assert_raise RuntimeError, ~r/Failed to extract text/, fn ->
+        PdfElixide.extract_text!(doc, 99)
+      end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> PdfElixide.extract_text!(doc, :first) end
+    end
+  end
 end

@@ -70,4 +70,15 @@ fn version(resource: ResourceArc<PdfDocumentResource>) -> NifResult<(u8, u8)> {
     Ok(doc.version())
 }
 
+/// Extracts text content from a single page (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn extract_text(
+    resource: ResourceArc<PdfDocumentResource>,
+    page_index: usize,
+) -> NifResult<String> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    doc.extract_text(page_index).map_err(to_nif_err)
+}
+
 rustler::init!("Elixir.PdfElixide.Native");
