@@ -1,8 +1,13 @@
 [package]
 name = "pdf_elixide_nif"
 version = "0.1.0"
-authors = []
+authors = ["Sergey Storchay"]
 edition = "2021"
+description = "Rust NIF for pdf_elixide — Elixir bindings to pdf_oxide via Rustler."
+repository = "https://github.com/r8/pdf_elixide"
+license = "MIT"
+readme = "../../README.md"
+publish = false
 
 [lib]
 crate-type = ["cdylib"]
@@ -10,3 +15,8 @@ crate-type = ["cdylib"]
 [dependencies]
 pdf_oxide = "0.3.50"
 rustler = "0.37.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
