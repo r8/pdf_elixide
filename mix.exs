@@ -54,7 +54,8 @@ defmodule PdfElixide.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:igniter, "~> 0.5", only: [:dev, :test]},
       {:git_ops, "~> 2.0", only: [:dev], runtime: false},
-      {:git_hooks, "~> 0.8.0", only: [:dev], runtime: false}
+      {:git_hooks, "~> 0.8.0", only: [:dev], runtime: false},
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 end
