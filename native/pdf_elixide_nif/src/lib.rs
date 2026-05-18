@@ -62,4 +62,12 @@ fn page_count(resource: ResourceArc<PdfDocumentResource>) -> NifResult<usize> {
     Ok(doc.page_count().map_err(to_nif_err)?)
 }
 
+/// Returns the PDF specification version as a `(major, minor)` tuple.
+#[rustler::nif]
+fn version(resource: ResourceArc<PdfDocumentResource>) -> NifResult<(u8, u8)> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    Ok(doc.version())
+}
+
 rustler::init!("Elixir.PdfElixide.Native");

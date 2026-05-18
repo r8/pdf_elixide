@@ -95,4 +95,30 @@ defmodule PdfElixideTest do
       end
     end
   end
+
+  describe "version/1" do
+    test "returns {:ok, {1, 4}} for the valid fixture" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert {:ok, {1, 4}} = PdfElixide.version(doc)
+    end
+
+    test "raises FunctionClauseError for non-reference input" do
+      assert_raise FunctionClauseError, fn ->
+        PdfElixide.version(:not_a_ref)
+      end
+    end
+  end
+
+  describe "version!/1" do
+    test "returns the {major, minor} tuple for the valid fixture" do
+      doc = PdfElixide.open!(@valid_pdf)
+      assert PdfElixide.version!(doc) == {1, 4}
+    end
+
+    test "raises FunctionClauseError for non-reference input" do
+      assert_raise FunctionClauseError, fn ->
+        PdfElixide.version!(:not_a_ref)
+      end
+    end
+  end
 end

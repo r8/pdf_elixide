@@ -62,6 +62,25 @@ defmodule PdfElixide do
     end
   end
 
+  @doc """
+  Returns the PDF specification version of the given document as a `{major, minor}` tuple.
+  """
+  @spec version(t()) :: {:ok, {non_neg_integer(), non_neg_integer()}} | {:error, term()}
+  def version(doc) when is_reference(doc) do
+    wrap(fn -> PdfElixide.Native.version(doc) end)
+  end
+
+  @doc """
+  Returns the PDF specification version of the given document, raising an error if it fails.
+  """
+  @spec version!(t()) :: {non_neg_integer(), non_neg_integer()}
+  def version!(doc) when is_reference(doc) do
+    case version(doc) do
+      {:ok, ver} -> ver
+      {:error, reason} -> raise "Failed to get PDF version: #{inspect(reason)}"
+    end
+  end
+
   # NIF result wrapper
   defp wrap(fun) do
     case fun.() do
