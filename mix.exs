@@ -19,7 +19,7 @@ defmodule PdfElixide.MixProject do
 
   defp description do
     """
-    Rustler-based Elixir bindings for pdf_oxide, a Rust PDF toolkit.
+    Elixir bindings for pdf_oxide, a high-performance PDF library written in Rust.
     """
   end
 

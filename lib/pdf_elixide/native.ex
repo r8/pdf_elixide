@@ -5,5 +5,7 @@ defmodule PdfElixide.Native do
     otp_app: :pdf_elixide,
     crate: :pdf_elixide_nif
 
-  def add(_a, _b), do: :erlang.nif_error(:nif_not_loaded)
+  # PdfDocument operations
+  def open(_path), do: :erlang.nif_error(:nif_not_loaded)
+  def from_bytes(_bytes), do: :erlang.nif_error(:nif_not_loaded)
 end
