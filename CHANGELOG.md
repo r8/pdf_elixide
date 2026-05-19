@@ -5,6 +5,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.2.0](https://github.com/r8/pdf_elixide/compare/v0.1.0...v0.2.0) (2026-05-19)
+
+
+
+
+### Features:
+
+* implement form fields extraction by [@r8](https://github.com/r8)
+
 ## [v0.1.0](https://github.com/r8/pdf_elixide/compare/v0.1.0...v0.1.0) (2026-05-18)
 
 
