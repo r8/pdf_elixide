@@ -4,12 +4,14 @@ use pdf_oxide::PdfDocument;
 
 mod document;
 mod error;
+mod form;
 
 // Atoms ------------------------------------------------------------------------------------------
 
-mod atoms {
+pub(crate) mod atoms {
     rustler::atoms! {
-        ok, error
+        ok, error,
+        button, text, choice, signature, unknown
     }
 }
 

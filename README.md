@@ -13,6 +13,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Query the PDF specification version
 - Get the page count
 - Extract text from a specific page
+- Extract AcroForm fields (name, kind, value)
 
 ## Requirements
 
@@ -43,6 +44,10 @@ The Rust NIF is compiled automatically by Rustler on first build.
 
 ## Usage
 
+### Opening a document
+
+`PdfElixide.open/1` and `PdfElixide.from_binary/1` are delegated convenience entry points; the rest of the API lives on `PdfElixide.Document`.
+
 ```elixir
 # Open from a file path
 {:ok, doc} = PdfElixide.open("path/to/file.pdf")
@@ -50,22 +55,53 @@ The Rust NIF is compiled automatically by Rustler on first build.
 # Or from an in-memory binary
 {:ok, bytes} = File.read("path/to/file.pdf")
 {:ok, doc}   = PdfElixide.from_binary(bytes)
-
-# Inspect the document
-{:ok, {1, 4}} = PdfElixide.version(doc)
-{:ok, 3}      = PdfElixide.page_count(doc)
-
-# Extract text from a single page (zero-based index)
-{:ok, text} = PdfElixide.extract_text(doc, 0)
 ```
 
-Every function ships with a bang variant that returns the value directly and raises on error:
+### Inspecting a document
+
+```elixir
+alias PdfElixide.Document
+
+# Version is read directly from the struct — returned as a {major, minor} tuple.
+{1, 4} = Document.version(doc)
+
+# Page count is fetched from the underlying PDF and may fail.
+{:ok, 3} = Document.page_count(doc)
+
+# Extract text from a single page (zero-based index).
+{:ok, text} = Document.extract_text(doc, 0)
+
+# Source path is the file the document was opened from, or `nil` when it was loaded from a binary.
+"path/to/file.pdf" = Document.source_path(doc)
+```
+
+Each fallible function ships with a bang variant that returns the value directly and raises on error:
 
 ```elixir
 doc   = PdfElixide.open!("path/to/file.pdf")
-pages = PdfElixide.page_count!(doc)
-text  = PdfElixide.extract_text!(doc, 0)
+pages = PdfElixide.Document.page_count!(doc)
+text  = PdfElixide.Document.extract_text!(doc, 0)
 ```
+
+### Extracting form fields
+
+`PdfElixide.Form.fields/1` returns the AcroForm fields of the document as a list of `%PdfElixide.Form.Field{}` structs:
+
+```elixir
+{:ok, fields} = PdfElixide.Form.fields(doc)
+
+Enum.each(fields, fn %PdfElixide.Form.Field{name: name, kind: kind, value: value} ->
+  IO.inspect({name, kind, value})
+end)
+```
+
+Each field carries:
+
+- `:name` — the field's PDF name (`String.t()`)
+- `:kind` — one of `:button | :text | :choice | :signature | :unknown`
+- `:value` — one of `{:text, String.t()} | {:boolean, boolean()} | {:name, String.t()} | {:array, [String.t()]} | nil`
+
+A bang variant, `PdfElixide.Form.fields!/1`, returns the list directly and raises on error.
 
 ## Documentation
 

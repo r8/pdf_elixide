@@ -11,6 +11,7 @@ defmodule PdfElixide.Native do
   def document_page_count(_doc), do: err()
   def document_version(_doc), do: err()
   def document_extract_text(_doc, _page_index), do: err()
+  def document_form_fields(_doc), do: err()
 
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

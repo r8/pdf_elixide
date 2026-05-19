@@ -76,7 +76,7 @@ defmodule PdfElixide.Document do
   """
   @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, term()}
   def page_count(%__MODULE__{ref: ref}) do
-    Wrap.call(fn -> PdfElixide.Native.document_page_count(ref) end)
+    Wrap.call(fn -> Native.document_page_count(ref) end)
   end
 
   @doc """
@@ -96,7 +96,7 @@ defmodule PdfElixide.Document do
   @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
   def extract_text(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    Wrap.call(fn -> PdfElixide.Native.document_extract_text(ref, page_index) end)
+    Wrap.call(fn -> Native.document_extract_text(ref, page_index) end)
   end
 
   @doc """
