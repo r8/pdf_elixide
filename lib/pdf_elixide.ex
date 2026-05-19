@@ -3,6 +3,8 @@ defmodule PdfElixide do
   Elixir bindings for pdf_oxide, a high-performance PDF library written in Rust.
   """
 
+  alias PdfElixide.Native.Wrap
+
   @opaque t :: reference()
 
   @doc """
@@ -10,7 +12,7 @@ defmodule PdfElixide do
   """
   @spec open(Path.t()) :: {:ok, t()} | {:error, term()}
   def open(path) when is_binary(path) do
-    wrap(fn -> PdfElixide.Native.document_open(path) end)
+    Wrap.call(fn -> PdfElixide.Native.document_open(path) end)
   end
 
   @doc """
@@ -29,7 +31,7 @@ defmodule PdfElixide do
   """
   @spec from_binary(binary()) :: {:ok, t()} | {:error, term()}
   def from_binary(bytes) when is_binary(bytes) do
-    wrap(fn -> PdfElixide.Native.document_from_bytes(bytes) end)
+    Wrap.call(fn -> PdfElixide.Native.document_from_bytes(bytes) end)
   end
 
   @doc """
@@ -48,7 +50,7 @@ defmodule PdfElixide do
   """
   @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, term()}
   def page_count(doc) when is_reference(doc) do
-    wrap(fn -> PdfElixide.Native.document_page_count(doc) end)
+    Wrap.call(fn -> PdfElixide.Native.document_page_count(doc) end)
   end
 
   @doc """
@@ -67,7 +69,7 @@ defmodule PdfElixide do
   """
   @spec version(t()) :: {:ok, {non_neg_integer(), non_neg_integer()}} | {:error, term()}
   def version(doc) when is_reference(doc) do
-    wrap(fn -> PdfElixide.Native.document_version(doc) end)
+    Wrap.call(fn -> PdfElixide.Native.document_version(doc) end)
   end
 
   @doc """
@@ -87,7 +89,7 @@ defmodule PdfElixide do
   @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
   def extract_text(doc, page_index)
       when is_reference(doc) and is_integer(page_index) and page_index >= 0 do
-    wrap(fn -> PdfElixide.Native.document_extract_text(doc, page_index) end)
+    Wrap.call(fn -> PdfElixide.Native.document_extract_text(doc, page_index) end)
   end
 
   @doc """
@@ -101,24 +103,5 @@ defmodule PdfElixide do
       {:ok, text} -> text
       {:error, reason} -> raise "Failed to extract text: #{inspect(reason)}"
     end
-  end
-
-  # NIF result wrapper
-  defp wrap(fun) do
-    case fun.() do
-      # NIF returned tagged ok
-      {:ok, _} = result -> result
-      # NIF returned tagged error
-      {:error, _} = result -> result
-      # NIF returned a bare value
-      other -> {:ok, other}
-    end
-  rescue
-    # Argument error from Rustler
-    ArgumentError -> {:error, :badarg}
-    # Structured Rust-side error via Error::Term
-    e in ErlangError -> {:error, e.original}
-    # Anything else (RuntimeError, FunctionClauseError, ...)
-    e -> {:error, Exception.message(e)}
   end
 end
