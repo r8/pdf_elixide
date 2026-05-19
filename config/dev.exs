@@ -8,6 +8,7 @@ config :git_hooks,
       tasks: [
         {:cmd, "mix format"},
         {:cmd, "mix credo --strict"},
+        {:cmd, "cargo +nightly fmt"},
         {:cmd, "cargo check --offline"},
         {:file, "priv/hooks/stage-cargo-lock.sh"}
       ]
@@ -15,6 +16,7 @@ config :git_hooks,
     pre_push: [
       tasks: [
         {:cmd, "mix format --check-formatted"},
+        {:cmd, "cargo +nightly fmt --check"},
         {:cmd, "mix credo --strict"},
         {:cmd, "mix test --color"}
       ]
