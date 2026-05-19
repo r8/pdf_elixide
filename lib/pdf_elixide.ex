@@ -3,105 +3,33 @@ defmodule PdfElixide do
   Elixir bindings for pdf_oxide, a high-performance PDF library written in Rust.
   """
 
-  alias PdfElixide.Native.Wrap
-
-  @opaque t :: reference()
+  alias PdfElixide.Document
 
   @doc """
   Opens a PDF document from the specified file path.
+  See `PdfElixide.Document.open/1`.
   """
-  @spec open(Path.t()) :: {:ok, t()} | {:error, term()}
-  def open(path) when is_binary(path) do
-    Wrap.call(fn -> PdfElixide.Native.document_open(path) end)
-  end
+  @spec open(Path.t()) :: {:ok, Document.t()} | {:error, term()}
+  defdelegate open(path), to: Document
 
   @doc """
   Opens a PDF document from the specified file path, raising an error if it fails.
+  See `PdfElixide.Document.open!/1`.
   """
-  @spec open!(Path.t()) :: t()
-  def open!(path) when is_binary(path) do
-    case open(path) do
-      {:ok, doc} -> doc
-      {:error, reason} -> raise "Failed to open PDF: #{inspect(reason)}"
-    end
-  end
+  @spec open!(Path.t()) :: Document.t()
+  defdelegate open!(path), to: Document
 
   @doc """
   Opens a PDF document from the given binary data.
+  See `PdfElixide.Document.from_binary/1`.
   """
-  @spec from_binary(binary()) :: {:ok, t()} | {:error, term()}
-  def from_binary(bytes) when is_binary(bytes) do
-    Wrap.call(fn -> PdfElixide.Native.document_from_bytes(bytes) end)
-  end
+  @spec from_binary(binary()) :: {:ok, Document.t()} | {:error, term()}
+  defdelegate from_binary(bin), to: Document
 
   @doc """
   Opens a PDF document from the given binary data, raising an error if it fails.
+  See `PdfElixide.Document.from_binary!/1`.
   """
-  @spec from_binary!(binary()) :: t()
-  def from_binary!(bytes) when is_binary(bytes) do
-    case from_binary(bytes) do
-      {:ok, doc} -> doc
-      {:error, reason} -> raise "Failed to open PDF from binary: #{inspect(reason)}"
-    end
-  end
-
-  @doc """
-  Returns the number of pages in the given PDF document.
-  """
-  @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, term()}
-  def page_count(doc) when is_reference(doc) do
-    Wrap.call(fn -> PdfElixide.Native.document_page_count(doc) end)
-  end
-
-  @doc """
-  Returns the number of pages in the given PDF document, raising an error if it fails.
-  """
-  @spec page_count!(t()) :: non_neg_integer()
-  def page_count!(doc) when is_reference(doc) do
-    case page_count(doc) do
-      {:ok, count} -> count
-      {:error, reason} -> raise "Failed to get page count: #{inspect(reason)}"
-    end
-  end
-
-  @doc """
-  Returns the PDF specification version of the given document as a `{major, minor}` tuple.
-  """
-  @spec version(t()) :: {:ok, {non_neg_integer(), non_neg_integer()}} | {:error, term()}
-  def version(doc) when is_reference(doc) do
-    Wrap.call(fn -> PdfElixide.Native.document_version(doc) end)
-  end
-
-  @doc """
-  Returns the PDF specification version of the given document, raising an error if it fails.
-  """
-  @spec version!(t()) :: {non_neg_integer(), non_neg_integer()}
-  def version!(doc) when is_reference(doc) do
-    case version(doc) do
-      {:ok, ver} -> ver
-      {:error, reason} -> raise "Failed to get PDF version: #{inspect(reason)}"
-    end
-  end
-
-  @doc """
-  Extracts the text content of the page at the given zero-based index.
-  """
-  @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
-  def extract_text(doc, page_index)
-      when is_reference(doc) and is_integer(page_index) and page_index >= 0 do
-    Wrap.call(fn -> PdfElixide.Native.document_extract_text(doc, page_index) end)
-  end
-
-  @doc """
-  Extracts the text content of the page at the given zero-based index,
-  raising an error if it fails.
-  """
-  @spec extract_text!(t(), non_neg_integer()) :: binary()
-  def extract_text!(doc, page_index)
-      when is_reference(doc) and is_integer(page_index) and page_index >= 0 do
-    case extract_text(doc, page_index) do
-      {:ok, text} -> text
-      {:error, reason} -> raise "Failed to extract text: #{inspect(reason)}"
-    end
-  end
+  @spec from_binary!(binary()) :: Document.t()
+  defdelegate from_binary!(bin), to: Document
 end

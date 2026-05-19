@@ -2,9 +2,10 @@ defmodule PdfElixide.Native.Wrap do
   @moduledoc false
 
   @doc """
-  Runs a NIF call and converts raised errors to `{:error, term`.
+  Runs a NIF call and converts raised errors to `{:error, term()}`.
   Returns `{:ok, value}` on success.
   """
+  @spec call((-> term())) :: {:ok, term()} | {:error, term()}
   def call(fun) do
     case fun.() do
       # NIF returned tagged ok
