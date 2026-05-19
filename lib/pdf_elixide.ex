@@ -10,7 +10,7 @@ defmodule PdfElixide do
   """
   @spec open(Path.t()) :: {:ok, t()} | {:error, term()}
   def open(path) when is_binary(path) do
-    wrap(fn -> PdfElixide.Native.open(path) end)
+    wrap(fn -> PdfElixide.Native.document_open(path) end)
   end
 
   @doc """
@@ -29,7 +29,7 @@ defmodule PdfElixide do
   """
   @spec from_binary(binary()) :: {:ok, t()} | {:error, term()}
   def from_binary(bytes) when is_binary(bytes) do
-    wrap(fn -> PdfElixide.Native.from_bytes(bytes) end)
+    wrap(fn -> PdfElixide.Native.document_from_bytes(bytes) end)
   end
 
   @doc """
@@ -48,7 +48,7 @@ defmodule PdfElixide do
   """
   @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, term()}
   def page_count(doc) when is_reference(doc) do
-    wrap(fn -> PdfElixide.Native.page_count(doc) end)
+    wrap(fn -> PdfElixide.Native.document_page_count(doc) end)
   end
 
   @doc """
@@ -67,7 +67,7 @@ defmodule PdfElixide do
   """
   @spec version(t()) :: {:ok, {non_neg_integer(), non_neg_integer()}} | {:error, term()}
   def version(doc) when is_reference(doc) do
-    wrap(fn -> PdfElixide.Native.version(doc) end)
+    wrap(fn -> PdfElixide.Native.document_version(doc) end)
   end
 
   @doc """
@@ -87,7 +87,7 @@ defmodule PdfElixide do
   @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
   def extract_text(doc, page_index)
       when is_reference(doc) and is_integer(page_index) and page_index >= 0 do
-    wrap(fn -> PdfElixide.Native.extract_text(doc, page_index) end)
+    wrap(fn -> PdfElixide.Native.document_extract_text(doc, page_index) end)
   end
 
   @doc """
