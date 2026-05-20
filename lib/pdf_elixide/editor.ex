@@ -70,21 +70,83 @@ defmodule PdfElixide.Editor do
 
   The result is a fully self-contained PDF that can be written to disk,
   stored in a database, or streamed over HTTP.
+
+  Accepts the same `t:save_opts/0` keyword list as `save/3`. Note that
+  `:incremental` is not supported here — upstream returns
+  `{:error, _}` because incremental updates can only be appended to
+  the original file.
   """
-  @spec to_binary(t()) :: {:ok, binary()} | {:error, term()}
-  def to_binary(%__MODULE__{ref: ref}) do
-    Wrap.call(fn -> Native.editor_to_bytes(ref) end)
+  @spec to_binary(t(), save_opts()) :: {:ok, binary()} | {:error, term()}
+  def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_save_options(opts)
+    Wrap.call(fn -> Native.editor_to_bytes(ref, options) end)
   end
 
   @doc """
   Serialises all in-memory changes into a PDF binary, raising an error if it fails.
   """
-  @spec to_binary!(t()) :: binary()
-  def to_binary!(%__MODULE__{} = editor) do
-    case to_binary(editor) do
+  @spec to_binary!(t(), save_opts()) :: binary()
+  def to_binary!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
+    case to_binary(editor, opts) do
       {:ok, bytes} -> bytes
       {:error, error} -> raise error
     end
+  end
+
+  @typedoc """
+  Options accepted by `save/3` and `save!/3`.
+
+    * `:incremental` — write an incremental update instead of a full
+      rewrite. Defaults to `false`.
+    * `:compress` — compress streams. Defaults to `true`.
+    * `:linearize` — linearize the output for fast web view. Defaults
+      to `false`.
+    * `:garbage_collect` — drop unreferenced objects. Defaults to
+      `true`.
+
+  Defaults mirror `pdf_oxide`'s `SaveOptions::full_rewrite()`, so
+  calling `save/2` is equivalent to `save/3` with no options.
+  """
+  @type save_opts :: [
+          incremental: boolean(),
+          compress: boolean(),
+          linearize: boolean(),
+          garbage_collect: boolean()
+        ]
+
+  @doc """
+  Writes all in-memory changes to a PDF file at the given path.
+  """
+  @spec save(t(), Path.t(), save_opts()) :: :ok | {:error, term()}
+  def save(%__MODULE__{ref: ref}, path, opts \\ [])
+      when is_binary(path) and is_list(opts) do
+    options = build_save_options(opts)
+
+    case Wrap.call(fn -> Native.editor_save(ref, path, options) end) do
+      {:ok, :ok} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Writes all in-memory changes to a PDF file at the given path, raising an error if it fails.
+  """
+  @spec save!(t(), Path.t(), save_opts()) :: :ok
+  def save!(%__MODULE__{} = editor, path, opts \\ [])
+      when is_binary(path) and is_list(opts) do
+    case save(editor, path, opts) do
+      :ok -> :ok
+      {:error, error} -> raise error
+    end
+  end
+
+  defp build_save_options(opts) do
+    %{
+      incremental: Keyword.get(opts, :incremental, false),
+      compress: Keyword.get(opts, :compress, true),
+      linearize: Keyword.get(opts, :linearize, false),
+      garbage_collect: Keyword.get(opts, :garbage_collect, true)
+    }
   end
 
   defimpl Inspect do

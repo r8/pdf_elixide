@@ -48,15 +48,16 @@ The Rust NIF is compiled automatically by Rustler on first build.
 
 ### Opening a document
 
-`PdfElixide.open/1` and `PdfElixide.from_binary/1` are delegated convenience entry points; the rest of the API lives on `PdfElixide.Document`.
+Document inspection lives on `PdfElixide.Document` (open, version,
+page count, text extraction).
 
 ```elixir
 # Open from a file path
-{:ok, doc} = PdfElixide.open("path/to/file.pdf")
+{:ok, doc} = PdfElixide.Document.open("path/to/file.pdf")
 
 # Or from an in-memory binary
 {:ok, bytes} = File.read("path/to/file.pdf")
-{:ok, doc}   = PdfElixide.from_binary(bytes)
+{:ok, doc}   = PdfElixide.Document.from_binary(bytes)
 ```
 
 ### Inspecting a document
@@ -80,7 +81,7 @@ alias PdfElixide.Document
 Each fallible function ships with a bang variant that returns the value directly and raises on error:
 
 ```elixir
-doc   = PdfElixide.open!("path/to/file.pdf")
+doc   = PdfElixide.Document.open!("path/to/file.pdf")
 pages = PdfElixide.Document.page_count!(doc)
 text  = PdfElixide.Document.extract_text!(doc, 0)
 ```

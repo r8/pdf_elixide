@@ -18,7 +18,8 @@ defmodule PdfElixide.Native do
   def editor_from_bytes(_bytes), do: err()
   def editor_form_fields(_editor), do: err()
   def editor_set_form_field_value(_editor, _name, _value), do: err()
-  def editor_to_bytes(_editor), do: err()
+  def editor_to_bytes(_editor, _options), do: err()
+  def editor_save(_editor, _path, _options), do: err()
 
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

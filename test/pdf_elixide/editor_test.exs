@@ -90,12 +90,120 @@ defmodule PdfElixide.EditorTest do
       {:ok, bytes} = Editor.to_binary(editor)
       assert String.contains?(bytes, "Jane Doe")
     end
+
+    test "to_binary/2 with compress and garbage_collect disabled still round-trips" do
+      editor = Editor.open!(@form_pdf)
+
+      assert {:ok, bytes} =
+               Editor.to_binary(editor, compress: false, garbage_collect: false)
+
+      assert byte_size(bytes) > 0
+      assert {:ok, %Editor{}} = Editor.from_binary(bytes)
+    end
+
+    test "to_binary/2 with linearize: true returns a round-trippable PDF" do
+      editor = Editor.open!(@form_pdf)
+      assert {:ok, bytes} = Editor.to_binary(editor, linearize: true)
+      assert byte_size(bytes) > 0
+      assert {:ok, %Editor{}} = Editor.from_binary(bytes)
+    end
+
+    test "to_binary/2 with incremental: true returns {:error, reason}" do
+      editor = Editor.open!(@form_pdf)
+      assert {:error, _reason} = Editor.to_binary(editor, incremental: true)
+    end
   end
 
   describe "to_binary!/1" do
     test "returns a binary directly" do
       editor = Editor.open!(@form_pdf)
       assert is_binary(Editor.to_binary!(editor))
+    end
+  end
+
+  describe "save/2" do
+    setup do
+      path =
+        Path.join(System.tmp_dir!(), "pdf_elixide_save_#{System.unique_integer([:positive])}.pdf")
+
+      on_exit(fn -> File.rm(path) end)
+      {:ok, out_path: path}
+    end
+
+    test "writes a non-empty PDF file to the given path", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      assert :ok = Editor.save(editor, out_path)
+      assert File.exists?(out_path)
+      assert File.stat!(out_path).size > 0
+    end
+
+    test "the written file round-trips into a new editor", %{out_path: out_path} do
+      editor = Editor.open!(@form_pdf)
+      :ok = Editor.save(editor, out_path)
+      assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
+    end
+
+    test "returns {:error, reason} when the target directory does not exist" do
+      editor = Editor.open!(@valid_pdf)
+
+      bogus =
+        Path.join([
+          "/",
+          "nonexistent_pdf_elixide_dir_#{System.unique_integer([:positive])}",
+          "out.pdf"
+        ])
+
+      assert {:error, _reason} = Editor.save(editor, bogus)
+    end
+
+    test "save/3 with incremental: true writes a round-trippable PDF",
+         %{out_path: out_path} do
+      editor = Editor.open!(@form_pdf)
+      assert :ok = Editor.save(editor, out_path, incremental: true)
+      assert File.stat!(out_path).size > 0
+      assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
+    end
+
+    test "save/3 with compress and garbage_collect disabled still round-trips",
+         %{out_path: out_path} do
+      editor = Editor.open!(@form_pdf)
+
+      assert :ok =
+               Editor.save(editor, out_path, compress: false, garbage_collect: false)
+
+      assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
+    end
+  end
+
+  describe "save!/2" do
+    setup do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "pdf_elixide_save_bang_#{System.unique_integer([:positive])}.pdf"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+      {:ok, out_path: path}
+    end
+
+    test "returns :ok on success", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      assert :ok = Editor.save!(editor, out_path)
+      assert File.exists?(out_path)
+    end
+
+    test "raises when the target directory does not exist" do
+      editor = Editor.open!(@valid_pdf)
+
+      bogus =
+        Path.join([
+          "/",
+          "nonexistent_pdf_elixide_dir_#{System.unique_integer([:positive])}",
+          "out.pdf"
+        ])
+
+      assert_raise RuntimeError, fn -> Editor.save!(editor, bogus) end
     end
   end
 end
