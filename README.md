@@ -7,6 +7,8 @@
 
 Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-performance PDF library written in Rust. Built on top of [Rustler](https://github.com/rusterlium/rustler).
 
+> ⚠️ **Status:** This project is under active development and the public API is subject to change without notice until a `1.0` release. Expect breaking changes between minor versions.
+
 ## Features
 
 - Open PDF documents from a file path or an in-memory binary
@@ -109,4 +111,4 @@ Full API documentation is published on [HexDocs](https://hexdocs.pm/pdf_elixide)
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [MIT License](https://github.com/r8/pdf_elixide/blob/main/LICENSE).
