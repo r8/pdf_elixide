@@ -5,6 +5,19 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.3.0](https://github.com/r8/pdf_elixide/compare/v0.2.0...v0.3.0) (2026-05-20)
+
+
+
+
+### Features:
+
+* implement save to file with options by [@r8](https://github.com/r8)
+
+* implement setting form field by [@r8](https://github.com/r8)
+
+* add editor module by [@r8](https://github.com/r8)
+
 ## [v0.2.0](https://github.com/r8/pdf_elixide/compare/v0.1.0...v0.2.0) (2026-05-19)
 
 
