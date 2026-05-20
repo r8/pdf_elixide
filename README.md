@@ -16,6 +16,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Get the page count
 - Extract text from a specific page
 - Extract AcroForm fields (name, kind, value)
+- Fill AcroForm fields and save the result to a file or in-memory binary
 
 ## Requirements
 
@@ -105,6 +106,41 @@ Each field carries:
 - `:value` — one of `{:text, String.t()} | {:boolean, boolean()} | {:name, String.t()} | {:array, [String.t()]} | nil`
 
 A bang variant, `PdfElixide.Form.fields!/1`, returns the list directly and raises on error.
+
+### Filling form fields
+
+To modify a PDF, open it as a `PdfElixide.Editor` instead of a `PdfElixide.Document`,
+set values with `PdfElixide.Form.set_value/3`, then persist the result with
+`PdfElixide.Editor.save/3` (file) or `PdfElixide.Editor.to_binary/2` (in-memory).
+
+```elixir
+alias PdfElixide.Editor
+alias PdfElixide.Form
+
+{:ok, editor} = Editor.open("path/to/form.pdf")
+
+# Values use the same tagged-tuple shape returned by Form.fields/1.
+:ok = Form.set_value(editor, "full_name", {:text, "Jane Doe"})
+:ok = Form.set_value(editor, "subscribe", {:boolean, true})
+
+# Write the filled PDF to disk.
+:ok = Editor.save(editor, "path/to/filled.pdf")
+
+# Or get the bytes back for streaming / storage.
+{:ok, bytes} = Editor.to_binary(editor)
+```
+
+Both `save/3` and `to_binary/2` accept a keyword list of options
+(`:incremental`, `:compress`, `:linearize`, `:garbage_collect`). For
+form filling against an existing PDF, an incremental save preserves the
+original AcroForm structure and only appends the field-value updates:
+
+```elixir
+:ok = Editor.save(editor, "path/to/filled.pdf", incremental: true)
+```
+
+Bang variants `Editor.open!/1`, `Editor.save!/3`, `Editor.to_binary!/2`,
+and `Form.set_value!/3` raise on error.
 
 ## Documentation
 
