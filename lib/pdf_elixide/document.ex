@@ -62,7 +62,7 @@ defmodule PdfElixide.Document do
   @doc """
   Returns the PDF specification version of the given document as a `{major, minor}` tuple.
   """
-  @spec version(t()) :: {non_neg_integer(), non_neg_integer()} | {:error, term()}
+  @spec version(t()) :: {non_neg_integer(), non_neg_integer()}
   def version(%__MODULE__{version: v}), do: v
 
   @doc """
