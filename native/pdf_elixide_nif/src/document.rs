@@ -5,7 +5,7 @@ use rustler::{Binary, NifResult, ResourceArc};
 
 use crate::{
     error::{lock_err, to_nif_err},
-    form::{form_field_to_nif, FieldNif},
+    form::{document_form_field_to_nif, FieldNif},
     DocumentResource,
 };
 
@@ -61,5 +61,5 @@ fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
 
     let fields = FormExtractor::extract_fields(&doc).map_err(to_nif_err)?;
-    Ok(fields.into_iter().map(form_field_to_nif).collect())
+    Ok(fields.into_iter().map(document_form_field_to_nif).collect())
 }

@@ -2,6 +2,7 @@ defmodule PdfElixide.FormTest do
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
+  alias PdfElixide.Editor
   alias PdfElixide.Form
   alias PdfElixide.Form.Field
 
@@ -62,6 +63,46 @@ defmodule PdfElixide.FormTest do
       assert length(fields) == 3
       assert Enum.all?(fields, &match?(%Field{}, &1))
       assert Enum.map(fields, & &1.name) == ["full_name", "subscribe", "country"]
+    end
+  end
+
+  describe "fields/1 with %Editor{}" do
+    test "returns {:ok, []} for an editor with no AcroForm" do
+      editor = Editor.open!(@no_form_pdf)
+      assert {:ok, []} = Form.fields(editor)
+    end
+
+    test "returns {:ok, fields} with one struct per AcroForm field" do
+      editor = Editor.open!(@form_pdf)
+      assert {:ok, fields} = Form.fields(editor)
+      assert length(fields) == 3
+      assert Enum.all?(fields, &match?(%Field{}, &1))
+    end
+
+    test "decodes a text field's name, kind, and string value" do
+      editor = Editor.open!(@form_pdf)
+      {:ok, fields} = Form.fields(editor)
+      field = Enum.find(fields, &(&1.name == "full_name"))
+      assert %Field{kind: :text, value: {:text, "John Doe"}} = field
+    end
+
+    test "works on an editor loaded from binary" do
+      editor = Editor.from_binary!(File.read!(@form_pdf))
+      assert {:ok, [_ | _]} = Form.fields(editor)
+    end
+  end
+
+  describe "fields!/1 with %Editor{}" do
+    test "returns [] for an editor with no AcroForm" do
+      editor = Editor.open!(@no_form_pdf)
+      assert Form.fields!(editor) == []
+    end
+
+    test "returns the list of fields directly for the form fixture" do
+      editor = Editor.open!(@form_pdf)
+      fields = Form.fields!(editor)
+      assert length(fields) == 3
+      assert Enum.all?(fields, &match?(%Field{}, &1))
     end
   end
 end

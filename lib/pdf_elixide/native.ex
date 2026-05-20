@@ -13,5 +13,10 @@ defmodule PdfElixide.Native do
   def document_extract_text(_doc, _page_index), do: err()
   def document_form_fields(_doc), do: err()
 
+  # Editor operations
+  def editor_open(_path), do: err()
+  def editor_from_bytes(_bytes), do: err()
+  def editor_form_fields(_editor), do: err()
+
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

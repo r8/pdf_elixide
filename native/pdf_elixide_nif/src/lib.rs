@@ -1,8 +1,9 @@
 use std::sync::Mutex;
 
-use pdf_oxide::PdfDocument;
+use pdf_oxide::{editor::DocumentEditor, PdfDocument};
 
 mod document;
+mod editor;
 mod error;
 mod form;
 
@@ -23,6 +24,13 @@ struct DocumentResource {
 
 #[rustler::resource_impl]
 impl rustler::Resource for DocumentResource {}
+
+struct EditorResource {
+    editor: Mutex<DocumentEditor>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for EditorResource {}
 
 // ------------------------------------------------------------------------------------------------
 

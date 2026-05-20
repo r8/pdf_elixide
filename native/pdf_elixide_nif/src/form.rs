@@ -1,6 +1,9 @@
-use pdf_oxide::extractors::{
-    forms::{FieldType, FieldValue},
-    FormField,
+use pdf_oxide::{
+    editor::form_fields::{FormFieldValue, FormFieldWrapper},
+    extractors::{
+        forms::{FieldType, FieldValue},
+        FormField,
+    },
 };
 use rustler::{Atom, NifStruct, NifTaggedEnum};
 
@@ -22,11 +25,24 @@ pub enum FieldValueNif {
     Array(Vec<String>),
 }
 
-pub fn form_field_to_nif(field: FormField) -> FieldNif {
+pub fn document_form_field_to_nif(field: FormField) -> FieldNif {
     FieldNif {
         name: field.name,
         kind: field_type_to_atom(field.field_type),
-        value: field_value_to_nif(field.value),
+        value: document_field_value_to_nif(field.value),
+    }
+}
+
+pub fn editor_form_field_to_nif(wrapper: FormFieldWrapper) -> FieldNif {
+    let kind = wrapper
+        .field_type()
+        .cloned()
+        .map(field_type_to_atom)
+        .unwrap_or_else(atoms::unknown);
+    FieldNif {
+        name: wrapper.name().to_string(),
+        kind,
+        value: editor_field_value_to_nif(wrapper.value()),
     }
 }
 
@@ -40,12 +56,22 @@ fn field_type_to_atom(field_type: FieldType) -> Atom {
     }
 }
 
-fn field_value_to_nif(value: FieldValue) -> Option<FieldValueNif> {
+fn document_field_value_to_nif(value: FieldValue) -> Option<FieldValueNif> {
     match value {
         FieldValue::Text(s) => Some(FieldValueNif::Text(s)),
         FieldValue::Boolean(b) => Some(FieldValueNif::Boolean(b)),
         FieldValue::Name(s) => Some(FieldValueNif::Name(s)),
         FieldValue::Array(a) => Some(FieldValueNif::Array(a)),
         FieldValue::None => None,
+    }
+}
+
+fn editor_field_value_to_nif(value: FormFieldValue) -> Option<FieldValueNif> {
+    match value {
+        FormFieldValue::Text(s) => Some(FieldValueNif::Text(s)),
+        FormFieldValue::Boolean(b) => Some(FieldValueNif::Boolean(b)),
+        FormFieldValue::Choice(s) => Some(FieldValueNif::Name(s)),
+        FormFieldValue::MultiChoice(v) => Some(FieldValueNif::Array(v)),
+        FormFieldValue::None => None,
     }
 }
