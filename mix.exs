@@ -27,7 +27,7 @@ defmodule PdfElixide.MixProject do
     [
       maintainers: ["Sergey Storchay"],
       licenses: ["MIT"],
-      links: %{"Source" => @source}
+      links: %{"Source" => @source, "PDF Oxide" => "https://oxide.fyi"}
     ]
   end
 
