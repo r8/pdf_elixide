@@ -1,5 +1,7 @@
 import Config
 
+config :rustler_precompiled, :force_build, pdf_elixide: true
+
 config :git_hooks,
   auto_install: true,
   verbose: true,

@@ -1,9 +1,15 @@
 defmodule PdfElixide.Native do
   @moduledoc false
 
-  use Rustler,
+  mix_config = Mix.Project.config()
+  version = mix_config[:version]
+  github_url = mix_config[:package][:links]["Source"]
+
+  use RustlerPrecompiled,
     otp_app: :pdf_elixide,
-    crate: :pdf_elixide_nif
+    crate: :pdf_elixide_nif,
+    base_url: "#{github_url}/releases/download/v#{version}",
+    version: version
 
   # Document operations
   def document_open(_path), do: err()

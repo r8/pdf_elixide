@@ -46,10 +46,12 @@ defmodule PdfElixide.MixProject do
       "native/pdf_elixide_nif/Cargo.toml",
       "Cargo.toml",
       "Cargo.lock",
+      ".cargo/config.toml",
       "mix.exs",
       "README.md",
       "LICENSE",
-      "CHANGELOG.md"
+      "CHANGELOG.md",
+      "checksum-*.exs"
     ]
   end
 
@@ -72,7 +74,8 @@ defmodule PdfElixide.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:rustler, "~> 0.37.3", runtime: false},
+      {:rustler_precompiled, "~> 0.9.0"},
+      {:rustler, "~> 0.37.3", optional: true, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:igniter, "~> 0.5", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.0", only: [:dev], runtime: false},

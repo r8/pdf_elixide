@@ -2,3 +2,8 @@
 resolver = "2"
 
 members = ["native/pdf_elixide_nif"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
