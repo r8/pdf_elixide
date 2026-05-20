@@ -75,3 +75,13 @@ fn editor_field_value_to_nif(value: FormFieldValue) -> Option<FieldValueNif> {
         FormFieldValue::None => None,
     }
 }
+
+pub fn editor_field_value_from_nif(value: Option<FieldValueNif>) -> FormFieldValue {
+    match value {
+        Some(FieldValueNif::Text(s)) => FormFieldValue::Text(s),
+        Some(FieldValueNif::Boolean(b)) => FormFieldValue::Boolean(b),
+        Some(FieldValueNif::Name(s)) => FormFieldValue::Choice(s),
+        Some(FieldValueNif::Array(v)) => FormFieldValue::MultiChoice(v),
+        None => FormFieldValue::None,
+    }
+}

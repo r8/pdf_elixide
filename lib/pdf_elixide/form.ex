@@ -33,4 +33,30 @@ defmodule PdfElixide.Form do
       {:error, error} -> raise error
     end
   end
+
+  @doc """
+  Sets the value of an existing form field on the given editor.
+
+  The value uses the same tagged-tuple shape returned by `fields/1`
+  (e.g. `{:text, "Jane Doe"}`, `{:boolean, true}`, `nil`).
+  """
+  @spec set_value(Editor.t(), String.t(), Field.value()) :: :ok | {:error, term()}
+  def set_value(%Editor{ref: ref}, name, value) when is_binary(name) do
+    case Wrap.call(fn -> Native.editor_set_form_field_value(ref, name, value) end) do
+      {:ok, :ok} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Sets the value of an existing form field on the given editor,
+  raising an error if it fails.
+  """
+  @spec set_value!(Editor.t(), String.t(), Field.value()) :: :ok
+  def set_value!(%Editor{} = editor, name, value) when is_binary(name) do
+    case set_value(editor, name, value) do
+      :ok -> :ok
+      {:error, error} -> raise error
+    end
+  end
 end

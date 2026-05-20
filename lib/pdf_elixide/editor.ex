@@ -65,6 +65,28 @@ defmodule PdfElixide.Editor do
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
 
+  @doc """
+  Serialises all in-memory changes into a PDF binary.
+
+  The result is a fully self-contained PDF that can be written to disk,
+  stored in a database, or streamed over HTTP.
+  """
+  @spec to_binary(t()) :: {:ok, binary()} | {:error, term()}
+  def to_binary(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.editor_to_bytes(ref) end)
+  end
+
+  @doc """
+  Serialises all in-memory changes into a PDF binary, raising an error if it fails.
+  """
+  @spec to_binary!(t()) :: binary()
+  def to_binary!(%__MODULE__{} = editor) do
+    case to_binary(editor) do
+      {:ok, bytes} -> bytes
+      {:error, error} -> raise error
+    end
+  end
+
   defimpl Inspect do
     import Inspect.Algebra
 

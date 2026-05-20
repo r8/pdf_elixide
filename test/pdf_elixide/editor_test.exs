@@ -2,9 +2,11 @@ defmodule PdfElixide.EditorTest do
   use ExUnit.Case, async: true
 
   alias PdfElixide.Editor
+  alias PdfElixide.Form
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
+  @form_pdf Path.join(@fixtures, "form.pdf")
   @invalid_pdf Path.join(@fixtures, "invalid.bin")
 
   describe "open/1" do
@@ -65,6 +67,35 @@ defmodule PdfElixide.EditorTest do
     test "returns nil after from_binary/1" do
       editor = Editor.from_binary!(File.read!(@valid_pdf))
       assert Editor.source_path(editor) == nil
+    end
+  end
+
+  describe "to_binary/1" do
+    test "returns {:ok, bytes} where bytes is a non-empty binary" do
+      editor = Editor.open!(@form_pdf)
+      assert {:ok, bytes} = Editor.to_binary(editor)
+      assert is_binary(bytes)
+      assert byte_size(bytes) > 0
+    end
+
+    test "returned bytes are a valid PDF (round-trips into a new editor)" do
+      editor = Editor.open!(@form_pdf)
+      {:ok, bytes} = Editor.to_binary(editor)
+      assert {:ok, %Editor{}} = Editor.from_binary(bytes)
+    end
+
+    test "form field mutations are present in the saved bytes" do
+      editor = Editor.open!(@form_pdf)
+      :ok = Form.set_value(editor, "full_name", {:text, "Jane Doe"})
+      {:ok, bytes} = Editor.to_binary(editor)
+      assert String.contains?(bytes, "Jane Doe")
+    end
+  end
+
+  describe "to_binary!/1" do
+    test "returns a binary directly" do
+      editor = Editor.open!(@form_pdf)
+      assert is_binary(Editor.to_binary!(editor))
     end
   end
 end

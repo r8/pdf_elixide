@@ -105,4 +105,54 @@ defmodule PdfElixide.FormTest do
       assert Enum.all?(fields, &match?(%Field{}, &1))
     end
   end
+
+  describe "set_value/3" do
+    test "returns :ok for a known field" do
+      editor = Editor.open!(@form_pdf)
+      assert :ok = Form.set_value(editor, "full_name", {:text, "Jane Doe"})
+    end
+
+    test "returns {:error, _} for an unknown field name" do
+      editor = Editor.open!(@form_pdf)
+      assert {:error, _} = Form.set_value(editor, "no_such_field", {:text, "x"})
+    end
+
+    test "text update is visible in subsequent Form.fields/1 read" do
+      editor = Editor.open!(@form_pdf)
+      :ok = Form.set_value(editor, "full_name", {:text, "Jane Doe"})
+      {:ok, fields} = Form.fields(editor)
+      field = Enum.find(fields, &(&1.name == "full_name"))
+      assert %Field{kind: :text, value: {:text, "Jane Doe"}} = field
+    end
+
+    test "boolean update is visible in subsequent Form.fields/1 read" do
+      editor = Editor.open!(@form_pdf)
+      :ok = Form.set_value(editor, "subscribe", {:boolean, false})
+      {:ok, fields} = Form.fields(editor)
+      field = Enum.find(fields, &(&1.name == "subscribe"))
+      assert %Field{value: {:boolean, false}} = field
+    end
+
+    test "round-trips a previously-read value unchanged" do
+      editor = Editor.open!(@form_pdf)
+      {:ok, fields_before} = Form.fields(editor)
+      field = Enum.find(fields_before, &(&1.name == "full_name"))
+      assert :ok = Form.set_value(editor, "full_name", field.value)
+      {:ok, fields_after} = Form.fields(editor)
+      after_field = Enum.find(fields_after, &(&1.name == "full_name"))
+      assert after_field.value == field.value
+    end
+  end
+
+  describe "set_value!/3" do
+    test "returns :ok for a known field" do
+      editor = Editor.open!(@form_pdf)
+      assert :ok = Form.set_value!(editor, "full_name", {:text, "Test"})
+    end
+
+    test "raises for an unknown field name" do
+      editor = Editor.open!(@form_pdf)
+      assert_raise RuntimeError, fn -> Form.set_value!(editor, "no_such_field", {:text, "x"}) end
+    end
+  end
 end
