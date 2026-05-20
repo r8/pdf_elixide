@@ -8,7 +8,7 @@ defmodule PdfElixide.MixProject do
     [
       app: :pdf_elixide,
       version: @version,
-      elixir: "~> 1.19",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       description: description(),
       package: package(),
