@@ -16,11 +16,6 @@ defmodule PdfElixide.Native.Wrap do
       other -> {:ok, other}
     end
   rescue
-    # Argument error from Rustler
-    ArgumentError -> {:error, :badarg}
-    # Structured Rust-side error via Error::Term
     e in ErlangError -> {:error, e.original}
-    # Anything else (RuntimeError, FunctionClauseError, ...)
-    e -> {:error, Exception.message(e)}
   end
 end
