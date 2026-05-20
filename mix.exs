@@ -74,8 +74,8 @@ defmodule PdfElixide.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:rustler_precompiled, "~> 0.9.0"},
-      {:rustler, "~> 0.37.3", optional: true, runtime: false},
+      {:rustler_precompiled, "~> 0.7"},
+      {:rustler, ">= 0.0.0", optional: true, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:igniter, "~> 0.5", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.0", only: [:dev], runtime: false},
