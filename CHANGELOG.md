@@ -5,6 +5,17 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.3.1](https://github.com/r8/pdf_elixide/compare/v0.3.0...v0.3.1) (2026-05-20)
+
+
+
+
+### Bug Fixes:
+
+* relax elixir requirements by [@r8](https://github.com/r8)
+
+* tune rustler dependencies by [@r8](https://github.com/r8)
+
 ## [v0.3.0](https://github.com/r8/pdf_elixide/compare/v0.2.0...v0.3.0) (2026-05-20)
 
 
