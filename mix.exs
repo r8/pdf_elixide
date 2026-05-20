@@ -27,7 +27,29 @@ defmodule PdfElixide.MixProject do
     [
       maintainers: ["Sergey Storchay"],
       licenses: ["MIT"],
-      links: %{"Source" => @source, "PDF Oxide" => "https://oxide.fyi"}
+      links: links(),
+      files: files()
+    ]
+  end
+
+  defp links do
+    %{
+      "Source" => @source,
+      "PDF Oxide" => "https://oxide.fyi"
+    }
+  end
+
+  defp files do
+    [
+      "lib",
+      "native/pdf_elixide_nif/src",
+      "native/pdf_elixide_nif/Cargo.toml",
+      "Cargo.toml",
+      "Cargo.lock",
+      "mix.exs",
+      "README.md",
+      "LICENSE",
+      "CHANGELOG.md"
     ]
   end
 
