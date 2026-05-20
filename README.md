@@ -20,7 +20,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 
 ## Requirements
 
-- Elixir `~> 1.17`
+- Elixir `~> 1.15`
 - Erlang/OTP compatible with the above
 - A working [Rust toolchain](https://www.rust-lang.org/tools/install) (stable) for compiling the NIF
 
