@@ -26,3 +26,6 @@ pdf_elixide-*.tar
 /target/
 /native/pdf_elixide_nif/target/
 /priv/native/
+
+# RustlerPrecompiled checksum files
+checksum-*.exs
