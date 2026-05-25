@@ -112,6 +112,38 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc """
+  Returns whether the PDF document is encrypted.
+  """
+  @spec encrypted?(t()) :: boolean()
+  def encrypted?(%__MODULE__{ref: ref}) do
+    Native.document_is_encrypted(ref)
+  end
+
+  @doc """
+  Authenticates against the document's encryption with the given password.
+
+  Returns `{:ok, true}` if authentication succeeded (or the PDF is not encrypted),
+  `{:ok, false}` if the password was wrong, or `{:error, reason}` on a PDF/crypto error.
+  """
+  @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, term()}
+  def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
+    Wrap.call(fn -> Native.document_authenticate(ref, password) end)
+  end
+
+  @doc """
+  Same as `authenticate/2` but raises on error.
+
+  Still returns `false` (does not raise) for a wrong password.
+  """
+  @spec authenticate!(t(), binary()) :: boolean()
+  def authenticate!(doc, password) when is_binary(password) do
+    case authenticate(doc, password) do
+      {:ok, result} -> result
+      {:error, error} -> raise error
+    end
+  end
+
   defimpl Inspect do
     import Inspect.Algebra
 

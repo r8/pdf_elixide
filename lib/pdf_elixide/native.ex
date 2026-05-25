@@ -18,6 +18,8 @@ defmodule PdfElixide.Native do
   def document_version(_doc), do: err()
   def document_extract_text(_doc, _page_index), do: err()
   def document_form_fields(_doc), do: err()
+  def document_is_encrypted(_doc), do: err()
+  def document_authenticate(_doc, _password), do: err()
 
   # Editor operations
   def editor_open(_path), do: err()

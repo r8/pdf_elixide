@@ -56,10 +56,32 @@ fn document_extract_text(
     doc.extract_text(page_index).map_err(to_nif_err)
 }
 
+/// Extracts form fields from the PDF document.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
 
     let fields = FormExtractor::extract_fields(&doc).map_err(to_nif_err)?;
     Ok(fields.into_iter().map(document_form_field_to_nif).collect())
+}
+
+/// Returns whether the PDF document is encrypted.
+#[rustler::nif]
+fn document_is_encrypted(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    Ok(doc.is_encrypted())
+}
+
+/// Authenticates against the document's encryption with the given password.
+/// Returns `Ok(true)` on success (or if the PDF is not encrypted),
+/// `Ok(false)` if the password was invalid.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_authenticate(
+    resource: ResourceArc<DocumentResource>,
+    password: Binary,
+) -> NifResult<bool> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    doc.authenticate(password.as_slice()).map_err(to_nif_err)
 }

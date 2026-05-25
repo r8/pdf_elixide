@@ -5,6 +5,8 @@ defmodule PdfElixide.DocumentTest do
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
+  @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
+  @password "secret"
 
   describe "page_count/1" do
     test "returns {:ok, 3} for the valid fixture" do
@@ -63,6 +65,52 @@ defmodule PdfElixide.DocumentTest do
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.extract_text!(doc, :first) end
+    end
+  end
+
+  describe "encrypted?/1" do
+    test "returns false for an unencrypted PDF" do
+      doc = Document.open!(@valid_pdf)
+      refute Document.encrypted?(doc)
+    end
+
+    test "returns true for an encrypted PDF" do
+      doc = Document.open!(@encrypted_pdf)
+      assert Document.encrypted?(doc)
+    end
+  end
+
+  describe "authenticate/2" do
+    test "returns {:ok, true} for an unencrypted PDF" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, true} = Document.authenticate(doc, "anything")
+    end
+
+    test "returns {:ok, true} with the correct password" do
+      doc = Document.open!(@encrypted_pdf)
+      assert {:ok, true} = Document.authenticate(doc, @password)
+    end
+
+    test "returns {:ok, false} with the wrong password" do
+      doc = Document.open!(@encrypted_pdf)
+      assert {:ok, false} = Document.authenticate(doc, "wrong")
+    end
+
+    test "raises FunctionClauseError for a non-binary password" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.authenticate(doc, :secret) end
+    end
+  end
+
+  describe "authenticate!/2" do
+    test "returns true with the correct password" do
+      doc = Document.open!(@encrypted_pdf)
+      assert Document.authenticate!(doc, @password) == true
+    end
+
+    test "returns false (does not raise) with the wrong password" do
+      doc = Document.open!(@encrypted_pdf)
+      assert Document.authenticate!(doc, "wrong") == false
     end
   end
 end
