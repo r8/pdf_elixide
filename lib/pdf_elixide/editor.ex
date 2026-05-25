@@ -65,34 +65,6 @@ defmodule PdfElixide.Editor do
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
 
-  @doc """
-  Serialises all in-memory changes into a PDF binary.
-
-  The result is a fully self-contained PDF that can be written to disk,
-  stored in a database, or streamed over HTTP.
-
-  Accepts the same `t:save_opts/0` keyword list as `save/3`. Note that
-  `:incremental` is not supported here — upstream returns
-  `{:error, _}` because incremental updates can only be appended to
-  the original file.
-  """
-  @spec to_binary(t(), save_opts()) :: {:ok, binary()} | {:error, term()}
-  def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
-    options = build_save_options(opts)
-    Wrap.call(fn -> Native.editor_to_bytes(ref, options) end)
-  end
-
-  @doc """
-  Serialises all in-memory changes into a PDF binary, raising an error if it fails.
-  """
-  @spec to_binary!(t(), save_opts()) :: binary()
-  def to_binary!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
-    case to_binary(editor, opts) do
-      {:ok, bytes} -> bytes
-      {:error, error} -> raise error
-    end
-  end
-
   @typedoc """
   Options accepted by `save/3` and `save!/3`.
 
@@ -136,6 +108,34 @@ defmodule PdfElixide.Editor do
       when is_binary(path) and is_list(opts) do
     case save(editor, path, opts) do
       :ok -> :ok
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Serialises all in-memory changes into a PDF binary.
+
+  The result is a fully self-contained PDF that can be written to disk,
+  stored in a database, or streamed over HTTP.
+
+  Accepts the same `t:save_opts/0` keyword list as `save/3`. Note that
+  `:incremental` is not supported here — upstream returns
+  `{:error, _}` because incremental updates can only be appended to
+  the original file.
+  """
+  @spec to_binary(t(), save_opts()) :: {:ok, binary()} | {:error, term()}
+  def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_save_options(opts)
+    Wrap.call(fn -> Native.editor_to_bytes(ref, options) end)
+  end
+
+  @doc """
+  Serialises all in-memory changes into a PDF binary, raising an error if it fails.
+  """
+  @spec to_binary!(t(), save_opts()) :: binary()
+  def to_binary!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
+    case to_binary(editor, opts) do
+      {:ok, bytes} -> bytes
       {:error, error} -> raise error
     end
   end
