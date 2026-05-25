@@ -12,8 +12,8 @@ defmodule PdfElixide.Native do
     version: version
 
   # Document operations
-  def document_open(_path), do: err()
-  def document_from_bytes(_bytes), do: err()
+  def document_open(_path, _options), do: err()
+  def document_from_bytes(_bytes, _options), do: err()
   def document_page_count(_doc), do: err()
   def document_version(_doc), do: err()
   def document_extract_text(_doc, _page_index), do: err()

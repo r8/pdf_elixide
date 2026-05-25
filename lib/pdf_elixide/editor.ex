@@ -66,7 +66,7 @@ defmodule PdfElixide.Editor do
   def source_path(%__MODULE__{source_path: p}), do: p
 
   @typedoc """
-  Options accepted by `save/3` and `save!/3`.
+  Options accepted by `save/3`, `save!/3`, `to_binary/2`, and `to_binary!/2`.
 
     * `:incremental` — write an incremental update instead of a full
       rewrite. Defaults to `false`.

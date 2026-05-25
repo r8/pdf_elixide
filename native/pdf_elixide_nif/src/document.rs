@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use pdf_oxide::{extractors::forms::FormExtractor, PdfDocument};
-use rustler::{Binary, NifResult, ResourceArc};
+use rustler::{Binary, NifMap, NifResult, ResourceArc};
 
 use crate::{
     error::{lock_err, to_nif_err},
@@ -9,10 +9,33 @@ use crate::{
     DocumentResource,
 };
 
+#[derive(NifMap, Debug)]
+pub struct OpenOptionsNif {
+    pub password: Option<String>,
+}
+
+impl OpenOptionsNif {
+    fn apply(self, doc: &PdfDocument) -> NifResult<()> {
+        if let Some(pw) = self.password {
+            let ok = doc.authenticate(pw.as_bytes()).map_err(to_nif_err)?;
+            if !ok {
+                return Err(rustler::Error::Term(Box::new(
+                    "Authentication failed: wrong password".to_string(),
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Opens a PDF document from the specified file path.
 #[rustler::nif(schedule = "DirtyIo")]
-fn document_open(path: String) -> NifResult<ResourceArc<DocumentResource>> {
+fn document_open(
+    path: String,
+    options: OpenOptionsNif,
+) -> NifResult<ResourceArc<DocumentResource>> {
     let doc = PdfDocument::open(path).map_err(to_nif_err)?;
+    options.apply(&doc)?;
 
     Ok(ResourceArc::new(DocumentResource {
         doc: Mutex::new(doc),
@@ -21,8 +44,12 @@ fn document_open(path: String) -> NifResult<ResourceArc<DocumentResource>> {
 
 /// Opens a PDF document from the given binary data.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_from_bytes(bytes: Binary) -> NifResult<ResourceArc<DocumentResource>> {
+fn document_from_bytes(
+    bytes: Binary,
+    options: OpenOptionsNif,
+) -> NifResult<ResourceArc<DocumentResource>> {
     let doc = PdfDocument::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
+    options.apply(&doc)?;
 
     Ok(ResourceArc::new(DocumentResource {
         doc: Mutex::new(doc),

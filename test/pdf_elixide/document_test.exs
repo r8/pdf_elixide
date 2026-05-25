@@ -113,4 +113,54 @@ defmodule PdfElixide.DocumentTest do
       assert Document.authenticate!(doc, "wrong") == false
     end
   end
+
+  describe "open/2 with password option" do
+    test "opens an encrypted PDF with the correct password" do
+      assert {:ok, %Document{}} = Document.open(@encrypted_pdf, password: @password)
+    end
+
+    test "returns {:error, _} with the wrong password" do
+      assert {:error, "Authentication failed: wrong password"} =
+               Document.open(@encrypted_pdf, password: "wrong")
+    end
+
+    test "password: nil is a no-op (unencrypted PDF opens normally)" do
+      assert {:ok, %Document{}} = Document.open(@valid_pdf, password: nil)
+    end
+
+    test "extracts text after open-with-password" do
+      doc = Document.open!(@encrypted_pdf, password: @password)
+      assert Document.extract_text!(doc, 0) =~ "Page One"
+    end
+  end
+
+  describe "from_binary/2 with password option" do
+    test "opens an encrypted PDF binary with the correct password" do
+      bytes = File.read!(@encrypted_pdf)
+      assert {:ok, %Document{}} = Document.from_binary(bytes, password: @password)
+    end
+
+    test "returns {:error, _} with the wrong password" do
+      bytes = File.read!(@encrypted_pdf)
+
+      assert {:error, "Authentication failed: wrong password"} =
+               Document.from_binary(bytes, password: "wrong")
+    end
+  end
+
+  describe "open!/2 and from_binary!/2 bang variants" do
+    test "open! raises with the wrong-password message" do
+      assert_raise RuntimeError, "Authentication failed: wrong password", fn ->
+        Document.open!(@encrypted_pdf, password: "wrong")
+      end
+    end
+
+    test "from_binary! raises with the wrong-password message" do
+      bytes = File.read!(@encrypted_pdf)
+
+      assert_raise RuntimeError, "Authentication failed: wrong password", fn ->
+        Document.from_binary!(bytes, password: "wrong")
+      end
+    end
+  end
 end

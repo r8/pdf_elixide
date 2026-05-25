@@ -15,12 +15,25 @@ defmodule PdfElixide.Document do
           source_path: Path.t() | nil
         }
 
+  @typedoc """
+  Options accepted by `open/2`, `open!/2`, `from_binary/2`, and `from_binary!/2`.
+
+    * `:password` — password used to authenticate against an encrypted
+      PDF. When the password is wrong, the call returns
+      `{:error, "Authentication failed: wrong password"}` (or raises,
+      for the bang variants). When omitted or `nil`, no authentication
+      attempt is made beyond `pdf_oxide`'s built-in empty-password try.
+  """
+  @type open_opts :: [password: String.t()]
+
   @doc """
   Opens a PDF document from the specified file path.
   """
-  @spec open(Path.t()) :: {:ok, t()} | {:error, term()}
-  def open(path) when is_binary(path) do
-    with {:ok, ref} <- Wrap.call(fn -> Native.document_open(path) end),
+  @spec open(Path.t(), open_opts()) :: {:ok, t()} | {:error, term()}
+  def open(path, opts \\ []) when is_binary(path) and is_list(opts) do
+    options = build_open_options(opts)
+
+    with {:ok, ref} <- Wrap.call(fn -> Native.document_open(path, options) end),
          {:ok, version} <- Wrap.call(fn -> Native.document_version(ref) end) do
       {:ok, %__MODULE__{ref: ref, version: version, source_path: path}}
     end
@@ -29,9 +42,9 @@ defmodule PdfElixide.Document do
   @doc """
   Opens a PDF document from the specified file path, raising an error if it fails.
   """
-  @spec open!(Path.t()) :: t()
-  def open!(path) when is_binary(path) do
-    case open(path) do
+  @spec open!(Path.t(), open_opts()) :: t()
+  def open!(path, opts \\ []) when is_binary(path) and is_list(opts) do
+    case open(path, opts) do
       {:ok, doc} -> doc
       {:error, error} -> raise error
     end
@@ -40,9 +53,11 @@ defmodule PdfElixide.Document do
   @doc """
   Opens a PDF document from the given binary data.
   """
-  @spec from_binary(binary()) :: {:ok, t()} | {:error, term()}
-  def from_binary(bytes) when is_binary(bytes) do
-    with {:ok, ref} <- Wrap.call(fn -> Native.document_from_bytes(bytes) end),
+  @spec from_binary(binary(), open_opts()) :: {:ok, t()} | {:error, term()}
+  def from_binary(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
+    options = build_open_options(opts)
+
+    with {:ok, ref} <- Wrap.call(fn -> Native.document_from_bytes(bytes, options) end),
          {:ok, version} <- Wrap.call(fn -> Native.document_version(ref) end) do
       {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
     end
@@ -51,12 +66,16 @@ defmodule PdfElixide.Document do
   @doc """
   Opens a PDF document from the given binary data, raising an error if it fails.
   """
-  @spec from_binary!(binary()) :: t()
-  def from_binary!(bytes) when is_binary(bytes) do
-    case from_binary(bytes) do
+  @spec from_binary!(binary(), open_opts()) :: t()
+  def from_binary!(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
+    case from_binary(bytes, opts) do
       {:ok, doc} -> doc
       {:error, error} -> raise error
     end
+  end
+
+  defp build_open_options(opts) do
+    %{password: Keyword.get(opts, :password)}
   end
 
   @doc """
