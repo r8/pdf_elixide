@@ -72,24 +72,13 @@ fn document_version(resource: ResourceArc<DocumentResource>) -> NifResult<(u8, u
     Ok(doc.version())
 }
 
-/// Extracts text content from a single page (zero-indexed).
+/// Returns whether the PDF document has a structure tree (i.e. is a Tagged PDF).
+/// Any error or missing tree is reported as `false`.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_extract_text(
-    resource: ResourceArc<DocumentResource>,
-    page_index: usize,
-) -> NifResult<String> {
+fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
 
-    doc.extract_text(page_index).map_err(to_nif_err)
-}
-
-/// Extracts form fields from the PDF document.
-#[rustler::nif(schedule = "DirtyCpu")]
-fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
-
-    let fields = FormExtractor::extract_fields(&doc).map_err(to_nif_err)?;
-    Ok(fields.into_iter().map(document_form_field_to_nif).collect())
+    Ok(doc.structure_tree().ok().flatten().is_some())
 }
 
 /// Returns whether the PDF document is encrypted.
@@ -111,4 +100,24 @@ fn document_authenticate(
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
 
     doc.authenticate(password.as_slice()).map_err(to_nif_err)
+}
+
+/// Extracts text content from a single page (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_extract_text(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<String> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    doc.extract_text(page_index).map_err(to_nif_err)
+}
+
+/// Extracts form fields from the PDF document.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let fields = FormExtractor::extract_fields(&doc).map_err(to_nif_err)?;
+    Ok(fields.into_iter().map(document_form_field_to_nif).collect())
 }

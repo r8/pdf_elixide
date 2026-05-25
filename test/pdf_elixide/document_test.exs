@@ -6,6 +6,7 @@ defmodule PdfElixide.DocumentTest do
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
+  @tagged_pdf Path.join(@fixtures, "tagged.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -77,6 +78,18 @@ defmodule PdfElixide.DocumentTest do
     test "returns true for an encrypted PDF" do
       doc = Document.open!(@encrypted_pdf)
       assert Document.encrypted?(doc)
+    end
+  end
+
+  describe "has_structure_tree?/1" do
+    test "returns false for the untagged sample fixture" do
+      doc = Document.open!(@valid_pdf)
+      refute Document.has_structure_tree?(doc)
+    end
+
+    test "returns true for a tagged PDF" do
+      doc = Document.open!(@tagged_pdf)
+      assert Document.has_structure_tree?(doc)
     end
   end
 

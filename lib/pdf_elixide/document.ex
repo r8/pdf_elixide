@@ -110,25 +110,11 @@ defmodule PdfElixide.Document do
   end
 
   @doc """
-  Extracts the text content of the page at the given zero-based index.
+  Returns whether the PDF document is a Tagged PDF with a structure tree.
   """
-  @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
-  def extract_text(%__MODULE__{ref: ref}, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    Wrap.call(fn -> Native.document_extract_text(ref, page_index) end)
-  end
-
-  @doc """
-  Extracts the text content of the page at the given zero-based index,
-  raising an error if it fails.
-  """
-  @spec extract_text!(t(), non_neg_integer()) :: binary()
-  def extract_text!(doc, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    case extract_text(doc, page_index) do
-      {:ok, text} -> text
-      {:error, error} -> raise error
-    end
+  @spec has_structure_tree?(t()) :: boolean()
+  def has_structure_tree?(%__MODULE__{ref: ref}) do
+    Native.document_has_structure_tree(ref)
   end
 
   @doc """
@@ -159,6 +145,28 @@ defmodule PdfElixide.Document do
   def authenticate!(doc, password) when is_binary(password) do
     case authenticate(doc, password) do
       {:ok, result} -> result
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the text content of the page at the given zero-based index.
+  """
+  @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
+  def extract_text(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    Wrap.call(fn -> Native.document_extract_text(ref, page_index) end)
+  end
+
+  @doc """
+  Extracts the text content of the page at the given zero-based index,
+  raising an error if it fails.
+  """
+  @spec extract_text!(t(), non_neg_integer()) :: binary()
+  def extract_text!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case extract_text(doc, page_index) do
+      {:ok, text} -> text
       {:error, error} -> raise error
     end
   end
