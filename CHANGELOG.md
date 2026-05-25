@@ -5,6 +5,19 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.4.0](https://github.com/r8/pdf_elixide/compare/v0.3.1...v0.4.0) (2026-05-25)
+
+
+
+
+### Features:
+
+* add `has_structure_tree?` check to Document by [@r8](https://github.com/r8)
+
+* add password authentication for opening encrypted PDFs by [@r8](https://github.com/r8)
+
+* add PDF encryption handling and authentication functions by [@r8](https://github.com/r8)
+
 ## [v0.3.1](https://github.com/r8/pdf_elixide/compare/v0.3.0...v0.3.1) (2026-05-20)
 
 
