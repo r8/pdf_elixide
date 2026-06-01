@@ -8,6 +8,8 @@
 Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-performance PDF library written in Rust. Built on top of [Rustler](https://github.com/rusterlium/rustler).
 
 > ⚠️ **Status:** This project is under active development and the public API is subject to change without notice until a `1.0` release. Expect breaking changes between minor versions.
+>
+> **Issues and Pull Requests are temporarily disabled.** Since the API is not yet stable, they would only add noise. They will be re-enabled once the API approaches a 1.0 release.
 
 ## Features
 
