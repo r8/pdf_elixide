@@ -13,5 +13,5 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-pdf_oxide = "0.3.59"
+pdf_oxide = "0.3.64"
 rustler = "0.37.4"
