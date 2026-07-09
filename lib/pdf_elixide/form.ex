@@ -2,6 +2,7 @@ defmodule PdfElixide.Form do
   @moduledoc """
   Representation of the form fields within a PDF document.
   """
+
   alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Form.Field

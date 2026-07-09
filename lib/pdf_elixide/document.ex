@@ -5,6 +5,7 @@ defmodule PdfElixide.Document do
 
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
+  alias PdfElixide.Page
 
   @enforce_keys [:ref, :version]
   defstruct [:ref, :version, :source_path]
@@ -167,6 +168,37 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case extract_text(doc, page_index) do
       {:ok, text} -> text
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Returns a lazy handle for every page in the document.
+  """
+  @spec pages(t()) :: [Page.t()]
+  def pages(%__MODULE__{} = doc) do
+    Enum.map(0..(page_count!(doc) - 1)//1, &%Page{doc: doc, index: &1})
+  end
+
+  @doc """
+  Returns a lazy handle for the page at the given zero-based index.
+  """
+  @spec page(t(), non_neg_integer()) :: {:ok, Page.t()} | {:error, term()}
+  def page(%__MODULE__{} = doc, index) when is_integer(index) and index >= 0 do
+    case page_count(doc) do
+      {:ok, count} when index < count -> {:ok, %Page{doc: doc, index: index}}
+      {:ok, _count} -> {:error, "Page index out of range"}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  Same as `page/2` but raises an error if it fails.
+  """
+  @spec page!(t(), non_neg_integer()) :: Page.t()
+  def page!(doc, index) when is_integer(index) and index >= 0 do
+    case page(doc, index) do
+      {:ok, page} -> page
       {:error, error} -> raise error
     end
   end

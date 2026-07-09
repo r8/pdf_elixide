@@ -2,6 +2,7 @@ defmodule PdfElixide.DocumentTest do
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
+  alias PdfElixide.Page
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
@@ -66,6 +67,44 @@ defmodule PdfElixide.DocumentTest do
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.extract_text!(doc, :first) end
+    end
+  end
+
+  describe "pages/1" do
+    test "returns a lazy handle for every page" do
+      doc = Document.open!(@valid_pdf)
+
+      assert [%Page{doc: ^doc, index: 0}, %Page{doc: ^doc, index: 1}, %Page{doc: ^doc, index: 2}] =
+               Document.pages(doc)
+    end
+  end
+
+  describe "page/2" do
+    test "returns {:ok, page} for a valid index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, %Page{doc: ^doc, index: 1}} = Document.page(doc, 1)
+    end
+
+    test "returns {:error, reason} for an out-of-range index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Document.page(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.page(doc, -1) end
+    end
+  end
+
+  describe "page!/2" do
+    test "returns the page for a valid index" do
+      doc = Document.open!(@valid_pdf)
+      assert %Page{doc: ^doc, index: 1} = Document.page!(doc, 1)
+    end
+
+    test "raises RuntimeError for an out-of-range index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Document.page!(doc, 99) end
     end
   end
 
