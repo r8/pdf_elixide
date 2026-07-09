@@ -113,6 +113,30 @@ fn document_extract_text(
     doc.extract_text(page_index).map_err(to_nif_err)
 }
 
+/// Returns the page's width in points (MediaBox urx - llx).
+#[rustler::nif]
+fn document_get_page_width(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<f32> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let (llx, _lly, urx, _ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
+    Ok(urx - llx)
+}
+
+/// Returns the page's height in points (MediaBox ury - lly).
+#[rustler::nif]
+fn document_get_page_height(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<f32> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let (_llx, lly, _urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
+    Ok(ury - lly)
+}
+
 /// Extracts form fields from the PDF document.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
