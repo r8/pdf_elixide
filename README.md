@@ -75,7 +75,7 @@ alias PdfElixide.Document
 {:ok, 3} = Document.page_count(doc)
 
 # Extract text from a single page (zero-based index).
-{:ok, text} = Document.extract_text(doc, 0)
+{:ok, text} = Document.text(doc, 0)
 
 # Source path is the file the document was opened from, or `nil` when it was loaded from a binary.
 "path/to/file.pdf" = Document.source_path(doc)
@@ -86,7 +86,7 @@ Each fallible function ships with a bang variant that returns the value directly
 ```elixir
 doc   = PdfElixide.Document.open!("path/to/file.pdf")
 pages = PdfElixide.Document.page_count!(doc)
-text  = PdfElixide.Document.extract_text!(doc, 0)
+text  = PdfElixide.Document.text!(doc, 0)
 ```
 
 ### Extracting form fields

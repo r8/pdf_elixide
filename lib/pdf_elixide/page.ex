@@ -58,7 +58,7 @@ defmodule PdfElixide.Page do
   """
   @spec text(t()) :: {:ok, binary()} | {:error, term()}
   def text(%__MODULE__{doc: doc, index: index}) do
-    Document.extract_text(doc, index)
+    Document.text(doc, index)
   end
 
   @doc """

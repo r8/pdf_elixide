@@ -153,8 +153,8 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts the text content of the page at the given zero-based index.
   """
-  @spec extract_text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
-  def extract_text(%__MODULE__{ref: ref}, page_index)
+  @spec text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
+  def text(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     Wrap.call(fn -> Native.document_extract_text(ref, page_index) end)
   end
@@ -163,10 +163,10 @@ defmodule PdfElixide.Document do
   Extracts the text content of the page at the given zero-based index,
   raising an error if it fails.
   """
-  @spec extract_text!(t(), non_neg_integer()) :: binary()
-  def extract_text!(doc, page_index)
+  @spec text!(t(), non_neg_integer()) :: binary()
+  def text!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    case extract_text(doc, page_index) do
+    case text(doc, page_index) do
       {:ok, text} -> text
       {:error, error} -> raise error
     end

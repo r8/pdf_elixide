@@ -31,12 +31,12 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
-  describe "extract_text/2" do
+  describe "text/2" do
     test "returns {:ok, text} containing the page's text for each page" do
       doc = Document.open!(@valid_pdf)
-      assert {:ok, p0} = Document.extract_text(doc, 0)
-      assert {:ok, p1} = Document.extract_text(doc, 1)
-      assert {:ok, p2} = Document.extract_text(doc, 2)
+      assert {:ok, p0} = Document.text(doc, 0)
+      assert {:ok, p1} = Document.text(doc, 1)
+      assert {:ok, p2} = Document.text(doc, 2)
       assert p0 =~ "Page One"
       assert p1 =~ "Page Two"
       assert p2 =~ "Page Three"
@@ -44,29 +44,29 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, _reason} = Document.extract_text(doc, 99)
+      assert {:error, _reason} = Document.text(doc, 99)
     end
 
     test "raises FunctionClauseError for negative page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.extract_text(doc, -1) end
+      assert_raise FunctionClauseError, fn -> Document.text(doc, -1) end
     end
   end
 
-  describe "extract_text!/2" do
+  describe "text!/2" do
     test "returns the text for a valid page" do
       doc = Document.open!(@valid_pdf)
-      assert Document.extract_text!(doc, 1) =~ "Page Two"
+      assert Document.text!(doc, 1) =~ "Page Two"
     end
 
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Document.extract_text!(doc, 99) end
+      assert_raise RuntimeError, fn -> Document.text!(doc, 99) end
     end
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.extract_text!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.text!(doc, :first) end
     end
   end
 
@@ -232,7 +232,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "extracts text after open-with-password" do
       doc = Document.open!(@encrypted_pdf, password: @password)
-      assert Document.extract_text!(doc, 0) =~ "Page One"
+      assert Document.text!(doc, 0) =~ "Page One"
     end
   end
 
