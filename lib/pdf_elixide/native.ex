@@ -20,6 +20,7 @@ defmodule PdfElixide.Native do
   def document_is_encrypted(_doc), do: err()
   def document_authenticate(_doc, _password), do: err()
   def document_extract_text(_doc, _page_index), do: err()
+  def document_extract_all_text(_doc), do: err()
   def document_get_page_width(_doc, _page_index), do: err()
   def document_get_page_height(_doc, _page_index), do: err()
   def document_form_fields(_doc), do: err()

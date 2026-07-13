@@ -77,6 +77,9 @@ alias PdfElixide.Document
 # Extract text from a single page (zero-based index).
 {:ok, text} = Document.text(doc, 0)
 
+# Extract text from the whole document (pages separated by a form-feed).
+{:ok, all} = Document.text(doc)
+
 # Source path is the file the document was opened from, or `nil` when it was loaded from a binary.
 "path/to/file.pdf" = Document.source_path(doc)
 ```

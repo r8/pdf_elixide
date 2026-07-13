@@ -31,6 +31,31 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "text/1" do
+    test "returns {:ok, text} containing every page's text" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, text} = Document.text(doc)
+      assert text =~ "Page One"
+      assert text =~ "Page Two"
+      assert text =~ "Page Three"
+    end
+
+    test "separates pages with a form-feed character" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, text} = Document.text(doc)
+      assert text =~ "\f"
+    end
+  end
+
+  describe "text!/1" do
+    test "returns the combined text of the whole document" do
+      doc = Document.open!(@valid_pdf)
+      text = Document.text!(doc)
+      assert text =~ "Page One"
+      assert text =~ "Page Three"
+    end
+  end
+
   describe "text/2" do
     test "returns {:ok, text} containing the page's text for each page" do
       doc = Document.open!(@valid_pdf)

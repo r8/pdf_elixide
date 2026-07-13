@@ -151,6 +151,28 @@ defmodule PdfElixide.Document do
   end
 
   @doc """
+  Extracts the text content of the whole document.
+
+  Returns every page's text concatenated in order, separated by a form-feed
+  (`\\f`) page separator.
+  """
+  @spec text(t()) :: {:ok, binary()} | {:error, term()}
+  def text(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.document_extract_all_text(ref) end)
+  end
+
+  @doc """
+  Extracts the text content of the whole document, raising an error if it fails.
+  """
+  @spec text!(t()) :: binary()
+  def text!(%__MODULE__{} = doc) do
+    case text(doc) do
+      {:ok, text} -> text
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
   Extracts the text content of the page at the given zero-based index.
   """
   @spec text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}

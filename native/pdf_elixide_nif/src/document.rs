@@ -113,6 +113,14 @@ fn document_extract_text(
     doc.extract_text(page_index).map_err(to_nif_err)
 }
 
+/// Extracts text content from all pages, separated by form-feed characters.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_extract_all_text(resource: ResourceArc<DocumentResource>) -> NifResult<String> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    doc.extract_all_text().map_err(to_nif_err)
+}
+
 /// Returns the page's width in points (MediaBox urx - llx).
 #[rustler::nif]
 fn document_get_page_width(
