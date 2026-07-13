@@ -53,6 +53,25 @@ defmodule PdfElixide.Page do
     end
   end
 
+  @doc """
+  Extracts the text content of the page.
+  """
+  @spec text(t()) :: {:ok, binary()} | {:error, term()}
+  def text(%__MODULE__{doc: doc, index: index}) do
+    Document.extract_text(doc, index)
+  end
+
+  @doc """
+  Same as `text/1` but raises an error if it fails.
+  """
+  @spec text!(t()) :: binary()
+  def text!(page) do
+    case text(page) do
+      {:ok, text} -> text
+      {:error, error} -> raise error
+    end
+  end
+
   defimpl Inspect do
     import Inspect.Algebra
 
