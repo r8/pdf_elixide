@@ -211,4 +211,34 @@ defmodule PdfElixide.Document do
       concat(["#PdfElixide.Document<", src, " v", to_string(maj), ".", to_string(min), ">"])
     end
   end
+
+  defimpl Enumerable do
+    alias PdfElixide.{Document, Page}
+
+    def count(doc), do: {:ok, Document.page_count!(doc)}
+
+    def member?(%Document{ref: ref} = doc, %Page{doc: %Document{ref: ref}, index: index})
+        when is_integer(index) and index >= 0 do
+      {:ok, index < Document.page_count!(doc)}
+    end
+
+    def member?(_doc, _other), do: {:ok, false}
+
+    def slice(doc) do
+      count = Document.page_count!(doc)
+
+      {:ok, count,
+       fn start, length, step ->
+         Enum.map(start..(start + (length - 1) * step)//step, &%Page{doc: doc, index: &1})
+       end}
+    end
+
+    def reduce(doc, acc, fun) do
+      count = Document.page_count!(doc)
+
+      Enumerable.reduce(0..(count - 1)//1, acc, fn i, acc ->
+        fun.(%Page{doc: doc, index: i}, acc)
+      end)
+    end
+  end
 end

@@ -79,6 +79,56 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "Enumerable" do
+    test "Enum.count/1 returns the page count" do
+      doc = Document.open!(@valid_pdf)
+      assert Enum.count(doc) == 3
+    end
+
+    test "Enum.at/2 returns the page at a zero-based index" do
+      doc = Document.open!(@valid_pdf)
+      assert %Page{doc: ^doc, index: 0} = Enum.at(doc, 0)
+    end
+
+    test "Enum.at/2 supports negative indexing" do
+      doc = Document.open!(@valid_pdf)
+      assert %Page{doc: ^doc, index: 2} = Enum.at(doc, -1)
+    end
+
+    test "Enum.at/2 returns nil for an out-of-range index" do
+      doc = Document.open!(@valid_pdf)
+      assert Enum.at(doc, 99) == nil
+    end
+
+    test "Enum.to_list/1 matches pages/1" do
+      doc = Document.open!(@valid_pdf)
+      assert Enum.to_list(doc) == Document.pages(doc)
+    end
+
+    test "is iterable page by page" do
+      doc = Document.open!(@valid_pdf)
+      assert Enum.map(doc, & &1.index) == [0, 1, 2]
+    end
+
+    test "Enum.slice/2 returns the requested pages" do
+      doc = Document.open!(@valid_pdf)
+      assert [%Page{index: 1}, %Page{index: 2}] = Enum.slice(doc, 1..2)
+    end
+
+    test "membership is true for an in-range page of the same document" do
+      doc = Document.open!(@valid_pdf)
+      assert Enum.member?(doc, %Page{doc: doc, index: 2})
+    end
+
+    test "membership is false for an out-of-range page or a foreign page" do
+      doc = Document.open!(@valid_pdf)
+      other = Document.open!(@valid_pdf)
+      refute Enum.member?(doc, %Page{doc: doc, index: 99})
+      refute Enum.member?(doc, %Page{doc: other, index: 0})
+      refute Enum.member?(doc, :not_a_page)
+    end
+  end
+
   describe "page/2" do
     test "returns {:ok, page} for a valid index" do
       doc = Document.open!(@valid_pdf)
