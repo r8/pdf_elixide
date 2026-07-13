@@ -3,9 +3,9 @@ defmodule PdfElixide.Document do
   Read-only representation of a PDF document.
   """
 
+  alias PdfElixide.Document.Page
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
-  alias PdfElixide.Page
 
   @enforce_keys [:ref, :version]
   defstruct [:ref, :version, :source_path]
@@ -235,7 +235,8 @@ defmodule PdfElixide.Document do
   end
 
   defimpl Enumerable do
-    alias PdfElixide.{Document, Page}
+    alias PdfElixide.Document
+    alias PdfElixide.Document.Page
 
     def count(doc), do: {:ok, Document.page_count!(doc)}
 

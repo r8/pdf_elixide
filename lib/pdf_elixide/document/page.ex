@@ -1,4 +1,4 @@
-defmodule PdfElixide.Page do
+defmodule PdfElixide.Document.Page do
   @moduledoc """
   Representation of a page of a PDF document.
   """
@@ -75,8 +75,8 @@ defmodule PdfElixide.Page do
   defimpl Inspect do
     import Inspect.Algebra
 
-    def inspect(%PdfElixide.Page{index: index}, _opts) do
-      concat(["#PdfElixide.Page<", to_string(index), ">"])
+    def inspect(%PdfElixide.Document.Page{index: index}, _opts) do
+      concat(["#PdfElixide.Document.Page<", to_string(index), ">"])
     end
   end
 end

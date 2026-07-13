@@ -2,7 +2,7 @@ defmodule PdfElixide.DocumentTest do
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
-  alias PdfElixide.Page
+  alias PdfElixide.Document.Page
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
