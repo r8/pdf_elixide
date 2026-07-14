@@ -18,6 +18,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Get the page count
 - Extract text from a specific page
 - Extract words with bounding boxes and font metadata
+- Extract text lines (each with its bounding box and constituent words)
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -119,6 +120,31 @@ Each word carries:
 - `:font_size` — the average font size (`float()`)
 - `:font` — the dominant font name (`String.t()`)
 - `:bold?` / `:italic?` — booleans
+
+### Extracting lines
+
+`PdfElixide.Document.text_lines/2` returns the lines of a single page (and
+`text_lines/1` returns every page's lines as one flat list) as
+`%PdfElixide.Document.TextLine{}` structs. Each line nests its constituent
+`%PdfElixide.Document.Word{}` structs:
+
+```elixir
+{:ok, lines} = PdfElixide.Document.text_lines(doc, 0)
+
+Enum.each(lines, fn %PdfElixide.Document.TextLine{text: text, words: words} ->
+  IO.inspect({text, length(words)})
+end)
+
+# Lines are also reachable from a page handle.
+{:ok, lines} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.text_lines()
+```
+
+Each line carries:
+
+- `:text` — the full line text, its words joined by spaces (`String.t()`)
+- `:page` — the zero-based page index the line belongs to (`non_neg_integer()`)
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` spanning the whole line (points)
+- `:words` — the line's `%PdfElixide.Document.Word{}` structs (so the word count is `length(line.words)`)
 
 ### Extracting form fields
 

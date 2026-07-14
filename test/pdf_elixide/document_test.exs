@@ -3,6 +3,7 @@ defmodule PdfElixide.DocumentTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Geometry.Rect
 
@@ -195,6 +196,80 @@ defmodule PdfElixide.DocumentTest do
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.words!(doc, :first) end
+    end
+  end
+
+  describe "text_lines/1" do
+    test "returns {:ok, lines} for every page as a flat list" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, lines} = Document.text_lines(doc)
+      assert Enum.all?(lines, &match?(%TextLine{}, &1))
+      assert Enum.map(lines, & &1.text) == ["Page One", "Page Two", "Page Three"]
+    end
+
+    test "each line carries its zero-based page index" do
+      doc = Document.open!(@valid_pdf)
+      {:ok, lines} = Document.text_lines(doc)
+      assert Enum.map(lines, & &1.page) == [0, 1, 2]
+    end
+  end
+
+  describe "text_lines!/1" do
+    test "returns the flat line list of the whole document" do
+      doc = Document.open!(@valid_pdf)
+      lines = Document.text_lines!(doc)
+      assert Enum.all?(lines, &match?(%TextLine{}, &1))
+      assert Enum.any?(lines, &(&1.text == "Page Three"))
+    end
+  end
+
+  describe "text_lines/2" do
+    test "returns {:ok, lines} carrying text, page, bbox and nested words" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, [%TextLine{} = line]} = Document.text_lines(doc, 0)
+
+      assert line.text == "Page One"
+      assert line.page == 0
+      assert %Rect{} = line.bbox
+      assert line.bbox.width > 0
+      assert line.bbox.height > 0
+      assert [%Word{text: "Page"}, %Word{text: "One"}] = line.words
+      assert Enum.all?(line.words, &(&1.page == 0))
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Document.text_lines(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.text_lines(doc, -1) end
+    end
+  end
+
+  describe "text_lines!/2" do
+    test "returns the lines for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert [%TextLine{text: "Page Two"}] = Document.text_lines!(doc, 1)
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Document.text_lines!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.text_lines!(doc, :first) end
+    end
+  end
+
+  describe "TextLine inspect/1" do
+    test "renders the text, page, and word count" do
+      doc = Document.open!(@valid_pdf)
+      [line] = Document.text_lines!(doc, 0)
+      assert inspect(line) == ~s|#PdfElixide.Document.TextLine<"Page One" @ p0 (2 words)>|
     end
   end
 

@@ -4,6 +4,7 @@ defmodule PdfElixide.Document.Page do
   """
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
@@ -88,6 +89,25 @@ defmodule PdfElixide.Document.Page do
   def words!(page) do
     case words(page) do
       {:ok, words} -> words
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the text lines of the page, each with its bounding box and words.
+  """
+  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, term()}
+  def text_lines(%__MODULE__{doc: doc, index: index}) do
+    Document.text_lines(doc, index)
+  end
+
+  @doc """
+  Same as `text_lines/1` but raises an error if it fails.
+  """
+  @spec text_lines!(t()) :: [TextLine.t()]
+  def text_lines!(page) do
+    case text_lines(page) do
+      {:ok, lines} -> lines
       {:error, error} -> raise error
     end
   end

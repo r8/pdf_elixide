@@ -33,7 +33,7 @@ pub fn word_to_nif(word: Word, page: usize) -> WordNif {
     }
 }
 
-fn rect_to_nif(rect: Rect) -> RectNif {
+pub fn rect_to_nif(rect: Rect) -> RectNif {
     RectNif {
         x: rect.x,
         y: rect.y,

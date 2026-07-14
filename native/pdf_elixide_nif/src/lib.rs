@@ -6,6 +6,7 @@ mod document;
 mod editor;
 mod error;
 mod form;
+mod text_line;
 mod word;
 
 // Atoms ------------------------------------------------------------------------------------------

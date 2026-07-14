@@ -4,6 +4,7 @@ defmodule PdfElixide.Document do
   """
 
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
@@ -243,6 +244,58 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case words(doc, page_index) do
       {:ok, words} -> words
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the text lines of the whole document.
+
+  Returns every page's lines concatenated into a single flat list, in page
+  order. Each line carries its bounding box and constituent words as a
+  `PdfElixide.Document.TextLine` struct.
+  """
+  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, term()}
+  def text_lines(%__MODULE__{ref: ref}) do
+    with {:ok, lines} <- Wrap.call(fn -> Native.document_all_text_lines(ref) end) do
+      {:ok, Enum.map(lines, &TextLine.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the text lines of the whole document, raising an error if it fails.
+  """
+  @spec text_lines!(t()) :: [TextLine.t()]
+  def text_lines!(%__MODULE__{} = doc) do
+    case text_lines(doc) do
+      {:ok, lines} -> lines
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the text lines of the page at the given zero-based index.
+
+  Each line carries its bounding box and constituent words as a
+  `PdfElixide.Document.TextLine` struct.
+  """
+  @spec text_lines(t(), non_neg_integer()) :: {:ok, [TextLine.t()]} | {:error, term()}
+  def text_lines(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, lines} <- Wrap.call(fn -> Native.document_text_lines(ref, page_index) end) do
+      {:ok, Enum.map(lines, &TextLine.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the text lines of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec text_lines!(t(), non_neg_integer()) :: [TextLine.t()]
+  def text_lines!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case text_lines(doc, page_index) do
+      {:ok, lines} -> lines
       {:error, error} -> raise error
     end
   end

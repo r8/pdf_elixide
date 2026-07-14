@@ -23,6 +23,8 @@ defmodule PdfElixide.Native do
   def document_extract_all_text(_doc), do: err()
   def document_words(_doc, _page_index), do: err()
   def document_all_words(_doc), do: err()
+  def document_text_lines(_doc, _page_index), do: err()
+  def document_all_text_lines(_doc), do: err()
   def document_get_page_width(_doc, _page_index), do: err()
   def document_get_page_height(_doc, _page_index), do: err()
   def document_form_fields(_doc), do: err()

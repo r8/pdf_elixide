@@ -6,6 +6,7 @@ use rustler::{Binary, NifMap, NifResult, ResourceArc};
 use crate::{
     error::{lock_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
+    text_line::{text_line_to_nif, TextLineNif},
     word::{word_to_nif, WordNif},
     DocumentResource,
 };
@@ -153,6 +154,39 @@ fn document_all_words(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
         );
     }
     Ok(words)
+}
+
+/// Extracts text lines (each with its words) from a single page (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_text_lines(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<TextLineNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let lines = doc.extract_text_lines(page_index).map_err(to_nif_err)?;
+    Ok(lines
+        .into_iter()
+        .map(|line| text_line_to_nif(line, page_index))
+        .collect())
+}
+
+/// Extracts text lines (each with its words) from all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_text_lines(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<TextLineNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut lines = Vec::new();
+    for page_index in 0..count {
+        let page_lines = doc.extract_text_lines(page_index).map_err(to_nif_err)?;
+        lines.extend(
+            page_lines
+                .into_iter()
+                .map(|line| text_line_to_nif(line, page_index)),
+        );
+    }
+    Ok(lines)
 }
 
 /// Returns the page's width in points (MediaBox urx - llx).

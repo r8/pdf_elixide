@@ -3,6 +3,7 @@ defmodule PdfElixide.Document.PageTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
 
   @fixtures Path.join([__DIR__, "..", "..", "fixtures"])
@@ -96,6 +97,32 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert_raise RuntimeError, fn -> Page.words!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "text_lines/1" do
+    test "delegates to Document.text_lines/2 for the page" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert Page.text_lines(page) == Document.text_lines(doc, 1)
+      assert {:ok, [%TextLine{text: "Page Two", page: 1}]} = Page.text_lines(page)
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.text_lines(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "text_lines!/1" do
+    test "returns the lines directly" do
+      doc = Document.open!(@valid_pdf)
+      assert [%TextLine{text: "Page One", page: 0}] = Page.text_lines!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Page.text_lines!(%Page{doc: doc, index: 99}) end
     end
   end
 end
