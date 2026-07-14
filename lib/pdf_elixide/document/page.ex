@@ -4,6 +4,7 @@ defmodule PdfElixide.Document.Page do
   """
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.Word
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -68,6 +69,25 @@ defmodule PdfElixide.Document.Page do
   def text!(page) do
     case text(page) do
       {:ok, text} -> text
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the words of the page, each with its bounding box and font metadata.
+  """
+  @spec words(t()) :: {:ok, [Word.t()]} | {:error, term()}
+  def words(%__MODULE__{doc: doc, index: index}) do
+    Document.words(doc, index)
+  end
+
+  @doc """
+  Same as `words/1` but raises an error if it fails.
+  """
+  @spec words!(t()) :: [Word.t()]
+  def words!(page) do
+    case words(page) do
+      {:ok, words} -> words
       {:error, error} -> raise error
     end
   end

@@ -3,6 +3,8 @@ defmodule PdfElixide.DocumentTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.Word
+  alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
@@ -92,6 +94,107 @@ defmodule PdfElixide.DocumentTest do
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.text!(doc, :first) end
+    end
+  end
+
+  describe "words/1" do
+    test "returns {:ok, words} for every page as a flat list" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, words} = Document.words(doc)
+      assert Enum.all?(words, &match?(%Word{}, &1))
+
+      text = Enum.map_join(words, " ", & &1.text)
+      assert text =~ "Page One"
+      assert text =~ "Page Two"
+      assert text =~ "Page Three"
+    end
+
+    test "length equals the sum of the per-page word counts" do
+      doc = Document.open!(@valid_pdf)
+      {:ok, all} = Document.words(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.words(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each word carries its zero-based page index" do
+      doc = Document.open!(@valid_pdf)
+      {:ok, words} = Document.words(doc)
+      assert Enum.map(words, & &1.page) == [0, 0, 1, 1, 2, 2]
+    end
+  end
+
+  describe "words!/1" do
+    test "returns the flat word list of the whole document" do
+      doc = Document.open!(@valid_pdf)
+      words = Document.words!(doc)
+      assert Enum.all?(words, &match?(%Word{}, &1))
+      assert Enum.any?(words, &(&1.text == "One"))
+      assert Enum.any?(words, &(&1.text == "Three"))
+    end
+  end
+
+  describe "words/2" do
+    test "returns {:ok, words} carrying text, bbox and font metadata" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, [%Word{} = word | _]} = Document.words(doc, 0)
+
+      assert word.text == "Page"
+      assert word.page == 0
+      assert %Rect{} = word.bbox
+      assert word.bbox.width > 0
+      assert word.bbox.height > 0
+      assert is_float(word.font_size)
+      assert is_binary(word.font)
+      assert is_boolean(word.bold?)
+      assert is_boolean(word.italic?)
+    end
+
+    test "returns each page's words" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, w0} = Document.words(doc, 0)
+      assert {:ok, w1} = Document.words(doc, 1)
+      assert Enum.map(w0, & &1.text) == ["Page", "One"]
+      assert Enum.map(w1, & &1.text) == ["Page", "Two"]
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Document.words(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.words(doc, -1) end
+    end
+  end
+
+  describe "Word inspect/1" do
+    test "renders the text, page, and bounding-box origin" do
+      doc = Document.open!(@valid_pdf)
+      [word | _] = Document.words!(doc, 0)
+      assert inspect(word) == ~s(#PdfElixide.Document.Word<"Page" @ p0 72.0,720.0>)
+    end
+  end
+
+  describe "words!/2" do
+    test "returns the words for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert [%Word{text: "Page"}, %Word{text: "One"}] = Document.words!(doc, 0)
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Document.words!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.words!(doc, :first) end
     end
   end
 

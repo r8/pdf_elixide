@@ -4,6 +4,7 @@ defmodule PdfElixide.Document do
   """
 
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.Word
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -190,6 +191,58 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case text(doc, page_index) do
       {:ok, text} -> text
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the words of the whole document.
+
+  Returns every page's words concatenated into a single flat list, in page
+  order. Each word carries its bounding box and font metadata as a
+  `PdfElixide.Document.Word` struct.
+  """
+  @spec words(t()) :: {:ok, [Word.t()]} | {:error, term()}
+  def words(%__MODULE__{ref: ref}) do
+    with {:ok, words} <- Wrap.call(fn -> Native.document_all_words(ref) end) do
+      {:ok, Enum.map(words, &Word.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the words of the whole document, raising an error if it fails.
+  """
+  @spec words!(t()) :: [Word.t()]
+  def words!(%__MODULE__{} = doc) do
+    case words(doc) do
+      {:ok, words} -> words
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the words of the page at the given zero-based index.
+
+  Each word carries its bounding box and font metadata as a
+  `PdfElixide.Document.Word` struct.
+  """
+  @spec words(t(), non_neg_integer()) :: {:ok, [Word.t()]} | {:error, term()}
+  def words(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, words} <- Wrap.call(fn -> Native.document_words(ref, page_index) end) do
+      {:ok, Enum.map(words, &Word.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the words of the page at the given zero-based index, raising an error
+  if it fails.
+  """
+  @spec words!(t(), non_neg_integer()) :: [Word.t()]
+  def words!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case words(doc, page_index) do
+      {:ok, words} -> words
       {:error, error} -> raise error
     end
   end

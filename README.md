@@ -17,6 +17,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Query the PDF specification version
 - Get the page count
 - Extract text from a specific page
+- Extract words with bounding boxes and font metadata
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -91,6 +92,33 @@ doc   = PdfElixide.Document.open!("path/to/file.pdf")
 pages = PdfElixide.Document.page_count!(doc)
 text  = PdfElixide.Document.text!(doc, 0)
 ```
+
+### Extracting words
+
+Word extraction keeps the positional and font information that plain text
+discards. `PdfElixide.Document.words/2` returns the words of a single page (and
+`words/1` returns every page's words as one flat list) as
+`%PdfElixide.Document.Word{}` structs:
+
+```elixir
+{:ok, words} = PdfElixide.Document.words(doc, 0)
+
+Enum.each(words, fn %PdfElixide.Document.Word{text: text, bbox: bbox} ->
+  IO.inspect({text, bbox.x, bbox.y, bbox.width, bbox.height})
+end)
+
+# Words are also reachable from a page handle.
+{:ok, words} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.words()
+```
+
+Each word carries:
+
+- `:text` — the word's text content (`String.t()`)
+- `:page` — the zero-based page index the word belongs to (`non_neg_integer()`), which keeps the flat `words/1` list usable since bounding boxes are page-relative
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` with `:x`, `:y`, `:width`, `:height` (points)
+- `:font_size` — the average font size (`float()`)
+- `:font` — the dominant font name (`String.t()`)
+- `:bold?` / `:italic?` — booleans
 
 ### Extracting form fields
 
