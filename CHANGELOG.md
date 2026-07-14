@@ -5,6 +5,27 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.5.0](https://github.com/r8/pdf_elixide/compare/v0.4.0...v0.5.0) (2026-07-14)
+
+
+
+
+### Features:
+
+* add text line extraction with nested words by [@r8](https://github.com/r8)
+
+* add word extraction with bounding boxes by [@r8](https://github.com/r8)
+
+* add Document.text/1 for whole-document text extraction by [@r8](https://github.com/r8)
+
+* add text getter to Page by [@r8](https://github.com/r8)
+
+* implement Enumerable protocol for Document by [@r8](https://github.com/r8)
+
+* add width and height getters to Page by [@r8](https://github.com/r8)
+
+* add Page module by [@r8](https://github.com/r8)
+
 ## [v0.4.0](https://github.com/r8/pdf_elixide/compare/v0.3.1...v0.4.0) (2026-05-25)
 
 
