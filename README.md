@@ -27,7 +27,12 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 
 - Elixir `~> 1.15`
 - Erlang/OTP compatible with the above
-- A working [Rust toolchain](https://www.rust-lang.org/tools/install) (stable) for compiling the NIF
+
+The NIF ships as a precompiled binary via
+[`rustler_precompiled`](https://hex.pm/packages/rustler_precompiled), so no Rust
+toolchain is needed. A stable
+[Rust toolchain](https://www.rust-lang.org/tools/install) is only required to
+build from source.
 
 ## Installation
 
@@ -48,7 +53,8 @@ mix deps.get
 mix compile
 ```
 
-The Rust NIF is compiled automatically by Rustler on first build.
+The precompiled NIF is downloaded automatically on first build; no compilation
+step is needed.
 
 ## Usage
 
