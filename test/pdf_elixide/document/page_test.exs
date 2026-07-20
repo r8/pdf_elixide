@@ -2,6 +2,7 @@ defmodule PdfElixide.Document.PageTest do
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
@@ -97,6 +98,34 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert_raise RuntimeError, fn -> Page.words!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "chars/1" do
+    test "delegates to Document.chars/2 for the page" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert Page.chars(page) == Document.chars(doc, 1)
+      assert {:ok, chars} = Page.chars(page)
+      assert Enum.map_join(chars, & &1.text) == "Page Two"
+      assert Enum.all?(chars, &(&1.page == 1))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.chars(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "chars!/1" do
+    test "returns the chars directly" do
+      doc = Document.open!(@valid_pdf)
+      assert [%Char{text: "P", page: 0} | _] = Page.chars!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Page.chars!(%Page{doc: doc, index: 99}) end
     end
   end
 

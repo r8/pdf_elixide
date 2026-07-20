@@ -20,6 +20,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract text from a specific page
 - Extract words with bounding boxes and font metadata
 - Extract text lines (each with its bounding box and constituent words)
+- Extract individual characters with glyph boxes, baseline origins, advances, and color
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -152,6 +153,41 @@ Each line carries:
 - `:page` — the zero-based page index the line belongs to (`non_neg_integer()`)
 - `:bbox` — a `%PdfElixide.Geometry.Rect{}` spanning the whole line (points)
 - `:words` — the line's `%PdfElixide.Document.Word{}` structs (so the word count is `length(line.words)`)
+
+### Extracting chars
+
+`PdfElixide.Document.chars/2` returns the characters of a single page (and
+`chars/1` returns every page's characters as one flat list) as
+`%PdfElixide.Document.Char{}` structs. This is the most detailed extraction
+level — it keeps the per-glyph typographic data that words and lines flatten
+away:
+
+```elixir
+{:ok, chars} = PdfElixide.Document.chars(doc, 0)
+
+Enum.map_join(chars, & &1.text)
+#=> "Page One"
+
+# Chars are also reachable from a page handle.
+{:ok, chars} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.chars()
+```
+
+Each character carries:
+
+- `:text` — the character itself, as a one-grapheme string (`String.t()`)
+- `:page` — the zero-based page index the character belongs to (`non_neg_integer()`)
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` around the glyph (points)
+- `:font_size` — the font size in points (`float()`)
+- `:font` — the font name (`String.t()`)
+- `:font_weight` — the numeric PDF font weight, `100`–`900` (`non_neg_integer()`)
+- `:bold?` / `:italic?` / `:monospace?` — booleans (`bold?` is `font_weight >= 600`)
+- `:color` — a `%PdfElixide.Color{}` with `:r`, `:g`, `:b` channels in `0.0..1.0`
+- `:origin` — the `{x, y}` baseline origin in points, the typographic reference point (unlike `:bbox`, which is the glyph's box)
+- `:rotation` — the rotation in degrees, clockwise from horizontal (`float()`)
+- `:advance_width` — the glyph's advance width from the font metrics (`float()`)
+- `:rendered_advance` — the actual advance to the next character's origin, including character and word spacing (`float()`); use this, not `:advance_width`, to detect word boundaries
+- `:ascent` / `:descent` — the distance from the baseline to the top / bottom of the typographic glyph box in points (`descent` is negative)
+- `:mcid` — the marked-content ID for Tagged PDFs (`non_neg_integer()` or `nil`)
 
 ### Extracting form fields
 

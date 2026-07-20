@@ -1,7 +1,9 @@
 defmodule PdfElixide.DocumentTest do
   use ExUnit.Case, async: true
 
+  alias PdfElixide.Color
   alias PdfElixide.Document
+  alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
@@ -270,6 +272,118 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       [line] = Document.text_lines!(doc, 0)
       assert inspect(line) == ~s|#PdfElixide.Document.TextLine<"Page One" @ p0 (2 words)>|
+    end
+  end
+
+  describe "chars/1" do
+    test "returns {:ok, chars} for every page as a flat list" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, chars} = Document.chars(doc)
+      assert Enum.all?(chars, &match?(%Char{}, &1))
+
+      text = Enum.map_join(chars, & &1.text)
+      assert text =~ "Page One"
+      assert text =~ "Page Two"
+      assert text =~ "Page Three"
+    end
+
+    test "length equals the sum of the per-page char counts" do
+      doc = Document.open!(@valid_pdf)
+      {:ok, all} = Document.chars(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.chars(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each char carries its zero-based page index" do
+      doc = Document.open!(@valid_pdf)
+      {:ok, chars} = Document.chars(doc)
+      assert chars |> Enum.map(& &1.page) |> Enum.uniq() == [0, 1, 2]
+    end
+  end
+
+  describe "chars!/1" do
+    test "returns the flat char list of the whole document" do
+      doc = Document.open!(@valid_pdf)
+      chars = Document.chars!(doc)
+      assert Enum.all?(chars, &match?(%Char{}, &1))
+      assert Enum.all?(chars, &(String.length(&1.text) == 1))
+    end
+  end
+
+  describe "chars/2" do
+    test "returns {:ok, chars} carrying text, bbox, font and typographic metadata" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, [%Char{} = char | _]} = Document.chars(doc, 0)
+
+      assert char.text == "P"
+      assert char.page == 0
+      assert %Rect{} = char.bbox
+      assert char.bbox.width > 0
+      assert char.bbox.height > 0
+      assert is_float(char.font_size)
+      assert is_binary(char.font)
+      assert is_integer(char.font_weight)
+      assert is_boolean(char.bold?)
+      assert is_boolean(char.italic?)
+      assert is_boolean(char.monospace?)
+      assert %Color{r: r, g: g, b: b} = char.color
+      assert Enum.all?([r, g, b], &is_float/1)
+      assert {origin_x, origin_y} = char.origin
+      assert is_float(origin_x) and is_float(origin_y)
+      assert is_float(char.rotation)
+      assert char.advance_width > 0
+      assert char.rendered_advance > 0
+      assert char.ascent > 0
+      assert char.descent < 0
+      assert is_nil(char.mcid)
+    end
+
+    test "returns each page's chars in reading order" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, c0} = Document.chars(doc, 0)
+      assert {:ok, c1} = Document.chars(doc, 1)
+      assert Enum.map_join(c0, & &1.text) == "Page One"
+      assert Enum.map_join(c1, & &1.text) == "Page Two"
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Document.chars(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.chars(doc, -1) end
+    end
+  end
+
+  describe "chars!/2" do
+    test "returns the chars for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert [%Char{text: "P"} | _] = Document.chars!(doc, 1)
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Document.chars!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.chars!(doc, :first) end
+    end
+  end
+
+  describe "Char inspect/1" do
+    test "renders the text, page, and baseline origin" do
+      doc = Document.open!(@valid_pdf)
+      [char | _] = Document.chars!(doc, 0)
+      assert inspect(char) == ~s(#PdfElixide.Document.Char<"P" @ p0 72.0,720.0>)
     end
   end
 

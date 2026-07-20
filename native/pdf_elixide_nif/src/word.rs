@@ -1,14 +1,7 @@
-use pdf_oxide::{geometry::Rect, layout::Word};
-use rustler::{NifMap, NifStruct};
+use pdf_oxide::layout::Word;
+use rustler::NifMap;
 
-#[derive(NifStruct, Debug)]
-#[module = "PdfElixide.Geometry.Rect"]
-pub struct RectNif {
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-}
+use crate::geometry::{rect_to_nif, RectNif};
 
 #[derive(NifMap, Debug)]
 pub struct WordNif {
@@ -30,14 +23,5 @@ pub fn word_to_nif(word: Word, page: usize) -> WordNif {
         font: word.dominant_font,
         bold: word.is_bold,
         italic: word.is_italic,
-    }
-}
-
-pub fn rect_to_nif(rect: Rect) -> RectNif {
-    RectNif {
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height,
     }
 }

@@ -3,6 +3,7 @@ defmodule PdfElixide.Document do
   Read-only representation of a PDF document.
   """
 
+  alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
@@ -296,6 +297,58 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case text_lines(doc, page_index) do
       {:ok, lines} -> lines
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the characters of the whole document.
+
+  Returns every page's characters concatenated into a single flat list, in page
+  order. Each character carries its bounding box, font metadata, and
+  typographic placement as a `PdfElixide.Document.Char` struct.
+  """
+  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, term()}
+  def chars(%__MODULE__{ref: ref}) do
+    with {:ok, chars} <- Wrap.call(fn -> Native.document_all_chars(ref) end) do
+      {:ok, Enum.map(chars, &Char.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the characters of the whole document, raising an error if it fails.
+  """
+  @spec chars!(t()) :: [Char.t()]
+  def chars!(%__MODULE__{} = doc) do
+    case chars(doc) do
+      {:ok, chars} -> chars
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the characters of the page at the given zero-based index.
+
+  Each character carries its bounding box, font metadata, and typographic
+  placement as a `PdfElixide.Document.Char` struct.
+  """
+  @spec chars(t(), non_neg_integer()) :: {:ok, [Char.t()]} | {:error, term()}
+  def chars(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, chars} <- Wrap.call(fn -> Native.document_chars(ref, page_index) end) do
+      {:ok, Enum.map(chars, &Char.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the characters of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec chars!(t(), non_neg_integer()) :: [Char.t()]
+  def chars!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case chars(doc, page_index) do
+      {:ok, chars} -> chars
       {:error, error} -> raise error
     end
   end

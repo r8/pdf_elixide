@@ -1,7 +1,10 @@
 use pdf_oxide::layout::TextLine;
 use rustler::NifMap;
 
-use crate::word::{rect_to_nif, word_to_nif, RectNif, WordNif};
+use crate::{
+    geometry::{rect_to_nif, RectNif},
+    word::{word_to_nif, WordNif},
+};
 
 #[derive(NifMap, Debug)]
 pub struct TextLineNif {

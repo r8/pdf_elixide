@@ -4,6 +4,7 @@ defmodule PdfElixide.Document.Page do
   """
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.Char
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Native
@@ -108,6 +109,26 @@ defmodule PdfElixide.Document.Page do
   def text_lines!(page) do
     case text_lines(page) do
       {:ok, lines} -> lines
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the characters of the page, each with its bounding box, font
+  metadata, and typographic placement.
+  """
+  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, term()}
+  def chars(%__MODULE__{doc: doc, index: index}) do
+    Document.chars(doc, index)
+  end
+
+  @doc """
+  Same as `chars/1` but raises an error if it fails.
+  """
+  @spec chars!(t()) :: [Char.t()]
+  def chars!(page) do
+    case chars(page) do
+      {:ok, chars} -> chars
       {:error, error} -> raise error
     end
   end

@@ -4,6 +4,7 @@ use pdf_oxide::{extractors::forms::FormExtractor, PdfDocument};
 use rustler::{Binary, NifMap, NifResult, ResourceArc};
 
 use crate::{
+    char::{char_to_nif, CharNif},
     error::{lock_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
     text_line::{text_line_to_nif, TextLineNif},
@@ -187,6 +188,37 @@ fn document_all_text_lines(resource: ResourceArc<DocumentResource>) -> NifResult
         );
     }
     Ok(lines)
+}
+
+/// Extracts characters (with bounding boxes and font metadata) from a single
+/// page (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_chars(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<CharNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let chars = doc.extract_chars(page_index).map_err(to_nif_err)?;
+    Ok(chars
+        .into_iter()
+        .map(|ch| char_to_nif(ch, page_index))
+        .collect())
+}
+
+/// Extracts characters (with bounding boxes and font metadata) from all pages,
+/// in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_chars(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<CharNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut chars = Vec::new();
+    for page_index in 0..count {
+        let page_chars = doc.extract_chars(page_index).map_err(to_nif_err)?;
+        chars.extend(page_chars.into_iter().map(|ch| char_to_nif(ch, page_index)));
+    }
+    Ok(chars)
 }
 
 /// Returns the page's width in points (MediaBox urx - llx).

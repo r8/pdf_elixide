@@ -2,10 +2,13 @@ use std::sync::Mutex;
 
 use pdf_oxide::{editor::DocumentEditor, PdfDocument};
 
+mod char;
+mod color;
 mod document;
 mod editor;
 mod error;
 mod form;
+mod geometry;
 mod text_line;
 mod word;
 
