@@ -1,7 +1,7 @@
 defmodule PdfElixide.MixProject do
   use Mix.Project
 
-  @version "0.5.0"
+  @version "0.6.0"
   @source "https://github.com/r8/pdf_elixide"
 
   def project do

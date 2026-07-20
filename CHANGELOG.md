@@ -5,6 +5,19 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.6.0](https://github.com/r8/pdf_elixide/compare/v0.5.0...v0.6.0) (2026-07-20)
+
+
+
+
+### Features:
+
+* add table extraction by [@r8](https://github.com/r8)
+
+* add span extraction by [@r8](https://github.com/r8)
+
+* add char extraction by [@r8](https://github.com/r8)
+
 ## [v0.5.0](https://github.com/r8/pdf_elixide/compare/v0.4.0...v0.5.0) (2026-07-14)
 
 
