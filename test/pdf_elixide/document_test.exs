@@ -6,6 +6,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Span
+  alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Geometry.Rect
@@ -14,6 +15,7 @@ defmodule PdfElixide.DocumentTest do
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
+  @table_pdf Path.join(@fixtures, "table.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -492,6 +494,141 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       [span | _] = Document.spans!(doc, 0)
       assert inspect(span) == ~s(#PdfElixide.Document.Span<"Page One" @ p0 72.0,720.0>)
+    end
+  end
+
+  describe "tables/2" do
+    test "returns {:ok, tables} carrying geometry, grid shape and rows" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, [%Table{} = table]} = Document.tables(doc, 0)
+
+      assert table.page == 0
+      assert table.col_count == 4
+      assert length(table.rows) == 5
+      assert table.real_grid?
+      assert is_boolean(table.has_header?)
+      assert %Rect{} = table.bbox
+      assert table.bbox.width > 0
+      assert table.bbox.height > 0
+    end
+
+    test "keeps each row's cells aligned with their values" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      grid = Enum.map(table.rows, fn row -> Enum.map(row.cells, & &1.text) end)
+
+      assert ["Age", "0.042", "0.011", "0.001"] in grid
+      assert ["Diabetes", "0.694", "0.233", "0.003"] in grid
+    end
+
+    test "cells carry their geometry, spans and grid placement" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      [%Table.Row{} = row | _] = table.rows
+      [%Table.Cell{} = cell | _] = row.cells
+
+      assert cell.text == "Age"
+      assert cell.colspan == 1
+      assert cell.rowspan == 1
+      assert is_boolean(cell.header?)
+      assert cell.mcids == []
+      assert %Rect{} = cell.bbox
+      assert [%Span{text: "Age", page: 0}] = cell.spans
+    end
+
+    test "returns {:ok, []} for a page with no table" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.tables(doc, 0)
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@table_pdf)
+      assert {:error, _reason} = Document.tables(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@table_pdf)
+      assert_raise FunctionClauseError, fn -> Document.tables(doc, -1) end
+    end
+  end
+
+  describe "tables/1" do
+    test "returns {:ok, tables} for every page as a flat list" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, [%Table{page: 0}]} = Document.tables(doc)
+    end
+
+    test "length equals the sum of the per-page table counts" do
+      doc = Document.open!(@table_pdf)
+      {:ok, all} = Document.tables(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.tables(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "returns an empty list for a document with no tables" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.tables(doc)
+    end
+  end
+
+  describe "tables!/1" do
+    test "returns the flat table list of the whole document" do
+      doc = Document.open!(@table_pdf)
+      assert [%Table{col_count: 4}] = Document.tables!(doc)
+    end
+  end
+
+  describe "tables!/2" do
+    test "returns the tables for a valid page" do
+      doc = Document.open!(@table_pdf)
+      assert [%Table{page: 0}] = Document.tables!(doc, 0)
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@table_pdf)
+      assert_raise RuntimeError, fn -> Document.tables!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@table_pdf)
+      assert_raise FunctionClauseError, fn -> Document.tables!(doc, :first) end
+    end
+  end
+
+  describe "Table inspect/1" do
+    test "renders the page and grid shape" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      assert inspect(table) == "#PdfElixide.Document.Table<p0 5x4>"
+    end
+
+    test "marks a table with an explicit header section" do
+      table = %Table{
+        page: 2,
+        bbox: nil,
+        col_count: 3,
+        has_header?: true,
+        real_grid?: true,
+        rows: []
+      }
+
+      assert inspect(table) == "#PdfElixide.Document.Table<p2 0x3 (header)>"
+    end
+
+    test "renders the cell count of a row and the text of a cell" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      [row | _] = table.rows
+      [cell | _] = row.cells
+
+      assert inspect(row) == "#PdfElixide.Document.Table.Row<4 cells>"
+      assert inspect(cell) == ~s(#PdfElixide.Document.Table.Cell<"Age">)
     end
   end
 

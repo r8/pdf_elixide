@@ -8,6 +8,7 @@ use crate::{
     error::{lock_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
     span::{span_to_nif, SpanNif},
+    table::{table_to_nif, TableNif},
     text_line::{text_line_to_nif, TextLineNif},
     word::{word_to_nif, WordNif},
     DocumentResource,
@@ -255,6 +256,39 @@ fn document_all_spans(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
         );
     }
     Ok(spans)
+}
+
+/// Detects tables on a single page (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_tables(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<TableNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let tables = doc.extract_tables(page_index).map_err(to_nif_err)?;
+    Ok(tables
+        .into_iter()
+        .map(|table| table_to_nif(table, page_index))
+        .collect())
+}
+
+/// Detects tables on all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_tables(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<TableNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut tables = Vec::new();
+    for page_index in 0..count {
+        let page_tables = doc.extract_tables(page_index).map_err(to_nif_err)?;
+        tables.extend(
+            page_tables
+                .into_iter()
+                .map(|table| table_to_nif(table, page_index)),
+        );
+    }
+    Ok(tables)
 }
 
 /// Returns the page's width in points (MediaBox urx - llx).

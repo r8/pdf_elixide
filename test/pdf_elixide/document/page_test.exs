@@ -5,11 +5,13 @@ defmodule PdfElixide.Document.PageTest do
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Span
+  alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
 
   @fixtures Path.join([__DIR__, "..", "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
+  @table_pdf Path.join(@fixtures, "table.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -153,6 +155,37 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert_raise RuntimeError, fn -> Page.spans!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "tables/1" do
+    test "delegates to Document.tables/2 for the page" do
+      doc = Document.open!(@table_pdf)
+      page = Document.page!(doc, 0)
+      assert Page.tables(page) == Document.tables(doc, 0)
+      assert {:ok, [%Table{page: 0, col_count: 4}]} = Page.tables(page)
+    end
+
+    test "returns {:ok, []} for a page with no table" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Page.tables(Document.page!(doc, 0))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@table_pdf)
+      assert {:error, _reason} = Page.tables(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "tables!/1" do
+    test "returns the tables directly" do
+      doc = Document.open!(@table_pdf)
+      assert [%Table{page: 0}] = Page.tables!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@table_pdf)
+      assert_raise RuntimeError, fn -> Page.tables!(%Page{doc: doc, index: 99}) end
     end
   end
 

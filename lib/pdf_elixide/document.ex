@@ -6,6 +6,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Span
+  alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Native
@@ -402,6 +403,61 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case spans(doc, page_index) do
       {:ok, spans} -> spans
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Detects the tables of the whole document.
+
+  Returns every page's tables concatenated into a single flat list, in page
+  order, as `PdfElixide.Document.Table` structs.
+
+  Detection is heuristic — see `PdfElixide.Document.Table` for the `:real_grid?`
+  flag and how to filter out likely false positives.
+  """
+  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, term()}
+  def tables(%__MODULE__{ref: ref}) do
+    with {:ok, tables} <- Wrap.call(fn -> Native.document_all_tables(ref) end) do
+      {:ok, Enum.map(tables, &Table.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Detects the tables of the whole document, raising an error if it fails.
+  """
+  @spec tables!(t()) :: [Table.t()]
+  def tables!(%__MODULE__{} = doc) do
+    case tables(doc) do
+      {:ok, tables} -> tables
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Detects the tables of the page at the given zero-based index.
+
+  Returns `{:ok, []}` when the page has no detectable table. Detection is
+  heuristic — see `PdfElixide.Document.Table` for the `:real_grid?` flag and how
+  to filter out likely false positives.
+  """
+  @spec tables(t(), non_neg_integer()) :: {:ok, [Table.t()]} | {:error, term()}
+  def tables(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, tables} <- Wrap.call(fn -> Native.document_tables(ref, page_index) end) do
+      {:ok, Enum.map(tables, &Table.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Detects the tables of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec tables!(t(), non_neg_integer()) :: [Table.t()]
+  def tables!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case tables(doc, page_index) do
+      {:ok, tables} -> tables
       {:error, error} -> raise error
     end
   end

@@ -22,6 +22,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract text lines (each with its bounding box and constituent words)
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
 - Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
+- Detect tables and read their rows and cells
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -228,6 +229,53 @@ Each span carries:
 - `:text_rise` — the `Ts` baseline shift as a ratio of the font size (`float()`); positive is superscript, negative subscript
 - `:heading_level` — the heading level `1`–`6` when the span is part of a heading, otherwise `nil`
 - `:mcid` — the marked-content ID for Tagged PDFs (`non_neg_integer()` or `nil`)
+
+### Detecting tables
+
+`PdfElixide.Document.tables/2` returns the tables of a single page (and
+`tables/1` returns every page's tables as one flat list) as
+`%PdfElixide.Document.Table{}` structs. A page with no table gives `{:ok, []}`:
+
+```elixir
+{:ok, tables} = PdfElixide.Document.tables(doc, 0)
+
+for table <- tables, table.real_grid? do
+  Enum.map(table.rows, fn row -> Enum.map(row.cells, & &1.text) end)
+end
+#=> [[["Age", "0.042", "0.011", "0.001"], ["Sex", "0.318", "0.142", "0.025"]]]
+
+# Tables are also reachable from a page handle.
+{:ok, tables} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.tables()
+```
+
+Unlike the text levels above, tables are **detected** — a spatial algorithm
+combines text alignment with the page's vector lines, since most PDFs carry no
+explicit table markup. Two consequences:
+
+- Detections are a best guess and include occasional false positives (form
+  layouts, label-colon-value lists). Each table carries `:real_grid?`, which is
+  true when the detection looks like a genuine data grid — at least two rows and
+  columns, consistently populated. Filter on it when that matters.
+- `:bbox` is `nil` when the detector could not determine an extent, on both
+  tables and cells. Every other bounding box in this library is always present.
+
+Each table carries:
+
+- `:page` — the zero-based page index (`non_neg_integer()`)
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` around the table, or `nil`
+- `:col_count` — the number of columns, inferred from the first row (`non_neg_integer()`)
+- `:has_header?` — whether the table has an explicit header section (`boolean()`)
+- `:real_grid?` — whether the detection looks like a genuine data grid (`boolean()`)
+- `:rows` — the `%PdfElixide.Document.Table.Row{}` structs
+
+Each row carries `:header?` and its `:cells`. Each cell carries:
+
+- `:text` — the cell's text content (`String.t()`)
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` around the cell, or `nil`
+- `:colspan` / `:rowspan` — the number of columns and rows the cell spans (`pos_integer()`)
+- `:header?` — whether this is a header cell (`boolean()`)
+- `:mcids` — the marked-content IDs making up the cell, for Tagged PDFs (`[non_neg_integer()]`)
+- `:spans` — the cell's `%PdfElixide.Document.Span{}` structs, so per-run font, size, and color survive into the table
 
 ### Extracting form fields
 

@@ -6,6 +6,7 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Span
+  alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Native
@@ -149,6 +150,27 @@ defmodule PdfElixide.Document.Page do
   def spans!(page) do
     case spans(page) do
       {:ok, spans} -> spans
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Detects the tables of the page.
+
+  Returns `{:ok, []}` when the page has no detectable table.
+  """
+  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, term()}
+  def tables(%__MODULE__{doc: doc, index: index}) do
+    Document.tables(doc, index)
+  end
+
+  @doc """
+  Same as `tables/1` but raises an error if it fails.
+  """
+  @spec tables!(t()) :: [Table.t()]
+  def tables!(page) do
+    case tables(page) do
+      {:ok, tables} -> tables
       {:error, error} -> raise error
     end
   end

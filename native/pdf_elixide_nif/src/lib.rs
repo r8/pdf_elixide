@@ -10,6 +10,7 @@ mod error;
 mod form;
 mod geometry;
 mod span;
+mod table;
 mod text_line;
 mod word;
 

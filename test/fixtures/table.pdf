@@ -1,0 +1,61 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 826 >>
+stream
+0 J 0 j
+0.8 w 100 710 m 500 710 l S
+0.3 w 100 688 m 500 688 l S
+0.8 w 100 568 m 500 568 l S
+BT /F1 10 Tf
+1 0 0 1 105 695 Tm (Variable) Tj
+1 0 0 1 260 695 Tm (Beta) Tj
+1 0 0 1 340 695 Tm (SE) Tj
+1 0 0 1 430 695 Tm (p-Value) Tj
+1 0 0 1 105 672 Tm (Age) Tj
+1 0 0 1 260 672 Tm (0.042) Tj
+1 0 0 1 340 672 Tm (0.011) Tj
+1 0 0 1 430 672 Tm (0.001) Tj
+1 0 0 1 105 652 Tm (Sex) Tj
+1 0 0 1 260 652 Tm (0.318) Tj
+1 0 0 1 340 652 Tm (0.142) Tj
+1 0 0 1 430 652 Tm (0.025) Tj
+1 0 0 1 105 632 Tm (BMI) Tj
+1 0 0 1 260 632 Tm (0.077) Tj
+1 0 0 1 340 632 Tm (0.023) Tj
+1 0 0 1 430 632 Tm (0.004) Tj
+1 0 0 1 105 612 Tm (Smoker) Tj
+1 0 0 1 260 612 Tm (0.512) Tj
+1 0 0 1 340 612 Tm (0.201) Tj
+1 0 0 1 430 612 Tm (0.011) Tj
+1 0 0 1 105 592 Tm (Diabetes) Tj
+1 0 0 1 260 592 Tm (0.694) Tj
+1 0 0 1 340 592 Tm (0.233) Tj
+1 0 0 1 430 592 Tm (0.003) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 6
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000241 00000 n
+0000001118 00000 n
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1215
+%%EOF
