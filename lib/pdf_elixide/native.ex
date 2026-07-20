@@ -27,6 +27,8 @@ defmodule PdfElixide.Native do
   def document_all_text_lines(_doc), do: err()
   def document_chars(_doc, _page_index), do: err()
   def document_all_chars(_doc), do: err()
+  def document_spans(_doc, _page_index), do: err()
+  def document_all_spans(_doc), do: err()
   def document_get_page_width(_doc, _page_index), do: err()
   def document_get_page_height(_doc, _page_index), do: err()
   def document_form_fields(_doc), do: err()

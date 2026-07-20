@@ -21,6 +21,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract words with bounding boxes and font metadata
 - Extract text lines (each with its bounding box and constituent words)
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
+- Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -187,6 +188,45 @@ Each character carries:
 - `:advance_width` — the glyph's advance width from the font metrics (`float()`)
 - `:rendered_advance` — the actual advance to the next character's origin, including character and word spacing (`float()`); use this, not `:advance_width`, to detect word boundaries
 - `:ascent` / `:descent` — the distance from the baseline to the top / bottom of the typographic glyph box in points (`descent` is negative)
+- `:mcid` — the marked-content ID for Tagged PDFs (`non_neg_integer()` or `nil`)
+
+### Extracting spans
+
+A *span* is a run of glyphs sharing one text state — the same font, size,
+color, and text-state parameters — which is what the PDF content stream
+actually emits. It sits between chars and words, and it is the only extraction
+level that keeps the raw text-state parameters.
+`PdfElixide.Document.spans/2` returns the spans of a single page (and `spans/1`
+returns every page's spans as one flat list) as
+`%PdfElixide.Document.Span{}` structs:
+
+```elixir
+{:ok, spans} = PdfElixide.Document.spans(doc, 0)
+
+Enum.each(spans, fn %PdfElixide.Document.Span{text: text, font: font} ->
+  IO.inspect({text, font})
+end)
+
+# Spans are also reachable from a page handle.
+{:ok, spans} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.spans()
+```
+
+Each span carries:
+
+- `:text` — the span's text content (`String.t()`)
+- `:page` — the zero-based page index the span belongs to (`non_neg_integer()`)
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` around the whole run (points)
+- `:font_size` — the font size in points (`float()`)
+- `:font` — the font name (`String.t()`)
+- `:font_weight` — the numeric PDF font weight, `100`–`900` (`non_neg_integer()`)
+- `:bold?` / `:italic?` / `:monospace?` — booleans (`bold?` is `font_weight >= 600`)
+- `:color` — a `%PdfElixide.Color{}` with `:r`, `:g`, `:b` channels in `0.0..1.0`
+- `:rotation` — the rotation in degrees, clockwise from horizontal (`float()`)
+- `:char_spacing` — the `Tc` character spacing in points (`float()`)
+- `:word_spacing` — the `Tw` word spacing in points (`float()`)
+- `:horizontal_scaling` — the `Tz` horizontal scaling as a percentage, `100.0` being normal (`float()`)
+- `:text_rise` — the `Ts` baseline shift as a ratio of the font size (`float()`); positive is superscript, negative subscript
+- `:heading_level` — the heading level `1`–`6` when the span is part of a heading, otherwise `nil`
 - `:mcid` — the marked-content ID for Tagged PDFs (`non_neg_integer()` or `nil`)
 
 ### Extracting form fields

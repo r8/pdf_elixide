@@ -5,6 +5,7 @@ defmodule PdfElixide.Document do
 
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.Span
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Native
@@ -349,6 +350,58 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case chars(doc, page_index) do
       {:ok, chars} -> chars
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the spans of the whole document.
+
+  Returns every page's spans concatenated into a single flat list, in page
+  order. Each span is a run of text sharing one text state, carried as a
+  `PdfElixide.Document.Span` struct.
+  """
+  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, term()}
+  def spans(%__MODULE__{ref: ref}) do
+    with {:ok, spans} <- Wrap.call(fn -> Native.document_all_spans(ref) end) do
+      {:ok, Enum.map(spans, &Span.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the spans of the whole document, raising an error if it fails.
+  """
+  @spec spans!(t()) :: [Span.t()]
+  def spans!(%__MODULE__{} = doc) do
+    case spans(doc) do
+      {:ok, spans} -> spans
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the spans of the page at the given zero-based index.
+
+  Each span is a run of text sharing one text state, carried as a
+  `PdfElixide.Document.Span` struct.
+  """
+  @spec spans(t(), non_neg_integer()) :: {:ok, [Span.t()]} | {:error, term()}
+  def spans(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, spans} <- Wrap.call(fn -> Native.document_spans(ref, page_index) end) do
+      {:ok, Enum.map(spans, &Span.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the spans of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec spans!(t(), non_neg_integer()) :: [Span.t()]
+  def spans!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case spans(doc, page_index) do
+      {:ok, spans} -> spans
       {:error, error} -> raise error
     end
   end

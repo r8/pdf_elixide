@@ -7,6 +7,7 @@ use crate::{
     char::{char_to_nif, CharNif},
     error::{lock_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
+    span::{span_to_nif, SpanNif},
     text_line::{text_line_to_nif, TextLineNif},
     word::{word_to_nif, WordNif},
     DocumentResource,
@@ -219,6 +220,41 @@ fn document_all_chars(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
         chars.extend(page_chars.into_iter().map(|ch| char_to_nif(ch, page_index)));
     }
     Ok(chars)
+}
+
+/// Extracts spans (runs of text sharing one text state) from a single page
+/// (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_spans(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<SpanNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let spans = doc.extract_spans(page_index).map_err(to_nif_err)?;
+    Ok(spans
+        .into_iter()
+        .map(|span| span_to_nif(span, page_index))
+        .collect())
+}
+
+/// Extracts spans (runs of text sharing one text state) from all pages, in
+/// page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_spans(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<SpanNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut spans = Vec::new();
+    for page_index in 0..count {
+        let page_spans = doc.extract_spans(page_index).map_err(to_nif_err)?;
+        spans.extend(
+            page_spans
+                .into_iter()
+                .map(|span| span_to_nif(span, page_index)),
+        );
+    }
+    Ok(spans)
 }
 
 /// Returns the page's width in points (MediaBox urx - llx).

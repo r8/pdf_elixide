@@ -4,6 +4,7 @@ defmodule PdfElixide.Document.PageTest do
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.Span
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
 
@@ -126,6 +127,32 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert_raise RuntimeError, fn -> Page.chars!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "spans/1" do
+    test "delegates to Document.spans/2 for the page" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert Page.spans(page) == Document.spans(doc, 1)
+      assert {:ok, [%Span{text: "Page Two", page: 1}]} = Page.spans(page)
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.spans(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "spans!/1" do
+    test "returns the spans directly" do
+      doc = Document.open!(@valid_pdf)
+      assert [%Span{text: "Page One", page: 0}] = Page.spans!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Page.spans!(%Page{doc: doc, index: 99}) end
     end
   end
 

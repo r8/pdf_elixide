@@ -5,6 +5,7 @@ defmodule PdfElixide.Document.Page do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.Span
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Native
@@ -129,6 +130,25 @@ defmodule PdfElixide.Document.Page do
   def chars!(page) do
     case chars(page) do
       {:ok, chars} -> chars
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the spans of the page, each a run of text sharing one text state.
+  """
+  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, term()}
+  def spans(%__MODULE__{doc: doc, index: index}) do
+    Document.spans(doc, index)
+  end
+
+  @doc """
+  Same as `spans/1` but raises an error if it fails.
+  """
+  @spec spans!(t()) :: [Span.t()]
+  def spans!(page) do
+    case spans(page) do
+      {:ok, spans} -> spans
       {:error, error} -> raise error
     end
   end

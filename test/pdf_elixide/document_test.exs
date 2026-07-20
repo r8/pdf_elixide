@@ -5,6 +5,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.Span
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Geometry.Rect
@@ -384,6 +385,113 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       [char | _] = Document.chars!(doc, 0)
       assert inspect(char) == ~s(#PdfElixide.Document.Char<"P" @ p0 72.0,720.0>)
+    end
+  end
+
+  describe "spans/1" do
+    test "returns {:ok, spans} for every page as a flat list" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, spans} = Document.spans(doc)
+      assert Enum.all?(spans, &match?(%Span{}, &1))
+      assert Enum.map(spans, & &1.text) == ["Page One", "Page Two", "Page Three"]
+    end
+
+    test "length equals the sum of the per-page span counts" do
+      doc = Document.open!(@valid_pdf)
+      {:ok, all} = Document.spans(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.spans(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each span carries its zero-based page index" do
+      doc = Document.open!(@valid_pdf)
+      {:ok, spans} = Document.spans(doc)
+      assert spans |> Enum.map(& &1.page) |> Enum.uniq() == [0, 1, 2]
+    end
+  end
+
+  describe "spans!/1" do
+    test "returns the flat span list of the whole document" do
+      doc = Document.open!(@valid_pdf)
+      spans = Document.spans!(doc)
+      assert Enum.all?(spans, &match?(%Span{}, &1))
+      assert Enum.any?(spans, &(&1.text == "Page Three"))
+    end
+  end
+
+  describe "spans/2" do
+    test "returns {:ok, spans} carrying text, bbox, font and text-state metadata" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, [%Span{} = span | _]} = Document.spans(doc, 0)
+
+      assert span.text == "Page One"
+      assert span.page == 0
+      assert %Rect{} = span.bbox
+      assert span.bbox.width > 0
+      assert span.bbox.height > 0
+      assert is_float(span.font_size)
+      assert is_binary(span.font)
+      assert is_integer(span.font_weight)
+      assert is_boolean(span.bold?)
+      assert is_boolean(span.italic?)
+      assert is_boolean(span.monospace?)
+      assert %Color{r: r, g: g, b: b} = span.color
+      assert Enum.all?([r, g, b], &is_float/1)
+      assert is_float(span.rotation)
+      assert is_float(span.char_spacing)
+      assert is_float(span.word_spacing)
+      assert span.horizontal_scaling == 100.0
+      assert is_float(span.text_rise)
+      assert is_nil(span.heading_level)
+      assert is_nil(span.mcid)
+    end
+
+    test "returns each page's spans" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, s0} = Document.spans(doc, 0)
+      assert {:ok, s1} = Document.spans(doc, 1)
+      assert Enum.map(s0, & &1.text) == ["Page One"]
+      assert Enum.map(s1, & &1.text) == ["Page Two"]
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Document.spans(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.spans(doc, -1) end
+    end
+  end
+
+  describe "spans!/2" do
+    test "returns the spans for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert [%Span{text: "Page Two"}] = Document.spans!(doc, 1)
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise RuntimeError, fn -> Document.spans!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.spans!(doc, :first) end
+    end
+  end
+
+  describe "Span inspect/1" do
+    test "renders the text, page, and bounding-box origin" do
+      doc = Document.open!(@valid_pdf)
+      [span | _] = Document.spans!(doc, 0)
+      assert inspect(span) == ~s(#PdfElixide.Document.Span<"Page One" @ p0 72.0,720.0>)
     end
   end
 

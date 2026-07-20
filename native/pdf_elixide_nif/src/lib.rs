@@ -9,6 +9,7 @@ mod editor;
 mod error;
 mod form;
 mod geometry;
+mod span;
 mod text_line;
 mod word;
 
