@@ -9,6 +9,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
+  alias PdfElixide.Error
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -26,7 +27,7 @@ defmodule PdfElixide.Document do
 
     * `:password` — password used to authenticate against an encrypted
       PDF. When the password is wrong, the call returns
-      `{:error, "Authentication failed: wrong password"}` (or raises,
+      `{:error, %PdfElixide.Error{reason: :wrong_password}}` (or raises,
       for the bang variants). When omitted or `nil`, no authentication
       attempt is made beyond `pdf_oxide`'s built-in empty-password try.
   """
@@ -35,7 +36,7 @@ defmodule PdfElixide.Document do
   @doc """
   Opens a PDF document from the specified file path.
   """
-  @spec open(Path.t(), open_opts()) :: {:ok, t()} | {:error, term()}
+  @spec open(Path.t(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
   def open(path, opts \\ []) when is_binary(path) and is_list(opts) do
     options = build_open_options(opts)
 
@@ -59,7 +60,7 @@ defmodule PdfElixide.Document do
   @doc """
   Opens a PDF document from the given binary data.
   """
-  @spec from_binary(binary(), open_opts()) :: {:ok, t()} | {:error, term()}
+  @spec from_binary(binary(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
   def from_binary(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
     options = build_open_options(opts)
 
@@ -99,7 +100,7 @@ defmodule PdfElixide.Document do
   @doc """
   Returns the number of pages in the given PDF document.
   """
-  @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
   def page_count(%__MODULE__{ref: ref}) do
     Wrap.call(fn -> Native.document_page_count(ref) end)
   end
@@ -137,7 +138,7 @@ defmodule PdfElixide.Document do
   Returns `{:ok, true}` if authentication succeeded (or the PDF is not encrypted),
   `{:ok, false}` if the password was wrong, or `{:error, reason}` on a PDF/crypto error.
   """
-  @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, term()}
+  @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
     Wrap.call(fn -> Native.document_authenticate(ref, password) end)
   end
@@ -161,7 +162,7 @@ defmodule PdfElixide.Document do
   Returns every page's text concatenated in order, separated by a form-feed
   (`\\f`) page separator.
   """
-  @spec text(t()) :: {:ok, binary()} | {:error, term()}
+  @spec text(t()) :: {:ok, binary()} | {:error, Error.t()}
   def text(%__MODULE__{ref: ref}) do
     Wrap.call(fn -> Native.document_extract_all_text(ref) end)
   end
@@ -180,7 +181,7 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts the text content of the page at the given zero-based index.
   """
-  @spec text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, term()}
+  @spec text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, Error.t()}
   def text(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     Wrap.call(fn -> Native.document_extract_text(ref, page_index) end)
@@ -206,7 +207,7 @@ defmodule PdfElixide.Document do
   order. Each word carries its bounding box and font metadata as a
   `PdfElixide.Document.Word` struct.
   """
-  @spec words(t()) :: {:ok, [Word.t()]} | {:error, term()}
+  @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}
   def words(%__MODULE__{ref: ref}) do
     with {:ok, words} <- Wrap.call(fn -> Native.document_all_words(ref) end) do
       {:ok, Enum.map(words, &Word.from_nif/1)}
@@ -230,7 +231,7 @@ defmodule PdfElixide.Document do
   Each word carries its bounding box and font metadata as a
   `PdfElixide.Document.Word` struct.
   """
-  @spec words(t(), non_neg_integer()) :: {:ok, [Word.t()]} | {:error, term()}
+  @spec words(t(), non_neg_integer()) :: {:ok, [Word.t()]} | {:error, Error.t()}
   def words(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     with {:ok, words} <- Wrap.call(fn -> Native.document_words(ref, page_index) end) do
@@ -258,7 +259,7 @@ defmodule PdfElixide.Document do
   order. Each line carries its bounding box and constituent words as a
   `PdfElixide.Document.TextLine` struct.
   """
-  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, term()}
+  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, Error.t()}
   def text_lines(%__MODULE__{ref: ref}) do
     with {:ok, lines} <- Wrap.call(fn -> Native.document_all_text_lines(ref) end) do
       {:ok, Enum.map(lines, &TextLine.from_nif/1)}
@@ -282,7 +283,7 @@ defmodule PdfElixide.Document do
   Each line carries its bounding box and constituent words as a
   `PdfElixide.Document.TextLine` struct.
   """
-  @spec text_lines(t(), non_neg_integer()) :: {:ok, [TextLine.t()]} | {:error, term()}
+  @spec text_lines(t(), non_neg_integer()) :: {:ok, [TextLine.t()]} | {:error, Error.t()}
   def text_lines(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     with {:ok, lines} <- Wrap.call(fn -> Native.document_text_lines(ref, page_index) end) do
@@ -310,7 +311,7 @@ defmodule PdfElixide.Document do
   order. Each character carries its bounding box, font metadata, and
   typographic placement as a `PdfElixide.Document.Char` struct.
   """
-  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, term()}
+  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, Error.t()}
   def chars(%__MODULE__{ref: ref}) do
     with {:ok, chars} <- Wrap.call(fn -> Native.document_all_chars(ref) end) do
       {:ok, Enum.map(chars, &Char.from_nif/1)}
@@ -334,7 +335,7 @@ defmodule PdfElixide.Document do
   Each character carries its bounding box, font metadata, and typographic
   placement as a `PdfElixide.Document.Char` struct.
   """
-  @spec chars(t(), non_neg_integer()) :: {:ok, [Char.t()]} | {:error, term()}
+  @spec chars(t(), non_neg_integer()) :: {:ok, [Char.t()]} | {:error, Error.t()}
   def chars(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     with {:ok, chars} <- Wrap.call(fn -> Native.document_chars(ref, page_index) end) do
@@ -362,7 +363,7 @@ defmodule PdfElixide.Document do
   order. Each span is a run of text sharing one text state, carried as a
   `PdfElixide.Document.Span` struct.
   """
-  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, term()}
+  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, Error.t()}
   def spans(%__MODULE__{ref: ref}) do
     with {:ok, spans} <- Wrap.call(fn -> Native.document_all_spans(ref) end) do
       {:ok, Enum.map(spans, &Span.from_nif/1)}
@@ -386,7 +387,7 @@ defmodule PdfElixide.Document do
   Each span is a run of text sharing one text state, carried as a
   `PdfElixide.Document.Span` struct.
   """
-  @spec spans(t(), non_neg_integer()) :: {:ok, [Span.t()]} | {:error, term()}
+  @spec spans(t(), non_neg_integer()) :: {:ok, [Span.t()]} | {:error, Error.t()}
   def spans(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     with {:ok, spans} <- Wrap.call(fn -> Native.document_spans(ref, page_index) end) do
@@ -416,7 +417,7 @@ defmodule PdfElixide.Document do
   Detection is heuristic — see `PdfElixide.Document.Table` for the `:real_grid?`
   flag and how to filter out likely false positives.
   """
-  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, term()}
+  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   def tables(%__MODULE__{ref: ref}) do
     with {:ok, tables} <- Wrap.call(fn -> Native.document_all_tables(ref) end) do
       {:ok, Enum.map(tables, &Table.from_nif/1)}
@@ -441,7 +442,7 @@ defmodule PdfElixide.Document do
   heuristic — see `PdfElixide.Document.Table` for the `:real_grid?` flag and how
   to filter out likely false positives.
   """
-  @spec tables(t(), non_neg_integer()) :: {:ok, [Table.t()]} | {:error, term()}
+  @spec tables(t(), non_neg_integer()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   def tables(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     with {:ok, tables} <- Wrap.call(fn -> Native.document_tables(ref, page_index) end) do
@@ -473,12 +474,17 @@ defmodule PdfElixide.Document do
   @doc """
   Returns a lazy handle for the page at the given zero-based index.
   """
-  @spec page(t(), non_neg_integer()) :: {:ok, Page.t()} | {:error, term()}
+  @spec page(t(), non_neg_integer()) :: {:ok, Page.t()} | {:error, Error.t()}
   def page(%__MODULE__{} = doc, index) when is_integer(index) and index >= 0 do
     case page_count(doc) do
-      {:ok, count} when index < count -> {:ok, %Page{doc: doc, index: index}}
-      {:ok, _count} -> {:error, "Page index out of range"}
-      {:error, _} = error -> error
+      {:ok, count} when index < count ->
+        {:ok, %Page{doc: doc, index: index}}
+
+      {:ok, _count} ->
+        {:error, %Error{reason: :out_of_range, message: "Page index out of range"}}
+
+      {:error, _} = error ->
+        error
     end
   end
 

@@ -5,6 +5,7 @@ defmodule PdfElixide.Form do
 
   alias PdfElixide.Document
   alias PdfElixide.Editor
+  alias PdfElixide.Error
   alias PdfElixide.Form.Field
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
@@ -14,7 +15,7 @@ defmodule PdfElixide.Form do
   @doc """
   Extracts form fields from the given PDF document or editor.
   """
-  @spec fields(source()) :: {:ok, [Field.t()]} | {:error, term()}
+  @spec fields(source()) :: {:ok, [Field.t()]} | {:error, Error.t()}
   def fields(%Document{ref: ref}) do
     Wrap.call(fn -> Native.document_form_fields(ref) end)
   end
@@ -41,7 +42,7 @@ defmodule PdfElixide.Form do
   The value uses the same tagged-tuple shape returned by `fields/1`
   (e.g. `{:text, "Jane Doe"}`, `{:boolean, true}`, `nil`).
   """
-  @spec set_value(Editor.t(), String.t(), Field.value()) :: :ok | {:error, term()}
+  @spec set_value(Editor.t(), String.t(), Field.value()) :: :ok | {:error, Error.t()}
   def set_value(%Editor{ref: ref}, name, value) when is_binary(name) do
     case Wrap.call(fn -> Native.editor_set_form_field_value(ref, name, value) end) do
       {:ok, :ok} -> :ok

@@ -19,7 +19,10 @@ mod word;
 pub(crate) mod atoms {
     rustler::atoms! {
         ok, error,
-        button, text, choice, signature, unknown
+        button, text, choice, signature, unknown,
+        // Error reason tags (see error.rs / PdfElixide.Error)
+        encrypted, wrong_password, invalid_pdf, unsupported,
+        not_found, out_of_range, io, lock_poisoned, other
     }
 }
 

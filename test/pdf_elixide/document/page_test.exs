@@ -8,6 +8,7 @@ defmodule PdfElixide.Document.PageTest do
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
+  alias PdfElixide.Error
 
   @fixtures Path.join([__DIR__, "..", "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
@@ -74,7 +75,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Page.text!(%Page{doc: doc, index: 99}) end
+      assert_raise Error, fn -> Page.text!(%Page{doc: doc, index: 99}) end
     end
   end
 
@@ -100,7 +101,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Page.words!(%Page{doc: doc, index: 99}) end
+      assert_raise Error, fn -> Page.words!(%Page{doc: doc, index: 99}) end
     end
   end
 
@@ -128,7 +129,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Page.chars!(%Page{doc: doc, index: 99}) end
+      assert_raise Error, fn -> Page.chars!(%Page{doc: doc, index: 99}) end
     end
   end
 
@@ -154,7 +155,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Page.spans!(%Page{doc: doc, index: 99}) end
+      assert_raise Error, fn -> Page.spans!(%Page{doc: doc, index: 99}) end
     end
   end
 
@@ -185,7 +186,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "raises for an out-of-range page" do
       doc = Document.open!(@table_pdf)
-      assert_raise RuntimeError, fn -> Page.tables!(%Page{doc: doc, index: 99}) end
+      assert_raise Error, fn -> Page.tables!(%Page{doc: doc, index: 99}) end
     end
   end
 
@@ -211,7 +212,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Page.text_lines!(%Page{doc: doc, index: 99}) end
+      assert_raise Error, fn -> Page.text_lines!(%Page{doc: doc, index: 99}) end
     end
   end
 end

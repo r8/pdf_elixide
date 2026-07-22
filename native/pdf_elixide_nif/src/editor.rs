@@ -5,7 +5,7 @@ use rustler::{Atom, Binary, NifMap, NifResult, OwnedBinary, ResourceArc};
 
 use crate::{
     atoms,
-    error::{lock_err, to_nif_err},
+    error::{lock_err, tagged_err, to_nif_err},
     form::{editor_field_value_from_nif, editor_form_field_to_nif, FieldNif, FieldValueNif},
     EditorResource,
 };
@@ -70,7 +70,7 @@ fn editor_to_bytes(
         .map_err(to_nif_err)?;
 
     let mut bin = OwnedBinary::new(bytes.len())
-        .ok_or_else(|| rustler::Error::Term(Box::new("failed to allocate binary")))?;
+        .ok_or_else(|| tagged_err(atoms::other(), "failed to allocate binary"))?;
     bin.as_mut_slice().copy_from_slice(&bytes);
     Ok(bin)
 }

@@ -2,6 +2,7 @@ defmodule PdfElixide.EditorTest do
   use ExUnit.Case, async: true
 
   alias PdfElixide.Editor
+  alias PdfElixide.Error
   alias PdfElixide.Form
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
@@ -17,7 +18,7 @@ defmodule PdfElixide.EditorTest do
     end
 
     test "returns {:error, reason} for a file that is not a valid PDF" do
-      assert {:error, _reason} = Editor.open(@invalid_pdf)
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.open(@invalid_pdf)
     end
   end
 
@@ -27,7 +28,7 @@ defmodule PdfElixide.EditorTest do
     end
 
     test "raises for a file that is not a valid PDF" do
-      assert_raise RuntimeError, fn -> Editor.open!(@invalid_pdf) end
+      assert_raise Error, fn -> Editor.open!(@invalid_pdf) end
     end
   end
 
@@ -39,11 +40,11 @@ defmodule PdfElixide.EditorTest do
     end
 
     test "returns {:error, reason} for invalid bytes" do
-      assert {:error, _reason} = Editor.from_binary("not a pdf")
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.from_binary("not a pdf")
     end
 
     test "returns {:error, reason} for empty binary" do
-      assert {:error, _reason} = Editor.from_binary(<<>>)
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.from_binary(<<>>)
     end
   end
 
@@ -54,7 +55,7 @@ defmodule PdfElixide.EditorTest do
     end
 
     test "raises for invalid bytes" do
-      assert_raise RuntimeError, fn -> Editor.from_binary!("not a pdf") end
+      assert_raise Error, fn -> Editor.from_binary!("not a pdf") end
     end
   end
 
@@ -203,7 +204,7 @@ defmodule PdfElixide.EditorTest do
           "out.pdf"
         ])
 
-      assert_raise RuntimeError, fn -> Editor.save!(editor, bogus) end
+      assert_raise Error, fn -> Editor.save!(editor, bogus) end
     end
   end
 end

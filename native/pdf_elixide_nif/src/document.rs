@@ -4,8 +4,9 @@ use pdf_oxide::{extractors::forms::FormExtractor, PdfDocument};
 use rustler::{Binary, NifMap, NifResult, ResourceArc};
 
 use crate::{
+    atoms,
     char::{char_to_nif, CharNif},
-    error::{lock_err, to_nif_err},
+    error::{lock_err, tagged_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
     span::{span_to_nif, SpanNif},
     table::{table_to_nif, TableNif},
@@ -24,13 +25,28 @@ impl OpenOptionsNif {
         if let Some(pw) = self.password {
             let ok = doc.authenticate(pw.as_bytes()).map_err(to_nif_err)?;
             if !ok {
-                return Err(rustler::Error::Term(Box::new(
-                    "Authentication failed: wrong password".to_string(),
-                )));
+                return Err(tagged_err(
+                    atoms::wrong_password(),
+                    "Authentication failed: wrong password",
+                ));
             }
         }
         Ok(())
     }
+}
+
+/// Returns an `:out_of_range` error if `page_index` is not a valid page of
+/// `doc`. Upstream reports a bad index as a generic `InvalidPdf`, so we check
+/// bounds here to give callers a distinct, matchable reason.
+fn ensure_page_in_range(doc: &PdfDocument, page_index: usize) -> NifResult<()> {
+    let count = doc.page_count().map_err(to_nif_err)?;
+    if page_index >= count {
+        return Err(tagged_err(
+            atoms::out_of_range(),
+            format!("Page index {page_index} out of range (document has {count} pages)"),
+        ));
+    }
+    Ok(())
 }
 
 /// Opens a PDF document from the specified file path.
@@ -114,6 +130,7 @@ fn document_extract_text(
     page_index: usize,
 ) -> NifResult<String> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
 
     doc.extract_text(page_index).map_err(to_nif_err)
 }
@@ -133,6 +150,7 @@ fn document_words(
     page_index: usize,
 ) -> NifResult<Vec<WordNif>> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
 
     let words = doc.extract_words(page_index).map_err(to_nif_err)?;
     Ok(words
@@ -166,6 +184,7 @@ fn document_text_lines(
     page_index: usize,
 ) -> NifResult<Vec<TextLineNif>> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
 
     let lines = doc.extract_text_lines(page_index).map_err(to_nif_err)?;
     Ok(lines
@@ -200,6 +219,7 @@ fn document_chars(
     page_index: usize,
 ) -> NifResult<Vec<CharNif>> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
 
     let chars = doc.extract_chars(page_index).map_err(to_nif_err)?;
     Ok(chars
@@ -231,6 +251,7 @@ fn document_spans(
     page_index: usize,
 ) -> NifResult<Vec<SpanNif>> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
 
     let spans = doc.extract_spans(page_index).map_err(to_nif_err)?;
     Ok(spans
@@ -265,6 +286,7 @@ fn document_tables(
     page_index: usize,
 ) -> NifResult<Vec<TableNif>> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
 
     let tables = doc.extract_tables(page_index).map_err(to_nif_err)?;
     Ok(tables
@@ -299,6 +321,8 @@ fn document_get_page_width(
 ) -> NifResult<f32> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
 
+    ensure_page_in_range(&doc, page_index)?;
+
     let (llx, _lly, urx, _ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
     Ok(urx - llx)
 }
@@ -310,6 +334,8 @@ fn document_get_page_height(
     page_index: usize,
 ) -> NifResult<f32> {
     let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    ensure_page_in_range(&doc, page_index)?;
 
     let (_llx, lly, _urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
     Ok(ury - lly)

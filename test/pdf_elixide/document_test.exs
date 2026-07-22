@@ -9,6 +9,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
+  alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
@@ -77,7 +78,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, _reason} = Document.text(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.text(doc, 99)
     end
 
     test "raises FunctionClauseError for negative page index" do
@@ -94,7 +95,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Document.text!(doc, 99) end
+      assert_raise Error, fn -> Document.text!(doc, 99) end
     end
 
     test "raises FunctionClauseError for non-integer page index" do
@@ -170,7 +171,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, _reason} = Document.words(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.words(doc, 99)
     end
 
     test "raises FunctionClauseError for negative page index" do
@@ -195,7 +196,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Document.words!(doc, 99) end
+      assert_raise Error, fn -> Document.words!(doc, 99) end
     end
 
     test "raises FunctionClauseError for non-integer page index" do
@@ -244,7 +245,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, _reason} = Document.text_lines(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.text_lines(doc, 99)
     end
 
     test "raises FunctionClauseError for negative page index" do
@@ -261,7 +262,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Document.text_lines!(doc, 99) end
+      assert_raise Error, fn -> Document.text_lines!(doc, 99) end
     end
 
     test "raises FunctionClauseError for non-integer page index" do
@@ -356,7 +357,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, _reason} = Document.chars(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.chars(doc, 99)
     end
 
     test "raises FunctionClauseError for negative page index" do
@@ -373,7 +374,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Document.chars!(doc, 99) end
+      assert_raise Error, fn -> Document.chars!(doc, 99) end
     end
 
     test "raises FunctionClauseError for non-integer page index" do
@@ -463,7 +464,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, _reason} = Document.spans(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.spans(doc, 99)
     end
 
     test "raises FunctionClauseError for negative page index" do
@@ -480,7 +481,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Document.spans!(doc, 99) end
+      assert_raise Error, fn -> Document.spans!(doc, 99) end
     end
 
     test "raises FunctionClauseError for non-integer page index" do
@@ -544,7 +545,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@table_pdf)
-      assert {:error, _reason} = Document.tables(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.tables(doc, 99)
     end
 
     test "raises FunctionClauseError for negative page index" do
@@ -592,7 +593,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@table_pdf)
-      assert_raise RuntimeError, fn -> Document.tables!(doc, 99) end
+      assert_raise Error, fn -> Document.tables!(doc, 99) end
     end
 
     test "raises FunctionClauseError for non-integer page index" do
@@ -699,7 +700,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "returns {:error, reason} for an out-of-range index" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, _reason} = Document.page(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.page(doc, 99)
     end
 
     test "raises FunctionClauseError for negative index" do
@@ -716,7 +717,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises RuntimeError for an out-of-range index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise RuntimeError, fn -> Document.page!(doc, 99) end
+      assert_raise Error, fn -> Document.page!(doc, 99) end
     end
   end
 
@@ -784,7 +785,7 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "returns {:error, _} with the wrong password" do
-      assert {:error, "Authentication failed: wrong password"} =
+      assert {:error, %Error{reason: :wrong_password}} =
                Document.open(@encrypted_pdf, password: "wrong")
     end
 
@@ -807,14 +808,14 @@ defmodule PdfElixide.DocumentTest do
     test "returns {:error, _} with the wrong password" do
       bytes = File.read!(@encrypted_pdf)
 
-      assert {:error, "Authentication failed: wrong password"} =
+      assert {:error, %Error{reason: :wrong_password}} =
                Document.from_binary(bytes, password: "wrong")
     end
   end
 
   describe "open!/2 and from_binary!/2 bang variants" do
     test "open! raises with the wrong-password message" do
-      assert_raise RuntimeError, "Authentication failed: wrong password", fn ->
+      assert_raise Error, "Authentication failed: wrong password", fn ->
         Document.open!(@encrypted_pdf, password: "wrong")
       end
     end
@@ -822,9 +823,36 @@ defmodule PdfElixide.DocumentTest do
     test "from_binary! raises with the wrong-password message" do
       bytes = File.read!(@encrypted_pdf)
 
-      assert_raise RuntimeError, "Authentication failed: wrong password", fn ->
+      assert_raise Error, "Authentication failed: wrong password", fn ->
         Document.from_binary!(bytes, password: "wrong")
       end
+    end
+  end
+
+  describe "structured error reasons" do
+    test "wrong password carries reason :wrong_password" do
+      assert {:error, %Error{reason: :wrong_password, message: message}} =
+               Document.open(@encrypted_pdf, password: "wrong")
+
+      assert is_binary(message)
+    end
+
+    test "invalid PDF bytes carry reason :invalid_pdf" do
+      assert {:error, %Error{reason: :invalid_pdf}} = Document.from_binary("not a pdf")
+    end
+
+    test "an out-of-range page index carries reason :out_of_range" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.text(doc, 99)
+    end
+
+    test "bang variants raise PdfElixide.Error with the reason preserved" do
+      doc = Document.open!(@valid_pdf)
+
+      error =
+        assert_raise Error, fn -> Document.text!(doc, 99) end
+
+      assert error.reason == :out_of_range
     end
   end
 end

@@ -9,6 +9,7 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
+  alias PdfElixide.Error
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -23,7 +24,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Returns the page's width in points.
   """
-  @spec width(t()) :: {:ok, float()} | {:error, term()}
+  @spec width(t()) :: {:ok, float()} | {:error, Error.t()}
   def width(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
     Wrap.call(fn -> Native.document_get_page_width(ref, index) end)
   end
@@ -42,7 +43,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Returns the page's height in points.
   """
-  @spec height(t()) :: {:ok, float()} | {:error, term()}
+  @spec height(t()) :: {:ok, float()} | {:error, Error.t()}
   def height(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
     Wrap.call(fn -> Native.document_get_page_height(ref, index) end)
   end
@@ -61,7 +62,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the text content of the page.
   """
-  @spec text(t()) :: {:ok, binary()} | {:error, term()}
+  @spec text(t()) :: {:ok, binary()} | {:error, Error.t()}
   def text(%__MODULE__{doc: doc, index: index}) do
     Document.text(doc, index)
   end
@@ -80,7 +81,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the words of the page, each with its bounding box and font metadata.
   """
-  @spec words(t()) :: {:ok, [Word.t()]} | {:error, term()}
+  @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}
   def words(%__MODULE__{doc: doc, index: index}) do
     Document.words(doc, index)
   end
@@ -99,7 +100,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the text lines of the page, each with its bounding box and words.
   """
-  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, term()}
+  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, Error.t()}
   def text_lines(%__MODULE__{doc: doc, index: index}) do
     Document.text_lines(doc, index)
   end
@@ -119,7 +120,7 @@ defmodule PdfElixide.Document.Page do
   Extracts the characters of the page, each with its bounding box, font
   metadata, and typographic placement.
   """
-  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, term()}
+  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, Error.t()}
   def chars(%__MODULE__{doc: doc, index: index}) do
     Document.chars(doc, index)
   end
@@ -138,7 +139,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the spans of the page, each a run of text sharing one text state.
   """
-  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, term()}
+  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, Error.t()}
   def spans(%__MODULE__{doc: doc, index: index}) do
     Document.spans(doc, index)
   end
@@ -159,7 +160,7 @@ defmodule PdfElixide.Document.Page do
 
   Returns `{:ok, []}` when the page has no detectable table.
   """
-  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, term()}
+  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   def tables(%__MODULE__{doc: doc, index: index}) do
     Document.tables(doc, index)
   end

@@ -3,6 +3,7 @@ defmodule PdfElixide.FormTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Editor
+  alias PdfElixide.Error
   alias PdfElixide.Form
   alias PdfElixide.Form.Field
 
@@ -152,7 +153,7 @@ defmodule PdfElixide.FormTest do
 
     test "raises for an unknown field name" do
       editor = Editor.open!(@form_pdf)
-      assert_raise RuntimeError, fn -> Form.set_value!(editor, "no_such_field", {:text, "x"}) end
+      assert_raise Error, fn -> Form.set_value!(editor, "no_such_field", {:text, "x"}) end
     end
   end
 end

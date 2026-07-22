@@ -3,6 +3,7 @@ defmodule PdfElixide.Editor do
   Mutable, in-memory PDF editor backed by `pdf_oxide`'s `DocumentEditor`.
   """
 
+  alias PdfElixide.Error
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -17,7 +18,7 @@ defmodule PdfElixide.Editor do
   @doc """
   Opens a PDF document for editing from the specified file path.
   """
-  @spec open(Path.t()) :: {:ok, t()} | {:error, term()}
+  @spec open(Path.t()) :: {:ok, t()} | {:error, Error.t()}
   def open(path) when is_binary(path) do
     with {:ok, ref} <- Wrap.call(fn -> Native.editor_open(path) end) do
       {:ok, %__MODULE__{ref: ref, source_path: path}}
@@ -39,7 +40,7 @@ defmodule PdfElixide.Editor do
   @doc """
   Opens a PDF document for editing from the given binary data.
   """
-  @spec from_binary(binary()) :: {:ok, t()} | {:error, term()}
+  @spec from_binary(binary()) :: {:ok, t()} | {:error, Error.t()}
   def from_binary(bytes) when is_binary(bytes) do
     with {:ok, ref} <- Wrap.call(fn -> Native.editor_from_bytes(bytes) end) do
       {:ok, %__MODULE__{ref: ref, source_path: nil}}
@@ -89,7 +90,7 @@ defmodule PdfElixide.Editor do
   @doc """
   Writes all in-memory changes to a PDF file at the given path.
   """
-  @spec save(t(), Path.t(), save_opts()) :: :ok | {:error, term()}
+  @spec save(t(), Path.t(), save_opts()) :: :ok | {:error, Error.t()}
   def save(%__MODULE__{ref: ref}, path, opts \\ [])
       when is_binary(path) and is_list(opts) do
     options = build_save_options(opts)
@@ -123,7 +124,7 @@ defmodule PdfElixide.Editor do
   `{:error, _}` because incremental updates can only be appended to
   the original file.
   """
-  @spec to_binary(t(), save_opts()) :: {:ok, binary()} | {:error, term()}
+  @spec to_binary(t(), save_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
     options = build_save_options(opts)
     Wrap.call(fn -> Native.editor_to_bytes(ref, options) end)
