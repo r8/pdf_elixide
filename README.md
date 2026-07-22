@@ -23,6 +23,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
 - Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
 - Detect tables and read their rows and cells
+- Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -276,6 +277,47 @@ Each row carries `:header?` and its `:cells`. Each cell carries:
 - `:header?` — whether this is a header cell (`boolean()`)
 - `:mcids` — the marked-content IDs making up the cell, for Tagged PDFs (`[non_neg_integer()]`)
 - `:spans` — the cell's `%PdfElixide.Document.Span{}` structs, so per-run font, size, and color survive into the table
+
+### Extracting paths
+
+`PdfElixide.Document.paths/2` returns the vector graphics of a single page — the
+lines, curves, rectangles, and filled shapes drawn on it (table rulings,
+underlines, boxes, diagrams) — as `%PdfElixide.Document.Path{}` structs (and
+`paths/1` returns every page's paths as one flat list). A page with no vector
+graphics gives `{:ok, []}`:
+
+```elixir
+{:ok, paths} = PdfElixide.Document.paths(doc, 0)
+
+for path <- paths do
+  IO.inspect(path.operations)
+end
+#=> [{:move_to, 100.0, 710.0}, {:line_to, 500.0, 710.0}]
+
+# Paths are also reachable from a page handle.
+{:ok, paths} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.paths()
+```
+
+Each path carries:
+
+- `:page` — the zero-based page index (`non_neg_integer()`)
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` around the path (points)
+- `:operations` — the drawing commands in stream order, as flat tagged tuples:
+  `{:move_to, x, y}`, `{:line_to, x, y}`,
+  `{:curve_to, c1x, c1y, c2x, c2y, ex, ey}` (a cubic Bézier — two control points
+  then the endpoint), `{:rectangle, x, y, width, height}`, and `:close_path`
+- `:stroke_color` — a `%PdfElixide.Color{}` when the path is stroked, otherwise `nil`
+- `:fill_color` — a `%PdfElixide.Color{}` when the path is filled, otherwise `nil`
+- `:stroke_width` — the stroke width in points (`float()`)
+- `:line_cap` — one of `:butt | :round | :square`
+- `:line_join` — one of `:miter | :round | :bevel`
+- `:dash_pattern` — `{dash_lengths, phase}` (`{[float()], float()}`) when the
+  stroke is dashed, otherwise `nil`
+- `:layer` — the Optional Content Group ("layer") name (`String.t()`) when the
+  path belongs to one, otherwise `nil`
+
+Colors are always resolved to DeviceRGB. A path can be both stroked and filled,
+so `:stroke_color` and `:fill_color` are independent.
 
 ### Extracting form fields
 

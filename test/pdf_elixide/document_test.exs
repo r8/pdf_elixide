@@ -498,6 +498,102 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "paths/1" do
+    test "returns {:ok, paths} for every page as a flat list of structs" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, paths} = Document.paths(doc)
+      assert paths != []
+      assert Enum.all?(paths, &match?(%Document.Path{}, &1))
+    end
+
+    test "length equals the sum of the per-page path counts" do
+      doc = Document.open!(@table_pdf)
+      {:ok, all} = Document.paths(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.paths(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each path carries its zero-based page index" do
+      doc = Document.open!(@table_pdf)
+      {:ok, paths} = Document.paths(doc)
+      assert Enum.all?(paths, &(&1.page == 0))
+    end
+  end
+
+  describe "paths!/1" do
+    test "returns the flat path list of the whole document" do
+      doc = Document.open!(@table_pdf)
+      paths = Document.paths!(doc)
+      assert Enum.all?(paths, &match?(%Document.Path{}, &1))
+    end
+  end
+
+  describe "paths/2" do
+    test "returns {:ok, paths} carrying operations, bbox, colors and stroke style" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, [%Document.Path{} = path | _]} = Document.paths(doc, 0)
+
+      assert path.page == 0
+      assert %Rect{} = path.bbox
+      assert [{:move_to, mx, my} | _] = path.operations
+      assert is_float(mx) and is_float(my)
+      assert Enum.any?(path.operations, &match?({:line_to, _, _}, &1))
+      assert %Color{r: r, g: g, b: b} = path.stroke_color
+      assert Enum.all?([r, g, b], &is_float/1)
+      assert is_nil(path.fill_color) or match?(%Color{}, path.fill_color)
+      assert is_float(path.stroke_width)
+      assert path.line_cap in [:butt, :round, :square]
+      assert path.line_join in [:miter, :round, :bevel]
+      assert is_nil(path.dash_pattern) or match?({_, _}, path.dash_pattern)
+      assert is_nil(path.layer) or is_binary(path.layer)
+    end
+
+    test "returns {:ok, []} for a page with no vector graphics" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.paths(doc, 0)
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.paths(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.paths(doc, -1) end
+    end
+  end
+
+  describe "paths!/2" do
+    test "returns the paths for a valid page" do
+      doc = Document.open!(@table_pdf)
+      assert [%Document.Path{} | _] = Document.paths!(doc, 0)
+    end
+
+    test "raises Error for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.paths!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.paths!(doc, :first) end
+    end
+  end
+
+  describe "Path inspect/1" do
+    test "renders the page index and operation count" do
+      doc = Document.open!(@table_pdf)
+      [path | _] = Document.paths!(doc, 0)
+      assert inspect(path) == "#PdfElixide.Document.Path<p0 2 ops>"
+    end
+  end
+
   describe "tables/2" do
     test "returns {:ok, tables} carrying geometry, grid shape and rows" do
       doc = Document.open!(@table_pdf)

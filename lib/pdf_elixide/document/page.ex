@@ -5,6 +5,7 @@ defmodule PdfElixide.Document.Page do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.Path
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
@@ -172,6 +173,27 @@ defmodule PdfElixide.Document.Page do
   def tables!(page) do
     case tables(page) do
       {:ok, tables} -> tables
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the vector paths of the page — lines, curves, rectangles, and shapes.
+
+  Returns `{:ok, []}` when the page has no vector graphics.
+  """
+  @spec paths(t()) :: {:ok, [Path.t()]} | {:error, Error.t()}
+  def paths(%__MODULE__{doc: doc, index: index}) do
+    Document.paths(doc, index)
+  end
+
+  @doc """
+  Same as `paths/1` but raises an error if it fails.
+  """
+  @spec paths!(t()) :: [Path.t()]
+  def paths!(page) do
+    case paths(page) do
+      {:ok, paths} -> paths
       {:error, error} -> raise error
     end
   end

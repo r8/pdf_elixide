@@ -159,6 +159,37 @@ defmodule PdfElixide.Document.PageTest do
     end
   end
 
+  describe "paths/1" do
+    test "delegates to Document.paths/2 for the page" do
+      doc = Document.open!(@table_pdf)
+      page = Document.page!(doc, 0)
+      assert Page.paths(page) == Document.paths(doc, 0)
+      assert {:ok, [%Document.Path{page: 0} | _]} = Page.paths(page)
+    end
+
+    test "returns {:ok, []} for a page with no vector graphics" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Page.paths(Document.page!(doc, 0))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@table_pdf)
+      assert {:error, _reason} = Page.paths(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "paths!/1" do
+    test "returns the paths directly" do
+      doc = Document.open!(@table_pdf)
+      assert [%Document.Path{page: 0} | _] = Page.paths!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@table_pdf)
+      assert_raise Error, fn -> Page.paths!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
   describe "tables/1" do
     test "delegates to Document.tables/2 for the page" do
       doc = Document.open!(@table_pdf)

@@ -9,6 +9,7 @@ mod editor;
 mod error;
 mod form;
 mod geometry;
+mod paths;
 mod span;
 mod table;
 mod text_line;
@@ -20,6 +21,8 @@ pub(crate) mod atoms {
     rustler::atoms! {
         ok, error,
         button, text, choice, signature, unknown,
+        // Path operation tags (see paths.rs / PdfElixide.Document.Path)
+        move_to, line_to, curve_to, rectangle, close_path,
         // Error reason tags (see error.rs / PdfElixide.Error)
         encrypted, wrong_password, invalid_pdf, unsupported,
         not_found, out_of_range, io, lock_poisoned, other

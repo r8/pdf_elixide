@@ -8,6 +8,7 @@ use crate::{
     char::{char_to_nif, CharNif},
     error::{lock_err, tagged_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
+    paths::{path_to_nif, PathNif},
     span::{span_to_nif, SpanNif},
     table::{table_to_nif, TableNif},
     text_line::{text_line_to_nif, TextLineNif},
@@ -277,6 +278,41 @@ fn document_all_spans(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
         );
     }
     Ok(spans)
+}
+
+/// Extracts vector paths (lines, curves, rectangles, shapes) from a single page
+/// (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_paths(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<PathNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
+
+    let paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
+    Ok(paths
+        .into_iter()
+        .map(|path| path_to_nif(path, page_index))
+        .collect())
+}
+
+/// Extracts vector paths from all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut paths = Vec::new();
+    for page_index in 0..count {
+        let page_paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
+        paths.extend(
+            page_paths
+                .into_iter()
+                .map(|path| path_to_nif(path, page_index)),
+        );
+    }
+    Ok(paths)
 }
 
 /// Detects tables on a single page (zero-indexed).
