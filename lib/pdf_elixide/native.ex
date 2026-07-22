@@ -5,11 +5,21 @@ defmodule PdfElixide.Native do
   version = mix_config[:version]
   github_url = mix_config[:package][:links]["Source"]
 
-  use RustlerPrecompiled,
+  opts = [
     otp_app: :pdf_elixide,
     crate: :pdf_elixide_nif,
     base_url: "#{github_url}/releases/download/v#{version}",
     version: version
+  ]
+
+  opts =
+    if System.get_env("PDF_ELIXIDE_BUILD") in ["1", "true"] do
+      Keyword.put(opts, :force_build, true)
+    else
+      opts
+    end
+
+  use RustlerPrecompiled, opts
 
   # Document operations
   def document_open(_path, _options), do: err()
