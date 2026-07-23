@@ -5,6 +5,7 @@ defmodule PdfElixide.Document.Page do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.Image
   alias PdfElixide.Document.Path
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
@@ -194,6 +195,27 @@ defmodule PdfElixide.Document.Page do
   def paths!(page) do
     case paths(page) do
       {:ok, paths} -> paths
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the raster images of the page — photos, logos, and scanned pictures.
+
+  Returns `{:ok, []}` when the page has no images.
+  """
+  @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
+  def images(%__MODULE__{doc: doc, index: index}) do
+    Document.images(doc, index)
+  end
+
+  @doc """
+  Same as `images/1` but raises an error if it fails.
+  """
+  @spec images!(t()) :: [Image.t()]
+  def images!(page) do
+    case images(page) do
+      {:ok, images} -> images
       {:error, error} -> raise error
     end
   end

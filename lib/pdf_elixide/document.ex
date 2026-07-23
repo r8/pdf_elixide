@@ -4,6 +4,7 @@ defmodule PdfElixide.Document do
   """
 
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.Image
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Path
   alias PdfElixide.Document.Span
@@ -512,6 +513,59 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case paths(doc, page_index) do
       {:ok, paths} -> paths
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the raster images of the whole document.
+
+  Returns every page's images concatenated into a single flat list, in page
+  order, as `PdfElixide.Document.Image` structs. Pixel data is normalized to PNG
+  bytes.
+  """
+  @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
+  def images(%__MODULE__{ref: ref}) do
+    with {:ok, images} <- Wrap.call(fn -> Native.document_all_images(ref) end) do
+      {:ok, Enum.map(images, &Image.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the raster images of the whole document, raising an error if it fails.
+  """
+  @spec images!(t()) :: [Image.t()]
+  def images!(%__MODULE__{} = doc) do
+    case images(doc) do
+      {:ok, images} -> images
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the raster images of the page at the given zero-based index.
+
+  Returns `{:ok, []}` when the page has no images. Each image — a photo, logo, or
+  scanned picture — is carried as a `PdfElixide.Document.Image` struct with its
+  pixel data normalized to PNG bytes.
+  """
+  @spec images(t(), non_neg_integer()) :: {:ok, [Image.t()]} | {:error, Error.t()}
+  def images(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, images} <- Wrap.call(fn -> Native.document_images(ref, page_index) end) do
+      {:ok, Enum.map(images, &Image.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the raster images of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec images!(t(), non_neg_integer()) :: [Image.t()]
+  def images!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case images(doc, page_index) do
+      {:ok, images} -> images
       {:error, error} -> raise error
     end
   end

@@ -8,6 +8,7 @@ use crate::{
     char::{char_to_nif, CharNif},
     error::{lock_err, tagged_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
+    images::{image_to_nif, ImageNif},
     paths::{path_to_nif, PathNif},
     span::{span_to_nif, SpanNif},
     table::{table_to_nif, TableNif},
@@ -313,6 +314,41 @@ fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
         );
     }
     Ok(paths)
+}
+
+/// Extracts raster images (photos, logos, scanned pictures) from a single page
+/// (zero-indexed). Pixel data is normalized to PNG bytes.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_images(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<ImageNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
+
+    let images = doc.extract_images(page_index).map_err(to_nif_err)?;
+    Ok(images
+        .into_iter()
+        .map(|image| image_to_nif(image, page_index))
+        .collect())
+}
+
+/// Extracts raster images from all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_images(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<ImageNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut images = Vec::new();
+    for page_index in 0..count {
+        let page_images = doc.extract_images(page_index).map_err(to_nif_err)?;
+        images.extend(
+            page_images
+                .into_iter()
+                .map(|image| image_to_nif(image, page_index)),
+        );
+    }
+    Ok(images)
 }
 
 /// Detects tables on a single page (zero-indexed).

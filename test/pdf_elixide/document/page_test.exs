@@ -13,6 +13,7 @@ defmodule PdfElixide.Document.PageTest do
   @fixtures Path.join([__DIR__, "..", "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
+  @image_pdf Path.join(@fixtures, "image.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -187,6 +188,42 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@table_pdf)
       assert_raise Error, fn -> Page.paths!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "images/1" do
+    test "delegates to Document.images/2 for the page" do
+      doc = Document.open!(@image_pdf)
+      page = Document.page!(doc, 0)
+      # Each extraction yields fresh image handles, so compare stable metadata
+      # rather than the structs (whose :ref differ) directly.
+      {:ok, via_page} = Page.images(page)
+      {:ok, via_doc} = Document.images(doc, 0)
+      assert Enum.map(via_page, & &1.page) == Enum.map(via_doc, & &1.page)
+      assert length(via_page) == length(via_doc)
+      assert {:ok, [%Document.Image{page: 0} | _]} = Page.images(page)
+    end
+
+    test "returns {:ok, []} for a page with no images" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Page.images(Document.page!(doc, 0))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@image_pdf)
+      assert {:error, _reason} = Page.images(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "images!/1" do
+    test "returns the images directly" do
+      doc = Document.open!(@image_pdf)
+      assert [%Document.Image{page: 0} | _] = Page.images!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@image_pdf)
+      assert_raise Error, fn -> Page.images!(%Page{doc: doc, index: 99}) end
     end
   end
 

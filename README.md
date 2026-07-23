@@ -24,6 +24,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
 - Detect tables and read their rows and cells
 - Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style
+- Extract raster images (photos, logos, scans) as PNG bytes with their on-page geometry
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -318,6 +319,76 @@ Each path carries:
 
 Colors are always resolved to DeviceRGB. A path can be both stroked and filled,
 so `:stroke_color` and `:fill_color` are independent.
+
+### Extracting images
+
+`PdfElixide.Document.images/2` returns the raster images of a single page — the
+photos, logos, and scanned pictures drawn on it — as
+`%PdfElixide.Document.Image{}` structs (and `images/1` returns every page's
+images as one flat list). A page with no images gives `{:ok, []}`:
+
+```elixir
+{:ok, images} = PdfElixide.Document.images(doc, 0)
+
+for image <- images do
+  PdfElixide.Document.Image.save(image, "page0-#{image.width}x#{image.height}.png")
+end
+
+# Images are also reachable from a page handle.
+{:ok, images} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.images()
+```
+
+Each image carries:
+
+- `:page` — the zero-based page index (`non_neg_integer()`)
+- `:bbox` — a `%PdfElixide.Geometry.Rect{}` giving where the image sits on the
+  page (points), or `nil` when the placement is unknown
+- `:width` / `:height` — the image's pixel dimensions (`non_neg_integer()`)
+- `:format` — how the image was **stored** in the PDF: `:jpeg` (a JPEG blob) or
+  `:raw` (decoded pixels)
+- `:ref` — an opaque handle to the underlying image, used by the encode/save
+  functions below
+- `:color_space` — how the image was stored, as an atom: `:device_rgb`,
+  `:device_gray`, `:device_cmyk`, `:indexed`, `:cal_gray`, `:cal_rgb`, `:lab`,
+  `:icc_based`, `:separation`, `:device_n`, or `:pattern`
+- `:bits_per_component` — the stored bit depth per component (`non_neg_integer()`)
+- `:rotation_degrees` — the image's rotation on the page (`integer()`)
+
+The pixel data is encoded on demand — mirroring `PdfElixide.Editor` — with
+`PdfElixide.Document.Image.to_binary/2` (in-memory bytes) and
+`PdfElixide.Document.Image.save/3` (to a file), each taking a `format: :png |
+:jpeg` option (`:png` is the default for `to_binary/2`):
+
+```elixir
+image = hd(images)
+
+{:ok, png} = PdfElixide.Document.Image.to_binary(image)               # PNG bytes
+{:ok, jpg} = PdfElixide.Document.Image.to_binary(image, format: :jpeg)
+
+# save/3 infers the format from the extension; :format overrides it.
+:ok = PdfElixide.Document.Image.save(image, "out.png")
+:ok = PdfElixide.Document.Image.save(image, "thumb.bin", format: :jpeg)
+```
+
+Encoding always produces a valid file, whatever the stored codec (JPEG, CCITT
+bilevel, CMYK, indexed palette, ...). JPEG output is lossless pass-through for a
+`:jpeg`-stored image (the original bytes are returned untouched) except CMYK
+JPEGs, which are re-encoded to RGB. Bang variants (`to_binary!/2`, `save!/3`)
+raise instead of returning `{:error, _}`.
+
+For the **raw stored bytes** (rather than a re-encoded image), use
+`PdfElixide.Document.Image.data/1`:
+
+```elixir
+case PdfElixide.Document.Image.data(image) do
+  {:ok, {:jpeg, bytes}} -> bytes             # the original JPEG blob (zero loss)
+  {:ok, {:raw, pixels, format}} -> pixels    # bare pixels; format is :rgb | :grayscale | :cmyk
+end
+```
+
+`{:raw, ...}` bytes are uncompressed pixels, not a standalone file — interpret
+them with `:width`, `:height`, and `:color_space`, or use `to_binary/2` when you
+want an encoded PNG/JPEG.
 
 ### Extracting form fields
 

@@ -17,6 +17,8 @@ defmodule PdfElixide.DocumentTest do
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
+  @image_pdf Path.join(@fixtures, "image.pdf")
+  @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -591,6 +593,197 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@table_pdf)
       [path | _] = Document.paths!(doc, 0)
       assert inspect(path) == "#PdfElixide.Document.Path<p0 2 ops>"
+    end
+  end
+
+  describe "images/1" do
+    test "returns {:ok, images} for every page as a flat list of structs" do
+      doc = Document.open!(@image_pdf)
+      assert {:ok, images} = Document.images(doc)
+      assert images != []
+      assert Enum.all?(images, &match?(%Document.Image{}, &1))
+    end
+
+    test "length equals the sum of the per-page image counts" do
+      doc = Document.open!(@image_pdf)
+      {:ok, all} = Document.images(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.images(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each image carries its zero-based page index" do
+      doc = Document.open!(@image_pdf)
+      {:ok, images} = Document.images(doc)
+      assert Enum.all?(images, &(&1.page == 0))
+    end
+  end
+
+  describe "images!/1" do
+    test "returns the flat image list of the whole document" do
+      doc = Document.open!(@image_pdf)
+      images = Document.images!(doc)
+      assert Enum.all?(images, &match?(%Document.Image{}, &1))
+    end
+  end
+
+  describe "images/2" do
+    test "returns {:ok, images} carrying a handle, source format, dimensions and metadata" do
+      doc = Document.open!(@image_pdf)
+      assert {:ok, [%Document.Image{} = image | _]} = Document.images(doc, 0)
+
+      assert image.page == 0
+      assert image.format in [:jpeg, :raw]
+      assert is_reference(image.ref)
+      assert image.width > 0
+      assert image.height > 0
+      assert is_nil(image.bbox) or match?(%Rect{}, image.bbox)
+      assert is_atom(image.color_space)
+      assert is_integer(image.bits_per_component)
+      assert is_integer(image.rotation_degrees)
+    end
+
+    test "reports :jpeg source format for a JPEG-stored image" do
+      doc = Document.open!(@image_jpeg_pdf)
+      assert {:ok, [%Document.Image{format: :jpeg} | _]} = Document.images(doc, 0)
+    end
+
+    test "returns {:ok, []} for a page with no images" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.images(doc, 0)
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.images(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.images(doc, -1) end
+    end
+  end
+
+  describe "images!/2" do
+    test "returns the images for a valid page" do
+      doc = Document.open!(@image_pdf)
+      assert [%Document.Image{} | _] = Document.images!(doc, 0)
+    end
+
+    test "raises Error for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.images!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.images!(doc, :first) end
+    end
+  end
+
+  describe "Image.to_binary/2" do
+    test "defaults to PNG bytes" do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+
+      assert {:ok, <<137, 80, 78, 71, 13, 10, 26, 10, _::binary>>} =
+               Document.Image.to_binary(image)
+    end
+
+    test "encodes JPEG bytes when format: :jpeg" do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      assert {:ok, <<255, 216, 255, _::binary>>} = Document.Image.to_binary(image, format: :jpeg)
+    end
+
+    test "passes the original bytes through for a JPEG-stored image" do
+      [image | _] = Document.open!(@image_jpeg_pdf) |> Document.images!(0)
+      assert image.format == :jpeg
+      assert {:ok, <<255, 216, 255, _::binary>>} = Document.Image.to_binary(image, format: :jpeg)
+    end
+
+    test "raises ArgumentError for an unsupported format" do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      assert_raise ArgumentError, fn -> Document.Image.to_binary(image, format: :gif) end
+    end
+
+    test "to_binary!/2 returns the bytes directly" do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      assert <<137, 80, 78, 71, _::binary>> = Document.Image.to_binary!(image)
+    end
+  end
+
+  describe "Image.data/1" do
+    test "returns the original JPEG blob for a JPEG-stored image" do
+      [image | _] = Document.open!(@image_jpeg_pdf) |> Document.images!(0)
+      assert image.format == :jpeg
+      assert {:ok, {:jpeg, <<255, 216, 255, _::binary>>}} = Document.Image.data(image)
+    end
+
+    test "returns raw pixels with their layout for a raw-stored image" do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      assert image.format == :raw
+      assert {:ok, {:raw, pixels, pixel_format}} = Document.Image.data(image)
+      assert pixel_format in [:rgb, :grayscale, :cmyk]
+      assert is_binary(pixels)
+      # DeviceRGB fixture: one byte per component, three components per pixel.
+      assert pixel_format == :rgb
+      assert byte_size(pixels) == image.width * image.height * 3
+    end
+
+    test "data!/1 returns the raw data directly" do
+      [image | _] = Document.open!(@image_jpeg_pdf) |> Document.images!(0)
+      assert {:jpeg, <<255, 216, 255, _::binary>>} = Document.Image.data!(image)
+    end
+  end
+
+  describe "Image.save/3" do
+    @describetag :tmp_dir
+
+    test "infers PNG from a .png path", %{tmp_dir: tmp_dir} do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      path = Path.join(tmp_dir, "out.png")
+      assert :ok = Document.Image.save(image, path)
+      assert <<137, 80, 78, 71, _::binary>> = File.read!(path)
+    end
+
+    test "infers JPEG from a .jpg path", %{tmp_dir: tmp_dir} do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      path = Path.join(tmp_dir, "out.jpg")
+      assert :ok = Document.Image.save(image, path)
+      assert <<255, 216, 255, _::binary>> = File.read!(path)
+    end
+
+    test "the :format option overrides the extension", %{tmp_dir: tmp_dir} do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      path = Path.join(tmp_dir, "thumb.bin")
+      assert :ok = Document.Image.save(image, path, format: :jpeg)
+      assert <<255, 216, 255, _::binary>> = File.read!(path)
+    end
+
+    test "raises ArgumentError for an unknown extension with no :format", %{tmp_dir: tmp_dir} do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      path = Path.join(tmp_dir, "out.bmp")
+      assert_raise ArgumentError, fn -> Document.Image.save(image, path) end
+    end
+
+    test "save!/3 returns :ok", %{tmp_dir: tmp_dir} do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      path = Path.join(tmp_dir, "bang.png")
+      assert :ok = Document.Image.save!(image, path)
+      assert File.exists?(path)
+    end
+  end
+
+  describe "Image inspect/1" do
+    test "renders the page index, dimensions and source format" do
+      doc = Document.open!(@image_pdf)
+      [image | _] = Document.images!(doc, 0)
+
+      assert inspect(image) ==
+               "#PdfElixide.Document.Image<p0 #{image.width}x#{image.height} #{image.format}>"
     end
   end
 
