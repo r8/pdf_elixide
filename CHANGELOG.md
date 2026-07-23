@@ -5,6 +5,23 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.7.0](https://github.com/r8/pdf_elixide/compare/v0.6.0...v0.7.0) (2026-07-23)
+
+
+
+
+### Features:
+
+* add image extraction by [@r8](https://github.com/r8)
+
+* add path extraction by [@r8](https://github.com/r8)
+
+* add structured PdfElixide.Error with matchable reason atoms by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* force NIF build when PDF_ELIXIDE_BUILD is set by [@r8](https://github.com/r8)
+
 ## [v0.6.0](https://github.com/r8/pdf_elixide/compare/v0.5.0...v0.6.0) (2026-07-20)
 
 

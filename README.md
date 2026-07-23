@@ -46,7 +46,7 @@ Add `pdf_elixide` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:pdf_elixide, "~> 0.6.0"}
+    {:pdf_elixide, "~> 0.7.0"}
   ]
 end
 ```
