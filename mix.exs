@@ -60,7 +60,7 @@ defmodule PdfElixide.MixProject do
       source_url: @source,
       source_ref: "v#{@version}",
       main: "readme",
-      extras: ["README.md"]
+      extras: ["README.md", "CHANGELOG.md"]
     ]
   end
 
