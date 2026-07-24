@@ -16,6 +16,7 @@ defmodule PdfElixide.DocumentTest do
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
+  @form_pdf Path.join(@fixtures, "form.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
@@ -1031,6 +1032,18 @@ defmodule PdfElixide.DocumentTest do
     test "returns true for a tagged PDF" do
       doc = Document.open!(@tagged_pdf)
       assert Document.has_structure_tree?(doc)
+    end
+  end
+
+  describe "has_xfa?/1" do
+    test "returns false for a plain PDF" do
+      doc = Document.open!(@valid_pdf)
+      refute Document.has_xfa?(doc)
+    end
+
+    test "returns false for a non-XFA AcroForm PDF" do
+      doc = Document.open!(@form_pdf)
+      refute Document.has_xfa?(doc)
     end
   end
 

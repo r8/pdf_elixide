@@ -127,6 +127,14 @@ defmodule PdfElixide.Document do
   end
 
   @doc """
+  Returns whether the PDF document contains XFA (XML Forms Architecture) form data.
+  """
+  @spec has_xfa?(t()) :: boolean()
+  def has_xfa?(%__MODULE__{ref: ref}) do
+    Native.document_has_xfa(ref)
+  end
+
+  @doc """
   Returns whether the PDF document is encrypted.
   """
   @spec encrypted?(t()) :: boolean()

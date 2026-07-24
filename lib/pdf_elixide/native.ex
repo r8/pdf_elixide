@@ -27,6 +27,7 @@ defmodule PdfElixide.Native do
   def document_version(_doc), do: err()
   def document_page_count(_doc), do: err()
   def document_has_structure_tree(_doc), do: err()
+  def document_has_xfa(_doc), do: err()
   def document_is_encrypted(_doc), do: err()
   def document_authenticate(_doc, _password), do: err()
   def document_extract_text(_doc, _page_index), do: err()

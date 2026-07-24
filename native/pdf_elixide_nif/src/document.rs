@@ -104,6 +104,15 @@ fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifRe
     Ok(doc.structure_tree().ok().flatten().is_some())
 }
 
+/// Returns whether the PDF document contains XFA (XML Forms Architecture) form
+/// data. Any error is reported as `false`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_has_xfa(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
+    let mut doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    Ok(pdf_oxide::xfa::XfaExtractor::has_xfa(&mut doc).unwrap_or(false))
+}
+
 /// Returns whether the PDF document is encrypted.
 #[rustler::nif]
 fn document_is_encrypted(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
