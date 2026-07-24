@@ -27,6 +27,15 @@ defmodule PdfElixide.Error do
 
   `:message` is a human-readable description. `:details` is reserved for future
   structured payloads and is currently always `nil`.
+
+  ## Errors versus exceptions
+
+  This struct is reserved for PDF and runtime failures. A malformed *argument*
+  raises instead, even from a non-bang function — `FunctionClauseError` when a
+  guard rejects it (e.g. a negative page index) and `ArgumentError` when the
+  native layer cannot decode it (e.g. a form field value that is not a tagged
+  tuple) — because that is a bug in the calling code rather than a condition of
+  the document.
   """
 
   @type reason ::

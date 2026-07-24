@@ -143,6 +143,15 @@ defmodule PdfElixide.FormTest do
       after_field = Enum.find(fields_after, &(&1.name == "full_name"))
       assert after_field.value == field.value
     end
+
+    test "raises ArgumentError for a value that is not a tagged tuple" do
+      editor = Editor.open!(@form_pdf)
+
+      # The NIF cannot decode the value and raises :badarg. That is a caller
+      # bug, so it propagates rather than becoming an {:error, _} tuple.
+      assert_raise ArgumentError, fn -> Form.set_value(editor, "full_name", "Jane Doe") end
+      assert_raise ArgumentError, fn -> Form.set_value(editor, "full_name", {:nope, "x"}) end
+    end
   end
 
   describe "set_value!/3" do
@@ -154,6 +163,11 @@ defmodule PdfElixide.FormTest do
     test "raises for an unknown field name" do
       editor = Editor.open!(@form_pdf)
       assert_raise Error, fn -> Form.set_value!(editor, "no_such_field", {:text, "x"}) end
+    end
+
+    test "raises ArgumentError for a value that is not a tagged tuple" do
+      editor = Editor.open!(@form_pdf)
+      assert_raise ArgumentError, fn -> Form.set_value!(editor, "full_name", "Jane Doe") end
     end
   end
 end

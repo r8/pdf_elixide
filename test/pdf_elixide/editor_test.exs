@@ -113,6 +113,14 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@form_pdf)
       assert {:error, _reason} = Editor.to_binary(editor, incremental: true)
     end
+
+    test "to_binary/2 with a non-boolean option returns an error rather than crashing" do
+      editor = Editor.open!(@form_pdf)
+
+      # An undecodable option map is reported by the NIF as a message string,
+      # so it arrives as an ordinary error struct.
+      assert {:error, %Error{reason: :other}} = Editor.to_binary(editor, compress: "yes")
+    end
   end
 
   describe "to_binary!/1" do

@@ -20,8 +20,23 @@ defmodule PdfElixide.Native.Wrap do
       other -> {:ok, other}
     end
   rescue
-    e in ErlangError -> {:error, normalize_error(e.original)}
+    exception -> handle_rescue(exception, __STACKTRACE__)
   end
+
+  # Our NIFs report failures by raising a `{reason, message}` term, which Elixir
+  # normalizes to an `ErlangError`. Anything else is a caller bug — most often
+  # the `:badarg` a NIF raises when it cannot decode its arguments, which
+  # normalizes to `ArgumentError` — so it propagates untouched, the way the
+  # public functions' guard clauses do.
+  #
+  # `rescue e in ErlangError` cannot draw this line: it matches every raw Erlang
+  # error but binds the *normalized* exception, so `e.original` blew up with a
+  # `KeyError` on anything that normalized to a different struct.
+  defp handle_rescue(%ErlangError{original: original}, _stacktrace) do
+    {:error, normalize_error(original)}
+  end
+
+  defp handle_rescue(exception, stacktrace), do: reraise(exception, stacktrace)
 
   # Converts a raw NIF error term into a %PdfElixide.Error{} struct.
   defp normalize_error(%Error{} = error), do: error
