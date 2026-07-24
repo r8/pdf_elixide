@@ -63,6 +63,31 @@ defmodule PdfElixide.Document.Page do
   end
 
   @doc """
+  Returns the page's logical page label (e.g. `"i"`, `"1"`, `"A-1"`).
+
+  This is the human-facing page number the PDF may define, independent of the
+  zero-based physical index. Pages outside any declared label range fall back to
+  their decimal page number.
+  """
+  @spec label(t()) :: {:ok, String.t()} | {:error, Error.t()}
+  def label(%__MODULE__{doc: doc, index: index}) do
+    with {:ok, labels} <- Document.page_labels(doc) do
+      {:ok, Enum.at(labels, index)}
+    end
+  end
+
+  @doc """
+  Same as `label/1` but raises an error if it fails.
+  """
+  @spec label!(t()) :: String.t()
+  def label!(page) do
+    case label(page) do
+      {:ok, label} -> label
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
   Extracts the text content of the page.
   """
   @spec text(t()) :: {:ok, String.t()} | {:error, Error.t()}

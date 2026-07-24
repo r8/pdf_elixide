@@ -6,13 +6,16 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
+  alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Path
+  alias PdfElixide.Document.Permissions
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
+  alias PdfElixide.Document.XmpMetadata
   alias PdfElixide.Error
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
@@ -174,6 +177,109 @@ defmodule PdfElixide.Document do
   def authenticate!(doc, password) when is_binary(password) do
     case authenticate(doc, password) do
       {:ok, result} -> result
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Reads the document's Info dictionary metadata (title, author, dates, etc.).
+
+  Always returns a `PdfElixide.Document.Metadata` struct; a document with no
+  `/Info` dictionary yields one with every field `nil`. For XMP metadata, see
+  `xmp_metadata/1`.
+  """
+  @spec metadata(t()) :: {:ok, Metadata.t()} | {:error, Error.t()}
+  def metadata(%__MODULE__{ref: ref}) do
+    with {:ok, map} <- Wrap.call(fn -> Native.document_info(ref) end) do
+      {:ok, Metadata.from_nif(map)}
+    end
+  end
+
+  @doc """
+  Reads the document's Info dictionary metadata, raising an error if it fails.
+  """
+  @spec metadata!(t()) :: Metadata.t()
+  def metadata!(%__MODULE__{} = doc) do
+    case metadata(doc) do
+      {:ok, metadata} -> metadata
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Reads the document's XMP (Extensible Metadata Platform) metadata.
+
+  Returns `{:ok, %PdfElixide.Document.XmpMetadata{}}` when the document carries
+  an XMP packet, or `{:ok, nil}` when it does not. For the classic Info
+  dictionary metadata, see `metadata/1`.
+  """
+  @spec xmp_metadata(t()) :: {:ok, XmpMetadata.t() | nil} | {:error, Error.t()}
+  def xmp_metadata(%__MODULE__{ref: ref}) do
+    with {:ok, map} <- Wrap.call(fn -> Native.document_xmp_metadata(ref) end) do
+      {:ok, map && XmpMetadata.from_nif(map)}
+    end
+  end
+
+  @doc """
+  Reads the document's XMP metadata, raising an error if it fails.
+  """
+  @spec xmp_metadata!(t()) :: XmpMetadata.t() | nil
+  def xmp_metadata!(%__MODULE__{} = doc) do
+    case xmp_metadata(doc) do
+      {:ok, xmp} -> xmp
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Reads the document's `/P` permission flags.
+
+  Returns `{:ok, %PdfElixide.Document.Permissions{}}` for an encrypted document,
+  or `{:ok, nil}` when the document is not encrypted (no permission dictionary).
+
+  Per the PDF specification these flags are advisory; see
+  `PdfElixide.Document.Permissions`.
+  """
+  @spec permissions(t()) :: {:ok, Permissions.t() | nil} | {:error, Error.t()}
+  def permissions(%__MODULE__{ref: ref}) do
+    with {:ok, map} <- Wrap.call(fn -> Native.document_permissions(ref) end) do
+      {:ok, map && Permissions.from_nif(map)}
+    end
+  end
+
+  @doc """
+  Reads the document's permission flags, raising an error if it fails.
+  """
+  @spec permissions!(t()) :: Permissions.t() | nil
+  def permissions!(%__MODULE__{} = doc) do
+    case permissions(doc) do
+      {:ok, permissions} -> permissions
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Returns the document's logical page labels — one per page, in page order.
+
+  Page labels are the human-facing page numbers a PDF may define (e.g. `"i"`,
+  `"ii"`, `"iii"`, `"1"`, `"2"`), independent of the zero-based physical page
+  index. Pages outside any declared label range fall back to their decimal page
+  number, so the returned list always has one entry per page.
+
+  See also `PdfElixide.Document.Page.label/1` for a single page's label.
+  """
+  @spec page_labels(t()) :: {:ok, [String.t()]} | {:error, Error.t()}
+  def page_labels(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.document_page_labels(ref) end)
+  end
+
+  @doc """
+  Returns the document's logical page labels, raising an error if it fails.
+  """
+  @spec page_labels!(t()) :: [String.t()]
+  def page_labels!(%__MODULE__{} = doc) do
+    case page_labels(doc) do
+      {:ok, labels} -> labels
       {:error, error} -> raise error
     end
   end

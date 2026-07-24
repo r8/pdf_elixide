@@ -56,6 +56,10 @@ defmodule PdfElixide.Native do
   def document_get_page_width(_doc, _page_index), do: err()
   def document_get_page_height(_doc, _page_index), do: err()
   def document_form_fields(_doc), do: err()
+  def document_info(_doc), do: err()
+  def document_xmp_metadata(_doc), do: err()
+  def document_permissions(_doc), do: err()
+  def document_page_labels(_doc), do: err()
 
   # Editor operations
   def editor_open(_path), do: err()

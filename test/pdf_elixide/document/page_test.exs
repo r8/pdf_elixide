@@ -16,6 +16,7 @@ defmodule PdfElixide.Document.PageTest do
   @image_pdf Path.join(@fixtures, "image.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
+  @metadata_pdf Path.join(@fixtures, "metadata.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -319,6 +320,27 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert_raise Error, fn -> Page.text_lines!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "label/1" do
+    test "returns the page's declared label" do
+      doc = Document.open!(@metadata_pdf)
+      assert {:ok, "i"} = Page.label(Document.page!(doc, 0))
+      assert {:ok, "ii"} = Page.label(Document.page!(doc, 1))
+      assert {:ok, "1"} = Page.label(Document.page!(doc, 2))
+    end
+
+    test "falls back to the decimal page number when no labels are declared" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, "3"} = Page.label(Document.page!(doc, 2))
+    end
+  end
+
+  describe "label!/1" do
+    test "returns the label directly" do
+      doc = Document.open!(@metadata_pdf)
+      assert Page.label!(Document.page!(doc, 0)) == "i"
     end
   end
 end

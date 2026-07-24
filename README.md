@@ -29,6 +29,9 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract the fonts a page uses (type, encoding, weight) and pull out embedded font programs
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
+- Read document metadata — both the `/Info` dictionary and the XMP packet
+- Read encryption permission flags (print, copy, modify, …)
+- Read logical page labels (roman numerals, prefixes, etc.)
 
 ## Requirements
 
@@ -142,6 +145,51 @@ Each outline item carries:
     (the raw name is preserved)
   - `nil` — no determinable destination
 - `:children` — the nested `%PdfElixide.Document.OutlineItem{}` structs
+
+### Reading metadata, permissions, and page labels
+
+`PdfElixide.Document.metadata/1` reads the classic `/Info` dictionary into a
+`%PdfElixide.Document.Metadata{}` struct. Every field is optional; a document
+without an `/Info` dictionary yields a struct with all fields `nil`:
+
+```elixir
+{:ok, meta} = PdfElixide.Document.metadata(doc)
+meta.title    # => "Test Title"
+meta.author   # => "Jane Doe"
+meta.producer # => "pdf_elixide"
+# Dates are the raw PDF date strings, e.g. "D:20240115120000Z".
+```
+
+`PdfElixide.Document.xmp_metadata/1` reads the XML-based XMP packet many modern
+PDFs carry instead of, or in addition to, the Info dictionary. It returns
+`{:ok, nil}` when the document has no XMP packet:
+
+```elixir
+{:ok, xmp} = PdfElixide.Document.xmp_metadata(doc)
+xmp.title    # => "Test Title"
+xmp.creators # => ["Jane Doe"]   (XMP models authors/subjects as lists)
+xmp.subjects # => ["alpha", "beta"]
+xmp.raw_xml  # => the original XMP packet, as an escape hatch
+```
+
+`PdfElixide.Document.permissions/1` reads the `/P` permission flags of an
+encrypted document, returning `{:ok, nil}` for an unencrypted one. Per the PDF
+spec these flags are advisory:
+
+```elixir
+{:ok, perms} = PdfElixide.Document.permissions(doc)
+perms.copy           # => false
+perms.print_high_res # => true
+```
+
+`PdfElixide.Document.page_labels/1` returns the logical page labels — one per
+page, in page order — falling back to decimal page numbers where none are
+declared. `PdfElixide.Document.Page.label/1` reads a single page's label:
+
+```elixir
+{:ok, ["i", "ii", "1", "2"]} = PdfElixide.Document.page_labels(doc)
+{:ok, "i"} = PdfElixide.Document.Page.label(PdfElixide.Document.page!(doc, 0))
+```
 
 ### Extracting words
 

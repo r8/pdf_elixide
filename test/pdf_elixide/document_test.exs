@@ -4,12 +4,15 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Color
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.Permissions
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
+  alias PdfElixide.Document.XmpMetadata
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
 
@@ -23,6 +26,7 @@ defmodule PdfElixide.DocumentTest do
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
+  @metadata_pdf Path.join(@fixtures, "metadata.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -1339,6 +1343,131 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@outline_pdf)
       [ch1, _ch2] = Document.outline!(doc)
       assert inspect(ch1) == "#PdfElixide.Document.OutlineItem<\"Chapter 1\" 1 child>"
+    end
+  end
+
+  describe "metadata/1" do
+    test "reads the Info dictionary fields" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert {:ok, %Metadata{} = meta} = Document.metadata(doc)
+      assert meta.title == "Test Title"
+      assert meta.author == "Jane Doe"
+      assert meta.subject == "Testing"
+      assert meta.keywords == "alpha, beta"
+      assert meta.creator == "pdf_elixide test"
+      assert meta.producer == "pdf_elixide"
+      assert meta.creation_date == "D:20240115120000Z"
+      assert meta.mod_date == nil
+      assert meta.trapped == "True"
+    end
+
+    test "returns an all-nil struct for a document with no Info dictionary" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:ok, %Metadata{} = meta} = Document.metadata(doc)
+
+      assert meta ==
+               %Metadata{
+                 title: nil,
+                 author: nil,
+                 subject: nil,
+                 keywords: nil,
+                 creator: nil,
+                 producer: nil,
+                 creation_date: nil,
+                 mod_date: nil,
+                 trapped: nil
+               }
+    end
+  end
+
+  describe "metadata!/1" do
+    test "returns the struct directly" do
+      doc = Document.open!(@metadata_pdf)
+      assert %Metadata{title: "Test Title"} = Document.metadata!(doc)
+    end
+  end
+
+  describe "xmp_metadata/1" do
+    test "parses the XMP packet into a struct" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert {:ok, %XmpMetadata{} = xmp} = Document.xmp_metadata(doc)
+      assert xmp.title == "Test Title"
+      assert xmp.creators == ["Jane Doe"]
+      assert xmp.subjects == ["alpha", "beta"]
+      assert xmp.creator_tool == "pdf_elixide test"
+      assert xmp.create_date == "2024-01-15T12:00:00Z"
+      assert xmp.producer == "pdf_elixide"
+      assert is_binary(xmp.raw_xml)
+    end
+
+    test "returns {:ok, nil} for a document with no XMP packet" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, nil} = Document.xmp_metadata(doc)
+    end
+  end
+
+  describe "xmp_metadata!/1" do
+    test "returns the struct directly" do
+      doc = Document.open!(@metadata_pdf)
+      assert %XmpMetadata{title: "Test Title"} = Document.xmp_metadata!(doc)
+    end
+
+    test "returns nil for a document with no XMP packet" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.xmp_metadata!(doc) == nil
+    end
+  end
+
+  describe "permissions/1" do
+    test "returns decoded flags for an encrypted document" do
+      doc = Document.open!(@encrypted_pdf, password: @password)
+
+      assert {:ok, %Permissions{} = perms} = Document.permissions(doc)
+      assert is_boolean(perms.print_low_res)
+      assert is_boolean(perms.copy)
+      assert is_integer(perms.raw)
+    end
+
+    test "returns {:ok, nil} for an unencrypted document" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, nil} = Document.permissions(doc)
+    end
+  end
+
+  describe "permissions!/1" do
+    test "returns the struct directly for an encrypted document" do
+      doc = Document.open!(@encrypted_pdf, password: @password)
+      assert %Permissions{} = Document.permissions!(doc)
+    end
+
+    test "returns nil for an unencrypted document" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.permissions!(doc) == nil
+    end
+  end
+
+  describe "page_labels/1" do
+    test "returns the declared labels, one per page" do
+      doc = Document.open!(@metadata_pdf)
+      assert {:ok, ["i", "ii", "1"]} = Document.page_labels(doc)
+    end
+
+    test "falls back to decimal page numbers when no labels are declared" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:ok, labels} = Document.page_labels(doc)
+      assert labels == ["1", "2", "3"]
+      assert length(labels) == Document.page_count!(doc)
+    end
+  end
+
+  describe "page_labels!/1" do
+    test "returns the list directly" do
+      doc = Document.open!(@metadata_pdf)
+      assert Document.page_labels!(doc) == ["i", "ii", "1"]
     end
   end
 end

@@ -11,6 +11,7 @@ mod fonts;
 mod form;
 mod geometry;
 mod images;
+mod metadata;
 mod outline;
 mod paths;
 mod span;
