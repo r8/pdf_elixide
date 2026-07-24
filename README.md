@@ -349,12 +349,15 @@ Each span carries:
 `%PdfElixide.Document.Table{}` structs. A page with no table gives `{:ok, []}`:
 
 ```elixir
-{:ok, tables} = PdfElixide.Document.tables(doc, 0)
+alias PdfElixide.Document.Table
 
-for table <- tables, table.real_grid? do
-  Enum.map(table.rows, fn row -> Enum.map(row.cells, & &1.text) end)
-end
-#=> [[["Age", "0.042", "0.011", "0.001"], ["Sex", "0.318", "0.142", "0.025"]]]
+{:ok, [table | _]} = PdfElixide.Document.tables(doc, 0)
+
+Table.cell_text(table, 0, 0)
+#=> "Age"
+
+Enum.map(table, fn row -> Enum.map(row, & &1.text) end)
+#=> [["Age", "0.042", "0.011", "0.001"], ["Sex", "0.318", "0.142", "0.025"], ...]
 
 # Tables are also reachable from a page handle.
 {:ok, tables} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.tables()
@@ -388,6 +391,25 @@ Each row carries `:header?` and its `:cells`. Each cell carries:
 - `:header?` — whether this is a header cell (`boolean()`)
 - `:mcids` — the marked-content IDs making up the cell, for Tagged PDFs (`[non_neg_integer()]`)
 - `:spans` — the cell's `%PdfElixide.Document.Span{}` structs, so per-run font, size, and color survive into the table
+
+Rather than walking those lists by hand, reach into a table with the accessors:
+
+- `Table.cell/3` — the `%Table.Cell{}` at a zero-based row and column
+- `Table.cell_text/3` — just that cell's text
+- `Table.row/2` and `Table.row_count/1` — the `%Table.Row{}` at an index, and how many there are
+- `Table.Row.cell/2` and `Table.Row.cell_text/2` — the same, within a single row
+
+Indices are positions — the row within `:rows`, the column within that row's
+`:cells` — so they reach exactly what `Enum.at/2` would. The detector drops the
+cells a merge covers without leaving a placeholder, so a row containing a cell
+whose `:colspan` or `:rowspan` is greater than one stores fewer cells than
+`:col_count`, and positions after the merge no longer line up with the visual
+column. Every accessor except `row_count/1` returns `nil` when the index falls
+outside the table (a negative or non-integer index raises `FunctionClauseError`),
+so none of them has a bang variant.
+
+Tables and rows are also `Enumerable` — a table over its rows, a row over its
+cells — which is where the nested `Enum.map/2` above comes from.
 
 ### Extracting paths
 

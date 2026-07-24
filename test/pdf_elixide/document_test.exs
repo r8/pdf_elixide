@@ -1032,6 +1032,153 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "Table.cell/3" do
+    test "returns the cell at a zero-based row and column" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert %Table.Cell{text: "Age"} = Table.cell(table, 0, 0)
+      assert %Table.Cell{text: "0.001"} = Table.cell(table, 0, 3)
+      assert %Table.Cell{text: "Sex"} = Table.cell(table, 1, 0)
+      assert %Table.Cell{text: "0.003"} = Table.cell(table, 4, 3)
+    end
+
+    test "returns nil for an out-of-range row or column" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.cell(table, 99, 0) == nil
+      assert Table.cell(table, 0, 99) == nil
+      assert Table.cell(table, 5, 4) == nil
+    end
+
+    test "raises FunctionClauseError for a negative row or column" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert_raise FunctionClauseError, fn -> Table.cell(table, -1, 0) end
+      assert_raise FunctionClauseError, fn -> Table.cell(table, 0, -1) end
+      assert_raise FunctionClauseError, fn -> Table.cell(table, :first, 0) end
+    end
+
+    test "indexes by position, ignoring colspan" do
+      table = spanning_table()
+
+      assert %Table.Cell{text: "A", colspan: 2} = Table.cell(table, 0, 0)
+      assert %Table.Cell{text: "B"} = Table.cell(table, 0, 1)
+      assert Table.cell(table, 0, 2) == nil
+      assert table.col_count == 3
+    end
+  end
+
+  describe "Table.cell_text/3" do
+    test "returns the text of the cell at a zero-based row and column" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.cell_text(table, 0, 0) == "Age"
+      assert Table.cell_text(table, 0, 3) == "0.001"
+      assert Table.cell_text(table, 4, 0) == "Diabetes"
+    end
+
+    test "returns nil for an out-of-range row or column" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.cell_text(table, 99, 0) == nil
+      assert Table.cell_text(table, 0, 99) == nil
+    end
+
+    test "stops at the last stored cell of a row that merged columns" do
+      table = spanning_table()
+
+      assert Enum.map(0..3, &Table.cell_text(table, 0, &1)) == ["A", "B", nil, nil]
+    end
+  end
+
+  describe "Table.row/2 and Table.row_count/1" do
+    test "returns the row at a zero-based index" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert %Table.Row{} = row = Table.row(table, 0)
+      assert length(row.cells) == 4
+      assert Table.row(table, 0) == hd(table.rows)
+    end
+
+    test "returns nil for an out-of-range index and raises for a negative one" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.row(table, 99) == nil
+      assert_raise FunctionClauseError, fn -> Table.row(table, -1) end
+    end
+
+    test "row_count/1 counts the rows" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.row_count(table) == 5
+      assert Table.row_count(%{table | rows: []}) == 0
+    end
+  end
+
+  describe "Table.Row.cell/2 and Table.Row.cell_text/2" do
+    test "index by position within a single row" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      row = Table.row(table, 0)
+
+      assert %Table.Cell{text: "Age"} = Table.Row.cell(row, 0)
+      assert Table.Row.cell_text(row, 1) == "0.042"
+      assert Table.Row.cell(row, 99) == nil
+      assert Table.Row.cell_text(row, 99) == nil
+      assert_raise FunctionClauseError, fn -> Table.Row.cell(row, -1) end
+    end
+  end
+
+  describe "Table Enumerable" do
+    test "enumerates the rows of a table and the cells of a row" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Enum.count(table) == 5
+      assert Enum.map(table, &Enum.count/1) == [4, 4, 4, 4, 4]
+
+      grid = Enum.map(table, fn row -> Enum.map(row, & &1.text) end)
+      assert ["Age", "0.042", "0.011", "0.001"] in grid
+      assert ["Diabetes", "0.694", "0.233", "0.003"] in grid
+    end
+
+    test "supports slicing and membership" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert %Table.Row{} = Enum.at(table, 1)
+      assert Enum.take(table, 2) == Enum.take(table.rows, 2)
+      assert Enum.slice(table, 1..2) == Enum.slice(table.rows, 1..2)
+      assert Enum.member?(table, Table.row(table, 0))
+      refute Enum.member?(table, :not_a_row)
+
+      row = Table.row(table, 0)
+      assert Enum.slice(row, 1..2) == Enum.slice(row.cells, 1..2)
+      assert Enum.member?(row, Table.Row.cell(row, 0))
+    end
+
+    test "agrees with the accessors, including on a row that merged columns" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Enum.map(table, & &1) == Enum.map(0..4, &Table.row(table, &1))
+      row = Table.row(table, 0)
+      assert Enum.map(row, & &1) == Enum.map(0..3, &Table.cell(table, 0, &1))
+
+      spanning = spanning_table()
+      assert Enum.map(spanning, fn row -> Enum.map(row, & &1.text) end) == [["A", "B"]]
+      assert Enum.to_list(Table.row(spanning, 0)) == Enum.map(0..1, &Table.cell(spanning, 0, &1))
+    end
+  end
+
   describe "Table inspect/1" do
     test "renders the page and grid shape" do
       doc = Document.open!(@table_pdf)
@@ -1767,5 +1914,39 @@ defmodule PdfElixide.DocumentTest do
 
     Enum.find(annotations, &(&1.contents == contents)) ||
       flunk("no annotation with contents #{inspect(contents)} in the fixture")
+  end
+
+  # No fixture detects a table with a colspan, so build one by hand: a single
+  # row of three grid columns whose first cell spans the first two.
+  defp spanning_table do
+    cells = [
+      %Table.Cell{
+        text: "A",
+        bbox: nil,
+        colspan: 2,
+        rowspan: 1,
+        header?: false,
+        mcids: [],
+        spans: []
+      },
+      %Table.Cell{
+        text: "B",
+        bbox: nil,
+        colspan: 1,
+        rowspan: 1,
+        header?: false,
+        mcids: [],
+        spans: []
+      }
+    ]
+
+    %Table{
+      page: 0,
+      bbox: nil,
+      col_count: 3,
+      has_header?: false,
+      real_grid?: true,
+      rows: [%Table.Row{header?: false, cells: cells}]
+    }
   end
 end
