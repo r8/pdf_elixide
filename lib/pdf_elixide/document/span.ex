@@ -4,7 +4,7 @@ defmodule PdfElixide.Document.Span do
   text-state parameters — extracted from a PDF page, with its zero-based page
   index and bounding box.
   """
-  alias PdfElixide.Color
+  alias PdfElixide.Color.RGB
   alias PdfElixide.Geometry.Rect
 
   @enforce_keys [
@@ -57,7 +57,7 @@ defmodule PdfElixide.Document.Span do
           bold?: boolean(),
           italic?: boolean(),
           monospace?: boolean(),
-          color: Color.t(),
+          color: RGB.t(),
           rotation: float(),
           char_spacing: float(),
           word_spacing: float(),

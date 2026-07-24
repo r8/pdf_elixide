@@ -1,0 +1,45 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Annots [5 0 R 6 0 R 7 0 R 8 0 R] >>
+endobj
+4 0 obj
+<< /Length 0 >>
+stream
+
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Square /Rect [100 700 200 720] /Contents (Gray border, CMYK interior) /C [0.5] /IC [0 1 1 0] >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Square /Rect [100 650 200 670] /Contents (CMYK border) /C [0 1 1 0] >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Square /Rect [100 600 200 620] /Contents (Explicitly not painted) /C [] >>
+endobj
+8 0 obj
+<< /Type /Annot /Subtype /Square /Rect [100 550 200 570] /Contents (Unidentifiable colourspace) /C [0.25 0.75] >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000242 00000 n 
+0000000291 00000 n 
+0000000428 00000 n 
+0000000540 00000 n 
+0000000656 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+785
+%%EOF

@@ -3,7 +3,7 @@ use rustler::{Encoder, Env, NifMap, NifUnitEnum, Term};
 
 use crate::{
     atoms,
-    color::{color_to_nif, ColorNif},
+    color::{color_to_nif, RgbNif},
     geometry::{rect_to_nif, RectNif},
 };
 
@@ -13,8 +13,8 @@ pub struct PathNif {
     page: usize,
     bbox: RectNif,
     operations: Vec<PathOpNif>,
-    stroke_color: Option<ColorNif>,
-    fill_color: Option<ColorNif>,
+    stroke_color: Option<RgbNif>,
+    fill_color: Option<RgbNif>,
     stroke_width: f32,
     line_cap: LineCapNif,
     line_join: LineJoinNif,

@@ -271,7 +271,7 @@ Each character carries:
 - `:font` — the font name (`String.t()`)
 - `:font_weight` — the numeric PDF font weight, `100`–`900` (`non_neg_integer()`)
 - `:bold?` / `:italic?` / `:monospace?` — booleans (`bold?` is `font_weight >= 600`)
-- `:color` — a `%PdfElixide.Color{}` with `:r`, `:g`, `:b` channels in `0.0..1.0`
+- `:color` — a `%PdfElixide.Color.RGB{}` with `:r`, `:g`, `:b` channels in `0.0..1.0`
 - `:origin` — the `{x, y}` baseline origin in points, the typographic reference point (unlike `:bbox`, which is the glyph's box)
 - `:rotation` — the rotation in degrees, clockwise from horizontal (`float()`)
 - `:advance_width` — the glyph's advance width from the font metrics (`float()`)
@@ -309,7 +309,7 @@ Each span carries:
 - `:font` — the font name (`String.t()`)
 - `:font_weight` — the numeric PDF font weight, `100`–`900` (`non_neg_integer()`)
 - `:bold?` / `:italic?` / `:monospace?` — booleans (`bold?` is `font_weight >= 600`)
-- `:color` — a `%PdfElixide.Color{}` with `:r`, `:g`, `:b` channels in `0.0..1.0`
+- `:color` — a `%PdfElixide.Color.RGB{}` with `:r`, `:g`, `:b` channels in `0.0..1.0`
 - `:rotation` — the rotation in degrees, clockwise from horizontal (`float()`)
 - `:char_spacing` — the `Tc` character spacing in points (`float()`)
 - `:word_spacing` — the `Tw` word spacing in points (`float()`)
@@ -393,8 +393,8 @@ Each path carries:
   `{:move_to, x, y}`, `{:line_to, x, y}`,
   `{:curve_to, c1x, c1y, c2x, c2y, ex, ey}` (a cubic Bézier — two control points
   then the endpoint), `{:rectangle, x, y, width, height}`, and `:close_path`
-- `:stroke_color` — a `%PdfElixide.Color{}` when the path is stroked, otherwise `nil`
-- `:fill_color` — a `%PdfElixide.Color{}` when the path is filled, otherwise `nil`
+- `:stroke_color` — a `%PdfElixide.Color.RGB{}` when the path is stroked, otherwise `nil`
+- `:fill_color` — a `%PdfElixide.Color.RGB{}` when the path is filled, otherwise `nil`
 - `:stroke_width` — the stroke width in points (`float()`)
 - `:line_cap` — one of `:butt | :round | :square`
 - `:line_join` — one of `:miter | :round | :bevel`
@@ -403,8 +403,10 @@ Each path carries:
 - `:layer` — the Optional Content Group ("layer") name (`String.t()`) when the
   path belongs to one, otherwise `nil`
 
-Colors are always resolved to DeviceRGB. A path can be both stroked and filled,
-so `:stroke_color` and `:fill_color` are independent.
+Colors are always resolved to DeviceRGB during extraction, which is why these
+are typed `%PdfElixide.Color.RGB{}` specifically rather than the wider
+`PdfElixide.Color` union. A path can be both stroked and filled, so
+`:stroke_color` and `:fill_color` are independent.
 
 ### Extracting images
 
@@ -536,14 +538,21 @@ page's annotations as one flat list). A page with no annotations gives
 
 Each annotation carries its `:page` index, a parsed `:subtype` atom (`:link`,
 `:text`, `:highlight`, `:widget`, …), its `:rect` (a `%PdfElixide.Geometry.Rect{}`),
-`:contents`, `:author`, dates, `:opacity`, and more. Colors decode by component
-count into a colorspace-tagged term:
+`:contents`, `:author`, dates, `:opacity`, and more. Unlike text and path
+colors, annotation colors carry the raw `/C` (or `/IC`) components, so any of
+the `PdfElixide.Color` structs can appear — decoded by component count, since
+the array itself names no colorspace:
 
 ```elixir
-%PdfElixide.Document.Annotation{color: {:rgb, 1.0, 0.0, 0.0}}   # DeviceRGB
-%PdfElixide.Document.Annotation{color: {:gray, 0.5}}           # DeviceGray
-%PdfElixide.Document.Annotation{color: {:cmyk, 0.0, 0.0, 0.0, 1.0}}
+%PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}              # 3 components
+%PdfElixide.Color.Gray{gray: 0.5}                          # 1 component
+%PdfElixide.Color.CMYK{c: 0.0, m: 0.0, y: 0.0, k: 1.0}     # 4 components
+%PdfElixide.Color.Unknown{components: [0.25, 0.75]}        # any other count
 ```
+
+A count-based guess can be wrong — a one-component `/C` in a Separation space
+reads as `%PdfElixide.Color.Gray{}` even though the value is a tint. `:color`
+and `:interior_color` are `nil` when no color is decoded.
 
 Link annotations expose where they point via `:destination` and `:action`:
 

@@ -3,7 +3,10 @@ use pdf_oxide::{
 };
 use rustler::{NifMap, NifStruct, NifTaggedEnum, NifUnitEnum};
 
-use crate::geometry::{rect_from_corners, RectNif};
+use crate::{
+    color::{annotation_color_to_nif, AnnotationColorNif},
+    geometry::{rect_from_corners, RectNif},
+};
 
 /// A single annotation, mirroring `pdf_oxide::Annotation` minus its `raw_dict`
 /// (a recursive PDF object we don't surface). `annotation_type` is renamed to
@@ -185,28 +188,6 @@ impl From<WidgetFieldType> for WidgetFieldTypeNif {
     }
 }
 
-/// An annotation color (`/C` or `/IC`), decoded from the raw component array by
-/// its length: `:transparent` (empty), `{:gray, g}`, `{:rgb, r, g, b}`,
-/// `{:cmyk, c, m, y, k}`, or `{:other, components}` for any other length.
-#[derive(NifTaggedEnum, Debug)]
-pub enum AnnotationColorNif {
-    Transparent,
-    Gray(f64),
-    Rgb(f64, f64, f64),
-    Cmyk(f64, f64, f64, f64),
-    Other(Vec<f64>),
-}
-
-fn color_to_nif(components: Option<Vec<f64>>) -> Option<AnnotationColorNif> {
-    components.map(|c| match c.len() {
-        0 => AnnotationColorNif::Transparent,
-        1 => AnnotationColorNif::Gray(c[0]),
-        3 => AnnotationColorNif::Rgb(c[0], c[1], c[2]),
-        4 => AnnotationColorNif::Cmyk(c[0], c[1], c[2], c[3]),
-        _ => AnnotationColorNif::Other(c),
-    })
-}
-
 /// The decoded `/F` annotation flags (ISO 32000-1 §12.5.3, Table 165), mirroring
 /// `PdfElixide.Document.Permissions`: one boolean per bit plus `raw`, the
 /// undecoded integer.
@@ -263,8 +244,8 @@ pub fn annotation_to_nif(annotation: Annotation, page: usize) -> AnnotationNif {
         quad_points: annotation
             .quad_points
             .map(|quads| quads.into_iter().map(|quad| quad.to_vec()).collect()),
-        color: color_to_nif(annotation.color),
-        interior_color: color_to_nif(annotation.interior_color),
+        color: annotation_color_to_nif(annotation.color),
+        interior_color: annotation_color_to_nif(annotation.interior_color),
         opacity: annotation.opacity,
         flags: flags_to_nif(annotation.flags),
         border: annotation.border.map(|border| border.to_vec()),

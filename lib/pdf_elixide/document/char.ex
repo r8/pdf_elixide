@@ -3,7 +3,7 @@ defmodule PdfElixide.Document.Char do
   A single character extracted from a PDF page, with its zero-based page index,
   bounding box, font metadata, and typographic placement.
   """
-  alias PdfElixide.Color
+  alias PdfElixide.Color.RGB
   alias PdfElixide.Geometry.Rect
 
   @enforce_keys [
@@ -56,7 +56,7 @@ defmodule PdfElixide.Document.Char do
           bold?: boolean(),
           italic?: boolean(),
           monospace?: boolean(),
-          color: Color.t(),
+          color: RGB.t(),
           origin: {float(), float()},
           rotation: float(),
           advance_width: float(),

@@ -2,7 +2,7 @@ use pdf_oxide::layout::TextSpan;
 use rustler::NifMap;
 
 use crate::{
-    color::{color_to_nif, ColorNif},
+    color::{color_to_nif, RgbNif},
     geometry::{rect_to_nif, RectNif},
 };
 
@@ -17,7 +17,7 @@ pub struct SpanNif {
     bold: bool,
     italic: bool,
     monospace: bool,
-    color: ColorNif,
+    color: RgbNif,
     rotation: f32,
     char_spacing: f32,
     word_spacing: f32,

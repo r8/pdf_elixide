@@ -29,6 +29,7 @@ defmodule PdfElixide.DocumentTest do
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
+  @annotation_colors_pdf Path.join(@fixtures, "annotation_colors.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -347,7 +348,7 @@ defmodule PdfElixide.DocumentTest do
       assert is_boolean(char.bold?)
       assert is_boolean(char.italic?)
       assert is_boolean(char.monospace?)
-      assert %Color{r: r, g: g, b: b} = char.color
+      assert %Color.RGB{r: r, g: g, b: b} = char.color
       assert Enum.all?([r, g, b], &is_float/1)
       assert {origin_x, origin_y} = char.origin
       assert is_float(origin_x) and is_float(origin_y)
@@ -455,7 +456,7 @@ defmodule PdfElixide.DocumentTest do
       assert is_boolean(span.bold?)
       assert is_boolean(span.italic?)
       assert is_boolean(span.monospace?)
-      assert %Color{r: r, g: g, b: b} = span.color
+      assert %Color.RGB{r: r, g: g, b: b} = span.color
       assert Enum.all?([r, g, b], &is_float/1)
       assert is_float(span.rotation)
       assert is_float(span.char_spacing)
@@ -555,9 +556,9 @@ defmodule PdfElixide.DocumentTest do
       assert [{:move_to, mx, my} | _] = path.operations
       assert is_float(mx) and is_float(my)
       assert Enum.any?(path.operations, &match?({:line_to, _, _}, &1))
-      assert %Color{r: r, g: g, b: b} = path.stroke_color
+      assert %Color.RGB{r: r, g: g, b: b} = path.stroke_color
       assert Enum.all?([r, g, b], &is_float/1)
-      assert is_nil(path.fill_color) or match?(%Color{}, path.fill_color)
+      assert is_nil(path.fill_color) or match?(%Color.RGB{}, path.fill_color)
       assert is_float(path.stroke_width)
       assert path.line_cap in [:butt, :round, :square]
       assert path.line_join in [:miter, :round, :bevel]
@@ -1394,7 +1395,7 @@ defmodule PdfElixide.DocumentTest do
       assert text.author == "Alice"
       assert text.creation_date == "D:20240101000000Z"
       assert text.modification_date == "D:20240102000000Z"
-      assert text.color == {:rgb, 1.0, 0.0, 0.0}
+      assert text.color == %Color.RGB{r: 1.0, g: 0.0, b: 0.0}
       assert %Rect{x: 100.0, y: 700.0, width: 20.0, height: 20.0} = text.rect
 
       # /F 4 decodes to only the PRINT bit, mirroring Permissions' :raw field.
@@ -1419,13 +1420,43 @@ defmodule PdfElixide.DocumentTest do
 
       highlight = Enum.find(annotations, &(&1.subtype == :highlight))
       assert highlight.quad_points == [[100.0, 620.0, 300.0, 620.0, 100.0, 600.0, 300.0, 600.0]]
-      assert highlight.color == {:rgb, 1.0, 1.0, 0.0}
+      assert highlight.color == %Color.RGB{r: 1.0, g: 1.0, b: 0.0}
       assert highlight.opacity == 0.5
     end
 
     test "returns {:ok, []} for a page with no annotations" do
       doc = Document.open!(@valid_pdf)
       assert {:ok, []} = Document.annotations(doc, 0)
+    end
+
+    test "decodes a one-component color as Gray and a four-component /IC as CMYK" do
+      annotation = annotation_with_contents("Gray border, CMYK interior")
+
+      assert annotation.color == %Color.Gray{gray: 0.5}
+      assert annotation.interior_color == %Color.CMYK{c: 0.0, m: 1.0, y: 1.0, k: 0.0}
+    end
+
+    test "decodes a four-component color as CMYK" do
+      annotation = annotation_with_contents("CMYK border")
+
+      assert annotation.color == %Color.CMYK{c: 0.0, m: 1.0, y: 1.0, k: 0.0}
+      assert annotation.interior_color == nil
+    end
+
+    test "preserves a color of unidentifiable arity verbatim" do
+      annotation = annotation_with_contents("Unidentifiable colourspace")
+
+      assert annotation.color == %Color.Unknown{components: [0.25, 0.75]}
+    end
+
+    # Upstream pdf_oxide collapses an empty /C array to "no entry"
+    # (parse_number_array in its src/annotations.rs), so an explicitly empty
+    # color is indistinguishable from an absent one. This pins that behavior; if
+    # upstream changes, this test is the tripwire.
+    test "surfaces an empty color array as nil" do
+      annotation = annotation_with_contents("Explicitly not painted")
+
+      assert annotation.color == nil
     end
 
     test "returns {:error, reason} for an out-of-range page index" do
@@ -1587,5 +1618,15 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@metadata_pdf)
       assert Document.page_labels!(doc) == ["i", "ii", "1"]
     end
+  end
+
+  # The annotation_colors.pdf fixture carries one annotation per color arity,
+  # each identified by its /Contents string.
+  defp annotation_with_contents(contents) do
+    doc = Document.open!(@annotation_colors_pdf)
+    annotations = Document.annotations!(doc)
+
+    Enum.find(annotations, &(&1.contents == contents)) ||
+      flunk("no annotation with contents #{inspect(contents)} in the fixture")
   end
 end

@@ -21,8 +21,9 @@ defmodule PdfElixide.Document.Annotation do
       annotations. For richer form-field access see `PdfElixide.Form`.
 
   `:color` and `:interior_color` are decoded from the raw `/C` and `/IC`
-  component arrays into a colorspace-tagged term (see `t:color/0`).
+  component arrays into a `PdfElixide.Color` struct (see `t:color/0`).
   """
+  alias PdfElixide.Color
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Annotation.Flags
   alias PdfElixide.Geometry.Rect
@@ -73,20 +74,22 @@ defmodule PdfElixide.Document.Annotation do
   An annotation color, decoded from the raw `/C` (or `/IC`) component array by
   its length:
 
-    * `:transparent` — an empty array.
-    * `{:gray, g}` — one component (DeviceGray).
-    * `{:rgb, r, g, b}` — three components (DeviceRGB).
-    * `{:cmyk, c, m, y, k}` — four components (DeviceCMYK).
-    * `{:other, components}` — any other length (preserved verbatim).
+    * `%PdfElixide.Color.Gray{}` — one component (DeviceGray).
+    * `%PdfElixide.Color.RGB{}` — three components (DeviceRGB).
+    * `%PdfElixide.Color.CMYK{}` — four components (DeviceCMYK).
+    * `%PdfElixide.Color.Unknown{}` — any other length, preserved verbatim.
 
   Each component is in the `0.0..1.0` range.
+
+  The colorspace is inferred from the component count, because the array itself
+  carries none. That inference can be wrong — a one-component `/C` in a
+  Separation space reads as `%PdfElixide.Color.Gray{}` even though the value is
+  a tint, not an intensity.
+
+  A `nil` field means no color was decoded — either because the entry is absent
+  or because it is an empty array, which upstream does not distinguish.
   """
-  @type color ::
-          :transparent
-          | {:gray, float()}
-          | {:rgb, float(), float(), float()}
-          | {:cmyk, float(), float(), float(), float()}
-          | {:other, [float()]}
+  @type color :: Color.t()
 
   @enforce_keys [
     :page,
@@ -148,8 +151,8 @@ defmodule PdfElixide.Document.Annotation do
 
   @doc false
   # Builds an `Annotation` from the raw map returned by the NIF. Every field
-  # already arrives in its final shape (subtype as an atom, `rect`/`flags` as
-  # structs, destination/action/field_type/color as tagged terms); only
+  # already arrives in its final shape (subtype as an atom, `rect`/`flags`/`color`
+  # as structs, destination/action/field_type as tagged terms); only
   # `annotation_type` is renamed to the `:type` field.
   @spec from_nif(map()) :: t()
   def from_nif(map) when is_map(map) do

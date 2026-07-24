@@ -2,7 +2,7 @@ use pdf_oxide::layout::TextChar;
 use rustler::NifMap;
 
 use crate::{
-    color::{color_to_nif, ColorNif},
+    color::{color_to_nif, RgbNif},
     geometry::{rect_to_nif, RectNif},
 };
 
@@ -17,7 +17,7 @@ pub struct CharNif {
     bold: bool,
     italic: bool,
     monospace: bool,
-    color: ColorNif,
+    color: RgbNif,
     origin: (f32, f32),
     rotation: f32,
     advance_width: f32,
