@@ -99,8 +99,12 @@ pub fn extract_page_fonts(doc: &PdfDocument, page_index: usize) -> Vec<FontNif> 
         return Vec::new();
     }
 
-    extractor
-        .get_font_set()
+    // `get_font_set` iterates a `HashMap`, whose order Rust randomizes per
+    // process. Sort by resource name (unique within a page) so extraction is
+    // deterministic across calls.
+    let mut fonts = extractor.get_font_set();
+    fonts.sort_by(|(a, _), (b, _)| a.cmp(b));
+    fonts
         .into_iter()
         .map(|(resource_name, font)| font_to_nif(resource_name, font, page_index))
         .collect()
