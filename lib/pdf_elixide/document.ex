@@ -32,6 +32,10 @@ defmodule PdfElixide.Document do
       `{:error, %PdfElixide.Error{reason: :wrong_password}}` (or raises,
       for the bang variants). When omitted or `nil`, no authentication
       attempt is made beyond `pdf_oxide`'s built-in empty-password try.
+
+  To *check* a password against an already-open document without treating a
+  wrong one as an error, use `authenticate/2`, which returns `{:ok, false}`
+  rather than a `:wrong_password` error.
   """
   @type open_opts :: [password: String.t()]
 
@@ -147,6 +151,12 @@ defmodule PdfElixide.Document do
 
   Returns `{:ok, true}` if authentication succeeded (or the PDF is not encrypted),
   `{:ok, false}` if the password was wrong, or `{:error, reason}` on a PDF/crypto error.
+
+  Unlike `open/2`'s `:password` option — where a wrong password is an
+  `{:error, %PdfElixide.Error{reason: :wrong_password}}` because the document
+  cannot be produced — this is a password *check*, so a wrong password is a
+  normal `{:ok, false}` result and `{:error, _}` is reserved for PDF/crypto
+  errors.
   """
   @spec authenticate(t(), String.t()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
