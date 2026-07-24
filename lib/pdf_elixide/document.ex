@@ -3,6 +3,7 @@ defmodule PdfElixide.Document do
   Read-only representation of a PDF document.
   """
 
+  alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
@@ -717,6 +718,60 @@ defmodule PdfElixide.Document do
   def outline!(%__MODULE__{} = doc) do
     case outline(doc) do
       {:ok, items} -> items
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Reads the annotations of the whole document.
+
+  Returns every page's annotations concatenated into a single flat list, in page
+  order, as `PdfElixide.Document.Annotation` structs. Each carries its zero-based
+  `:page` index. Returns `{:ok, []}` when the document has no annotations.
+  """
+  @spec annotations(t()) :: {:ok, [Annotation.t()]} | {:error, Error.t()}
+  def annotations(%__MODULE__{ref: ref}) do
+    with {:ok, annotations} <- Wrap.call(fn -> Native.document_all_annotations(ref) end) do
+      {:ok, Enum.map(annotations, &Annotation.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Reads the annotations of the whole document, raising an error if it fails.
+  """
+  @spec annotations!(t()) :: [Annotation.t()]
+  def annotations!(%__MODULE__{} = doc) do
+    case annotations(doc) do
+      {:ok, annotations} -> annotations
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Reads the annotations of the page at the given zero-based index.
+
+  Returns `{:ok, []}` when the page has no annotations. Each annotation — a link,
+  sticky note, highlight, form widget, and so on — is carried as a
+  `PdfElixide.Document.Annotation` struct.
+  """
+  @spec annotations(t(), non_neg_integer()) ::
+          {:ok, [Annotation.t()]} | {:error, Error.t()}
+  def annotations(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, annotations} <- Wrap.call(fn -> Native.document_annotations(ref, page_index) end) do
+      {:ok, Enum.map(annotations, &Annotation.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Reads the annotations of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec annotations!(t(), non_neg_integer()) :: [Annotation.t()]
+  def annotations!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case annotations(doc, page_index) do
+      {:ok, annotations} -> annotations
       {:error, error} -> raise error
     end
   end

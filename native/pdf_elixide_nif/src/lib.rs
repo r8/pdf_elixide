@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use pdf_oxide::{editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo, PdfDocument};
 
+mod annotations;
 mod char;
 mod color;
 mod document;

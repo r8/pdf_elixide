@@ -4,6 +4,7 @@ defmodule PdfElixide.Document.Page do
   """
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
@@ -263,6 +264,27 @@ defmodule PdfElixide.Document.Page do
   def fonts!(page) do
     case fonts(page) do
       {:ok, fonts} -> fonts
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Reads the annotations on the page.
+
+  Returns `{:ok, []}` when the page has no annotations.
+  """
+  @spec annotations(t()) :: {:ok, [Annotation.t()]} | {:error, Error.t()}
+  def annotations(%__MODULE__{doc: doc, index: index}) do
+    Document.annotations(doc, index)
+  end
+
+  @doc """
+  Same as `annotations/1` but raises an error if it fails.
+  """
+  @spec annotations!(t()) :: [Annotation.t()]
+  def annotations!(page) do
+    case annotations(page) do
+      {:ok, annotations} -> annotations
       {:error, error} -> raise error
     end
   end

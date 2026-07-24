@@ -3,6 +3,7 @@ defmodule PdfElixide.DocumentTest do
 
   alias PdfElixide.Color
   alias PdfElixide.Document
+  alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
@@ -27,6 +28,7 @@ defmodule PdfElixide.DocumentTest do
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
+  @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -1343,6 +1345,122 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@outline_pdf)
       [ch1, _ch2] = Document.outline!(doc)
       assert inspect(ch1) == "#PdfElixide.Document.OutlineItem<\"Chapter 1\" 1 child>"
+    end
+  end
+
+  describe "annotations/1" do
+    test "returns every page's annotations as a flat list of structs" do
+      doc = Document.open!(@annotations_pdf)
+      assert {:ok, annotations} = Document.annotations(doc)
+      assert annotations != []
+      assert Enum.all?(annotations, &match?(%Annotation{}, &1))
+    end
+
+    test "length equals the sum of the per-page annotation counts" do
+      doc = Document.open!(@annotations_pdf)
+      {:ok, all} = Document.annotations(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.annotations(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each annotation carries its zero-based page index" do
+      doc = Document.open!(@annotations_pdf)
+      {:ok, annotations} = Document.annotations(doc)
+      assert Enum.all?(annotations, &(&1.page == 0))
+    end
+  end
+
+  describe "annotations!/1" do
+    test "returns the flat annotation list of the whole document" do
+      doc = Document.open!(@annotations_pdf)
+      annotations = Document.annotations!(doc)
+      assert Enum.all?(annotations, &match?(%Annotation{}, &1))
+    end
+  end
+
+  describe "annotations/2" do
+    test "decodes a text (sticky note) annotation with its metadata" do
+      doc = Document.open!(@annotations_pdf)
+      {:ok, annotations} = Document.annotations(doc, 0)
+
+      text = Enum.find(annotations, &(&1.subtype == :text))
+      assert %Annotation{type: "Annot", raw_subtype: "Text"} = text
+      assert text.contents == "Hello note"
+      assert text.author == "Alice"
+      assert text.creation_date == "D:20240101000000Z"
+      assert text.modification_date == "D:20240102000000Z"
+      assert text.color == {:rgb, 1.0, 0.0, 0.0}
+      assert %Rect{x: 100.0, y: 700.0, width: 20.0, height: 20.0} = text.rect
+
+      # /F 4 decodes to only the PRINT bit, mirroring Permissions' :raw field.
+      assert text.flags.print
+      refute text.flags.hidden
+      assert text.flags.raw == 4
+    end
+
+    test "decodes a link annotation's URI action" do
+      doc = Document.open!(@annotations_pdf)
+      {:ok, annotations} = Document.annotations(doc, 0)
+
+      link = Enum.find(annotations, &(&1.subtype == :link))
+      assert link.action == {:uri, "https://example.com"}
+      assert link.destination == nil
+      assert link.border == [0.0, 0.0, 1.0]
+    end
+
+    test "decodes a highlight annotation's quad points, color, and opacity" do
+      doc = Document.open!(@annotations_pdf)
+      {:ok, annotations} = Document.annotations(doc, 0)
+
+      highlight = Enum.find(annotations, &(&1.subtype == :highlight))
+      assert highlight.quad_points == [[100.0, 620.0, 300.0, 620.0, 100.0, 600.0, 300.0, 600.0]]
+      assert highlight.color == {:rgb, 1.0, 1.0, 0.0}
+      assert highlight.opacity == 0.5
+    end
+
+    test "returns {:ok, []} for a page with no annotations" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.annotations(doc, 0)
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.annotations(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.annotations(doc, -1) end
+    end
+  end
+
+  describe "annotations!/2" do
+    test "returns the annotations for a valid page" do
+      doc = Document.open!(@annotations_pdf)
+      assert [%Annotation{} | _] = Document.annotations!(doc, 0)
+    end
+
+    test "raises Error for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.annotations!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.annotations!(doc, :first) end
+    end
+  end
+
+  describe "Annotation inspect/1" do
+    test "renders the page index and subtype" do
+      doc = Document.open!(@annotations_pdf)
+      [text | _] = Document.annotations!(doc, 0)
+      assert inspect(text) == "#PdfElixide.Document.Annotation<p0 :text>"
     end
   end
 

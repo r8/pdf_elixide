@@ -27,6 +27,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Read the document outline (bookmarks / table of contents) as a nested tree
 - Extract raster images (photos, logos, scans) as PNG bytes with their on-page geometry
 - Extract the fonts a page uses (type, encoding, weight) and pull out embedded font programs
+- Read annotations (links, notes, highlights, form widgets) with their geometry, contents, colors, and flags
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 - Read document metadata — both the `/Info` dictionary and the XMP packet
@@ -518,6 +519,51 @@ end
 ```
 
 `data!/1` returns the bytes (or `nil`) directly, raising on error.
+
+### Reading annotations
+
+`PdfElixide.Document.annotations/2` returns the annotations on a single page as
+`%PdfElixide.Document.Annotation{}` structs (and `annotations/1` returns every
+page's annotations as one flat list). A page with no annotations gives
+`{:ok, []}`:
+
+```elixir
+{:ok, annotations} = PdfElixide.Document.annotations(doc, 0)
+
+# Annotations are also reachable from a page handle.
+{:ok, annotations} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.annotations()
+```
+
+Each annotation carries its `:page` index, a parsed `:subtype` atom (`:link`,
+`:text`, `:highlight`, `:widget`, …), its `:rect` (a `%PdfElixide.Geometry.Rect{}`),
+`:contents`, `:author`, dates, `:opacity`, and more. Colors decode by component
+count into a colorspace-tagged term:
+
+```elixir
+%PdfElixide.Document.Annotation{color: {:rgb, 1.0, 0.0, 0.0}}   # DeviceRGB
+%PdfElixide.Document.Annotation{color: {:gray, 0.5}}           # DeviceGray
+%PdfElixide.Document.Annotation{color: {:cmyk, 0.0, 0.0, 0.0, 1.0}}
+```
+
+Link annotations expose where they point via `:destination` and `:action`:
+
+```elixir
+%PdfElixide.Document.Annotation{action: {:uri, "https://example.com"}}
+```
+
+The `/F` flags decode into a `%PdfElixide.Document.Annotation.Flags{}` sub-struct
+(one boolean per bit, plus `:raw` for the undecoded integer):
+
+```elixir
+annotation.flags.print         # => true
+annotation.flags.hidden        # => false
+annotation.flags.raw           # => 4
+```
+
+Widget (form field) annotations additionally populate `:field_type`,
+`:field_name`, `:field_value`, and related keys; for richer form-field access see
+`PdfElixide.Form`. `annotations!/1` and `annotations!/2` return the list directly,
+raising on error.
 
 ### Extracting form fields
 

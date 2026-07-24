@@ -1,0 +1,41 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Annots [5 0 R 6 0 R 7 0 R] >>
+endobj
+4 0 obj
+<< /Length 0 >>
+stream
+
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Text /Rect [100 700 120 720] /Contents (Hello note) /T (Alice) /CreationDate (D:20240101000000Z) /M (D:20240102000000Z) /F 4 /C [1 0 0] >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Link /Rect [100 650 200 670] /Border [0 0 1] /A << /Type /Action /S /URI /URI (https://example.com) >> >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Highlight /Rect [100 600 300 620] /QuadPoints [100 620 300 620 100 600 300 600] /C [1 1 0] /CA 0.5 >>
+endobj
+xref
+0 8
+0000000000 65535 f
+0000000015 00000 n
+0000000064 00000 n
+0000000121 00000 n
+0000000236 00000 n
+0000000285 00000 n
+0000000465 00000 n
+0000000612 00000 n
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+755
+%%EOF

@@ -48,6 +48,8 @@ defmodule PdfElixide.Native do
   def document_all_fonts(_doc), do: err()
   def font_data(_font), do: err()
   def document_outline(_doc), do: err()
+  def document_annotations(_doc, _page_index), do: err()
+  def document_all_annotations(_doc), do: err()
   def document_images(_doc, _page_index), do: err()
   def document_all_images(_doc), do: err()
   def image_to_binary(_image, _format), do: err()

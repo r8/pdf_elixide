@@ -4,6 +4,7 @@ use pdf_oxide::{extractors::forms::FormExtractor, PdfDocument};
 use rustler::{Binary, NifMap, NifResult, ResourceArc};
 
 use crate::{
+    annotations::{annotation_to_nif, AnnotationNif},
     atoms,
     char::{char_to_nif, CharNif},
     error::{lock_err, tagged_err, to_nif_err},
@@ -335,6 +336,43 @@ fn document_outline(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<Ou
 
     let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
     Ok(items.into_iter().map(outline_item_to_nif).collect())
+}
+
+/// Reads the annotations of a single page (zero-indexed) as `AnnotationNif`
+/// structs. Returns an empty list when the page has no annotations.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_annotations(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<AnnotationNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
+
+    let annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
+    Ok(annotations
+        .into_iter()
+        .map(|annotation| annotation_to_nif(annotation, page_index))
+        .collect())
+}
+
+/// Reads the annotations across all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_annotations(
+    resource: ResourceArc<DocumentResource>,
+) -> NifResult<Vec<AnnotationNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut annotations = Vec::new();
+    for page_index in 0..count {
+        let page_annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
+        annotations.extend(
+            page_annotations
+                .into_iter()
+                .map(|annotation| annotation_to_nif(annotation, page_index)),
+        );
+    }
+    Ok(annotations)
 }
 
 /// Extracts raster images (photos, logos, scanned pictures) from a single page
