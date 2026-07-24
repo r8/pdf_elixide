@@ -10,6 +10,7 @@ mod error;
 mod form;
 mod geometry;
 mod images;
+mod outline;
 mod paths;
 mod span;
 mod table;

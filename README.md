@@ -24,6 +24,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
 - Detect tables and read their rows and cells
 - Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style
+- Read the document outline (bookmarks / table of contents) as a nested tree
 - Extract raster images (photos, logos, scans) as PNG bytes with their on-page geometry
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
@@ -105,6 +106,41 @@ doc   = PdfElixide.Document.open!("path/to/file.pdf")
 pages = PdfElixide.Document.page_count!(doc)
 text  = PdfElixide.Document.text!(doc, 0)
 ```
+
+### Reading the outline
+
+`PdfElixide.Document.outline/1` reads the document's outline — its bookmarks or
+table of contents — as a tree of `%PdfElixide.Document.OutlineItem{}` structs.
+A document with no outline gives `{:ok, []}`:
+
+```elixir
+{:ok, items} = PdfElixide.Document.outline(doc)
+
+# Walk the tree — each item may carry nested `:children`.
+defmodule TOC do
+  def print(items, depth \\ 0) do
+    for %{title: title, dest: dest, children: children} <- items do
+      IO.puts(String.duplicate("  ", depth) <> "#{title} (#{inspect(dest)})")
+      print(children, depth + 1)
+    end
+  end
+end
+
+TOC.print(items)
+# Chapter 1 ({:page, 0})
+#   Section 1.1 ({:page, 1})
+# Chapter 2 ({:page, 2})
+```
+
+Each outline item carries:
+
+- `:title` — the bookmark label (`String.t()`)
+- `:dest` — where it points, as one of:
+  - `{:page, page_index}` — a zero-based page index
+  - `{:named, name}` — a named destination that could not be resolved to a page
+    (the raw name is preserved)
+  - `nil` — no determinable destination
+- `:children` — the nested `%PdfElixide.Document.OutlineItem{}` structs
 
 ### Extracting words
 

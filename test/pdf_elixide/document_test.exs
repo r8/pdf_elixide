@@ -4,6 +4,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Color
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
@@ -20,6 +21,7 @@ defmodule PdfElixide.DocumentTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
+  @outline_pdf Path.join(@fixtures, "outline.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -1155,6 +1157,57 @@ defmodule PdfElixide.DocumentTest do
         assert_raise Error, fn -> Document.text!(doc, 99) end
 
       assert error.reason == :out_of_range
+    end
+  end
+
+  describe "outline/1" do
+    test "returns the top-level outline items as a tree of structs" do
+      doc = Document.open!(@outline_pdf)
+      assert {:ok, [%OutlineItem{} = ch1, %OutlineItem{} = ch2]} = Document.outline(doc)
+
+      assert ch1.title == "Chapter 1"
+      assert ch1.dest == {:page, 0}
+
+      assert ch2.title == "Chapter 2"
+      assert ch2.dest == {:page, 2}
+      assert ch2.children == []
+    end
+
+    test "nests child items under their parent, resolving destinations to pages" do
+      doc = Document.open!(@outline_pdf)
+      {:ok, [ch1, _ch2]} = Document.outline(doc)
+
+      assert [%OutlineItem{} = section] = ch1.children
+      assert section.title == "Section 1.1"
+      assert section.dest == {:page, 1}
+      assert section.children == []
+    end
+
+    test "returns {:ok, []} for a document with no outline" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.outline(doc)
+    end
+  end
+
+  describe "outline!/1" do
+    test "returns the outline items directly" do
+      doc = Document.open!(@outline_pdf)
+
+      assert [%OutlineItem{title: "Chapter 1"}, %OutlineItem{title: "Chapter 2"}] =
+               Document.outline!(doc)
+    end
+
+    test "returns [] for a document with no outline" do
+      doc = Document.open!(@valid_pdf)
+      assert [] = Document.outline!(doc)
+    end
+  end
+
+  describe "OutlineItem inspect/1" do
+    test "renders the title and child count" do
+      doc = Document.open!(@outline_pdf)
+      [ch1, _ch2] = Document.outline!(doc)
+      assert inspect(ch1) == "#PdfElixide.Document.OutlineItem<\"Chapter 1\" 1 child>"
     end
   end
 end

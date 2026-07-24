@@ -5,6 +5,7 @@ defmodule PdfElixide.Document do
 
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Image
+  alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Path
   alias PdfElixide.Document.Span
@@ -531,6 +532,31 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case paths(doc, page_index) do
       {:ok, paths} -> paths
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Reads the document outline — its bookmarks / table of contents.
+
+  Returns the top-level `PdfElixide.Document.OutlineItem` structs, each of which
+  may carry nested `:children`, forming a tree. Returns `{:ok, []}` when the
+  document has no outline.
+  """
+  @spec outline(t()) :: {:ok, [OutlineItem.t()]} | {:error, Error.t()}
+  def outline(%__MODULE__{ref: ref}) do
+    with {:ok, items} <- Wrap.call(fn -> Native.document_outline(ref) end) do
+      {:ok, Enum.map(items, &OutlineItem.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Reads the document outline, raising an error if it fails.
+  """
+  @spec outline!(t()) :: [OutlineItem.t()]
+  def outline!(%__MODULE__{} = doc) do
+    case outline(doc) do
+      {:ok, items} -> items
       {:error, error} -> raise error
     end
   end

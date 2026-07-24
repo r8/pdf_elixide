@@ -9,6 +9,7 @@ use crate::{
     error::{lock_err, tagged_err, to_nif_err},
     form::{document_form_field_to_nif, FieldNif},
     images::{image_to_nif, ImageNif},
+    outline::{outline_item_to_nif, OutlineItemNif},
     paths::{path_to_nif, PathNif},
     span::{span_to_nif, SpanNif},
     table::{table_to_nif, TableNif},
@@ -323,6 +324,16 @@ fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
         );
     }
     Ok(paths)
+}
+
+/// Reads the document outline (bookmarks / table of contents) as a tree of
+/// `OutlineItemNif`. Returns an empty list when the document has no outline.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_outline(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<OutlineItemNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
+    Ok(items.into_iter().map(outline_item_to_nif).collect())
 }
 
 /// Extracts raster images (photos, logos, scanned pictures) from a single page

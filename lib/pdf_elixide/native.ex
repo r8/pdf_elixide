@@ -44,6 +44,7 @@ defmodule PdfElixide.Native do
   def document_all_tables(_doc), do: err()
   def document_paths(_doc, _page_index), do: err()
   def document_all_paths(_doc), do: err()
+  def document_outline(_doc), do: err()
   def document_images(_doc, _page_index), do: err()
   def document_all_images(_doc), do: err()
   def image_to_binary(_image, _format), do: err()
