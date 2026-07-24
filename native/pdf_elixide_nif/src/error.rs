@@ -18,9 +18,15 @@ pub fn to_nif_err(e: PdfError) -> Error {
     tagged_err(classify(&e), e.to_string())
 }
 
-/// Creates a standard "Lock is poisoned" error for poisoned mutexes.
+/// Creates a standard "Lock is poisoned" error for poisoned locks.
 pub fn lock_err() -> Error {
     tagged_err(atoms::lock_poisoned(), "Lock is poisoned")
+}
+
+/// Creates the error reported for a handle that was released with `close`
+/// (see `crate::resource::Closable`). `label` names the handle, e.g. `"Document"`.
+pub fn closed_err(label: &str) -> Error {
+    tagged_err(atoms::closed(), format!("{label} is closed"))
 }
 
 /// Maps a `pdf_oxide::Error` variant to a stable reason atom. Anything not

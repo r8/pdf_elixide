@@ -1,6 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use pdf_oxide::{editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo, PdfDocument};
+
+use crate::resource::Closable;
 
 mod annotations;
 mod char;
@@ -15,6 +17,7 @@ mod images;
 mod metadata;
 mod outline;
 mod paths;
+mod resource;
 mod span;
 mod table;
 mod text_line;
@@ -34,35 +37,38 @@ pub(crate) mod atoms {
         standard, custom, identity,
         // Error reason tags (see error.rs / PdfElixide.Error)
         encrypted, wrong_password, invalid_pdf, unsupported,
-        not_found, out_of_range, io, lock_poisoned, other
+        not_found, out_of_range, io, lock_poisoned, closed, other
     }
 }
 
 // Resources --------------------------------------------------------------------------------------
+//
+// Every resource wraps its value in a `Closable`, which owns the locking and
+// supports releasing the value early (see resource.rs and the `*_close` NIFs).
 
 struct DocumentResource {
-    doc: Mutex<PdfDocument>,
+    doc: Closable<PdfDocument>,
 }
 
 #[rustler::resource_impl]
 impl rustler::Resource for DocumentResource {}
 
 struct EditorResource {
-    editor: Mutex<DocumentEditor>,
+    editor: Closable<DocumentEditor>,
 }
 
 #[rustler::resource_impl]
 impl rustler::Resource for EditorResource {}
 
 struct ImageResource {
-    image: PdfImage,
+    image: Closable<PdfImage>,
 }
 
 #[rustler::resource_impl]
 impl rustler::Resource for ImageResource {}
 
 struct FontResource {
-    font: Arc<FontInfo>,
+    font: Closable<Arc<FontInfo>>,
 }
 
 #[rustler::resource_impl]

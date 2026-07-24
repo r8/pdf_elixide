@@ -110,6 +110,36 @@ defmodule PdfElixide.Document do
   def source_path(%__MODULE__{source_path: p}), do: p
 
   @doc """
+  Releases the document's native memory immediately.
+
+  A document holds its PDF data in memory on the Rust side, which is normally
+  freed only when the BEAM garbage-collects the handle — invisible to the VM's
+  memory accounting, so nothing pressures it to happen promptly. `close/1` frees
+  it now, which matters for long-lived processes that open many documents.
+  Calling it is optional and idempotent.
+
+  Afterwards, functions that read the document return
+  `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
+  it. `version/1` and `source_path/1` keep working, since they read the struct
+  rather than the native handle, and any `PdfElixide.Document.Image` or
+  `PdfElixide.Document.Font` handles already extracted from the document remain
+  valid — they own their data independently.
+
+      doc = PdfElixide.Document.open!("sample.pdf")
+      text = PdfElixide.Document.text!(doc, 0)
+      :ok = PdfElixide.Document.close(doc)
+
+  """
+  @spec close(t()) :: :ok
+  def close(%__MODULE__{ref: ref}), do: Native.document_close(ref)
+
+  @doc """
+  Returns whether the document has been released with `close/1`.
+  """
+  @spec closed?(t()) :: boolean()
+  def closed?(%__MODULE__{ref: ref}), do: Native.document_closed(ref)
+
+  @doc """
   Returns the number of pages in the given PDF document.
   """
   @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
@@ -133,7 +163,7 @@ defmodule PdfElixide.Document do
   """
   @spec has_structure_tree?(t()) :: boolean()
   def has_structure_tree?(%__MODULE__{ref: ref}) do
-    Native.document_has_structure_tree(ref)
+    predicate!(fn -> Native.document_has_structure_tree(ref) end)
   end
 
   @doc """
@@ -141,7 +171,7 @@ defmodule PdfElixide.Document do
   """
   @spec has_xfa?(t()) :: boolean()
   def has_xfa?(%__MODULE__{ref: ref}) do
-    Native.document_has_xfa(ref)
+    predicate!(fn -> Native.document_has_xfa(ref) end)
   end
 
   @doc """
@@ -149,7 +179,16 @@ defmodule PdfElixide.Document do
   """
   @spec encrypted?(t()) :: boolean()
   def encrypted?(%__MODULE__{ref: ref}) do
-    Native.document_is_encrypted(ref)
+    predicate!(fn -> Native.document_is_encrypted(ref) end)
+  end
+
+  # Predicates return a bare boolean, so a NIF failure (a closed document, a
+  # poisoned lock) has nowhere to go but a raise — as the bang variants do.
+  defp predicate!(fun) do
+    case Wrap.call(fun) do
+      {:ok, value} -> value
+      {:error, error} -> raise error
+    end
   end
 
   @doc """

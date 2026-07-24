@@ -66,6 +66,35 @@ defmodule PdfElixide.Editor do
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
 
+  @doc """
+  Releases the editor's native memory immediately.
+
+  An editor holds the source document plus its pending edits in memory on the
+  Rust side, normally freed only when the BEAM garbage-collects the handle.
+  `close/1` frees it now, which matters for long-lived processes that open many
+  documents. Calling it is optional and idempotent.
+
+  **Unsaved edits are discarded** — call `save/3` or `to_binary/2` first.
+  Afterwards, functions that read or mutate the editor return
+  `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
+  it. `source_path/1` keeps working, since it reads the struct rather than the
+  native handle.
+
+      editor = PdfElixide.Editor.open!("form.pdf")
+      :ok = PdfElixide.Form.set_value(editor, "name", "Ada")
+      :ok = PdfElixide.Editor.save(editor, "filled.pdf")
+      :ok = PdfElixide.Editor.close(editor)
+
+  """
+  @spec close(t()) :: :ok
+  def close(%__MODULE__{ref: ref}), do: Native.editor_close(ref)
+
+  @doc """
+  Returns whether the editor has been released with `close/1`.
+  """
+  @spec closed?(t()) :: boolean()
+  def closed?(%__MODULE__{ref: ref}), do: Native.editor_closed(ref)
+
   @typedoc """
   Options accepted by `save/3`, `save!/3`, `to_binary/2`, and `to_binary!/2`.
 

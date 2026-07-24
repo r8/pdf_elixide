@@ -112,6 +112,30 @@ pages = PdfElixide.Document.page_count!(doc)
 text  = PdfElixide.Document.text!(doc, 0)
 ```
 
+### Releasing a document
+
+A document keeps its PDF data in memory on the Rust side. That memory is freed
+when the BEAM garbage-collects the handle, so for most programs there is nothing
+to do. In a long-lived process that opens many documents, `close/1` frees it at a
+point you choose instead:
+
+```elixir
+doc = PdfElixide.Document.open!("path/to/file.pdf")
+text = PdfElixide.Document.text!(doc, 0)
+
+:ok = PdfElixide.Document.close(doc)
+true = PdfElixide.Document.closed?(doc)
+
+# Reading a closed document is an ordinary error, not a crash.
+{:error, %PdfElixide.Error{reason: :closed}} = PdfElixide.Document.page_count(doc)
+```
+
+`close/1` is idempotent, and `PdfElixide.Editor`, `PdfElixide.Document.Image`,
+and `PdfElixide.Document.Font` handles have the same pair of functions. Closing
+an editor discards unsaved edits, so save first. Images and fonts already
+extracted from a document own their data independently — closing the document
+leaves them usable, and vice versa.
+
 ### Reading the outline
 
 `PdfElixide.Document.outline/1` reads the document's outline — its bookmarks or

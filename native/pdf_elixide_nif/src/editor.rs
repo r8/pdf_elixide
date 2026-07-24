@@ -1,12 +1,11 @@
-use std::sync::Mutex;
-
 use pdf_oxide::editor::{DocumentEditor, EditableDocument, SaveOptions};
 use rustler::{Atom, Binary, NifMap, NifResult, OwnedBinary, ResourceArc};
 
 use crate::{
     atoms,
-    error::{lock_err, tagged_err, to_nif_err},
+    error::{tagged_err, to_nif_err},
     form::{editor_field_value_from_nif, editor_form_field_to_nif, FieldNif, FieldValueNif},
+    resource::Closable,
     EditorResource,
 };
 
@@ -36,7 +35,7 @@ fn editor_open(path: String) -> NifResult<ResourceArc<EditorResource>> {
     let editor = DocumentEditor::open(path).map_err(to_nif_err)?;
 
     Ok(ResourceArc::new(EditorResource {
-        editor: Mutex::new(editor),
+        editor: Closable::new("Editor", editor),
     }))
 }
 
@@ -46,13 +45,29 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<ResourceArc<EditorResource>> {
     let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
 
     Ok(ResourceArc::new(EditorResource {
-        editor: Mutex::new(editor),
+        editor: Closable::new("Editor", editor),
     }))
+}
+
+/// Releases the editor's native memory now, rather than waiting for the BEAM to
+/// garbage-collect the handle. Idempotent; later calls on the handle fail with
+/// `:closed`, and any unsaved edits are discarded.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
+    resource.editor.close();
+
+    atoms::ok()
+}
+
+/// Returns whether the editor has been released with `editor_close`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_closed(resource: ResourceArc<EditorResource>) -> bool {
+    resource.editor.is_closed()
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_form_fields(resource: ResourceArc<EditorResource>) -> NifResult<Vec<FieldNif>> {
-    let mut editor = resource.editor.lock().map_err(|_| lock_err())?;
+    let mut editor = resource.editor.lock()?;
 
     let fields = editor.get_form_fields().map_err(to_nif_err)?;
     Ok(fields.into_iter().map(editor_form_field_to_nif).collect())
@@ -63,7 +78,7 @@ fn editor_to_bytes(
     resource: ResourceArc<EditorResource>,
     options: SaveOptionsNif,
 ) -> NifResult<OwnedBinary> {
-    let mut editor = resource.editor.lock().map_err(|_| lock_err())?;
+    let mut editor = resource.editor.lock()?;
 
     let bytes = editor
         .save_to_bytes_with_options(options.into())
@@ -81,7 +96,7 @@ fn editor_save(
     path: String,
     options: SaveOptionsNif,
 ) -> NifResult<Atom> {
-    let mut editor = resource.editor.lock().map_err(|_| lock_err())?;
+    let mut editor = resource.editor.lock()?;
 
     editor
         .save_with_options(path, options.into())
@@ -96,7 +111,7 @@ fn editor_set_form_field_value(
     name: String,
     value: Option<FieldValueNif>,
 ) -> NifResult<Atom> {
-    let mut editor = resource.editor.lock().map_err(|_| lock_err())?;
+    let mut editor = resource.editor.lock()?;
 
     editor
         .set_form_field_value(&name, editor_field_value_from_nif(value))

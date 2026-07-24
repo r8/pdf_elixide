@@ -22,6 +22,7 @@ defmodule PdfElixide.Error do
     * `:out_of_range` — the page index is outside the document.
     * `:io` — an underlying IO error.
     * `:lock_poisoned` — the internal resource lock was poisoned.
+    * `:closed` — the handle was released with `close/1`.
     * `:other` — any error not covered above; `message` is preserved verbatim.
 
   `:message` is a human-readable description. `:details` is reserved for future
@@ -37,6 +38,7 @@ defmodule PdfElixide.Error do
           | :out_of_range
           | :io
           | :lock_poisoned
+          | :closed
           | :other
 
   @type t :: %__MODULE__{

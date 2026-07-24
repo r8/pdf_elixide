@@ -204,6 +204,27 @@ defmodule PdfElixide.Document.Image do
     end
   end
 
+  @doc """
+  Releases the image's pixel data immediately.
+
+  The bytes behind `:ref` are normally freed when the BEAM garbage-collects the
+  handle; `close/1` frees them now, which is worth doing when walking many large
+  images. Calling it is optional and idempotent.
+
+  Afterwards `data/1`, `to_binary/2`, and `save/3` return
+  `{:error, %PdfElixide.Error{reason: :closed}}` (bang variants raise it); the
+  metadata fields on the struct keep working. An image's lifetime is independent
+  of the document it came from — closing either one leaves the other usable.
+  """
+  @spec close(t()) :: :ok
+  def close(%__MODULE__{ref: ref}), do: Native.image_close(ref)
+
+  @doc """
+  Returns whether the image has been released with `close/1`.
+  """
+  @spec closed?(t()) :: boolean()
+  def closed?(%__MODULE__{ref: ref}), do: Native.image_closed(ref)
+
   # Validates an explicit :format option, returning the atom or raising.
   defp validate_format!(format) when format in [:png, :jpeg], do: format
 

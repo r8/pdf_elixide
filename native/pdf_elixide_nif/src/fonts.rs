@@ -6,9 +6,9 @@ use pdf_oxide::{
     object::Object,
     PdfDocument,
 };
-use rustler::{Encoder, Env, NifMap, OwnedBinary, ResourceArc, Term};
+use rustler::{Encoder, Env, NifMap, NifResult, OwnedBinary, ResourceArc, Term};
 
-use crate::{atoms, FontResource};
+use crate::{atoms, resource::Closable, FontResource};
 
 #[derive(NifMap)]
 #[rustler(encode)]
@@ -83,7 +83,9 @@ pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> F
         weight: font.font_weight,
         bold: font.is_bold(),
         italic: font.is_italic(),
-        resource: ResourceArc::new(FontResource { font }),
+        resource: ResourceArc::new(FontResource {
+            font: Closable::new("Font", font),
+        }),
     }
 }
 
@@ -134,13 +136,31 @@ fn page_resources(doc: &PdfDocument, page_index: usize) -> Object {
 /// file) as an Erlang binary, or the atom `nil` when the font has no embedded
 /// program (e.g. the standard 14).
 #[rustler::nif(schedule = "DirtyCpu")]
-fn font_data(env: Env<'_>, resource: ResourceArc<FontResource>) -> Term<'_> {
-    match resource.font.embedded_font_data.as_deref() {
+fn font_data<'a>(env: Env<'a>, resource: ResourceArc<FontResource>) -> NifResult<Term<'a>> {
+    let font = resource.font.read()?;
+
+    Ok(match font.embedded_font_data.as_deref() {
         Some(bytes) => {
             let mut bin = OwnedBinary::new(bytes.len()).expect("failed to allocate font binary");
             bin.as_mut_slice().copy_from_slice(bytes);
             bin.release(env).encode(env)
         }
         None => rustler::types::atom::nil().encode(env),
-    }
+    })
+}
+
+/// Releases this handle's reference to the font now, rather than waiting for the
+/// BEAM to garbage-collect it. Idempotent. The embedded font program is freed
+/// once no other extracted handle still references the same font.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn font_close(resource: ResourceArc<FontResource>) -> rustler::Atom {
+    resource.font.close();
+
+    atoms::ok()
+}
+
+/// Returns whether the font handle has been released with `font_close`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn font_closed(resource: ResourceArc<FontResource>) -> bool {
+    resource.font.is_closed()
 }

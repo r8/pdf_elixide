@@ -10,10 +10,7 @@ use pdf_oxide::{
 };
 use rustler::{NifMap, NifResult, ResourceArc};
 
-use crate::{
-    error::{lock_err, to_nif_err},
-    DocumentResource,
-};
+use crate::{error::to_nif_err, DocumentResource};
 
 // Info dictionary --------------------------------------------------------------------------------
 
@@ -98,7 +95,7 @@ fn read_metadata(doc: &PdfDocument) -> MetadataNif {
 /// not an error.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_info(resource: ResourceArc<DocumentResource>) -> NifResult<MetadataNif> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     Ok(read_metadata(&doc))
 }
@@ -162,7 +159,7 @@ fn xmp_to_nif(xmp: XmpMetadata) -> XmpMetadataNif {
 fn document_xmp_metadata(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Option<XmpMetadataNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let xmp = XmpExtractor::extract(&doc).map_err(to_nif_err)?;
     Ok(xmp.map(xmp_to_nif))
@@ -205,7 +202,7 @@ fn permissions_to_nif(perms: PdfPermissions) -> PermissionsNif {
 fn document_permissions(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Option<PermissionsNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     Ok(doc.permissions().map(permissions_to_nif))
 }
@@ -217,7 +214,7 @@ fn document_permissions(
 /// behavior).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<String>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let ranges = PageLabelExtractor::extract(&doc).map_err(to_nif_err)?;
     let count = doc.page_count().map_err(to_nif_err)?;

@@ -1620,6 +1620,145 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "close/1 and closed?/1" do
+    test "closed?/1 flips once the document is closed" do
+      doc = Document.open!(@valid_pdf)
+      refute Document.closed?(doc)
+
+      assert :ok = Document.close(doc)
+      assert Document.closed?(doc)
+    end
+
+    test "close/1 is idempotent" do
+      doc = Document.open!(@valid_pdf)
+
+      assert :ok = Document.close(doc)
+      assert :ok = Document.close(doc)
+      assert Document.closed?(doc)
+    end
+
+    test "reading a closed document returns a :closed error" do
+      doc = Document.open!(@valid_pdf)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed, message: "Document is closed"}} =
+               Document.page_count(doc)
+
+      assert {:error, %Error{reason: :closed}} = Document.text(doc, 0)
+      assert {:error, %Error{reason: :closed}} = Document.metadata(doc)
+      assert {:error, %Error{reason: :closed}} = PdfElixide.Form.fields(doc)
+    end
+
+    test "bang variants raise on a closed document" do
+      doc = Document.open!(@valid_pdf)
+      :ok = Document.close(doc)
+
+      error = assert_raise Error, fn -> Document.page_count!(doc) end
+      assert error.reason == :closed
+
+      assert_raise Error, "Document is closed", fn -> Document.text!(doc, 0) end
+    end
+
+    test "predicates raise on a closed document" do
+      doc = Document.open!(@valid_pdf)
+      :ok = Document.close(doc)
+
+      error = assert_raise Error, fn -> Document.encrypted?(doc) end
+      assert error.reason == :closed
+
+      assert_raise Error, fn -> Document.has_structure_tree?(doc) end
+      assert_raise Error, fn -> Document.has_xfa?(doc) end
+    end
+
+    test "struct-backed accessors keep working after close" do
+      doc = Document.open!(@valid_pdf)
+      :ok = Document.close(doc)
+
+      assert Document.version(doc) == {1, 4}
+      assert Document.source_path(doc) == @valid_pdf
+      assert inspect(doc) == "#PdfElixide.Document<sample.pdf v1.4>"
+    end
+
+    test "page handles from a closed document report :closed" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 0)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Page.text(page)
+      assert {:error, %Error{reason: :closed}} = Page.width(page)
+    end
+
+    test "enumerating a closed document raises" do
+      doc = Document.open!(@valid_pdf)
+      :ok = Document.close(doc)
+
+      assert_raise Error, fn -> Enum.count(doc) end
+    end
+  end
+
+  describe "close/1 and closed?/1 on extracted handles" do
+    test "closes an image handle" do
+      image = Document.open!(@image_pdf) |> Document.images!() |> hd()
+      refute Document.Image.closed?(image)
+
+      assert :ok = Document.Image.close(image)
+      assert :ok = Document.Image.close(image)
+      assert Document.Image.closed?(image)
+
+      assert {:error, %Error{reason: :closed, message: "Image is closed"}} =
+               Document.Image.data(image)
+
+      assert {:error, %Error{reason: :closed}} = Document.Image.to_binary(image)
+      assert_raise Error, fn -> Document.Image.to_binary!(image) end
+    end
+
+    test "closes a font handle" do
+      font =
+        Document.open!(@fonts_pdf) |> Document.fonts!(0) |> Enum.find(& &1.embedded?)
+
+      refute Document.Font.closed?(font)
+
+      assert :ok = Document.Font.close(font)
+      assert Document.Font.closed?(font)
+
+      assert {:error, %Error{reason: :closed, message: "Font is closed"}} =
+               Document.Font.data(font)
+
+      assert_raise Error, fn -> Document.Font.data!(font) end
+    end
+
+    test "an extracted image outlives the document it came from" do
+      doc = Document.open!(@image_pdf)
+      image = doc |> Document.images!() |> hd()
+
+      :ok = Document.close(doc)
+
+      refute Document.Image.closed?(image)
+      assert {:ok, {:raw, _bytes, _format}} = Document.Image.data(image)
+    end
+
+    test "an extracted font outlives the document it came from" do
+      doc = Document.open!(@fonts_pdf)
+      font = doc |> Document.fonts!(0) |> Enum.find(& &1.embedded?)
+
+      :ok = Document.close(doc)
+
+      refute Document.Font.closed?(font)
+      assert {:ok, bytes} = Document.Font.data(font)
+      assert is_binary(bytes)
+    end
+
+    test "closing an image leaves its document usable" do
+      doc = Document.open!(@image_pdf)
+      image = doc |> Document.images!() |> hd()
+
+      :ok = Document.Image.close(image)
+
+      refute Document.closed?(doc)
+      assert {:ok, [_ | _]} = Document.images(doc)
+    end
+  end
+
   # The annotation_colors.pdf fixture carries one annotation per color arity,
   # each identified by its /Contents string.
   defp annotation_with_contents(contents) do

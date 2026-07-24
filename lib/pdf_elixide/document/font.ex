@@ -126,6 +126,28 @@ defmodule PdfElixide.Document.Font do
     end
   end
 
+  @doc """
+  Releases this handle's reference to the font immediately.
+
+  The embedded font program behind `:ref` is normally freed when the BEAM
+  garbage-collects the handle; `close/1` releases it now. Calling it is optional
+  and idempotent. Because a font can be shared between pages, the underlying
+  bytes are freed once no other extracted handle still references the same font.
+
+  Afterwards `data/1` returns `{:error, %PdfElixide.Error{reason: :closed}}`
+  (and `data!/1` raises it); the metadata fields on the struct keep working. A
+  font's lifetime is independent of the document it came from — closing either
+  one leaves the other usable.
+  """
+  @spec close(t()) :: :ok
+  def close(%__MODULE__{ref: ref}), do: Native.font_close(ref)
+
+  @doc """
+  Returns whether the font handle has been released with `close/1`.
+  """
+  @spec closed?(t()) :: boolean()
+  def closed?(%__MODULE__{ref: ref}), do: Native.font_closed(ref)
+
   defimpl Inspect do
     import Inspect.Algebra
 

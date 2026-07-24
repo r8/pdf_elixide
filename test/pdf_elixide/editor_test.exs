@@ -207,4 +207,78 @@ defmodule PdfElixide.EditorTest do
       assert_raise Error, fn -> Editor.save!(editor, bogus) end
     end
   end
+
+  describe "close/1 and closed?/1" do
+    setup do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "pdf_elixide_close_#{System.unique_integer([:positive])}.pdf"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+      {:ok, out_path: path}
+    end
+
+    test "closed?/1 flips once the editor is closed" do
+      editor = Editor.open!(@valid_pdf)
+      refute Editor.closed?(editor)
+
+      assert :ok = Editor.close(editor)
+      assert Editor.closed?(editor)
+    end
+
+    test "close/1 is idempotent" do
+      editor = Editor.open!(@valid_pdf)
+
+      assert :ok = Editor.close(editor)
+      assert :ok = Editor.close(editor)
+    end
+
+    test "using a closed editor returns a :closed error", %{out_path: out_path} do
+      editor = Editor.open!(@form_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed, message: "Editor is closed"}} =
+               Editor.to_binary(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.save(editor, out_path)
+      assert {:error, %Error{reason: :closed}} = Form.fields(editor)
+
+      assert {:error, %Error{reason: :closed}} =
+               Form.set_value(editor, "full_name", {:text, "Ada"})
+
+      refute File.exists?(out_path)
+    end
+
+    test "bang variants raise on a closed editor", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      :ok = Editor.close(editor)
+
+      error = assert_raise Error, fn -> Editor.to_binary!(editor) end
+      assert error.reason == :closed
+
+      assert_raise Error, "Editor is closed", fn -> Editor.save!(editor, out_path) end
+    end
+
+    test "source_path/1 keeps working after close" do
+      editor = Editor.open!(@valid_pdf)
+      :ok = Editor.close(editor)
+
+      assert Editor.source_path(editor) == @valid_pdf
+      assert inspect(editor) == "#PdfElixide.Editor<sample.pdf>"
+    end
+
+    test "edits saved before closing are unaffected", %{out_path: out_path} do
+      editor = Editor.open!(@form_pdf)
+      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+      :ok = Editor.save(editor, out_path)
+
+      :ok = Editor.close(editor)
+
+      reopened = Editor.open!(out_path)
+      assert {:ok, fields} = Form.fields(reopened)
+      assert Enum.any?(fields, &(&1.name == "full_name" and &1.value == {:text, "Ada"}))
+    end
+  end
 end

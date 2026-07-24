@@ -7,6 +7,7 @@ use crate::{
     atoms,
     error::{tagged_err, to_nif_err},
     geometry::{rect_to_nif, RectNif},
+    resource::Closable,
     ImageResource,
 };
 
@@ -142,7 +143,9 @@ pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
         color_space: (*image.color_space()).into(),
         bits_per_component: image.bits_per_component(),
         rotation_degrees: image.rotation_degrees(),
-        resource: ResourceArc::new(ImageResource { image }),
+        resource: ResourceArc::new(ImageResource {
+            image: Closable::new("Image", image),
+        }),
     }
 }
 
@@ -155,7 +158,7 @@ fn image_to_binary(
     resource: ResourceArc<ImageResource>,
     format: OutputFormatNif,
 ) -> NifResult<OwnedBinary> {
-    let image = &resource.image;
+    let image = resource.image.read()?;
 
     let bytes = match format {
         OutputFormatNif::Png => image.to_png_bytes().map_err(to_nif_err)?,
@@ -164,7 +167,7 @@ fn image_to_binary(
             // matching `save_as_jpeg`'s pass-through.
             ImageData::Jpeg(jpeg) if image.color_space().components() != 4 => jpeg.clone(),
             // CMYK JPEG or raw pixels → decode + encode.
-            _ => encode_jpeg(image)?,
+            _ => encode_jpeg(&image)?,
         },
     };
 
@@ -181,7 +184,7 @@ fn image_save(
     path: String,
     format: OutputFormatNif,
 ) -> NifResult<rustler::Atom> {
-    let image = &resource.image;
+    let image = resource.image.read()?;
 
     match format {
         OutputFormatNif::Png => image.save_as_png(path).map_err(to_nif_err)?,
@@ -194,11 +197,28 @@ fn image_save(
 /// Returns the image's raw stored bytes: the original JPEG blob for a
 /// JPEG-stored image, or the bare decoded pixels (with their layout) otherwise.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn image_data(resource: ResourceArc<ImageResource>) -> ImageDataNif {
-    match resource.image.data() {
+fn image_data(resource: ResourceArc<ImageResource>) -> NifResult<ImageDataNif> {
+    let image = resource.image.read()?;
+
+    Ok(match image.data() {
         ImageData::Jpeg(bytes) => ImageDataNif::Jpeg(bytes.clone()),
         ImageData::Raw { pixels, format } => ImageDataNif::Raw(pixels.clone(), (*format).into()),
-    }
+    })
+}
+
+/// Releases the image's pixel data now, rather than waiting for the BEAM to
+/// garbage-collect the handle. Idempotent.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn image_close(resource: ResourceArc<ImageResource>) -> rustler::Atom {
+    resource.image.close();
+
+    atoms::ok()
+}
+
+/// Returns whether the image has been released with `image_close`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn image_closed(resource: ResourceArc<ImageResource>) -> bool {
+    resource.image.is_closed()
 }
 
 /// Decodes the image and re-encodes it as JPEG bytes in memory.

@@ -1,18 +1,17 @@
-use std::sync::Mutex;
-
 use pdf_oxide::{extractors::forms::FormExtractor, PdfDocument};
-use rustler::{Binary, NifMap, NifResult, ResourceArc};
+use rustler::{Atom, Binary, NifMap, NifResult, ResourceArc};
 
 use crate::{
     annotations::{annotation_to_nif, AnnotationNif},
     atoms,
     char::{char_to_nif, CharNif},
-    error::{lock_err, tagged_err, to_nif_err},
+    error::{tagged_err, to_nif_err},
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
     images::{image_to_nif, ImageNif},
     outline::{outline_item_to_nif, OutlineItemNif},
     paths::{path_to_nif, PathNif},
+    resource::Closable,
     span::{span_to_nif, SpanNif},
     table::{table_to_nif, TableNif},
     text_line::{text_line_to_nif, TextLineNif},
@@ -64,7 +63,7 @@ fn document_open(
     options.apply(&doc)?;
 
     Ok(ResourceArc::new(DocumentResource {
-        doc: Mutex::new(doc),
+        doc: Closable::new("Document", doc),
     }))
 }
 
@@ -78,14 +77,30 @@ fn document_from_bytes(
     options.apply(&doc)?;
 
     Ok(ResourceArc::new(DocumentResource {
-        doc: Mutex::new(doc),
+        doc: Closable::new("Document", doc),
     }))
+}
+
+/// Releases the document's native memory now, rather than waiting for the BEAM
+/// to garbage-collect the handle. Idempotent; later calls on the handle fail
+/// with `:closed`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_close(resource: ResourceArc<DocumentResource>) -> Atom {
+    resource.doc.close();
+
+    atoms::ok()
+}
+
+/// Returns whether the document has been released with `document_close`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_closed(resource: ResourceArc<DocumentResource>) -> bool {
+    resource.doc.is_closed()
 }
 
 /// Returns the number of pages in the PDF document.
 #[rustler::nif]
 fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     Ok(doc.page_count().map_err(to_nif_err)?)
 }
@@ -93,7 +108,7 @@ fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usi
 /// Returns the PDF specification version as a `(major, minor)` tuple.
 #[rustler::nif]
 fn document_version(resource: ResourceArc<DocumentResource>) -> NifResult<(u8, u8)> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     Ok(doc.version())
 }
@@ -102,7 +117,7 @@ fn document_version(resource: ResourceArc<DocumentResource>) -> NifResult<(u8, u
 /// Any error or missing tree is reported as `false`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     Ok(doc.structure_tree().ok().flatten().is_some())
 }
@@ -111,7 +126,7 @@ fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifRe
 /// data. Any error is reported as `false`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_has_xfa(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
-    let mut doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let mut doc = resource.doc.lock()?;
 
     Ok(pdf_oxide::xfa::XfaExtractor::has_xfa(&mut doc).unwrap_or(false))
 }
@@ -119,7 +134,7 @@ fn document_has_xfa(resource: ResourceArc<DocumentResource>) -> NifResult<bool> 
 /// Returns whether the PDF document is encrypted.
 #[rustler::nif]
 fn document_is_encrypted(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     Ok(doc.is_encrypted())
 }
@@ -132,7 +147,7 @@ fn document_authenticate(
     resource: ResourceArc<DocumentResource>,
     password: Binary,
 ) -> NifResult<bool> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     doc.authenticate(password.as_slice()).map_err(to_nif_err)
 }
@@ -143,7 +158,7 @@ fn document_extract_text(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<String> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     doc.extract_text(page_index).map_err(to_nif_err)
@@ -152,7 +167,7 @@ fn document_extract_text(
 /// Extracts text content from all pages, separated by form-feed characters.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_extract_all_text(resource: ResourceArc<DocumentResource>) -> NifResult<String> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     doc.extract_all_text().map_err(to_nif_err)
 }
@@ -163,7 +178,7 @@ fn document_words(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<WordNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let words = doc.extract_words(page_index).map_err(to_nif_err)?;
@@ -176,7 +191,7 @@ fn document_words(
 /// Extracts words (with bounding boxes) from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_words(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<WordNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut words = Vec::new();
@@ -197,7 +212,7 @@ fn document_text_lines(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<TextLineNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let lines = doc.extract_text_lines(page_index).map_err(to_nif_err)?;
@@ -210,7 +225,7 @@ fn document_text_lines(
 /// Extracts text lines (each with its words) from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_text_lines(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<TextLineNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut lines = Vec::new();
@@ -232,7 +247,7 @@ fn document_chars(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<CharNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let chars = doc.extract_chars(page_index).map_err(to_nif_err)?;
@@ -246,7 +261,7 @@ fn document_chars(
 /// in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_chars(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<CharNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut chars = Vec::new();
@@ -264,7 +279,7 @@ fn document_spans(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<SpanNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let spans = doc.extract_spans(page_index).map_err(to_nif_err)?;
@@ -278,7 +293,7 @@ fn document_spans(
 /// page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_spans(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<SpanNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut spans = Vec::new();
@@ -300,7 +315,7 @@ fn document_paths(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<PathNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
@@ -313,7 +328,7 @@ fn document_paths(
 /// Extracts vector paths from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut paths = Vec::new();
@@ -332,7 +347,7 @@ fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
 /// `OutlineItemNif`. Returns an empty list when the document has no outline.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_outline(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<OutlineItemNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
     Ok(items.into_iter().map(outline_item_to_nif).collect())
@@ -345,7 +360,7 @@ fn document_annotations(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<AnnotationNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
@@ -360,7 +375,7 @@ fn document_annotations(
 fn document_all_annotations(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Vec<AnnotationNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut annotations = Vec::new();
@@ -382,7 +397,7 @@ fn document_images(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<ImageNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let images = doc.extract_images(page_index).map_err(to_nif_err)?;
@@ -395,7 +410,7 @@ fn document_images(
 /// Extracts raster images from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_images(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<ImageNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut images = Vec::new();
@@ -417,7 +432,7 @@ fn document_fonts(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<FontNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     Ok(extract_page_fonts(&doc, page_index))
@@ -426,7 +441,7 @@ fn document_fonts(
 /// Extracts the fonts referenced across all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_fonts(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FontNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut fonts = Vec::new();
@@ -442,7 +457,7 @@ fn document_tables(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<TableNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
     let tables = doc.extract_tables(page_index).map_err(to_nif_err)?;
@@ -455,7 +470,7 @@ fn document_tables(
 /// Detects tables on all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_tables(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<TableNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut tables = Vec::new();
@@ -476,7 +491,7 @@ fn document_get_page_width(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<f32> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     ensure_page_in_range(&doc, page_index)?;
 
@@ -490,7 +505,7 @@ fn document_get_page_height(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<f32> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     ensure_page_in_range(&doc, page_index)?;
 
@@ -501,7 +516,7 @@ fn document_get_page_height(
 /// Extracts form fields from the PDF document.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
-    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    let doc = resource.doc.lock()?;
 
     let fields = FormExtractor::extract_fields(&doc).map_err(to_nif_err)?;
     Ok(fields.into_iter().map(document_form_field_to_nif).collect())
