@@ -26,6 +26,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style
 - Read the document outline (bookmarks / table of contents) as a nested tree
 - Extract raster images (photos, logos, scans) as PNG bytes with their on-page geometry
+- Extract the fonts a page uses (type, encoding, weight) and pull out embedded font programs
 - Extract AcroForm fields (name, kind, value)
 - Fill AcroForm fields and save the result to a file or in-memory binary
 
@@ -425,6 +426,50 @@ end
 `{:raw, ...}` bytes are uncompressed pixels, not a standalone file — interpret
 them with `:width`, `:height`, and `:color_space`, or use `to_binary/2` when you
 want an encoded PNG/JPEG.
+
+### Extracting fonts
+
+`PdfElixide.Document.fonts/2` returns the fonts referenced by a single page as
+`%PdfElixide.Document.Font{}` structs (and `fonts/1` returns every page's fonts
+as one flat list, so a font used on several pages appears once per page). A page
+that references no fonts gives `{:ok, []}`:
+
+```elixir
+{:ok, fonts} = PdfElixide.Document.fonts(doc, 0)
+
+# Fonts are also reachable from a page handle.
+{:ok, fonts} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.fonts()
+```
+
+Each font carries:
+
+- `:page` — the zero-based page index (`non_neg_integer()`)
+- `:resource_name` — the page's font resource id, e.g. `"F1"` (`String.t()`)
+- `:base_font` — the face name, with any six-letter subset prefix (`ABCDEF+`)
+  stripped (`String.t()`)
+- `:subtype` — the PDF font type: `"Type1"`, `"TrueType"`, or `"Type0"`
+- `:encoding` — `{:standard, name}` for a named base encoding (e.g.
+  `"WinAnsiEncoding"`), or `:custom` / `:identity`
+- `:embedded?` — whether the font program is embedded in the document
+- `:subset?` — whether the font is subsetted (carried a subset prefix)
+- `:weight` — the FontDescriptor weight (400 normal, 700 bold), or `nil`
+- `:bold?` / `:italic?` — booleans derived from the font's descriptor and name
+- `:ref` — an opaque handle to the font, used by `data/1` below
+
+For an **embedded** font, `PdfElixide.Document.Font.data/1` pulls out the raw font
+program — the TrueType / OpenType bytes, suitable for re-embedding elsewhere. A
+non-embedded font (e.g. one of the standard 14) gives `{:ok, nil}`:
+
+```elixir
+font = Enum.find(fonts, & &1.embedded?)
+
+case PdfElixide.Document.Font.data(font) do
+  {:ok, nil} -> :not_embedded
+  {:ok, bytes} -> File.write!("#{font.base_font}.otf", bytes)
+end
+```
+
+`data!/1` returns the bytes (or `nil`) directly, raising on error.
 
 ### Extracting form fields
 

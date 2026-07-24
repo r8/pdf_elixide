@@ -7,6 +7,7 @@ use crate::{
     atoms,
     char::{char_to_nif, CharNif},
     error::{lock_err, tagged_err, to_nif_err},
+    fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
     images::{image_to_nif, ImageNif},
     outline::{outline_item_to_nif, OutlineItemNif},
@@ -369,6 +370,32 @@ fn document_all_images(resource: ResourceArc<DocumentResource>) -> NifResult<Vec
         );
     }
     Ok(images)
+}
+
+/// Extracts the fonts referenced by a single page (zero-indexed), with their
+/// metadata and a handle to any embedded font program.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_fonts(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<FontNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+    ensure_page_in_range(&doc, page_index)?;
+
+    Ok(extract_page_fonts(&doc, page_index))
+}
+
+/// Extracts the fonts referenced across all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_fonts(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FontNif>> {
+    let doc = resource.doc.lock().map_err(|_| lock_err())?;
+
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut fonts = Vec::new();
+    for page_index in 0..count {
+        fonts.extend(extract_page_fonts(&doc, page_index));
+    }
+    Ok(fonts)
 }
 
 /// Detects tables on a single page (zero-indexed).

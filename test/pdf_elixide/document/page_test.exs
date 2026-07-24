@@ -14,6 +14,8 @@ defmodule PdfElixide.Document.PageTest do
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
+  @fonts_pdf Path.join(@fixtures, "fonts.pdf")
+  @form_pdf Path.join(@fixtures, "form.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -224,6 +226,42 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@image_pdf)
       assert_raise Error, fn -> Page.images!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "fonts/1" do
+    test "delegates to Document.fonts/2 for the page" do
+      doc = Document.open!(@fonts_pdf)
+      page = Document.page!(doc, 0)
+      # Each extraction yields fresh font handles, so compare stable metadata
+      # rather than the structs (whose :ref differ) directly.
+      {:ok, via_page} = Page.fonts(page)
+      {:ok, via_doc} = Document.fonts(doc, 0)
+      assert Enum.map(via_page, & &1.base_font) == Enum.map(via_doc, & &1.base_font)
+      assert length(via_page) == length(via_doc)
+      assert {:ok, [%Document.Font{page: 0} | _]} = Page.fonts(page)
+    end
+
+    test "returns {:ok, []} for a page that references no fonts" do
+      doc = Document.open!(@form_pdf)
+      assert {:ok, []} = Page.fonts(Document.page!(doc, 0))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@fonts_pdf)
+      assert {:error, _reason} = Page.fonts(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "fonts!/1" do
+    test "returns the fonts directly" do
+      doc = Document.open!(@fonts_pdf)
+      assert [%Document.Font{page: 0} | _] = Page.fonts!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@fonts_pdf)
+      assert_raise Error, fn -> Page.fonts!(%Page{doc: doc, index: 99}) end
     end
   end
 

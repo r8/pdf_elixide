@@ -22,6 +22,7 @@ defmodule PdfElixide.DocumentTest do
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
   @outline_pdf Path.join(@fixtures, "outline.pdf")
+  @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @password "secret"
 
   describe "page_count/1" do
@@ -596,6 +597,136 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@table_pdf)
       [path | _] = Document.paths!(doc, 0)
       assert inspect(path) == "#PdfElixide.Document.Path<p0 2 ops>"
+    end
+  end
+
+  describe "fonts/1" do
+    test "returns {:ok, fonts} for every page as a flat list of structs" do
+      doc = Document.open!(@fonts_pdf)
+      assert {:ok, fonts} = Document.fonts(doc)
+      assert fonts != []
+      assert Enum.all?(fonts, &match?(%Document.Font{}, &1))
+    end
+
+    test "length equals the sum of the per-page font counts" do
+      doc = Document.open!(@fonts_pdf)
+      {:ok, all} = Document.fonts(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.fonts(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each font carries its zero-based page index" do
+      doc = Document.open!(@fonts_pdf)
+      {:ok, fonts} = Document.fonts(doc)
+      assert Enum.all?(fonts, &(&1.page in 0..1))
+      assert fonts |> Enum.map(& &1.page) |> Enum.into(MapSet.new()) == MapSet.new([0, 1])
+    end
+  end
+
+  describe "fonts!/1" do
+    test "returns the flat font list of the whole document" do
+      doc = Document.open!(@fonts_pdf)
+      fonts = Document.fonts!(doc)
+      assert Enum.all?(fonts, &match?(%Document.Font{}, &1))
+    end
+  end
+
+  describe "fonts/2" do
+    test "returns {:ok, fonts} carrying metadata, and distinguishes embedded fonts" do
+      doc = Document.open!(@fonts_pdf)
+      assert {:ok, fonts} = Document.fonts(doc, 0)
+
+      assert Enum.all?(fonts, fn font ->
+               font.page == 0 and is_binary(font.resource_name) and is_binary(font.base_font) and
+                 is_binary(font.subtype) and is_boolean(font.embedded?) and
+                 is_boolean(font.subset?) and is_boolean(font.bold?) and is_boolean(font.italic?) and
+                 (is_nil(font.weight) or is_integer(font.weight)) and is_reference(font.ref)
+             end)
+
+      # The embedded, subsetted TrueType/OpenType font.
+      embedded = Enum.find(fonts, & &1.embedded?)
+      assert %Document.Font{base_font: "Arial", subtype: "Type0"} = embedded
+      assert embedded.subset?
+      assert embedded.encoding == :identity
+
+      # The core standard-14 font: not embedded, with a named base encoding.
+      standard = Enum.find(fonts, &(not &1.embedded?))
+      assert %Document.Font{base_font: "Helvetica", subtype: "Type1"} = standard
+      refute standard.subset?
+      assert standard.encoding == {:standard, "WinAnsiEncoding"}
+    end
+
+    test "returns {:ok, []} for a page that references no fonts" do
+      doc = Document.open!(@form_pdf)
+      assert {:ok, []} = Document.fonts(doc, 0)
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.fonts(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.fonts(doc, -1) end
+    end
+  end
+
+  describe "fonts!/2" do
+    test "returns the fonts for a valid page" do
+      doc = Document.open!(@fonts_pdf)
+      assert [%Document.Font{} | _] = Document.fonts!(doc, 0)
+    end
+
+    test "raises Error for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.fonts!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.fonts!(doc, :first) end
+    end
+  end
+
+  describe "Font.data/1" do
+    test "returns the raw embedded font-program bytes for an embedded font" do
+      embedded =
+        Document.open!(@fonts_pdf) |> Document.fonts!(0) |> Enum.find(& &1.embedded?)
+
+      assert {:ok, bytes} = Document.Font.data(embedded)
+      assert is_binary(bytes)
+      assert byte_size(bytes) > 0
+      # A valid sfnt (TrueType/OpenType) wrapper starts with a known version tag.
+      assert binary_part(bytes, 0, 4) in [<<0, 1, 0, 0>>, "OTTO", "true", "ttcf"]
+    end
+
+    test "returns {:ok, nil} for a non-embedded font" do
+      standard =
+        Document.open!(@fonts_pdf) |> Document.fonts!(0) |> Enum.find(&(not &1.embedded?))
+
+      assert {:ok, nil} = Document.Font.data(standard)
+    end
+
+    test "data!/1 returns the bytes directly" do
+      embedded =
+        Document.open!(@fonts_pdf) |> Document.fonts!(0) |> Enum.find(& &1.embedded?)
+
+      assert is_binary(Document.Font.data!(embedded))
+    end
+  end
+
+  describe "Font inspect/1" do
+    test "renders the page index, base font and subtype" do
+      embedded =
+        Document.open!(@fonts_pdf) |> Document.fonts!(0) |> Enum.find(& &1.embedded?)
+
+      assert inspect(embedded) == "#PdfElixide.Document.Font<p0 Arial (Type0)>"
     end
   end
 

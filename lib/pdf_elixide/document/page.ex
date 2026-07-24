@@ -5,6 +5,7 @@ defmodule PdfElixide.Document.Page do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
   alias PdfElixide.Document.Path
   alias PdfElixide.Document.Span
@@ -216,6 +217,27 @@ defmodule PdfElixide.Document.Page do
   def images!(page) do
     case images(page) do
       {:ok, images} -> images
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the fonts referenced by the page.
+
+  Returns `{:ok, []}` when the page references no fonts.
+  """
+  @spec fonts(t()) :: {:ok, [Font.t()]} | {:error, Error.t()}
+  def fonts(%__MODULE__{doc: doc, index: index}) do
+    Document.fonts(doc, index)
+  end
+
+  @doc """
+  Same as `fonts/1` but raises an error if it fails.
+  """
+  @spec fonts!(t()) :: [Font.t()]
+  def fonts!(page) do
+    case fonts(page) do
+      {:ok, fonts} -> fonts
       {:error, error} -> raise error
     end
   end

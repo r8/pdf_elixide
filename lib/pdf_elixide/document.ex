@@ -4,6 +4,7 @@ defmodule PdfElixide.Document do
   """
 
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
@@ -532,6 +533,59 @@ defmodule PdfElixide.Document do
       when is_integer(page_index) and page_index >= 0 do
     case paths(doc, page_index) do
       {:ok, paths} -> paths
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the fonts of the whole document.
+
+  Returns every page's fonts concatenated into a single flat list, in page order,
+  as `PdfElixide.Document.Font` structs. A font used on several pages appears once
+  per page.
+  """
+  @spec fonts(t()) :: {:ok, [Font.t()]} | {:error, Error.t()}
+  def fonts(%__MODULE__{ref: ref}) do
+    with {:ok, fonts} <- Wrap.call(fn -> Native.document_all_fonts(ref) end) do
+      {:ok, Enum.map(fonts, &Font.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the fonts of the whole document, raising an error if it fails.
+  """
+  @spec fonts!(t()) :: [Font.t()]
+  def fonts!(%__MODULE__{} = doc) do
+    case fonts(doc) do
+      {:ok, fonts} -> fonts
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Extracts the fonts referenced by the page at the given zero-based index.
+
+  Returns `{:ok, []}` when the page references no fonts. Each font is carried as a
+  `PdfElixide.Document.Font` struct with its metadata; the raw embedded font
+  program (when present) is pulled on demand with `PdfElixide.Document.Font.data/1`.
+  """
+  @spec fonts(t(), non_neg_integer()) :: {:ok, [Font.t()]} | {:error, Error.t()}
+  def fonts(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, fonts} <- Wrap.call(fn -> Native.document_fonts(ref, page_index) end) do
+      {:ok, Enum.map(fonts, &Font.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the fonts referenced by the page at the given zero-based index, raising
+  an error if it fails.
+  """
+  @spec fonts!(t(), non_neg_integer()) :: [Font.t()]
+  def fonts!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case fonts(doc, page_index) do
+      {:ok, fonts} -> fonts
       {:error, error} -> raise error
     end
   end

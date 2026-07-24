@@ -1,12 +1,13 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use pdf_oxide::{editor::DocumentEditor, extractors::PdfImage, PdfDocument};
+use pdf_oxide::{editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo, PdfDocument};
 
 mod char;
 mod color;
 mod document;
 mod editor;
 mod error;
+mod fonts;
 mod form;
 mod geometry;
 mod images;
@@ -27,6 +28,8 @@ pub(crate) mod atoms {
         move_to, line_to, curve_to, rectangle, close_path,
         // Raw image data tags (see images.rs / PdfElixide.Document.Image.data/1)
         jpeg, raw,
+        // Font encoding tags (see fonts.rs / PdfElixide.Document.Font)
+        standard, custom, identity,
         // Error reason tags (see error.rs / PdfElixide.Error)
         encrypted, wrong_password, invalid_pdf, unsupported,
         not_found, out_of_range, io, lock_poisoned, other
@@ -55,6 +58,13 @@ struct ImageResource {
 
 #[rustler::resource_impl]
 impl rustler::Resource for ImageResource {}
+
+struct FontResource {
+    font: Arc<FontInfo>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for FontResource {}
 
 // ------------------------------------------------------------------------------------------------
 
