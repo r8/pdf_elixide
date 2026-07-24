@@ -41,7 +41,7 @@ defmodule PdfElixide.Error do
 
   @type t :: %__MODULE__{
           reason: reason(),
-          message: binary(),
+          message: String.t(),
           details: map() | nil
         }
 

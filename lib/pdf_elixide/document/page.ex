@@ -64,7 +64,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the text content of the page.
   """
-  @spec text(t()) :: {:ok, binary()} | {:error, Error.t()}
+  @spec text(t()) :: {:ok, String.t()} | {:error, Error.t()}
   def text(%__MODULE__{doc: doc, index: index}) do
     Document.text(doc, index)
   end
@@ -72,7 +72,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Same as `text/1` but raises an error if it fails.
   """
-  @spec text!(t()) :: binary()
+  @spec text!(t()) :: String.t()
   def text!(page) do
     case text(page) do
       {:ok, text} -> text

@@ -148,7 +148,7 @@ defmodule PdfElixide.Document do
   Returns `{:ok, true}` if authentication succeeded (or the PDF is not encrypted),
   `{:ok, false}` if the password was wrong, or `{:error, reason}` on a PDF/crypto error.
   """
-  @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, Error.t()}
+  @spec authenticate(t(), String.t()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
     Wrap.call(fn -> Native.document_authenticate(ref, password) end)
   end
@@ -158,7 +158,7 @@ defmodule PdfElixide.Document do
 
   Still returns `false` (does not raise) for a wrong password.
   """
-  @spec authenticate!(t(), binary()) :: boolean()
+  @spec authenticate!(t(), String.t()) :: boolean()
   def authenticate!(doc, password) when is_binary(password) do
     case authenticate(doc, password) do
       {:ok, result} -> result
@@ -172,7 +172,7 @@ defmodule PdfElixide.Document do
   Returns every page's text concatenated in order, separated by a form-feed
   (`\\f`) page separator.
   """
-  @spec text(t()) :: {:ok, binary()} | {:error, Error.t()}
+  @spec text(t()) :: {:ok, String.t()} | {:error, Error.t()}
   def text(%__MODULE__{ref: ref}) do
     Wrap.call(fn -> Native.document_extract_all_text(ref) end)
   end
@@ -180,7 +180,7 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts the text content of the whole document, raising an error if it fails.
   """
-  @spec text!(t()) :: binary()
+  @spec text!(t()) :: String.t()
   def text!(%__MODULE__{} = doc) do
     case text(doc) do
       {:ok, text} -> text
@@ -191,7 +191,7 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts the text content of the page at the given zero-based index.
   """
-  @spec text(t(), non_neg_integer()) :: {:ok, binary()} | {:error, Error.t()}
+  @spec text(t(), non_neg_integer()) :: {:ok, String.t()} | {:error, Error.t()}
   def text(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     Wrap.call(fn -> Native.document_extract_text(ref, page_index) end)
@@ -201,7 +201,7 @@ defmodule PdfElixide.Document do
   Extracts the text content of the page at the given zero-based index,
   raising an error if it fails.
   """
-  @spec text!(t(), non_neg_integer()) :: binary()
+  @spec text!(t(), non_neg_integer()) :: String.t()
   def text!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
     case text(doc, page_index) do
