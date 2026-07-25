@@ -5,6 +5,45 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.8.0](https://github.com/r8/pdf_elixide/compare/v0.7.0...v0.8.0) (2026-07-25)
+
+
+
+
+### Features:
+
+* add options to the extractors by [@r8](https://github.com/r8)
+
+* upgrade pdf_oxide to 0.3.75 by [@r8](https://github.com/r8)
+
+* add to_markdown, to_html, and to_text for Table by [@r8](https://github.com/r8)
+
+* add HTML conversion with to_html for Document and Page by [@r8](https://github.com/r8)
+
+* add Markdown conversion with to_markdown for Document and Page by [@r8](https://github.com/r8)
+
+* add cell, row, and Enumerable accessors to Table by [@r8](https://github.com/r8)
+
+* add close/1 and closed?/1 functions for resource management by [@r8](https://github.com/r8)
+
+* introduce color structs for CMYK, Gray, RGB, and Unknown by [@r8](https://github.com/r8)
+
+* add annotations extraction by [@r8](https://github.com/r8)
+
+* add metadata, permissions, and page labels extraction by [@r8](https://github.com/r8)
+
+* add fonts extraction by [@r8](https://github.com/r8)
+
+* add outline extraction by [@r8](https://github.com/r8)
+
+* add XFA detection with Document.has_xfa?/1 by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* re-raise non-ErlangError exceptions from Wrap.call/1 by [@r8](https://github.com/r8)
+
+* sort extracted fonts by resource name for deterministic order by [@r8](https://github.com/r8)
+
 ## [v0.7.0](https://github.com/r8/pdf_elixide/compare/v0.6.0...v0.7.0) (2026-07-23)
 
 
