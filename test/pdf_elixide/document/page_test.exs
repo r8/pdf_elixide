@@ -85,6 +85,53 @@ defmodule PdfElixide.Document.PageTest do
     end
   end
 
+  describe "to_markdown/1" do
+    test "delegates to Document.to_markdown/3 for the page" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert Page.to_markdown(page) == Document.to_markdown(doc, 1, [])
+      assert {:ok, markdown} = Page.to_markdown(page)
+      assert markdown =~ "# Page Two"
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.to_markdown(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "to_markdown/2" do
+    test "passes options through to Document.to_markdown/3" do
+      doc = Document.open!(@table_pdf)
+      page = Document.page!(doc, 0)
+      assert {:ok, with_tables} = Page.to_markdown(page)
+      assert {:ok, without} = Page.to_markdown(page, extract_tables: false)
+      assert with_tables =~ "|---|"
+      refute without =~ "|---|"
+    end
+  end
+
+  describe "to_markdown!/1" do
+    test "returns the markdown directly" do
+      doc = Document.open!(@valid_pdf)
+      assert Page.to_markdown!(Document.page!(doc, 0)) =~ "Page One"
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.to_markdown!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "to_markdown!/2" do
+    test "returns the markdown with options applied" do
+      doc = Document.open!(@valid_pdf)
+      markdown = Page.to_markdown!(Document.page!(doc, 0), detect_headings: false)
+      assert markdown =~ "Page One"
+      refute markdown =~ "#"
+    end
+  end
+
   describe "words/1" do
     test "delegates to Document.words/2 for the page" do
       doc = Document.open!(@valid_pdf)

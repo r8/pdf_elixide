@@ -25,6 +25,12 @@ defmodule PdfElixide.DocumentTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
+  # Purpose-built for the markdown-conversion options: a 24pt heading over an
+  # 11pt body line, a 64x64 DeviceRGB image (upstream's markdown image filter
+  # drops anything under 32x32, so @image_pdf's 24x24 never surfaces), and a
+  # /Widget annotation carrying /V (John Doe) in the page /Annots (upstream
+  # reads widget text from /Annots only, never from @form_pdf's /AcroForm).
+  @markdown_pdf Path.join(@fixtures, "markdown.pdf")
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
@@ -114,6 +120,277 @@ defmodule PdfElixide.DocumentTest do
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.text!(doc, :first) end
+    end
+  end
+
+  describe "to_markdown/1" do
+    test "returns {:ok, markdown} covering every page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, markdown} = Document.to_markdown(doc)
+      assert markdown =~ "Page One"
+      assert markdown =~ "Page Two"
+      assert markdown =~ "Page Three"
+    end
+
+    test "separates pages with a thematic break rather than a form feed" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, markdown} = Document.to_markdown(doc)
+      assert markdown =~ "\n---\n"
+      refute markdown =~ "\f"
+    end
+
+    test "detects headings by default" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, markdown} = Document.to_markdown(doc)
+      assert markdown =~ "# Page One"
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert {:error, %Error{reason: :closed}} = Document.to_markdown(doc)
+    end
+  end
+
+  describe "to_markdown!/1" do
+    test "returns the markdown for the whole document" do
+      doc = Document.open!(@valid_pdf)
+      markdown = Document.to_markdown!(doc)
+      assert markdown =~ "Page One"
+      assert markdown =~ "Page Three"
+    end
+
+    test "raises for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert_raise Error, fn -> Document.to_markdown!(doc) end
+    end
+  end
+
+  describe "to_markdown/2 with a page index" do
+    test "returns {:ok, markdown} for the page at the given index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, markdown} = Document.to_markdown(doc, 1)
+      assert markdown =~ "Page Two"
+      refute markdown =~ "Page One"
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.to_markdown(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_markdown(doc, -1) end
+    end
+  end
+
+  describe "to_markdown/2 with options" do
+    test "detect_headings: false emits plain paragraphs" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, markdown} = Document.to_markdown(doc, detect_headings: false)
+      assert markdown =~ "Page One"
+      refute markdown =~ "#"
+    end
+
+    test "extract_tables: false drops the markdown table" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, with_tables} = Document.to_markdown(doc)
+      assert {:ok, without} = Document.to_markdown(doc, extract_tables: false)
+      assert with_tables =~ "|---|"
+      refute without =~ "|---|"
+    end
+
+    test "annotate_skipped_pages: false leaves a scanned page blank" do
+      doc = Document.open!(@image_pdf)
+      assert {:ok, annotated} = Document.to_markdown(doc)
+      assert {:ok, bare} = Document.to_markdown(doc, annotate_skipped_pages: false)
+      assert annotated =~ "OCR REQUIRED"
+      assert String.trim(bare) == ""
+    end
+
+    test "detect_headings distinguishes the two font tiers" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, detected} = Document.to_markdown(doc)
+      assert {:ok, plain} = Document.to_markdown(doc, detect_headings: false)
+      assert detected =~ "# Markdown Fixture"
+      assert plain =~ "Markdown Fixture"
+      refute plain =~ "#"
+    end
+
+    test "include_images: true embeds the image as a base64 data URI" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, omitted} = Document.to_markdown(doc)
+      assert {:ok, included} = Document.to_markdown(doc, include_images: true)
+      refute omitted =~ "!["
+      assert included =~ "![Image 1 from page 1](data:image/png;base64,"
+    end
+
+    test "max_image_pixels: 0 suppresses the image" do
+      doc = Document.open!(@markdown_pdf)
+
+      assert {:ok, markdown} =
+               Document.to_markdown(doc, include_images: true, max_image_pixels: 0)
+
+      refute markdown =~ "!["
+      assert markdown =~ "Markdown Fixture"
+    end
+
+    @tag :tmp_dir
+    test "embed_images: false writes the image to image_output_dir", %{tmp_dir: tmp_dir} do
+      doc = Document.open!(@markdown_pdf)
+
+      assert {:ok, markdown} =
+               Document.to_markdown(doc,
+                 include_images: true,
+                 embed_images: false,
+                 image_output_dir: tmp_dir
+               )
+
+      assert markdown =~ "![Image 1 from page 1](#{Elixir.Path.join(tmp_dir, "page1_1.png")})"
+      refute markdown =~ "data:image/png;base64,"
+      assert File.exists?(Elixir.Path.join(tmp_dir, "page1_1.png"))
+    end
+
+    @tag :tmp_dir
+    test "embed_images: false creates a missing image_output_dir", %{tmp_dir: tmp_dir} do
+      doc = Document.open!(@markdown_pdf)
+      nested = Elixir.Path.join([tmp_dir, "images", "page-0"])
+
+      assert {:ok, markdown} =
+               Document.to_markdown(doc,
+                 include_images: true,
+                 embed_images: false,
+                 image_output_dir: nested
+               )
+
+      assert markdown =~ "page1_1.png"
+      assert File.exists?(Elixir.Path.join(nested, "page1_1.png"))
+    end
+
+    @tag :tmp_dir
+    test "an image_output_dir that cannot be created is an :io error", %{tmp_dir: tmp_dir} do
+      doc = Document.open!(@markdown_pdf)
+
+      # A regular file cannot hold a subdirectory, so create_dir_all fails.
+      blocker = Elixir.Path.join(tmp_dir, "blocker")
+      File.write!(blocker, "not a directory")
+
+      assert {:error, %Error{reason: :io}} =
+               Document.to_markdown(doc,
+                 include_images: true,
+                 embed_images: false,
+                 image_output_dir: Elixir.Path.join(blocker, "images")
+               )
+    end
+
+    test "embed_images: false without an image_output_dir emits no image" do
+      doc = Document.open!(@markdown_pdf)
+
+      assert {:ok, markdown} =
+               Document.to_markdown(doc, include_images: true, embed_images: false)
+
+      refute markdown =~ "!["
+      assert markdown =~ "Markdown Fixture"
+    end
+
+    test "include_form_fields: false drops the widget's value" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, included} = Document.to_markdown(doc)
+      assert {:ok, omitted} = Document.to_markdown(doc, include_form_fields: false)
+      assert included =~ "John Doe"
+      refute omitted =~ "John Doe"
+    end
+
+    test "accepts the remaining options and returns markdown" do
+      doc = Document.open!(@table_pdf)
+
+      opts = [
+        strip_running_headers_footers: true,
+        expand_ligatures: true,
+        bold_markers: :aggressive
+      ]
+
+      assert {:ok, markdown} = Document.to_markdown(doc, opts)
+      assert is_binary(markdown)
+    end
+
+    test "accepts every reading_order value" do
+      doc = Document.open!(@valid_pdf)
+
+      for mode <- [:structure_tree, :column_aware, :top_to_bottom] do
+        assert {:ok, markdown} = Document.to_markdown(doc, reading_order: mode)
+        assert markdown =~ "Page One"
+      end
+    end
+
+    test "returns {:error, reason} for an option of the wrong type" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :other}} = Document.to_markdown(doc, detect_headings: "yes")
+    end
+
+    test "returns {:error, reason} for an unknown reading_order value" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :other}} = Document.to_markdown(doc, reading_order: :nope)
+    end
+  end
+
+  describe "to_markdown!/2" do
+    test "returns the markdown for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.to_markdown!(doc, 1) =~ "Page Two"
+    end
+
+    test "returns the markdown for the whole document with options" do
+      doc = Document.open!(@valid_pdf)
+      markdown = Document.to_markdown!(doc, detect_headings: false)
+      assert markdown =~ "Page One"
+      refute markdown =~ "#"
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.to_markdown!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer, non-list second argument" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_markdown!(doc, :first) end
+    end
+  end
+
+  describe "to_markdown/3" do
+    test "applies options to the given page" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, with_tables} = Document.to_markdown(doc, 0, [])
+      assert {:ok, without} = Document.to_markdown(doc, 0, extract_tables: false)
+      assert with_tables =~ "|---|"
+      refute without =~ "|---|"
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.to_markdown(doc, 99, [])
+    end
+
+    test "raises FunctionClauseError for a non-list options argument" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_markdown(doc, 0, :opts) end
+    end
+  end
+
+  describe "to_markdown!/3" do
+    test "returns the markdown for a page with options applied" do
+      doc = Document.open!(@valid_pdf)
+      markdown = Document.to_markdown!(doc, 0, detect_headings: false)
+      assert markdown =~ "Page One"
+      refute markdown =~ "#"
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.to_markdown!(doc, 99, []) end
     end
   end
 

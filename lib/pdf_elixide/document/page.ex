@@ -108,6 +108,28 @@ defmodule PdfElixide.Document.Page do
   end
 
   @doc """
+  Converts the page to Markdown.
+
+  See `t:PdfElixide.Document.markdown_opts/0` for the available options.
+  """
+  @spec to_markdown(t(), Document.markdown_opts()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_markdown(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.to_markdown(doc, index, opts)
+  end
+
+  @doc """
+  Same as `to_markdown/2` but raises an error if it fails.
+  """
+  @spec to_markdown!(t(), Document.markdown_opts()) :: String.t()
+  def to_markdown!(page, opts \\ []) when is_list(opts) do
+    case to_markdown(page, opts) do
+      {:ok, markdown} -> markdown
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
   Extracts the words of the page, each with its bounding box and font metadata.
   """
   @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}

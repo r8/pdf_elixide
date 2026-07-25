@@ -18,6 +18,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Query the PDF specification version
 - Get the page count
 - Extract text from a specific page
+- Convert a page or the whole document to Markdown, with headings, tables, images, and reading order under your control
 - Extract words with bounding boxes and font metadata
 - Extract text lines (each with its bounding box and constituent words)
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
@@ -111,6 +112,35 @@ doc   = PdfElixide.Document.open!("path/to/file.pdf")
 pages = PdfElixide.Document.page_count!(doc)
 text  = PdfElixide.Document.text!(doc, 0)
 ```
+
+### Converting to Markdown
+
+`to_markdown` turns a page — or the whole document — into structured Markdown,
+detecting headings and tables rather than returning the flat text stream that
+`text/1` gives you.
+
+```elixir
+alias PdfElixide.Document
+
+# The whole document, pages joined by a `---` thematic break.
+{:ok, markdown} = Document.to_markdown(doc)
+
+# A single page (zero-based index).
+{:ok, markdown} = Document.to_markdown(doc, 0)
+
+# Either form takes options.
+{:ok, markdown} = Document.to_markdown(doc, detect_headings: false)
+{:ok, markdown} = Document.to_markdown(doc, 0, extract_tables: false)
+
+# And from a page struct.
+{:ok, markdown} = Document.Page.to_markdown(Document.page!(doc, 0))
+```
+
+The defaults mirror `pdf_oxide`'s own, so `to_markdown(doc)` and
+`to_markdown(doc, [])` are equivalent. The full option list — heading detection,
+table extraction, image embedding, form-field inlining, running header/footer
+stripping, ligature expansion, reading order, and bold-marker behaviour — is
+documented under `t:PdfElixide.Document.markdown_opts/0`.
 
 ### Releasing a document
 

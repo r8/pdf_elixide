@@ -368,6 +368,177 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @typedoc """
+  Options accepted by the `to_markdown` and `to_markdown!` functions.
+
+    * `:detect_headings` — cluster font sizes to emit `#` headings instead
+      of plain paragraphs. Defaults to `true`.
+    * `:extract_tables` — detect tables and render them as Markdown
+      tables. Defaults to `true`.
+    * `:include_images` — emit `![](…)` image syntax. Defaults to `false`,
+      since embedded images can add hundreds of kilobytes per page.
+    * `:embed_images` — when `true`, images are inlined as base64 data
+      URIs and `:image_output_dir` is ignored. When `false`, they are
+      written to `:image_output_dir` and referenced by path — and if that
+      option is `nil`, no image is emitted at all. Only applies when
+      `:include_images` is `true`. Defaults to `true`.
+    * `:image_output_dir` — directory to write extracted images to, used
+      only when `:include_images` is `true` and `:embed_images` is
+      `false`. It is created if missing, and one that cannot be created
+      is an `:io` error. The writes themselves are best-effort: upstream
+      drops an image that fails to encode or write, so a successful call
+      does not guarantee every image reached disk. Defaults to `nil`.
+    * `:include_form_fields` — inline AcroForm field values at their
+      positions on the page. Defaults to `true`.
+    * `:strip_running_headers_footers` — drop text lines that repeat in
+      the top/bottom band of a majority of pages. Defaults to `false`.
+    * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
+      component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
+    * `:annotate_skipped_pages` — emit a block quote naming any page that
+      is a scan with no usable text layer, rather than rendering it blank.
+      Defaults to `true`.
+    * `:max_image_pixels` — skip images whose width times height exceeds
+      this count. `nil` means `pdf_oxide`'s own 16 MP limit, not "no
+      limit" — pass a large integer to lift it, or `0` to skip every
+      image. Defaults to `nil`.
+    * `:reading_order` — how text blocks are ordered:
+      `:structure_tree` (follow a tagged PDF's structure tree, falling
+      back to an XY-cut), `:column_aware`, or `:top_to_bottom`. Defaults
+      to `:structure_tree`.
+    * `:bold_markers` — `:conservative` applies `**` only to
+      content-bearing text; `:aggressive` also wraps whitespace-only
+      spans. Defaults to `:conservative`.
+
+  Defaults mirror `pdf_oxide`'s `ConversionOptions::default()`, so calling
+  `to_markdown/1` is equivalent to `to_markdown/2` with no options.
+  """
+  @type markdown_opts :: [
+          detect_headings: boolean(),
+          extract_tables: boolean(),
+          include_images: boolean(),
+          embed_images: boolean(),
+          image_output_dir: Path.t() | nil,
+          include_form_fields: boolean(),
+          strip_running_headers_footers: boolean(),
+          expand_ligatures: boolean(),
+          annotate_skipped_pages: boolean(),
+          max_image_pixels: non_neg_integer() | nil,
+          reading_order: :structure_tree | :column_aware | :top_to_bottom,
+          bold_markers: :conservative | :aggressive
+        ]
+
+  @doc """
+  Converts the document to Markdown.
+
+  With a keyword list (or nothing) as the second argument, converts the
+  whole document, joining pages with a `---` thematic break — note that
+  this differs from `text/1`, which uses a form feed. With a zero-based
+  integer, converts that single page instead.
+
+      Document.to_markdown(doc)
+      Document.to_markdown(doc, detect_headings: false)
+      Document.to_markdown(doc, 0)
+
+  See `t:markdown_opts/0` for the available options.
+  """
+  @spec to_markdown(t()) :: {:ok, String.t()} | {:error, Error.t()}
+  @spec to_markdown(t(), markdown_opts() | non_neg_integer()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_markdown(doc, page_index_or_opts \\ [])
+
+  def to_markdown(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_markdown_options(opts)
+    Wrap.call(fn -> call_markdown_all(ref, options) end)
+  end
+
+  def to_markdown(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    to_markdown(doc, page_index, [])
+  end
+
+  @doc """
+  Converts the document to Markdown, raising an error if it fails.
+  """
+  @spec to_markdown!(t()) :: String.t()
+  @spec to_markdown!(t(), markdown_opts() | non_neg_integer()) :: String.t()
+  def to_markdown!(doc, page_index_or_opts \\ [])
+
+  def to_markdown!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case to_markdown(doc, opts) do
+      {:ok, markdown} -> markdown
+      {:error, error} -> raise error
+    end
+  end
+
+  def to_markdown!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    to_markdown!(doc, page_index, [])
+  end
+
+  @doc """
+  Converts the page at the given zero-based index to Markdown.
+
+  See `t:markdown_opts/0` for the available options.
+  """
+  @spec to_markdown(t(), non_neg_integer(), markdown_opts()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_markdown(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_markdown_options(opts)
+    Wrap.call(fn -> call_markdown(ref, page_index, options) end)
+  end
+
+  @doc """
+  Converts the page at the given zero-based index to Markdown, raising an
+  error if it fails.
+  """
+  @spec to_markdown!(t(), non_neg_integer(), markdown_opts()) :: String.t()
+  def to_markdown!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case to_markdown(doc, page_index, opts) do
+      {:ok, markdown} -> markdown
+      {:error, error} -> raise error
+    end
+  end
+
+  defp build_markdown_options(opts) do
+    %{
+      detect_headings: Keyword.get(opts, :detect_headings, true),
+      extract_tables: Keyword.get(opts, :extract_tables, true),
+      include_images: Keyword.get(opts, :include_images, false),
+      embed_images: Keyword.get(opts, :embed_images, true),
+      image_output_dir: Keyword.get(opts, :image_output_dir),
+      include_form_fields: Keyword.get(opts, :include_form_fields, true),
+      strip_running_headers_footers: Keyword.get(opts, :strip_running_headers_footers, false),
+      expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
+      annotate_skipped_pages: Keyword.get(opts, :annotate_skipped_pages, true),
+      max_image_pixels: Keyword.get(opts, :max_image_pixels),
+      reading_order: Keyword.get(opts, :reading_order, :structure_tree),
+      bold_markers: Keyword.get(opts, :bold_markers, :conservative)
+    }
+  end
+
+  # Conversion is CPU-bound except when it writes images to disk, so it has a
+  # dirty-CPU and a dirty-IO NIF and picks between them here — the same split as
+  # `Document.Image.to_binary/2` and `save/3`.
+  defp call_markdown_all(ref, options) do
+    if writes_images?(options),
+      do: Native.document_to_markdown_all_to_dir(ref, options),
+      else: Native.document_to_markdown_all(ref, options)
+  end
+
+  defp call_markdown(ref, page_index, options) do
+    if writes_images?(options),
+      do: Native.document_to_markdown_to_dir(ref, page_index, options),
+      else: Native.document_to_markdown(ref, page_index, options)
+  end
+
+  defp writes_images?(%{include_images: true, embed_images: false, image_output_dir: dir})
+       when is_binary(dir),
+       do: true
+
+  defp writes_images?(_options), do: false
+
   @doc """
   Extracts the words of the whole document.
 
