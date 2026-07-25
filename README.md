@@ -35,6 +35,9 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Read document metadata — both the `/Info` dictionary and the XMP packet
 - Read encryption permission flags (print, copy, modify, …)
 - Read logical page labels (roman numerals, prefixes, etc.)
+- Tune every text extractor: restrict to a region, drop optional-content layers,
+  spot inks or `/Artifact` headers, and configure the table detector and the
+  span merger
 
 ## Requirements
 
@@ -281,6 +284,44 @@ declared. `PdfElixide.Document.Page.label/1` reads a single page's label:
 {:ok, ["i", "ii", "1", "2"]} = PdfElixide.Document.page_labels(doc)
 {:ok, "i"} = PdfElixide.Document.Page.label(PdfElixide.Document.page!(doc, 0))
 ```
+
+### Tuning extraction
+
+The six text-family extractors — `text`, `chars`, `words`, `text_lines`,
+`spans` and `tables` — all take an optional keyword list, in the same shape as
+`to_markdown/2,3`: a list means "the whole document", a zero-based integer
+means "this page", and both can be followed by options.
+
+```elixir
+# Restrict extraction to a region — any extracted bbox works as one.
+{:ok, [heading | _]} = PdfElixide.Document.text_lines(doc, 0)
+{:ok, words} = PdfElixide.Document.words(doc, 0, region: heading.bbox)
+
+# ...with a stricter containment rule than the default :intersects.
+{:ok, words} =
+  PdfElixide.Document.words(doc, 0, region: heading.bbox, region_mode: :fully_contained)
+
+# Drop /Artifact-tagged running headers, footers and watermarks (ISO 32000-1
+# §14.8.2.2.1), an optional-content layer, or a spot ink.
+{:ok, words} = PdfElixide.Document.words(doc, 0, include_artifacts: false)
+{:ok, text} = PdfElixide.Document.text(doc, 0, exclude_layers: ["Watermark"])
+{:ok, text} = PdfElixide.Document.text(doc, 0, exclude_inks: ["PANTONE 185 C"])
+
+# Tune the spatial table detector when a page yields no table, or too many.
+{:ok, tables} =
+  PdfElixide.Document.tables(doc, 0, preset: :strict, min_table_cells: 6)
+
+# Every option is available from a page handle too.
+{:ok, tables} =
+  doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.tables(preset: :relaxed)
+```
+
+Each function documents its own list — `t:PdfElixide.Document.text_opts/0`,
+`words_opts/0`, `text_lines_opts/0`, `chars_opts/0`, `spans_opts/0` and
+`tables_opts/0` — including a few combinations `pdf_oxide` cannot serve at
+once, where the typedoc names exactly which options get dropped. An unknown
+key is ignored; a known key with a wrong-typed value comes back as
+`{:error, %PdfElixide.Error{reason: :other}}` naming the field.
 
 ### Extracting words
 

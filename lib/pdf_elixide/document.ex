@@ -18,6 +18,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Word
   alias PdfElixide.Document.XmpMetadata
   alias PdfElixide.Error
+  alias PdfElixide.Geometry.Rect
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -324,48 +325,187 @@ defmodule PdfElixide.Document do
     end
   end
 
-  @doc """
-  Extracts the text content of the whole document.
+  @typedoc """
+  How a `:region` (or `:exclude_regions`) decides whether an object is inside
+  it.
 
-  Returns every page's text concatenated in order, separated by a form-feed
-  (`\\f`) page separator.
+    * `:intersects` — any overlap at all counts. The default, and what
+      `pdf_oxide` uses everywhere it does not take a mode.
+    * `:fully_contained` — the object's bounding box must lie entirely
+      within the region.
+    * `{:min_overlap, ratio}` — at least `ratio` of the object's area must
+      lie within the region.
+
+  ## `:min_overlap` details
+
+  `ratio` must be between `0.0` and `1.0`; anything outside that range is
+  `{:error, %PdfElixide.Error{reason: :other}}`. The bound is checked here
+  rather than upstream, which validates it nowhere — no other `pdf_oxide`
+  binding can even select this mode, so an out-of-range value would otherwise
+  fail silently and wrongly (a negative one matches every object, and one
+  above `1.0` matches none).
+
+  Two behaviors worth knowing before choosing a value:
+
+    * The fraction is of the **object's own** area, not the region's. A large
+      element clipped by a small region scores low however much of the region
+      it covers, so `:min_overlap` answers "how much of this object is in the
+      region?", never the reverse.
+    * `{:min_overlap, 0.0}` matches *everything*, including objects that do
+      not touch the region at all — a non-overlapping object scores `0.0`,
+      and the comparison is `>=`. Use `:intersects` if you meant "any
+      overlap".
+  """
+  @type region_mode :: :intersects | :fully_contained | {:min_overlap, float()}
+
+  @typedoc """
+  Options accepted by the `text` and `text!` functions.
+
+    * `:extract_tables` — detect tables and render them inline as
+      space-padded, column-aligned rows. Defaults to `true`, matching
+      `pdf_oxide`'s own `extract_text`.
+    * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
+      component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
+      Unlike in `t:markdown_opts/0`, this one is live: upstream applies it
+      on the plain-text assembly path, which is exactly the path this
+      function uses.
+    * `:table_detection` — a keyword list tuning the spatial table
+      detector; see `t:table_detection_opts/0`. Only consulted when
+      `:extract_tables` is `true`, and its `:text_fallback` key is ignored
+      here — upstream forces it to `false` on the text path, so a page with
+      no ruling lines yields no tables regardless. Defaults to `nil` (the
+      upstream default config).
+    * `:region` — a `PdfElixide.Geometry.Rect` keeping only the text inside
+      it. An extracted `bbox` can be handed straight back in. Defaults to
+      `nil`.
+    * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
+      Defaults to `:intersects`.
+    * `:exclude_regions` — a list of rects whose text is dropped. Applied
+      *before* `:region`, so exclusion wins. Defaults to `[]`.
+    * `:exclude_regions_mode` — how `:exclude_regions` match. Defaults to
+      `:intersects`.
+    * `:exclude_layers` — names of optional-content (OCG) layers to
+      suppress. Defaults to `[]`.
+    * `:exclude_inks` — names of Separation/DeviceN inks to suppress.
+      Defaults to `[]`.
+
+  ## Layer and ink filtering drops the other options
+
+  `pdf_oxide` serves layer and ink filtering only through
+  `extract_text_filtered` / `extract_text_filtered_in_rect`, which build
+  their own conversion options internally and offer no way to pass ours.
+  So when `:exclude_layers` or `:exclude_inks` is non-empty, **only
+  `:region` and `:region_mode` still apply** — `:extract_tables`,
+  `:expand_ligatures`, `:table_detection`, `:exclude_regions` and
+  `:exclude_regions_mode` fall back to their upstream defaults
+  (`:extract_tables` to `true`, the rest to off). The Python bindings have
+  the same limitation and do not document it.
+
+  Options `to_markdown/2` accepts but this function does not —
+  `:reading_order`, `:include_form_fields`, `:strip_running_headers_footers`
+  — are omitted because upstream's text assembler never reads them. Like any
+  other undeclared key, passing one is silently ignored.
+  """
+  @type text_opts :: [
+          extract_tables: boolean(),
+          expand_ligatures: boolean(),
+          table_detection: table_detection_opts() | nil,
+          region: Rect.t() | nil,
+          region_mode: region_mode(),
+          exclude_regions: [Rect.t()],
+          exclude_regions_mode: region_mode(),
+          exclude_layers: [String.t()],
+          exclude_inks: [String.t()]
+        ]
+
+  @doc """
+  Extracts text content.
+
+  With a keyword list (or nothing) as the second argument, extracts the whole
+  document — every page's text concatenated in order, separated by a form-feed
+  (`\\f`) page separator. With a zero-based integer, extracts that single page
+  instead.
+
+      Document.text(doc)
+      Document.text(doc, extract_tables: false)
+      Document.text(doc, 0)
+      Document.text(doc, 0, region: word.bbox)
+
+  A page that fails to extract contributes nothing to the whole-document
+  result rather than failing the call, matching `pdf_oxide`.
+
+  See `t:text_opts/0` for the available options.
   """
   @spec text(t()) :: {:ok, String.t()} | {:error, Error.t()}
-  def text(%__MODULE__{ref: ref}) do
-    Wrap.call(fn -> Native.document_extract_all_text(ref) end)
+  @spec text(t(), text_opts() | non_neg_integer()) :: {:ok, String.t()} | {:error, Error.t()}
+  def text(doc, page_index_or_opts \\ [])
+
+  def text(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_text_options(opts)
+    Wrap.call(fn -> Native.document_extract_all_text(ref, options) end)
+  end
+
+  def text(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    text(doc, page_index, [])
   end
 
   @doc """
-  Extracts the text content of the whole document, raising an error if it fails.
+  Extracts text content, raising an error if it fails.
   """
   @spec text!(t()) :: String.t()
-  def text!(%__MODULE__{} = doc) do
-    case text(doc) do
+  @spec text!(t(), text_opts() | non_neg_integer()) :: String.t()
+  def text!(doc, page_index_or_opts \\ [])
+
+  def text!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case text(doc, opts) do
       {:ok, text} -> text
       {:error, error} -> raise error
     end
   end
 
+  def text!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    text!(doc, page_index, [])
+  end
+
   @doc """
   Extracts the text content of the page at the given zero-based index.
+
+  See `t:text_opts/0` for the available options.
   """
-  @spec text(t(), non_neg_integer()) :: {:ok, String.t()} | {:error, Error.t()}
-  def text(%__MODULE__{ref: ref}, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    Wrap.call(fn -> Native.document_extract_text(ref, page_index) end)
+  @spec text(t(), non_neg_integer(), text_opts()) :: {:ok, String.t()} | {:error, Error.t()}
+  def text(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_text_options(opts)
+    Wrap.call(fn -> Native.document_extract_text(ref, page_index, options) end)
   end
 
   @doc """
   Extracts the text content of the page at the given zero-based index,
   raising an error if it fails.
   """
-  @spec text!(t(), non_neg_integer()) :: String.t()
-  def text!(doc, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    case text(doc, page_index) do
+  @spec text!(t(), non_neg_integer(), text_opts()) :: String.t()
+  def text!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case text(doc, page_index, opts) do
       {:ok, text} -> text
       {:error, error} -> raise error
     end
+  end
+
+  defp build_text_options(opts) do
+    %{
+      extract_tables: Keyword.get(opts, :extract_tables, true),
+      expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
+      table_detection: build_table_detection_option(Keyword.get(opts, :table_detection)),
+      region: Keyword.get(opts, :region),
+      region_mode: Keyword.get(opts, :region_mode, :intersects),
+      exclude_regions: Keyword.get(opts, :exclude_regions, []),
+      exclude_regions_mode: Keyword.get(opts, :exclude_regions_mode, :intersects),
+      exclude_layers: Keyword.get(opts, :exclude_layers, []),
+      exclude_inks: Keyword.get(opts, :exclude_inks, [])
+    }
   end
 
   @typedoc """
@@ -734,41 +874,127 @@ defmodule PdfElixide.Document do
       else: Native.document_to_html(ref, page_index, options)
   end
 
-  @doc """
-  Extracts the words of the whole document.
+  @typedoc """
+  A span-extraction tuning preset, named after `pdf_oxide`'s own
+  `ExtractionProfile` constants. A profile changes the TJ-offset and
+  word-margin thresholds used to turn glyphs into spans, before any word
+  clustering happens.
+  """
+  @type extraction_profile ::
+          :conservative
+          | :tj_heavy
+          | :aggressive
+          | :balanced
+          | :academic
+          | :policy
+          | :form
+          | :government
+          | :scanned_ocr
+          | :adaptive
 
-  Returns every page's words concatenated into a single flat list, in page
-  order. Each word carries its bounding box and font metadata as a
+  @typedoc """
+  Options accepted by the `words` and `words!` functions.
+
+    * `:include_artifacts` — keep spans tagged `/Artifact` (running
+      headers and footers, page numbers, watermarks; ISO 32000-1
+      §14.8.2.2.1). Defaults to `true`, which is the current behavior and
+      what the Python bindings default to; `false` selects upstream's
+      spec-correct variant.
+    * `:region` — a `PdfElixide.Geometry.Rect` keeping only the words
+      inside it. Defaults to `nil`.
+    * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
+      Defaults to `:intersects`.
+    * `:word_gap_threshold` — the inter-glyph gap in points that starts a
+      new word. `nil` lets upstream compute it adaptively from page
+      statistics (median character width × 0.3). Defaults to `nil`.
+    * `:profile` — a `t:extraction_profile/0`, or `nil` for none.
+      Defaults to `nil`.
+
+  ## `:word_gap_threshold` and `:profile` are deprecated upstream
+
+  `pdf_oxide` plans to move both to a separate advanced API (its Python
+  bindings already emit a `DeprecationWarning` for them), and `:profile`
+  in particular is documented as pending removal. `:profile` also does
+  more than its name suggests: passing *any* profile switches span
+  extraction to a different, legacy ordering path (XY-cut plus a row-aware
+  sort), so it can change word **order** and not merely word boundaries —
+  even for `:conservative`, which is nominally the default profile. Prefer
+  leaving both at `nil`.
+
+  Unlike the Python bindings, `:region` here composes with everything else:
+  it is applied after extraction, so it does not discard the thresholds or
+  the profile.
+  """
+  @type words_opts :: [
+          include_artifacts: boolean(),
+          region: Rect.t() | nil,
+          region_mode: region_mode(),
+          word_gap_threshold: float() | nil,
+          profile: extraction_profile() | nil
+        ]
+
+  @doc """
+  Extracts words, each with its bounding box and font metadata as a
   `PdfElixide.Document.Word` struct.
+
+  With a keyword list (or nothing) as the second argument, returns every
+  page's words concatenated into a single flat list, in page order. With a
+  zero-based integer, returns that single page's words instead.
+
+      Document.words(doc)
+      Document.words(doc, include_artifacts: false)
+      Document.words(doc, 0)
+      Document.words(doc, 0, region: heading.bbox)
+
+  See `t:words_opts/0` for the available options.
   """
   @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}
-  def words(%__MODULE__{ref: ref}) do
-    with {:ok, words} <- Wrap.call(fn -> Native.document_all_words(ref) end) do
+  @spec words(t(), words_opts() | non_neg_integer()) :: {:ok, [Word.t()]} | {:error, Error.t()}
+  def words(doc, page_index_or_opts \\ [])
+
+  def words(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_words_options(opts)
+
+    with {:ok, words} <- Wrap.call(fn -> Native.document_all_words(ref, options) end) do
       {:ok, Enum.map(words, &Word.from_nif/1)}
     end
   end
 
+  def words(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    words(doc, page_index, [])
+  end
+
   @doc """
-  Extracts the words of the whole document, raising an error if it fails.
+  Extracts words, raising an error if it fails.
   """
   @spec words!(t()) :: [Word.t()]
-  def words!(%__MODULE__{} = doc) do
-    case words(doc) do
+  @spec words!(t(), words_opts() | non_neg_integer()) :: [Word.t()]
+  def words!(doc, page_index_or_opts \\ [])
+
+  def words!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case words(doc, opts) do
       {:ok, words} -> words
       {:error, error} -> raise error
     end
   end
 
+  def words!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    words!(doc, page_index, [])
+  end
+
   @doc """
   Extracts the words of the page at the given zero-based index.
 
-  Each word carries its bounding box and font metadata as a
-  `PdfElixide.Document.Word` struct.
+  See `t:words_opts/0` for the available options.
   """
-  @spec words(t(), non_neg_integer()) :: {:ok, [Word.t()]} | {:error, Error.t()}
-  def words(%__MODULE__{ref: ref}, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    with {:ok, words} <- Wrap.call(fn -> Native.document_words(ref, page_index) end) do
+  @spec words(t(), non_neg_integer(), words_opts()) :: {:ok, [Word.t()]} | {:error, Error.t()}
+  def words(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_words_options(opts)
+
+    with {:ok, words} <- Wrap.call(fn -> Native.document_words(ref, page_index, options) end) do
       {:ok, Enum.map(words, &Word.from_nif/1)}
     end
   end
@@ -777,50 +1003,103 @@ defmodule PdfElixide.Document do
   Extracts the words of the page at the given zero-based index, raising an error
   if it fails.
   """
-  @spec words!(t(), non_neg_integer()) :: [Word.t()]
-  def words!(doc, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    case words(doc, page_index) do
+  @spec words!(t(), non_neg_integer(), words_opts()) :: [Word.t()]
+  def words!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case words(doc, page_index, opts) do
       {:ok, words} -> words
       {:error, error} -> raise error
     end
   end
 
-  @doc """
-  Extracts the text lines of the whole document.
+  defp build_words_options(opts) do
+    %{
+      include_artifacts: Keyword.get(opts, :include_artifacts, true),
+      word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
+      profile: Keyword.get(opts, :profile),
+      region: Keyword.get(opts, :region),
+      region_mode: Keyword.get(opts, :region_mode, :intersects)
+    }
+  end
 
-  Returns every page's lines concatenated into a single flat list, in page
-  order. Each line carries its bounding box and constituent words as a
+  @typedoc """
+  Options accepted by the `text_lines` and `text_lines!` functions.
+
+  The same options as `t:words_opts/0` — including the upstream deprecation
+  of `:word_gap_threshold` and `:profile` documented there — plus:
+
+    * `:line_gap_threshold` — the vertical gap in points that starts a new
+      line. `nil` lets upstream compute it. Defaults to `nil`, and is
+      deprecated upstream alongside the other two.
+  """
+  @type text_lines_opts :: [
+          include_artifacts: boolean(),
+          region: Rect.t() | nil,
+          region_mode: region_mode(),
+          word_gap_threshold: float() | nil,
+          line_gap_threshold: float() | nil,
+          profile: extraction_profile() | nil
+        ]
+
+  @doc """
+  Extracts text lines, each with its bounding box and constituent words as a
   `PdfElixide.Document.TextLine` struct.
+
+  With a keyword list (or nothing) as the second argument, returns every
+  page's lines concatenated into a single flat list, in page order. With a
+  zero-based integer, returns that single page's lines instead.
+
+  See `t:text_lines_opts/0` for the available options.
   """
   @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, Error.t()}
-  def text_lines(%__MODULE__{ref: ref}) do
-    with {:ok, lines} <- Wrap.call(fn -> Native.document_all_text_lines(ref) end) do
+  @spec text_lines(t(), text_lines_opts() | non_neg_integer()) ::
+          {:ok, [TextLine.t()]} | {:error, Error.t()}
+  def text_lines(doc, page_index_or_opts \\ [])
+
+  def text_lines(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_text_lines_options(opts)
+
+    with {:ok, lines} <- Wrap.call(fn -> Native.document_all_text_lines(ref, options) end) do
       {:ok, Enum.map(lines, &TextLine.from_nif/1)}
     end
   end
 
+  def text_lines(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    text_lines(doc, page_index, [])
+  end
+
   @doc """
-  Extracts the text lines of the whole document, raising an error if it fails.
+  Extracts text lines, raising an error if it fails.
   """
   @spec text_lines!(t()) :: [TextLine.t()]
-  def text_lines!(%__MODULE__{} = doc) do
-    case text_lines(doc) do
+  @spec text_lines!(t(), text_lines_opts() | non_neg_integer()) :: [TextLine.t()]
+  def text_lines!(doc, page_index_or_opts \\ [])
+
+  def text_lines!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case text_lines(doc, opts) do
       {:ok, lines} -> lines
       {:error, error} -> raise error
     end
   end
 
+  def text_lines!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    text_lines!(doc, page_index, [])
+  end
+
   @doc """
   Extracts the text lines of the page at the given zero-based index.
 
-  Each line carries its bounding box and constituent words as a
-  `PdfElixide.Document.TextLine` struct.
+  See `t:text_lines_opts/0` for the available options.
   """
-  @spec text_lines(t(), non_neg_integer()) :: {:ok, [TextLine.t()]} | {:error, Error.t()}
-  def text_lines(%__MODULE__{ref: ref}, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    with {:ok, lines} <- Wrap.call(fn -> Native.document_text_lines(ref, page_index) end) do
+  @spec text_lines(t(), non_neg_integer(), text_lines_opts()) ::
+          {:ok, [TextLine.t()]} | {:error, Error.t()}
+  def text_lines(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_text_lines_options(opts)
+
+    with {:ok, lines} <- Wrap.call(fn -> Native.document_text_lines(ref, page_index, options) end) do
       {:ok, Enum.map(lines, &TextLine.from_nif/1)}
     end
   end
@@ -829,50 +1108,102 @@ defmodule PdfElixide.Document do
   Extracts the text lines of the page at the given zero-based index, raising an
   error if it fails.
   """
-  @spec text_lines!(t(), non_neg_integer()) :: [TextLine.t()]
-  def text_lines!(doc, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    case text_lines(doc, page_index) do
+  @spec text_lines!(t(), non_neg_integer(), text_lines_opts()) :: [TextLine.t()]
+  def text_lines!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case text_lines(doc, page_index, opts) do
       {:ok, lines} -> lines
       {:error, error} -> raise error
     end
   end
 
-  @doc """
-  Extracts the characters of the whole document.
+  defp build_text_lines_options(opts) do
+    %{
+      include_artifacts: Keyword.get(opts, :include_artifacts, true),
+      word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
+      line_gap_threshold: Keyword.get(opts, :line_gap_threshold),
+      profile: Keyword.get(opts, :profile),
+      region: Keyword.get(opts, :region),
+      region_mode: Keyword.get(opts, :region_mode, :intersects)
+    }
+  end
 
-  Returns every page's characters concatenated into a single flat list, in page
-  order. Each character carries its bounding box, font metadata, and
+  @typedoc """
+  Options accepted by the `chars` and `chars!` functions.
+
+    * `:region` — a `PdfElixide.Geometry.Rect` keeping only the characters
+      inside it. Defaults to `nil`.
+    * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
+      Defaults to `:intersects`.
+    * `:exclude_layers` — names of optional-content (OCG) layers to
+      suppress. Defaults to `[]`.
+    * `:exclude_inks` — names of Separation/DeviceN inks to suppress.
+      Defaults to `[]`.
+  """
+  @type chars_opts :: [
+          region: Rect.t() | nil,
+          region_mode: region_mode(),
+          exclude_layers: [String.t()],
+          exclude_inks: [String.t()]
+        ]
+
+  @doc """
+  Extracts characters, each with its bounding box, font metadata and
   typographic placement as a `PdfElixide.Document.Char` struct.
+
+  With a keyword list (or nothing) as the second argument, returns every
+  page's characters concatenated into a single flat list, in page order. With
+  a zero-based integer, returns that single page's characters instead.
+
+  See `t:chars_opts/0` for the available options.
   """
   @spec chars(t()) :: {:ok, [Char.t()]} | {:error, Error.t()}
-  def chars(%__MODULE__{ref: ref}) do
-    with {:ok, chars} <- Wrap.call(fn -> Native.document_all_chars(ref) end) do
+  @spec chars(t(), chars_opts() | non_neg_integer()) :: {:ok, [Char.t()]} | {:error, Error.t()}
+  def chars(doc, page_index_or_opts \\ [])
+
+  def chars(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_chars_options(opts)
+
+    with {:ok, chars} <- Wrap.call(fn -> Native.document_all_chars(ref, options) end) do
       {:ok, Enum.map(chars, &Char.from_nif/1)}
     end
   end
 
+  def chars(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    chars(doc, page_index, [])
+  end
+
   @doc """
-  Extracts the characters of the whole document, raising an error if it fails.
+  Extracts characters, raising an error if it fails.
   """
   @spec chars!(t()) :: [Char.t()]
-  def chars!(%__MODULE__{} = doc) do
-    case chars(doc) do
+  @spec chars!(t(), chars_opts() | non_neg_integer()) :: [Char.t()]
+  def chars!(doc, page_index_or_opts \\ [])
+
+  def chars!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case chars(doc, opts) do
       {:ok, chars} -> chars
       {:error, error} -> raise error
     end
   end
 
+  def chars!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    chars!(doc, page_index, [])
+  end
+
   @doc """
   Extracts the characters of the page at the given zero-based index.
 
-  Each character carries its bounding box, font metadata, and typographic
-  placement as a `PdfElixide.Document.Char` struct.
+  See `t:chars_opts/0` for the available options.
   """
-  @spec chars(t(), non_neg_integer()) :: {:ok, [Char.t()]} | {:error, Error.t()}
-  def chars(%__MODULE__{ref: ref}, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    with {:ok, chars} <- Wrap.call(fn -> Native.document_chars(ref, page_index) end) do
+  @spec chars(t(), non_neg_integer(), chars_opts()) :: {:ok, [Char.t()]} | {:error, Error.t()}
+  def chars(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_chars_options(opts)
+
+    with {:ok, chars} <- Wrap.call(fn -> Native.document_chars(ref, page_index, options) end) do
       {:ok, Enum.map(chars, &Char.from_nif/1)}
     end
   end
@@ -881,50 +1212,164 @@ defmodule PdfElixide.Document do
   Extracts the characters of the page at the given zero-based index, raising an
   error if it fails.
   """
-  @spec chars!(t(), non_neg_integer()) :: [Char.t()]
-  def chars!(doc, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    case chars(doc, page_index) do
+  @spec chars!(t(), non_neg_integer(), chars_opts()) :: [Char.t()]
+  def chars!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case chars(doc, page_index, opts) do
       {:ok, chars} -> chars
       {:error, error} -> raise error
     end
   end
 
-  @doc """
-  Extracts the spans of the whole document.
+  defp build_chars_options(opts) do
+    %{
+      region: Keyword.get(opts, :region),
+      region_mode: Keyword.get(opts, :region_mode, :intersects),
+      exclude_layers: Keyword.get(opts, :exclude_layers, []),
+      exclude_inks: Keyword.get(opts, :exclude_inks, [])
+    }
+  end
 
-  Returns every page's spans concatenated into a single flat list, in page
-  order. Each span is a run of text sharing one text state, carried as a
-  `PdfElixide.Document.Span` struct.
+  @typedoc """
+  Options tuning how glyph runs are merged into spans, accepted as
+  `:span_merging`. `pdf_oxide`'s own bindings expose none of this.
+
+    * `:preset` — the base configuration every other key overrides:
+      `:default`, `:aggressive` (merges across wider gaps), `:conservative`
+      (splits more readily), `:adaptive` (derives thresholds from page gap
+      statistics), or `:legacy`. Defaults to `:default`.
+    * `:space_threshold_em_ratio` — gap, as a fraction of font size, that
+      becomes a space.
+    * `:conservative_threshold_pt` — floor gap in points below which no
+      space is inserted.
+    * `:column_boundary_threshold_pt` — gap in points treated as a column
+      break rather than a space.
+    * `:severe_overlap_threshold_pt` — negative gap indicating real glyph
+      overlap.
+    * `:use_adaptive_threshold` — derive the space threshold from page gap
+      statistics.
+    * `:adaptive` — a keyword list tuning that derivation:
+      `:median_multiplier`, `:min_threshold_pt`, `:max_threshold_pt`,
+      `:use_iqr`, `:min_samples`. Only consulted when
+      `:use_adaptive_threshold` resolves to `true`.
+    * `:detect_email_patterns` / `:email_threshold_multiplier` — keep
+      addresses from being split at the `@`.
+    * `:detect_citation_markers` / `:citation_font_size_ratio` — treat
+      small raised runs as citation markers.
+    * `:merge_tm_tj_runs` — when `false`, every text-matrix operator starts
+      a fresh span.
+
+  Every key except `:preset` defaults to `nil`, meaning "keep the preset's
+  value".
+  """
+  @type span_merging_opts :: [
+          preset: :default | :aggressive | :conservative | :adaptive | :legacy,
+          space_threshold_em_ratio: float() | nil,
+          conservative_threshold_pt: float() | nil,
+          column_boundary_threshold_pt: float() | nil,
+          severe_overlap_threshold_pt: float() | nil,
+          use_adaptive_threshold: boolean() | nil,
+          adaptive: keyword() | nil,
+          detect_email_patterns: boolean() | nil,
+          email_threshold_multiplier: float() | nil,
+          detect_citation_markers: boolean() | nil,
+          citation_font_size_ratio: float() | nil,
+          merge_tm_tj_runs: boolean() | nil
+        ]
+
+  @typedoc """
+  Options accepted by the `spans` and `spans!` functions.
+
+    * `:reading_order` — how spans are ordered: `:top_to_bottom` (simple
+      geometric sorting), `:column_aware` (XY-cut column detection), or
+      `:structure` (follow a tagged PDF's structure tree). Defaults to
+      `:top_to_bottom`. This is `pdf_oxide`'s span-level reading order and
+      names its values differently from the `:reading_order` of
+      `t:markdown_opts/0`, which is a separate upstream type.
+    * `:span_merging` — a `t:span_merging_opts/0` keyword list, or `nil`
+      for upstream's default merging. Defaults to `nil`.
+    * `:region` — a `PdfElixide.Geometry.Rect` keeping only the spans
+      inside it. Defaults to `nil`.
+    * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
+      Defaults to `:intersects`.
+    * `:exclude_layers` — names of optional-content (OCG) layers to
+      suppress. Defaults to `[]`.
+    * `:exclude_inks` — names of Separation/DeviceN inks to suppress.
+      Defaults to `[]`.
+
+  ## `:span_merging` drops the other options
+
+  Upstream serves a merging configuration through a call that accepts
+  neither a reading order nor layer/ink filters. So when `:span_merging` is
+  set, `:reading_order`, `:exclude_layers` and `:exclude_inks` are ignored.
+  `:region` still applies — it is a post-filter, not an upstream argument.
+  """
+  @type spans_opts :: [
+          reading_order: :top_to_bottom | :column_aware | :structure,
+          span_merging: span_merging_opts() | nil,
+          region: Rect.t() | nil,
+          region_mode: region_mode(),
+          exclude_layers: [String.t()],
+          exclude_inks: [String.t()]
+        ]
+
+  @doc """
+  Extracts spans — runs of text sharing one text state — as
+  `PdfElixide.Document.Span` structs.
+
+  With a keyword list (or nothing) as the second argument, returns every
+  page's spans concatenated into a single flat list, in page order. With a
+  zero-based integer, returns that single page's spans instead.
+
+  See `t:spans_opts/0` for the available options.
   """
   @spec spans(t()) :: {:ok, [Span.t()]} | {:error, Error.t()}
-  def spans(%__MODULE__{ref: ref}) do
-    with {:ok, spans} <- Wrap.call(fn -> Native.document_all_spans(ref) end) do
+  @spec spans(t(), spans_opts() | non_neg_integer()) :: {:ok, [Span.t()]} | {:error, Error.t()}
+  def spans(doc, page_index_or_opts \\ [])
+
+  def spans(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_spans_options(opts)
+
+    with {:ok, spans} <- Wrap.call(fn -> Native.document_all_spans(ref, options) end) do
       {:ok, Enum.map(spans, &Span.from_nif/1)}
     end
   end
 
+  def spans(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    spans(doc, page_index, [])
+  end
+
   @doc """
-  Extracts the spans of the whole document, raising an error if it fails.
+  Extracts spans, raising an error if it fails.
   """
   @spec spans!(t()) :: [Span.t()]
-  def spans!(%__MODULE__{} = doc) do
-    case spans(doc) do
+  @spec spans!(t(), spans_opts() | non_neg_integer()) :: [Span.t()]
+  def spans!(doc, page_index_or_opts \\ [])
+
+  def spans!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case spans(doc, opts) do
       {:ok, spans} -> spans
       {:error, error} -> raise error
     end
   end
 
+  def spans!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    spans!(doc, page_index, [])
+  end
+
   @doc """
   Extracts the spans of the page at the given zero-based index.
 
-  Each span is a run of text sharing one text state, carried as a
-  `PdfElixide.Document.Span` struct.
+  See `t:spans_opts/0` for the available options.
   """
-  @spec spans(t(), non_neg_integer()) :: {:ok, [Span.t()]} | {:error, Error.t()}
-  def spans(%__MODULE__{ref: ref}, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    with {:ok, spans} <- Wrap.call(fn -> Native.document_spans(ref, page_index) end) do
+  @spec spans(t(), non_neg_integer(), spans_opts()) :: {:ok, [Span.t()]} | {:error, Error.t()}
+  def spans(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_spans_options(opts)
+
+    with {:ok, spans} <- Wrap.call(fn -> Native.document_spans(ref, page_index, options) end) do
       {:ok, Enum.map(spans, &Span.from_nif/1)}
     end
   end
@@ -933,53 +1378,193 @@ defmodule PdfElixide.Document do
   Extracts the spans of the page at the given zero-based index, raising an
   error if it fails.
   """
-  @spec spans!(t(), non_neg_integer()) :: [Span.t()]
-  def spans!(doc, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    case spans(doc, page_index) do
+  @spec spans!(t(), non_neg_integer(), spans_opts()) :: [Span.t()]
+  def spans!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case spans(doc, page_index, opts) do
       {:ok, spans} -> spans
       {:error, error} -> raise error
     end
   end
 
+  defp build_spans_options(opts) do
+    %{
+      reading_order: Keyword.get(opts, :reading_order, :top_to_bottom),
+      span_merging: build_span_merging_option(Keyword.get(opts, :span_merging)),
+      region: Keyword.get(opts, :region),
+      region_mode: Keyword.get(opts, :region_mode, :intersects),
+      exclude_layers: Keyword.get(opts, :exclude_layers, []),
+      exclude_inks: Keyword.get(opts, :exclude_inks, [])
+    }
+  end
+
+  # The nested option builders below each take a keyword list, but a value of
+  # any other shape is passed through untouched rather than rejected by a
+  # guard. That keeps the rule the rest of the library follows: a wrong-typed
+  # value inside an options map fails in the NIF's own decode, surfacing as
+  # `{:error, %Error{reason: :other}}` whose message names the offending
+  # field. A guard here would instead raise a `FunctionClauseError` naming a
+  # private function, which tells the caller nothing about which option was
+  # wrong.
+  defp build_span_merging_option(nil), do: nil
+
+  defp build_span_merging_option(opts) when is_list(opts) do
+    %{
+      preset: Keyword.get(opts, :preset, :default),
+      space_threshold_em_ratio: Keyword.get(opts, :space_threshold_em_ratio),
+      conservative_threshold_pt: Keyword.get(opts, :conservative_threshold_pt),
+      column_boundary_threshold_pt: Keyword.get(opts, :column_boundary_threshold_pt),
+      severe_overlap_threshold_pt: Keyword.get(opts, :severe_overlap_threshold_pt),
+      use_adaptive_threshold: Keyword.get(opts, :use_adaptive_threshold),
+      adaptive: build_adaptive_threshold_option(Keyword.get(opts, :adaptive)),
+      detect_email_patterns: Keyword.get(opts, :detect_email_patterns),
+      email_threshold_multiplier: Keyword.get(opts, :email_threshold_multiplier),
+      detect_citation_markers: Keyword.get(opts, :detect_citation_markers),
+      citation_font_size_ratio: Keyword.get(opts, :citation_font_size_ratio),
+      merge_tm_tj_runs: Keyword.get(opts, :merge_tm_tj_runs)
+    }
+  end
+
+  defp build_span_merging_option(other), do: other
+
+  defp build_adaptive_threshold_option(nil), do: nil
+
+  defp build_adaptive_threshold_option(opts) when is_list(opts) do
+    %{
+      median_multiplier: Keyword.get(opts, :median_multiplier),
+      min_threshold_pt: Keyword.get(opts, :min_threshold_pt),
+      max_threshold_pt: Keyword.get(opts, :max_threshold_pt),
+      use_iqr: Keyword.get(opts, :use_iqr),
+      min_samples: Keyword.get(opts, :min_samples)
+    }
+  end
+
+  defp build_adaptive_threshold_option(other), do: other
+
+  @typedoc """
+  Options tuning `pdf_oxide`'s spatial table detector. Accepted directly by
+  the `tables` functions, and as the `:table_detection` option of the `text`
+  functions.
+
+    * `:preset` — the base configuration every other key overrides:
+      `:default`, `:strict` (demands ruling lines and regular rows) or
+      `:relaxed` (tolerant, text-driven). Defaults to `:default`.
+    * `:horizontal_strategy` / `:vertical_strategy` — what evidence
+      delimits cells on that axis: `:lines` (ruling lines only), `:text`
+      (glyph alignment only) or `:both`.
+    * `:column_tolerance` / `:row_tolerance` — coordinate slack in points
+      when grouping cells into columns and rows.
+    * `:min_table_cells` / `:min_table_columns` — smallest grid accepted as
+      a table.
+    * `:max_table_columns` — reject anything wider as a false positive.
+    * `:regular_row_ratio` — fraction of rows that must share the column
+      count.
+    * `:column_merge_threshold` — slack for the post-clustering column
+      merge pass.
+    * `:v_split_gap` — minimum gap between vertical-line groups that splits
+      a cluster.
+    * `:text_fallback` — allow text-only detection when a page has no
+      ruling lines. Ignored on the `text` path, where upstream forces it to
+      `false`.
+    * `:enabled` — set to `false` to disable detection entirely.
+
+  Every key except `:preset` defaults to `nil`, meaning "keep the preset's
+  value". The Python bindings' `table_settings` dict reaches only five of
+  these.
+  """
+  @type table_detection_opts :: [
+          preset: :default | :strict | :relaxed,
+          enabled: boolean() | nil,
+          horizontal_strategy: :lines | :text | :both | nil,
+          vertical_strategy: :lines | :text | :both | nil,
+          column_tolerance: float() | nil,
+          row_tolerance: float() | nil,
+          min_table_cells: non_neg_integer() | nil,
+          min_table_columns: non_neg_integer() | nil,
+          regular_row_ratio: float() | nil,
+          max_table_columns: non_neg_integer() | nil,
+          column_merge_threshold: float() | nil,
+          v_split_gap: float() | nil,
+          text_fallback: boolean() | nil
+        ]
+
+  @typedoc """
+  Options accepted by the `tables` and `tables!` functions: every
+  `t:table_detection_opts/0` key, plus
+
+    * `:region` — a `PdfElixide.Geometry.Rect` keeping only the tables
+      overlapping it. Defaults to `nil`. There is no `:region_mode`:
+      upstream filters tables by bounding-box intersection only.
+
+  Note that `:region` here keeps the detection options you passed, whereas
+  `pdf_oxide`'s own region call silently substitutes its `:relaxed` preset.
+  Pass `preset: :relaxed` to ask for that explicitly.
+  """
+  @type tables_opts :: [{:region, Rect.t() | nil} | {atom(), term()}]
+
   @doc """
-  Detects the tables of the whole document.
+  Detects tables, as `PdfElixide.Document.Table` structs.
 
-  Returns every page's tables concatenated into a single flat list, in page
-  order, as `PdfElixide.Document.Table` structs.
+  With a keyword list (or nothing) as the second argument, returns every
+  page's tables concatenated into a single flat list, in page order. With a
+  zero-based integer, returns that single page's tables instead.
 
-  Detection is heuristic — see `PdfElixide.Document.Table` for the `:real_grid?`
-  flag and how to filter out likely false positives.
+      Document.tables(doc)
+      Document.tables(doc, 0)
+      Document.tables(doc, 0, preset: :strict, row_tolerance: 1.5)
+
+  Detection is heuristic — see `PdfElixide.Document.Table` for the
+  `:real_grid?` flag and how to filter out likely false positives, and
+  `t:tables_opts/0` for the available options.
   """
   @spec tables(t()) :: {:ok, [Table.t()]} | {:error, Error.t()}
-  def tables(%__MODULE__{ref: ref}) do
-    with {:ok, tables} <- Wrap.call(fn -> Native.document_all_tables(ref) end) do
+  @spec tables(t(), tables_opts() | non_neg_integer()) :: {:ok, [Table.t()]} | {:error, Error.t()}
+  def tables(doc, page_index_or_opts \\ [])
+
+  def tables(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_tables_options(opts)
+
+    with {:ok, tables} <- Wrap.call(fn -> Native.document_all_tables(ref, options) end) do
       {:ok, Enum.map(tables, &Table.from_nif/1)}
     end
   end
 
+  def tables(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    tables(doc, page_index, [])
+  end
+
   @doc """
-  Detects the tables of the whole document, raising an error if it fails.
+  Detects tables, raising an error if it fails.
   """
   @spec tables!(t()) :: [Table.t()]
-  def tables!(%__MODULE__{} = doc) do
-    case tables(doc) do
+  @spec tables!(t(), tables_opts() | non_neg_integer()) :: [Table.t()]
+  def tables!(doc, page_index_or_opts \\ [])
+
+  def tables!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case tables(doc, opts) do
       {:ok, tables} -> tables
       {:error, error} -> raise error
     end
   end
 
+  def tables!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    tables!(doc, page_index, [])
+  end
+
   @doc """
   Detects the tables of the page at the given zero-based index.
 
-  Returns `{:ok, []}` when the page has no detectable table. Detection is
-  heuristic — see `PdfElixide.Document.Table` for the `:real_grid?` flag and how
-  to filter out likely false positives.
+  Returns `{:ok, []}` when the page has no detectable table. See
+  `t:tables_opts/0` for the available options.
   """
-  @spec tables(t(), non_neg_integer()) :: {:ok, [Table.t()]} | {:error, Error.t()}
-  def tables(%__MODULE__{ref: ref}, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    with {:ok, tables} <- Wrap.call(fn -> Native.document_tables(ref, page_index) end) do
+  @spec tables(t(), non_neg_integer(), tables_opts()) :: {:ok, [Table.t()]} | {:error, Error.t()}
+  def tables(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_tables_options(opts)
+
+    with {:ok, tables} <- Wrap.call(fn -> Native.document_tables(ref, page_index, options) end) do
       {:ok, Enum.map(tables, &Table.from_nif/1)}
     end
   end
@@ -988,13 +1573,44 @@ defmodule PdfElixide.Document do
   Detects the tables of the page at the given zero-based index, raising an
   error if it fails.
   """
-  @spec tables!(t(), non_neg_integer()) :: [Table.t()]
-  def tables!(doc, page_index)
-      when is_integer(page_index) and page_index >= 0 do
-    case tables(doc, page_index) do
+  @spec tables!(t(), non_neg_integer(), tables_opts()) :: [Table.t()]
+  def tables!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case tables(doc, page_index, opts) do
       {:ok, tables} -> tables
       {:error, error} -> raise error
     end
+  end
+
+  defp build_tables_options(opts) do
+    %{
+      detection: build_table_detection(opts),
+      region: Keyword.get(opts, :region)
+    }
+  end
+
+  defp build_table_detection_option(nil), do: nil
+
+  defp build_table_detection_option(opts) when is_list(opts), do: build_table_detection(opts)
+
+  defp build_table_detection_option(other), do: other
+
+  defp build_table_detection(opts) do
+    %{
+      preset: Keyword.get(opts, :preset, :default),
+      enabled: Keyword.get(opts, :enabled),
+      horizontal_strategy: Keyword.get(opts, :horizontal_strategy),
+      vertical_strategy: Keyword.get(opts, :vertical_strategy),
+      column_tolerance: Keyword.get(opts, :column_tolerance),
+      row_tolerance: Keyword.get(opts, :row_tolerance),
+      min_table_cells: Keyword.get(opts, :min_table_cells),
+      min_table_columns: Keyword.get(opts, :min_table_columns),
+      regular_row_ratio: Keyword.get(opts, :regular_row_ratio),
+      max_table_columns: Keyword.get(opts, :max_table_columns),
+      column_merge_threshold: Keyword.get(opts, :column_merge_threshold),
+      v_split_gap: Keyword.get(opts, :v_split_gap),
+      text_fallback: Keyword.get(opts, :text_fallback)
+    }
   end
 
   @doc """

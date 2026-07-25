@@ -13,6 +13,7 @@ mod color;
 mod document;
 mod editor;
 mod error;
+mod extract_options;
 mod fonts;
 mod form;
 mod geometry;

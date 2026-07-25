@@ -1,0 +1,157 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [20 0 R] /D << /ON [20 0 R] >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R 15 0 R] /Count 5 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> /ColorSpace << /CS0 21 0 R >> /Properties << /MC0 20 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 285 >>
+stream
+BT /F1 12 Tf
+1 0 0 1 72 700 Tm (Alpha one) Tj
+1 0 0 1 380 700 Tm (Beta one) Tj
+1 0 0 1 72 660 Tm (Alpha two) Tj
+1 0 0 1 380 660 Tm (Beta two) Tj
+1 0 0 1 72 620 Tm (Alpha three) Tj
+1 0 0 1 380 620 Tm (Beta three) Tj
+1 0 0 1 72 580 Tm (Alpha four) Tj
+1 0 0 1 380 580 Tm (Beta four) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> /ColorSpace << /CS0 21 0 R >> /Properties << /MC0 20 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 227 >>
+stream
+/Artifact << /Type /Pagination /Subtype /Header >> BDC
+BT /F1 10 Tf 1 0 0 1 72 750 Tm (Running header artifact) Tj ET
+EMC
+BT /F1 12 Tf 1 0 0 1 72 700 Tm (Body line one) Tj ET
+BT /F1 12 Tf 1 0 0 1 72 680 Tm (Body line two) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> /ColorSpace << /CS0 21 0 R >> /Properties << /MC0 20 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 253 >>
+stream
+BT /F2 12 Tf 1 0 0 1 72 700 Tm (co\310n) Tj ET
+/CS0 cs 1 scn
+BT /F1 12 Tf 1 0 0 1 72 660 Tm (Spot inked line) Tj ET
+0 g
+/OC /MC0 BDC
+BT /F1 12 Tf 1 0 0 1 72 620 Tm (Layered watermark line) Tj ET
+EMC
+BT /F1 12 Tf 1 0 0 1 72 580 Tm (Plain body line) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> /ColorSpace << /CS0 21 0 R >> /Properties << /MC0 20 0 R >> >> /Contents 10 0 R >>
+endobj
+10 0 obj
+<< /Length 355 >>
+stream
+BT /F1 11 Tf
+1 0 0 1 72 700 Tm (Region) Tj
+1 0 0 1 220 700 Tm (Units) Tj
+1 0 0 1 340 700 Tm (Total) Tj
+1 0 0 1 72 676 Tm (North) Tj
+1 0 0 1 220 676 Tm (12) Tj
+1 0 0 1 340 676 Tm (480) Tj
+1 0 0 1 72 652 Tm (South) Tj
+1 0 0 1 220 652 Tm (31) Tj
+1 0 0 1 340 652 Tm (930) Tj
+1 0 0 1 72 628 Tm (East) Tj
+1 0 0 1 220 628 Tm (7) Tj
+1 0 0 1 340 628 Tm (210) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+12 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding 13 0 R /ToUnicode 14 0 R >>
+endobj
+13 0 obj
+<< /Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [200 /fi] >>
+endobj
+14 0 obj
+<< /Length 246 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /Custom def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfchar
+<C8> <FB01>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> /ColorSpace << /CS0 21 0 R >> /Properties << /MC0 20 0 R >> >> /Contents 16 0 R >>
+endobj
+16 0 obj
+<< /Length 131 >>
+stream
+BT /F1 12 Tf
+1 0 0 1 72 700 Tm [(Alpha) -400 (Beta) -4000 (Gamma)] TJ
+1 0 0 1 72 660 Tm [(Delta) -400 (Epsilon) -4000 (Zeta)] TJ
+ET
+endstream
+endobj
+20 0 obj
+<< /Type /OCG /Name (Watermark) >>
+endobj
+21 0 obj
+[/Separation /SpotRed /DeviceRGB 22 0 R]
+endobj
+22 0 obj
+<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [1 0 0] /N 1 >>
+endobj
+xref
+0 23
+0000000000 65535 f 
+0000000015 00000 n 
+0000000121 00000 n 
+0000000203 00000 n 
+0000000401 00000 n 
+0000000737 00000 n 
+0000000935 00000 n 
+0000001213 00000 n 
+0000001411 00000 n 
+0000001715 00000 n 
+0000001914 00000 n 
+0000002321 00000 n 
+0000002419 00000 n 
+0000002525 00000 n 
+0000002617 00000 n 
+0000002915 00000 n 
+0000003115 00000 n 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+0000003298 00000 n 
+0000003349 00000 n 
+0000003406 00000 n 
+trailer
+<< /Size 23 /Root 1 0 R >>
+startxref
+3487
+%%EOF

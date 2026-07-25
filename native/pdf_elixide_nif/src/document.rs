@@ -1,6 +1,10 @@
+use std::collections::HashSet;
+
 use pdf_oxide::{
     converters::{BoldMarkerBehavior, ConversionOptions, ReadingOrderMode},
+    error::Result,
     extractors::forms::FormExtractor,
+    layout::SpatialCollectionFiltering,
     PdfDocument,
 };
 use rustler::{Atom, Binary, NifMap, NifResult, NifUnitEnum, ResourceArc};
@@ -10,6 +14,11 @@ use crate::{
     atoms,
     char::{char_to_nif, CharNif},
     error::{tagged_err, to_nif_err},
+    extract_options::{
+        CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, RegionFilter, SpansOptions,
+        SpansOptionsNif, TablesOptions, TablesOptionsNif, TextOptions, TextOptionsNif,
+        WordsOptions, WordsOptionsNif,
+    },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
     images::{image_to_nif, ImageNif},
@@ -317,24 +326,77 @@ fn document_authenticate(
     doc.authenticate(password.as_slice()).map_err(to_nif_err)
 }
 
+/// Extracts one page's text under the caller's options.
+///
+/// Layer and ink filtering can only be served by upstream's
+/// `extract_text_filtered` / `extract_text_filtered_in_rect`, which build their
+/// own `ConversionOptions` internally (`extract_tables: true`, everything else
+/// default) and offer no way to pass ours — `assemble_text_from_spans` is
+/// private. So when either list is non-empty every option except `:region` and
+/// `:region_mode` falls back to its upstream default; `PdfElixide.Document`
+/// documents that and `upstream_drift_test.exs` pins it.
+fn extract_text_page(
+    doc: &PdfDocument,
+    page_index: usize,
+    options: &TextOptions,
+) -> Result<String> {
+    if options.filtered() {
+        let layers: HashSet<String> = options.exclude_layers.iter().cloned().collect();
+        let inks: HashSet<String> = options.exclude_inks.iter().cloned().collect();
+        return match &options.region {
+            Some(RegionFilter { rect, mode }) => {
+                doc.extract_text_filtered_in_rect(page_index, layers, inks, rect.clone(), *mode)
+            }
+            None => doc.extract_text_filtered(page_index, layers, inks),
+        };
+    }
+
+    doc.extract_text_with_options(page_index, &options.conversion)
+}
+
 /// Extracts text content from a single page (zero-indexed).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_extract_text(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
+    options: TextOptionsNif,
 ) -> NifResult<String> {
     let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
-    doc.extract_text(page_index).map_err(to_nif_err)
+    options.validate()?;
+
+    extract_text_page(&doc, page_index, &options.into()).map_err(to_nif_err)
 }
 
 /// Extracts text content from all pages, separated by form-feed characters.
+///
+/// Mirrors upstream `extract_all_text`: the same `\x0c` separator, and the same
+/// choice to log and skip a page that fails rather than failing the document.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_extract_all_text(resource: ResourceArc<DocumentResource>) -> NifResult<String> {
+fn document_extract_all_text(
+    resource: ResourceArc<DocumentResource>,
+    options: TextOptionsNif,
+) -> NifResult<String> {
     let doc = resource.doc.lock()?;
+    options.validate()?;
+    let options: TextOptions = options.into();
 
-    doc.extract_all_text().map_err(to_nif_err)
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut text = String::new();
+    for page_index in 0..count {
+        if page_index > 0 {
+            text.push('\x0c');
+        }
+        // A page that fails to extract contributes nothing and does not fail
+        // the document — upstream `extract_all_text` swallows the same way (it
+        // logs; this crate carries no logging dependency). Keeping the
+        // behavior matters: `text/1` now routes through here too.
+        if let Ok(page_text) = extract_text_page(&doc, page_index, &options) {
+            text.push_str(&page_text);
+        }
+    }
+    Ok(text)
 }
 
 fn markdown_page(
@@ -459,16 +521,57 @@ fn document_to_html_all_to_dir(
     html_all(&resource, options)
 }
 
+/// Applies a caller-supplied `:region` to an already-extracted collection.
+///
+/// Upstream's own `extract_*_in_rect` methods do exactly this internally, over
+/// the plain (option-less) extraction. Filtering here instead of calling them
+/// is what lets `:region` compose with `:word_gap_threshold`, `:profile`,
+/// `:span_merging` and the layer/ink-filtered variants — those methods would
+/// discard all of it.
+fn apply_region<T>(items: Vec<T>, region: &Option<RegionFilter>) -> Vec<T>
+where
+    T: pdf_oxide::layout::LayoutObjectSpatial + Clone,
+{
+    match region {
+        Some(RegionFilter { rect, mode }) => items.filter_by_rect(rect, *mode),
+        None => items,
+    }
+}
+
+fn extract_words_page(
+    doc: &PdfDocument,
+    page_index: usize,
+    options: &WordsOptions,
+) -> Result<Vec<pdf_oxide::layout::Word>> {
+    let words = if options.include_artifacts {
+        doc.extract_words_with_thresholds(
+            page_index,
+            options.word_gap_threshold,
+            options.profile.clone(),
+        )?
+    } else {
+        doc.extract_words_with_thresholds_no_artifacts(
+            page_index,
+            options.word_gap_threshold,
+            options.profile.clone(),
+        )?
+    };
+    Ok(apply_region(words, &options.region))
+}
+
 /// Extracts words (with bounding boxes) from a single page (zero-indexed).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_words(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
+    options: WordsOptionsNif,
 ) -> NifResult<Vec<WordNif>> {
     let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
-    let words = doc.extract_words(page_index).map_err(to_nif_err)?;
+    options.validate()?;
+
+    let words = extract_words_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
     Ok(words
         .into_iter()
         .map(|word| word_to_nif(word, page_index))
@@ -477,13 +580,18 @@ fn document_words(
 
 /// Extracts words (with bounding boxes) from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_all_words(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<WordNif>> {
+fn document_all_words(
+    resource: ResourceArc<DocumentResource>,
+    options: WordsOptionsNif,
+) -> NifResult<Vec<WordNif>> {
     let doc = resource.doc.lock()?;
+    options.validate()?;
+    let options: WordsOptions = options.into();
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut words = Vec::new();
     for page_index in 0..count {
-        let page_words = doc.extract_words(page_index).map_err(to_nif_err)?;
+        let page_words = extract_words_page(&doc, page_index, &options).map_err(to_nif_err)?;
         words.extend(
             page_words
                 .into_iter()
@@ -493,16 +601,42 @@ fn document_all_words(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
     Ok(words)
 }
 
+fn extract_text_lines_page(
+    doc: &PdfDocument,
+    page_index: usize,
+    options: &LinesOptions,
+) -> Result<Vec<pdf_oxide::layout::TextLine>> {
+    let lines = if options.include_artifacts {
+        doc.extract_text_lines_with_thresholds(
+            page_index,
+            options.word_gap_threshold,
+            options.line_gap_threshold,
+            options.profile.clone(),
+        )?
+    } else {
+        doc.extract_text_lines_with_thresholds_no_artifacts(
+            page_index,
+            options.word_gap_threshold,
+            options.line_gap_threshold,
+            options.profile.clone(),
+        )?
+    };
+    Ok(apply_region(lines, &options.region))
+}
+
 /// Extracts text lines (each with its words) from a single page (zero-indexed).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_text_lines(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
+    options: LinesOptionsNif,
 ) -> NifResult<Vec<TextLineNif>> {
     let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
-    let lines = doc.extract_text_lines(page_index).map_err(to_nif_err)?;
+    options.validate()?;
+
+    let lines = extract_text_lines_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
     Ok(lines
         .into_iter()
         .map(|line| text_line_to_nif(line, page_index))
@@ -511,13 +645,18 @@ fn document_text_lines(
 
 /// Extracts text lines (each with its words) from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_all_text_lines(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<TextLineNif>> {
+fn document_all_text_lines(
+    resource: ResourceArc<DocumentResource>,
+    options: LinesOptionsNif,
+) -> NifResult<Vec<TextLineNif>> {
     let doc = resource.doc.lock()?;
+    options.validate()?;
+    let options: LinesOptions = options.into();
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut lines = Vec::new();
     for page_index in 0..count {
-        let page_lines = doc.extract_text_lines(page_index).map_err(to_nif_err)?;
+        let page_lines = extract_text_lines_page(&doc, page_index, &options).map_err(to_nif_err)?;
         lines.extend(
             page_lines
                 .into_iter()
@@ -527,17 +666,37 @@ fn document_all_text_lines(resource: ResourceArc<DocumentResource>) -> NifResult
     Ok(lines)
 }
 
+fn extract_chars_page(
+    doc: &PdfDocument,
+    page_index: usize,
+    options: &CharsOptions,
+) -> Result<Vec<pdf_oxide::layout::TextChar>> {
+    let chars = if options.exclude_layers.is_empty() && options.exclude_inks.is_empty() {
+        doc.extract_chars(page_index)?
+    } else {
+        doc.extract_chars_filtered(
+            page_index,
+            options.exclude_layers.iter().cloned().collect(),
+            options.exclude_inks.iter().cloned().collect(),
+        )?
+    };
+    Ok(apply_region(chars, &options.region))
+}
+
 /// Extracts characters (with bounding boxes and font metadata) from a single
 /// page (zero-indexed).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_chars(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
+    options: CharsOptionsNif,
 ) -> NifResult<Vec<CharNif>> {
     let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
-    let chars = doc.extract_chars(page_index).map_err(to_nif_err)?;
+    options.validate()?;
+
+    let chars = extract_chars_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
     Ok(chars
         .into_iter()
         .map(|ch| char_to_nif(ch, page_index))
@@ -547,16 +706,47 @@ fn document_chars(
 /// Extracts characters (with bounding boxes and font metadata) from all pages,
 /// in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_all_chars(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<CharNif>> {
+fn document_all_chars(
+    resource: ResourceArc<DocumentResource>,
+    options: CharsOptionsNif,
+) -> NifResult<Vec<CharNif>> {
     let doc = resource.doc.lock()?;
+    options.validate()?;
+    let options: CharsOptions = options.into();
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut chars = Vec::new();
     for page_index in 0..count {
-        let page_chars = doc.extract_chars(page_index).map_err(to_nif_err)?;
+        let page_chars = extract_chars_page(&doc, page_index, &options).map_err(to_nif_err)?;
         chars.extend(page_chars.into_iter().map(|ch| char_to_nif(ch, page_index)));
     }
     Ok(chars)
+}
+
+/// Extracts one page's spans under the caller's options.
+///
+/// `:span_merging` is served by `extract_spans_with_config`, which takes no
+/// reading order and no layer/ink filters, so setting it drops `:reading_order`,
+/// `:exclude_layers` and `:exclude_inks`. `:region` still applies — it is a
+/// post-filter here rather than an upstream argument.
+fn extract_spans_page(
+    doc: &PdfDocument,
+    page_index: usize,
+    options: &SpansOptions,
+) -> Result<Vec<pdf_oxide::layout::TextSpan>> {
+    let spans = match &options.span_merging {
+        Some(config) => doc.extract_spans_with_config(page_index, config.clone())?,
+        None if options.exclude_layers.is_empty() && options.exclude_inks.is_empty() => {
+            doc.extract_spans_with_reading_order(page_index, options.reading_order)?
+        }
+        None => doc.extract_spans_filtered_with_reading_order(
+            page_index,
+            options.reading_order,
+            options.exclude_layers.iter().cloned().collect(),
+            options.exclude_inks.iter().cloned().collect(),
+        )?,
+    };
+    Ok(apply_region(spans, &options.region))
 }
 
 /// Extracts spans (runs of text sharing one text state) from a single page
@@ -565,11 +755,14 @@ fn document_all_chars(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
 fn document_spans(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
+    options: SpansOptionsNif,
 ) -> NifResult<Vec<SpanNif>> {
     let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
-    let spans = doc.extract_spans(page_index).map_err(to_nif_err)?;
+    options.validate()?;
+
+    let spans = extract_spans_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
     Ok(spans
         .into_iter()
         .map(|span| span_to_nif(span, page_index))
@@ -579,13 +772,18 @@ fn document_spans(
 /// Extracts spans (runs of text sharing one text state) from all pages, in
 /// page order.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_all_spans(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<SpanNif>> {
+fn document_all_spans(
+    resource: ResourceArc<DocumentResource>,
+    options: SpansOptionsNif,
+) -> NifResult<Vec<SpanNif>> {
     let doc = resource.doc.lock()?;
+    options.validate()?;
+    let options: SpansOptions = options.into();
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut spans = Vec::new();
     for page_index in 0..count {
-        let page_spans = doc.extract_spans(page_index).map_err(to_nif_err)?;
+        let page_spans = extract_spans_page(&doc, page_index, &options).map_err(to_nif_err)?;
         spans.extend(
             page_spans
                 .into_iter()
@@ -738,16 +936,37 @@ fn document_all_fonts(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
     Ok(fonts)
 }
 
+/// Detects one page's tables under the caller's detection config.
+///
+/// The region variant passes the caller's config through, where upstream's own
+/// `extract_tables_in_rect` would silently swap in `TableDetectionConfig::
+/// relaxed()`. Python deviates the same way; `:preset` makes it explicit.
+fn extract_tables_page(
+    doc: &PdfDocument,
+    page_index: usize,
+    options: &TablesOptions,
+) -> Result<Vec<pdf_oxide::structure::table_extractor::Table>> {
+    match &options.region {
+        Some(rect) => doc.extract_tables_in_rect_with_config(
+            page_index,
+            rect.clone(),
+            options.detection.clone(),
+        ),
+        None => doc.extract_tables_with_config(page_index, options.detection.clone()),
+    }
+}
+
 /// Detects tables on a single page (zero-indexed).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_tables(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
+    options: TablesOptionsNif,
 ) -> NifResult<Vec<TableNif>> {
     let doc = resource.doc.lock()?;
     ensure_page_in_range(&doc, page_index)?;
 
-    let tables = doc.extract_tables(page_index).map_err(to_nif_err)?;
+    let tables = extract_tables_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
     Ok(tables
         .into_iter()
         .map(|table| table_to_nif(table, page_index))
@@ -756,13 +975,17 @@ fn document_tables(
 
 /// Detects tables on all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_all_tables(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<TableNif>> {
+fn document_all_tables(
+    resource: ResourceArc<DocumentResource>,
+    options: TablesOptionsNif,
+) -> NifResult<Vec<TableNif>> {
     let doc = resource.doc.lock()?;
+    let options: TablesOptions = options.into();
 
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut tables = Vec::new();
     for page_index in 0..count {
-        let page_tables = doc.extract_tables(page_index).map_err(to_nif_err)?;
+        let page_tables = extract_tables_page(&doc, page_index, &options).map_err(to_nif_err)?;
         tables.extend(
             page_tables
                 .into_iter()

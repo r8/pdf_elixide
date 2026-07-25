@@ -11,6 +11,11 @@ defmodule PdfElixide.Document.Table do
 
       Enum.filter(tables, & &1.real_grid?)
 
+  The detector itself is tunable — the strategies, tolerances and size floors
+  it uses are `t:PdfElixide.Document.table_detection_opts/0`, passed to
+  `PdfElixide.Document.tables/3`. Reach for those when a page yields no table,
+  or too many.
+
   `:bbox` is `nil` when the detector could not determine the table's extent.
 
   Read a value out with `cell/3` or `cell_text/3`, both zero-based and both

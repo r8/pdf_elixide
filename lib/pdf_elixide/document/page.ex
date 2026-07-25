@@ -90,18 +90,20 @@ defmodule PdfElixide.Document.Page do
 
   @doc """
   Extracts the text content of the page.
+
+  See `t:PdfElixide.Document.text_opts/0` for the available options.
   """
-  @spec text(t()) :: {:ok, String.t()} | {:error, Error.t()}
-  def text(%__MODULE__{doc: doc, index: index}) do
-    Document.text(doc, index)
+  @spec text(t(), Document.text_opts()) :: {:ok, String.t()} | {:error, Error.t()}
+  def text(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.text(doc, index, opts)
   end
 
   @doc """
-  Same as `text/1` but raises an error if it fails.
+  Same as `text/2` but raises an error if it fails.
   """
-  @spec text!(t()) :: String.t()
-  def text!(page) do
-    case text(page) do
+  @spec text!(t(), Document.text_opts()) :: String.t()
+  def text!(page, opts \\ []) when is_list(opts) do
+    case text(page, opts) do
       {:ok, text} -> text
       {:error, error} -> raise error
     end
@@ -153,18 +155,20 @@ defmodule PdfElixide.Document.Page do
 
   @doc """
   Extracts the words of the page, each with its bounding box and font metadata.
+
+  See `t:PdfElixide.Document.words_opts/0` for the available options.
   """
-  @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}
-  def words(%__MODULE__{doc: doc, index: index}) do
-    Document.words(doc, index)
+  @spec words(t(), Document.words_opts()) :: {:ok, [Word.t()]} | {:error, Error.t()}
+  def words(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.words(doc, index, opts)
   end
 
   @doc """
-  Same as `words/1` but raises an error if it fails.
+  Same as `words/2` but raises an error if it fails.
   """
-  @spec words!(t()) :: [Word.t()]
-  def words!(page) do
-    case words(page) do
+  @spec words!(t(), Document.words_opts()) :: [Word.t()]
+  def words!(page, opts \\ []) when is_list(opts) do
+    case words(page, opts) do
       {:ok, words} -> words
       {:error, error} -> raise error
     end
@@ -172,18 +176,21 @@ defmodule PdfElixide.Document.Page do
 
   @doc """
   Extracts the text lines of the page, each with its bounding box and words.
+
+  See `t:PdfElixide.Document.text_lines_opts/0` for the available options.
   """
-  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, Error.t()}
-  def text_lines(%__MODULE__{doc: doc, index: index}) do
-    Document.text_lines(doc, index)
+  @spec text_lines(t(), Document.text_lines_opts()) ::
+          {:ok, [TextLine.t()]} | {:error, Error.t()}
+  def text_lines(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.text_lines(doc, index, opts)
   end
 
   @doc """
-  Same as `text_lines/1` but raises an error if it fails.
+  Same as `text_lines/2` but raises an error if it fails.
   """
-  @spec text_lines!(t()) :: [TextLine.t()]
-  def text_lines!(page) do
-    case text_lines(page) do
+  @spec text_lines!(t(), Document.text_lines_opts()) :: [TextLine.t()]
+  def text_lines!(page, opts \\ []) when is_list(opts) do
+    case text_lines(page, opts) do
       {:ok, lines} -> lines
       {:error, error} -> raise error
     end
@@ -192,18 +199,20 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the characters of the page, each with its bounding box, font
   metadata, and typographic placement.
+
+  See `t:PdfElixide.Document.chars_opts/0` for the available options.
   """
-  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, Error.t()}
-  def chars(%__MODULE__{doc: doc, index: index}) do
-    Document.chars(doc, index)
+  @spec chars(t(), Document.chars_opts()) :: {:ok, [Char.t()]} | {:error, Error.t()}
+  def chars(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.chars(doc, index, opts)
   end
 
   @doc """
-  Same as `chars/1` but raises an error if it fails.
+  Same as `chars/2` but raises an error if it fails.
   """
-  @spec chars!(t()) :: [Char.t()]
-  def chars!(page) do
-    case chars(page) do
+  @spec chars!(t(), Document.chars_opts()) :: [Char.t()]
+  def chars!(page, opts \\ []) when is_list(opts) do
+    case chars(page, opts) do
       {:ok, chars} -> chars
       {:error, error} -> raise error
     end
@@ -211,18 +220,20 @@ defmodule PdfElixide.Document.Page do
 
   @doc """
   Extracts the spans of the page, each a run of text sharing one text state.
+
+  See `t:PdfElixide.Document.spans_opts/0` for the available options.
   """
-  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, Error.t()}
-  def spans(%__MODULE__{doc: doc, index: index}) do
-    Document.spans(doc, index)
+  @spec spans(t(), Document.spans_opts()) :: {:ok, [Span.t()]} | {:error, Error.t()}
+  def spans(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.spans(doc, index, opts)
   end
 
   @doc """
-  Same as `spans/1` but raises an error if it fails.
+  Same as `spans/2` but raises an error if it fails.
   """
-  @spec spans!(t()) :: [Span.t()]
-  def spans!(page) do
-    case spans(page) do
+  @spec spans!(t(), Document.spans_opts()) :: [Span.t()]
+  def spans!(page, opts \\ []) when is_list(opts) do
+    case spans(page, opts) do
       {:ok, spans} -> spans
       {:error, error} -> raise error
     end
@@ -231,19 +242,20 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Detects the tables of the page.
 
-  Returns `{:ok, []}` when the page has no detectable table.
+  Returns `{:ok, []}` when the page has no detectable table. See
+  `t:PdfElixide.Document.tables_opts/0` for the available options.
   """
-  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, Error.t()}
-  def tables(%__MODULE__{doc: doc, index: index}) do
-    Document.tables(doc, index)
+  @spec tables(t(), Document.tables_opts()) :: {:ok, [Table.t()]} | {:error, Error.t()}
+  def tables(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.tables(doc, index, opts)
   end
 
   @doc """
-  Same as `tables/1` but raises an error if it fails.
+  Same as `tables/2` but raises an error if it fails.
   """
-  @spec tables!(t()) :: [Table.t()]
-  def tables!(page) do
-    case tables(page) do
+  @spec tables!(t(), Document.tables_opts()) :: [Table.t()]
+  def tables!(page, opts \\ []) when is_list(opts) do
+    case tables(page, opts) do
       {:ok, tables} -> tables
       {:error, error} -> raise error
     end
