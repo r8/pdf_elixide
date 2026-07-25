@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use pdf_oxide::{editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo, PdfDocument};
+use pdf_oxide::{
+    editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo,
+    structure::table_extractor::Table, PdfDocument,
+};
 
 use crate::resource::Closable;
 
@@ -73,6 +76,13 @@ struct FontResource {
 
 #[rustler::resource_impl]
 impl rustler::Resource for FontResource {}
+
+struct TableResource {
+    table: Closable<Table>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for TableResource {}
 
 // ------------------------------------------------------------------------------------------------
 

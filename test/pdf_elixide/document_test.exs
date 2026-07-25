@@ -1808,7 +1808,8 @@ defmodule PdfElixide.DocumentTest do
         col_count: 3,
         has_header?: true,
         real_grid?: true,
-        rows: []
+        rows: [],
+        ref: nil
       }
 
       assert inspect(table) == "#PdfElixide.Document.Table<p2 0x3 (header)>"
@@ -1822,6 +1823,229 @@ defmodule PdfElixide.DocumentTest do
 
       assert inspect(row) == "#PdfElixide.Document.Table.Row<4 cells>"
       assert inspect(cell) == ~s(#PdfElixide.Document.Table.Cell<"Age">)
+    end
+  end
+
+  describe "Table.to_markdown/2" do
+    test "renders the table as a Markdown table" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      assert {:ok, markdown} = Table.to_markdown(table)
+
+      assert markdown =~ "| Age | 0.042 | 0.011 | 0.001 |"
+      assert markdown =~ "|---|---|---|---|"
+      assert markdown =~ "| Diabetes | 0.694 | 0.233 | 0.003 |"
+      assert String.ends_with?(markdown, "\n")
+    end
+
+    test "emits the same block the whole-page conversion emits" do
+      # The table goes back to upstream's own converter with the config the
+      # document path builds, so rendering one table in isolation must not drift
+      # from rendering it as part of its page. This is the assertion that
+      # catches such a drift.
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Document.to_markdown!(doc, 0) =~ String.trim(Table.to_markdown!(table))
+    end
+
+    test "renders the first row as a header even without a header section" do
+      # Markdown requires a header row, so upstream emits the separator after
+      # row 0 whatever :has_header? says — this fixture's is false.
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      refute table.has_header?
+      assert [_header, separator | _] = String.split(Table.to_markdown!(table), "\n")
+      assert separator == "|---|---|---|---|"
+    end
+
+    test "accepts :bold_markers" do
+      # Both settings render; they diverge only for a bold span whose text is
+      # entirely whitespace, which no fixture table contains.
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert {:ok, conservative} = Table.to_markdown(table, bold_markers: :conservative)
+      assert {:ok, aggressive} = Table.to_markdown(table, bold_markers: :aggressive)
+      assert conservative == Table.to_markdown!(table)
+      assert aggressive =~ "| Age |"
+    end
+
+    test "ignores unknown options" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.to_markdown(table, detect_headings: false) == Table.to_markdown(table)
+    end
+
+    test "returns {:error, reason} for a wrongly typed option" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert {:error, %Error{reason: :other}} = Table.to_markdown(table, bold_markers: :nope)
+    end
+
+    test "returns {:error, reason} for a closed table" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      :ok = Table.close(table)
+
+      assert {:error, %Error{reason: :closed}} = Table.to_markdown(table)
+    end
+
+    test "raises for a table that never came from extraction" do
+      assert_raise FunctionClauseError, fn -> Table.to_markdown(spanning_table()) end
+    end
+
+    test "raises for non-list options" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert_raise FunctionClauseError, fn -> Table.to_markdown(table, :conservative) end
+    end
+  end
+
+  describe "Table.to_markdown!/2" do
+    test "returns the Markdown directly" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.to_markdown!(table) =~ "|---|---|---|---|"
+      assert Table.to_markdown!(table, bold_markers: :aggressive) =~ "| Age |"
+    end
+
+    test "raises for a closed table" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      :ok = Table.close(table)
+
+      assert_raise Error, fn -> Table.to_markdown!(table) end
+    end
+  end
+
+  describe "Table.to_html/1" do
+    test "renders the table as an HTML fragment" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      assert {:ok, html} = Table.to_html(table)
+
+      assert String.starts_with?(html, "<table>")
+      assert String.ends_with?(html, "</table>\n")
+      assert html =~ "<tbody>"
+      assert html =~ "<tr><td>Age</td><td>0.042</td><td>0.011</td><td>0.001</td></tr>"
+      # No header section was detected, so upstream emits no <thead>/<th> —
+      # unlike the Markdown renderer, which promotes the first row regardless.
+      refute table.has_header?
+      refute html =~ "<thead>"
+      refute html =~ "<th>"
+    end
+
+    test "emits the same fragment the whole-page conversion emits" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Document.to_html!(doc, 0) =~ String.trim(Table.to_html!(table))
+    end
+
+    test "returns {:error, reason} for a closed table" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      :ok = Table.close(table)
+
+      assert {:error, %Error{reason: :closed}} = Table.to_html(table)
+    end
+
+    test "raises for a table that never came from extraction" do
+      assert_raise FunctionClauseError, fn -> Table.to_html(spanning_table()) end
+    end
+  end
+
+  describe "Table.to_html!/1" do
+    test "returns the HTML directly" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.to_html!(table) =~ "<td>Diabetes</td>"
+    end
+
+    test "raises for a closed table" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      :ok = Table.close(table)
+
+      assert_raise Error, fn -> Table.to_html!(table) end
+    end
+  end
+
+  describe "Table.to_text/1" do
+    test "renders the grid as space-padded plain text" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      assert {:ok, text} = Table.to_text(table)
+
+      lines = String.split(text, "\n", trim: true)
+      assert length(lines) == Table.row_count(table)
+      assert hd(lines) == "Age       0.042  0.011  0.001"
+      assert List.last(lines) == "Diabetes  0.694  0.233  0.003"
+    end
+
+    test "returns {:error, reason} for a closed table" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      :ok = Table.close(table)
+
+      assert {:error, %Error{reason: :closed}} = Table.to_text(table)
+    end
+
+    test "raises for a table that never came from extraction" do
+      assert_raise FunctionClauseError, fn -> Table.to_text(spanning_table()) end
+    end
+  end
+
+  describe "Table.to_text!/1" do
+    test "returns the text directly" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.to_text!(table) =~ "Smoker    0.512"
+    end
+
+    test "raises for a closed table" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      :ok = Table.close(table)
+
+      assert_raise Error, fn -> Table.to_text!(table) end
+    end
+  end
+
+  describe "Table.close/1 and Table.closed?/1" do
+    test "releases the table and reports the state" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      refute Table.closed?(table)
+      assert Table.close(table) == :ok
+      assert Table.closed?(table)
+    end
+
+    test "is idempotent" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+
+      assert Table.close(table) == :ok
+      assert Table.close(table) == :ok
+      assert Table.closed?(table)
+    end
+
+    test "leaves the struct's own rows and cells readable" do
+      doc = Document.open!(@table_pdf)
+      [table] = Document.tables!(doc, 0)
+      :ok = Table.close(table)
+
+      assert Table.cell_text(table, 0, 0) == "Age"
+      assert Enum.map(table, fn row -> length(row.cells) end) == [4, 4, 4, 4, 4]
     end
   end
 
@@ -2555,13 +2779,17 @@ defmodule PdfElixide.DocumentTest do
       }
     ]
 
+    # `:ref` is nil because the table never came from extraction: the accessors
+    # under test are plain data, while rendering needs the native handle and
+    # refuses a struct built by hand.
     %Table{
       page: 0,
       bbox: nil,
       col_count: 3,
       has_header?: false,
       real_grid?: true,
-      rows: [%Table.Row{header?: false, cells: cells}]
+      rows: [%Table.Row{header?: false, cells: cells}],
+      ref: nil
     }
   end
 end

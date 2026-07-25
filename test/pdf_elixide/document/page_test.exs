@@ -399,7 +399,12 @@ defmodule PdfElixide.Document.PageTest do
     test "delegates to Document.tables/2 for the page" do
       doc = Document.open!(@table_pdf)
       page = Document.page!(doc, 0)
-      assert Page.tables(page) == Document.tables(doc, 0)
+      # Each extraction yields fresh table handles, so compare stable data
+      # rather than the structs (whose :ref differ) directly.
+      {:ok, via_page} = Page.tables(page)
+      {:ok, via_doc} = Document.tables(doc, 0)
+      assert Enum.map(via_page, & &1.rows) == Enum.map(via_doc, & &1.rows)
+      assert Enum.map(via_page, & &1.page) == Enum.map(via_doc, & &1.page)
       assert {:ok, [%Table{page: 0, col_count: 4}]} = Page.tables(page)
     end
 

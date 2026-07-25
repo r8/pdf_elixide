@@ -34,12 +34,26 @@ defmodule PdfElixide.Document.Table do
 
       Enum.map(table, fn row -> Enum.map(row, & &1.text) end)
       #=> [["Age", "0.042", "0.011", "0.001"], ...]
+
+  A single table renders on its own with `to_markdown/2`, `to_html/1`, or
+  `to_text/1` — the same output `PdfElixide.Document.to_markdown/2` and
+  `to_html/2` produce for that table within its page:
+
+      Table.to_markdown(table)
+      #=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\\n|---|---|---|---|\\n..."}
+
+  Rendering goes through `:ref`, a handle to the detected table held on the Rust
+  side, so it works only on a table that came from extraction — not on a
+  hand-built struct — and stops working once `close/1` releases it.
   """
   alias PdfElixide.Document.Table.Cell
   alias PdfElixide.Document.Table.Row
+  alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.Native
+  alias PdfElixide.Native.Wrap
 
-  @enforce_keys [:page, :bbox, :col_count, :has_header?, :real_grid?, :rows]
+  @enforce_keys [:page, :bbox, :col_count, :has_header?, :real_grid?, :rows, :ref]
 
   defstruct [
     :page,
@@ -47,7 +61,8 @@ defmodule PdfElixide.Document.Table do
     :col_count,
     :has_header?,
     :real_grid?,
-    :rows
+    :rows,
+    :ref
   ]
 
   @type t :: %__MODULE__{
@@ -56,8 +71,24 @@ defmodule PdfElixide.Document.Table do
           col_count: non_neg_integer(),
           has_header?: boolean(),
           real_grid?: boolean(),
-          rows: [Row.t()]
+          rows: [Row.t()],
+          ref: reference()
         }
+
+  @typedoc """
+  Options for `to_markdown/2`.
+
+  * `:bold_markers` — how `**bold**` markers are placed around spans whose font
+    is bold: `:conservative` (the default) skips whitespace-only spans,
+    `:aggressive` wraps them too. This is the only conversion option upstream's
+    table renderer reads, which is why `to_html/1` takes none; unknown keys are
+    ignored, and a wrongly typed value returns `{:error, %PdfElixide.Error{reason:
+    :other}}` rather than raising.
+
+  Bold markers are suppressed in the header row of a multi-row table either way,
+  since a Markdown header is already rendered bold by readers.
+  """
+  @type markdown_opts :: [bold_markers: :conservative | :aggressive]
 
   @doc """
   The cell at the zero-based row `row_index` and column `col`, or `nil` when
@@ -110,10 +141,121 @@ defmodule PdfElixide.Document.Table do
   @spec row_count(t()) :: non_neg_integer()
   def row_count(%__MODULE__{rows: rows}), do: length(rows)
 
+  @doc """
+  Renders the table as a Markdown table.
+
+      Table.to_markdown(table)
+      #=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\\n|---|---|---|---|\\n..."}
+
+  Two upstream quirks are worth knowing. Markdown requires a header row, so the
+  first row is rendered as one even when `:has_header?` is false. And while
+  `:colspan` widens a cell into extra pipe-delimited columns, `:rowspan` is
+  ignored entirely — a row whose cells were absorbed by a merge above it is
+  simply padded with empty cells on the right.
+
+  An empty table renders as `""`. See `t:markdown_opts/0` for the options.
+  """
+  @spec to_markdown(t(), markdown_opts()) :: {:ok, String.t()} | {:error, Error.t()}
+  def to_markdown(%__MODULE__{ref: ref}, opts \\ []) when is_reference(ref) and is_list(opts) do
+    Wrap.call(fn -> Native.table_to_markdown(ref, build_markdown_options(opts)) end)
+  end
+
+  @doc """
+  Same as `to_markdown/2`, but returns the Markdown directly and raises
+  `PdfElixide.Error` on failure.
+  """
+  @spec to_markdown!(t(), markdown_opts()) :: String.t()
+  def to_markdown!(%__MODULE__{} = table, opts \\ []) do
+    case to_markdown(table, opts) do
+      {:ok, markdown} -> markdown
+      {:error, error} -> raise error
+    end
+  end
+
+  defp build_markdown_options(opts) do
+    %{bold_markers: Keyword.get(opts, :bold_markers, :conservative)}
+  end
+
+  @doc """
+  Renders the table as an HTML `<table>` fragment.
+
+      Table.to_html(table)
+      #=> {:ok, "<table>\\n<thead>\\n<tr><th>Age</th>...</table>\\n"}
+
+  The fragment carries no styling and is not wrapped in a document: header rows
+  become `<thead>`/`<th>`, the rest `<tbody>`/`<td>`, and merged cells keep their
+  `colspan`/`rowspan` as attributes. An empty table renders as `""`.
+  """
+  @spec to_html(t()) :: {:ok, String.t()} | {:error, Error.t()}
+  def to_html(%__MODULE__{ref: ref}) when is_reference(ref) do
+    Wrap.call(fn -> Native.table_to_html(ref) end)
+  end
+
+  @doc """
+  Same as `to_html/1`, but returns the HTML directly and raises
+  `PdfElixide.Error` on failure.
+  """
+  @spec to_html!(t()) :: String.t()
+  def to_html!(%__MODULE__{} = table) do
+    case to_html(table) do
+      {:ok, html} -> html
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Renders the table as plain text, padding each column to a fixed width so the
+  grid lines up in a monospaced font.
+
+      Table.to_text(table)
+      #=> {:ok, "Age       0.042  0.011  0.001\\n..."}
+
+  Cells that span columns are excluded from the width calculation, and an empty
+  table renders as `""`.
+  """
+  @spec to_text(t()) :: {:ok, String.t()} | {:error, Error.t()}
+  def to_text(%__MODULE__{ref: ref}) when is_reference(ref) do
+    Wrap.call(fn -> Native.table_to_text(ref) end)
+  end
+
+  @doc """
+  Same as `to_text/1`, but returns the text directly and raises
+  `PdfElixide.Error` on failure.
+  """
+  @spec to_text!(t()) :: String.t()
+  def to_text!(%__MODULE__{} = table) do
+    case to_text(table) do
+      {:ok, text} -> text
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Releases the detected table held behind `:ref`.
+
+  The table is normally freed when the BEAM garbage-collects the handle;
+  `close/1` frees it now, which is worth doing when walking many tables and
+  keeping only their text. The struct's own fields — rows, cells, spans — are
+  plain data and stay readable afterwards; only `to_markdown/2`, `to_html/1`, and
+  `to_text/1` stop working, returning `{:error, %PdfElixide.Error{reason:
+  :closed}}` (bang variants raise it).
+
+  Infallible and idempotent, so there is no `close!/1`.
+  """
+  @spec close(t()) :: :ok
+  def close(%__MODULE__{ref: ref}), do: Native.table_close(ref)
+
+  @doc """
+  Returns whether the table has been released with `close/1`.
+  """
+  @spec closed?(t()) :: boolean()
+  def closed?(%__MODULE__{ref: ref}), do: Native.table_closed(ref)
+
   @doc false
   # Builds a `Table` from the raw map returned by the NIF, renaming the
-  # `has_header`/`real_grid` keys to the `?`-suffixed struct fields and
-  # converting the nested row maps into `PdfElixide.Document.Table.Row` structs.
+  # `has_header`/`real_grid` keys to the `?`-suffixed struct fields and the
+  # `resource` handle to `:ref`, and converting the nested row maps into
+  # `PdfElixide.Document.Table.Row` structs.
   @spec from_nif(map()) :: t()
   def from_nif(%{
         page: page,
@@ -121,7 +263,8 @@ defmodule PdfElixide.Document.Table do
         col_count: col_count,
         has_header: has_header,
         real_grid: real_grid,
-        rows: rows
+        rows: rows,
+        resource: ref
       }) do
     %__MODULE__{
       page: page,
@@ -129,7 +272,8 @@ defmodule PdfElixide.Document.Table do
       col_count: col_count,
       has_header?: has_header,
       real_grid?: real_grid,
-      rows: Enum.map(rows, &Row.from_nif/1)
+      rows: Enum.map(rows, &Row.from_nif/1),
+      ref: ref
     }
   end
 

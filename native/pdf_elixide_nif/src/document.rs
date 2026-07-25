@@ -58,6 +58,15 @@ pub enum BoldMarkersNif {
     Aggressive,
 }
 
+impl From<BoldMarkersNif> for BoldMarkerBehavior {
+    fn from(markers: BoldMarkersNif) -> Self {
+        match markers {
+            BoldMarkersNif::Conservative => BoldMarkerBehavior::Conservative,
+            BoldMarkersNif::Aggressive => BoldMarkerBehavior::Aggressive,
+        }
+    }
+}
+
 /// Creates the image output directory up front, for options that make upstream
 /// write image files (`include_images` without `embed_images`, plus a
 /// directory).
@@ -137,10 +146,7 @@ impl From<MarkdownOptionsNif> for ConversionOptions {
                 ReadingOrderNif::ColumnAware => ReadingOrderMode::ColumnAware,
                 ReadingOrderNif::TopToBottom => ReadingOrderMode::TopToBottomLeftToRight,
             },
-            bold_marker_behavior: match o.bold_markers {
-                BoldMarkersNif::Conservative => BoldMarkerBehavior::Conservative,
-                BoldMarkersNif::Aggressive => BoldMarkerBehavior::Aggressive,
-            },
+            bold_marker_behavior: o.bold_markers.into(),
             ..Default::default()
         }
     }

@@ -24,7 +24,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract text lines (each with its bounding box and constituent words)
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
 - Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
-- Detect tables and read their rows and cells
+- Detect tables, read their rows and cells, and render one as Markdown, HTML, or plain text
 - Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style
 - Read the document outline (bookmarks / table of contents) as a nested tree
 - Extract raster images (photos, logos, scans) as PNG bytes with their on-page geometry
@@ -457,6 +457,40 @@ Each row carries `:header?` and its `:cells`. Each cell carries:
 - `:header?` — whether this is a header cell (`boolean()`)
 - `:mcids` — the marked-content IDs making up the cell, for Tagged PDFs (`[non_neg_integer()]`)
 - `:spans` — the cell's `%PdfElixide.Document.Span{}` structs, so per-run font, size, and color survive into the table
+
+### Rendering a single table
+
+A detected table renders on its own, in any of the three formats the
+whole-document converters use:
+
+```elixir
+Table.to_markdown(table)
+#=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\n|---|---|---|---|\n| Sex | ..."}
+
+Table.to_html(table)
+#=> {:ok, "<table>\n<tbody>\n<tr><td>Age</td><td>0.042</td>..."}
+
+Table.to_text(table)
+#=> {:ok, "Age       0.042  0.011  0.001\nSex       0.318  0.142  0.025\n..."}
+
+# Markdown takes one option: :conservative (the default) applies ** only to
+# content-bearing text, :aggressive also wraps whitespace-only bold spans.
+Table.to_markdown(table, bold_markers: :aggressive)
+```
+
+Each has a bang variant, and the output is the same block
+`PdfElixide.Document.to_markdown/2` and `to_html/2` emit for that table within
+its page — the same renderer produces both.
+
+Rendering goes through the table's `:ref`, a handle to the detected table held on
+the Rust side, so it works only on a table that came from extraction, and
+`Table.close/1` releases it early when you are walking many tables and keeping
+only their text. The struct's own rows and cells stay readable afterwards.
+
+Two upstream quirks are worth knowing. Markdown requires a header row, so
+`to_markdown/2` renders the first row as one even when `:has_header?` is false.
+And while `:colspan` widens a cell into extra columns there, `:rowspan` is ignored
+— `to_html/1` is the one that carries both as attributes.
 
 Rather than walking those lists by hand, reach into a table with the accessors:
 
