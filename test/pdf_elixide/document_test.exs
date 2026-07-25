@@ -25,11 +25,12 @@ defmodule PdfElixide.DocumentTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
-  # Purpose-built for the markdown-conversion options: a 24pt heading over an
-  # 11pt body line, a 64x64 DeviceRGB image (upstream's markdown image filter
-  # drops anything under 32x32, so @image_pdf's 24x24 never surfaces), and a
-  # /Widget annotation carrying /V (John Doe) in the page /Annots (upstream
-  # reads widget text from /Annots only, never from @form_pdf's /AcroForm).
+  # Purpose-built for the Markdown- and HTML-conversion options: a 24pt heading
+  # over an 11pt body line, a 64x64 DeviceRGB image (upstream's converter image
+  # filter drops anything under 32x32, so @image_pdf's 24x24 never surfaces),
+  # and a /Widget annotation carrying /V (John Doe) in the page /Annots
+  # (upstream reads widget text from /Annots only, never from @form_pdf's
+  # /AcroForm).
   @markdown_pdf Path.join(@fixtures, "markdown.pdf")
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
@@ -391,6 +392,343 @@ defmodule PdfElixide.DocumentTest do
     test "raises RuntimeError for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
       assert_raise Error, fn -> Document.to_markdown!(doc, 99, []) end
+    end
+  end
+
+  describe "to_html/1" do
+    test "returns {:ok, html} covering every page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, html} = Document.to_html(doc)
+      assert html =~ "Page One"
+      assert html =~ "Page Two"
+      assert html =~ "Page Three"
+    end
+
+    test "wraps each page in a one-based page div rather than joining pages" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, html} = Document.to_html(doc)
+      assert html =~ ~s(<div class="page" data-page="1">)
+      assert html =~ ~s(<div class="page" data-page="3">)
+      refute html =~ ~s(data-page="0")
+      refute html =~ "\n---\n"
+      refute html =~ "\f"
+    end
+
+    test "returns a fragment rather than a standalone document" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, html} = Document.to_html(doc)
+      refute html =~ "<!DOCTYPE"
+      refute html =~ "<html"
+      refute html =~ "<body"
+      refute html =~ "<style"
+    end
+
+    test "detects headings by default" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, html} = Document.to_html(doc)
+      assert html =~ "<h1>Page One</h1>"
+    end
+
+    test "returns {:ok, empty} for an encrypted document opened without a password" do
+      doc = Document.open!(@encrypted_pdf)
+      assert {:ok, ""} = Document.to_html(doc)
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert {:error, %Error{reason: :closed}} = Document.to_html(doc)
+    end
+  end
+
+  describe "to_html!/1" do
+    test "returns the html for the whole document" do
+      doc = Document.open!(@valid_pdf)
+      html = Document.to_html!(doc)
+      assert html =~ "Page One"
+      assert html =~ "Page Three"
+    end
+
+    test "raises for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert_raise Error, fn -> Document.to_html!(doc) end
+    end
+  end
+
+  describe "to_html/2 with a page index" do
+    test "returns {:ok, html} for the page at the given index, without the page div" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, html} = Document.to_html(doc, 1)
+      assert html =~ "Page Two"
+      refute html =~ "Page One"
+      refute html =~ ~s(class="page")
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.to_html(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_html(doc, -1) end
+    end
+  end
+
+  describe "to_html/2 with options" do
+    test "detect_headings: false emits plain paragraphs" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, html} = Document.to_html(doc, detect_headings: false)
+      assert html =~ "<p>Page One</p>"
+      refute html =~ "<h1"
+    end
+
+    test "extract_tables: false drops the html table" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, with_tables} = Document.to_html(doc)
+      assert {:ok, without} = Document.to_html(doc, extract_tables: false)
+      assert with_tables =~ "<table>"
+      assert with_tables =~ "<td>Age</td>"
+      refute without =~ "<table"
+      assert without =~ "<p>Age"
+    end
+
+    test "preserve_layout: true emits absolutely positioned divs" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, html} = Document.to_html(doc, preserve_layout: true)
+      assert html =~ ~s(<div style="position:absolute;)
+      assert html =~ "font-size:24pt;"
+      assert html =~ "Page One"
+      refute html =~ "<h1"
+      refute html =~ "<p>"
+    end
+
+    test "preserve_layout: true writes PDF y verbatim into CSS top, unflipped" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 0)
+      assert {:ok, html} = Document.to_html(doc, 0, preserve_layout: true)
+
+      # Upstream writes the span's PDF user-space y — measured from the bottom
+      # of the page — straight into CSS `top`, which measures from the top. The
+      # text sits at y=720 on a 792pt page, so a converter that flipped it
+      # would emit top:72pt. Pinned because `html_opts` documents the flip as
+      # the caller's job; if upstream ever fixes it, this test says so.
+      assert Page.height!(page) == 792.0
+      assert html =~ "top:720pt;"
+      refute html =~ "top:72pt;"
+
+      # The page wrapper is likewise unstyled, so it gives the positioned spans
+      # no containing block to resolve against.
+      assert {:ok, all} = Document.to_html(doc, preserve_layout: true)
+      assert all =~ ~s(<div class="page" data-page="1">)
+      refute all =~ ~s(<div class="page" data-page="1" style)
+    end
+
+    test "preserve_layout: true drops tables, which upstream emits only in semantic mode" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, html} = Document.to_html(doc, preserve_layout: true, extract_tables: true)
+      refute html =~ "<table"
+      assert html =~ "position:absolute;"
+      assert html =~ "Age"
+    end
+
+    test "detect_headings distinguishes the two font tiers" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, detected} = Document.to_html(doc)
+      assert {:ok, plain} = Document.to_html(doc, detect_headings: false)
+      assert detected =~ "<h1>Markdown Fixture</h1>"
+      # Without the heading split, the two tiers run into one paragraph.
+      assert plain =~ "<p>Markdown Fixture Body paragraph text.</p>"
+      refute plain =~ "<h1"
+    end
+
+    test "include_images: true embeds the image as a base64 data URI" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, omitted} = Document.to_html(doc)
+      assert {:ok, included} = Document.to_html(doc, include_images: true)
+      refute omitted =~ "<img"
+      assert included =~ ~s(<div class="page-images">)
+      assert included =~ ~s(<img src="data:image/png;base64,)
+      assert included =~ ~s(alt="Image 1 from page 1")
+    end
+
+    test "max_image_pixels: 0 suppresses the image" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, html} = Document.to_html(doc, include_images: true, max_image_pixels: 0)
+      refute html =~ "<img"
+      assert html =~ "Markdown Fixture"
+    end
+
+    @tag :tmp_dir
+    test "embed_images: false writes the image to image_output_dir", %{tmp_dir: tmp_dir} do
+      doc = Document.open!(@markdown_pdf)
+
+      assert {:ok, html} =
+               Document.to_html(doc,
+                 include_images: true,
+                 embed_images: false,
+                 image_output_dir: tmp_dir
+               )
+
+      assert html =~ ~s(<img src="#{Elixir.Path.join(tmp_dir, "page1_1.png")}")
+      refute html =~ "data:image/png;base64,"
+      assert File.exists?(Elixir.Path.join(tmp_dir, "page1_1.png"))
+    end
+
+    @tag :tmp_dir
+    test "embed_images: false creates a missing image_output_dir", %{tmp_dir: tmp_dir} do
+      doc = Document.open!(@markdown_pdf)
+      nested = Elixir.Path.join([tmp_dir, "images", "page-0"])
+
+      assert {:ok, html} =
+               Document.to_html(doc,
+                 include_images: true,
+                 embed_images: false,
+                 image_output_dir: nested
+               )
+
+      assert html =~ "page1_1.png"
+      assert File.exists?(Elixir.Path.join(nested, "page1_1.png"))
+    end
+
+    @tag :tmp_dir
+    test "an image_output_dir that cannot be created is an :io error", %{tmp_dir: tmp_dir} do
+      doc = Document.open!(@markdown_pdf)
+
+      # A regular file cannot hold a subdirectory, so create_dir_all fails.
+      blocker = Elixir.Path.join(tmp_dir, "blocker")
+      File.write!(blocker, "not a directory")
+
+      assert {:error, %Error{reason: :io}} =
+               Document.to_html(doc,
+                 include_images: true,
+                 embed_images: false,
+                 image_output_dir: Elixir.Path.join(blocker, "images")
+               )
+    end
+
+    test "embed_images: false without an image_output_dir emits no image" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, html} = Document.to_html(doc, include_images: true, embed_images: false)
+      refute html =~ "<img"
+      assert html =~ "Markdown Fixture"
+    end
+
+    @tag :tmp_dir
+    test "an image_output_dir is not attribute-escaped in src", %{tmp_dir: tmp_dir} do
+      doc = Document.open!(@markdown_pdf)
+      # A double quote is a legal filename character, and upstream interpolates
+      # the path into src="…" unescaped, so it closes the attribute. Pinned
+      # because :image_output_dir documents this as a reason never to build the
+      # path from untrusted input.
+      quoted = Elixir.Path.join(tmp_dir, ~s(img"dir))
+
+      assert {:ok, html} =
+               Document.to_html(doc,
+                 include_images: true,
+                 embed_images: false,
+                 image_output_dir: quoted
+               )
+
+      assert html =~ ~s(src="#{quoted}/page1_1.png")
+      refute html =~ "&quot;"
+      assert File.exists?(Elixir.Path.join(quoted, "page1_1.png"))
+    end
+
+    test "include_form_fields: false drops the widget's value" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, included} = Document.to_html(doc)
+      assert {:ok, omitted} = Document.to_html(doc, include_form_fields: false)
+      assert included =~ "John Doe"
+      refute omitted =~ "John Doe"
+    end
+
+    test "accepts every reading_order value" do
+      doc = Document.open!(@valid_pdf)
+
+      for mode <- [:structure_tree, :column_aware, :top_to_bottom] do
+        assert {:ok, html} = Document.to_html(doc, reading_order: mode)
+        assert html =~ "Page One"
+      end
+    end
+
+    test "returns {:error, reason} for an option of the wrong type" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :other}} = Document.to_html(doc, detect_headings: "yes")
+    end
+
+    test "returns {:error, reason} for an unknown reading_order value" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :other}} = Document.to_html(doc, reading_order: :nope)
+    end
+
+    test "ignores a Markdown-only option instead of failing" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, plain} = Document.to_html(doc)
+      # Options this function does not declare never reach the NIF, so a
+      # Markdown-only key is dropped rather than rejected — it would have no
+      # effect on HTML in any case.
+      assert Document.to_html(doc, bold_markers: :aggressive) == {:ok, plain}
+      assert Document.to_html(doc, annotate_skipped_pages: false) == {:ok, plain}
+    end
+  end
+
+  describe "to_html!/2" do
+    test "returns the html for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.to_html!(doc, 1) =~ "Page Two"
+    end
+
+    test "returns the html for the whole document with options" do
+      doc = Document.open!(@valid_pdf)
+      html = Document.to_html!(doc, detect_headings: false)
+      assert html =~ "Page One"
+      refute html =~ "<h1"
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.to_html!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer, non-list second argument" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_html!(doc, :first) end
+    end
+  end
+
+  describe "to_html/3" do
+    test "applies options to the given page" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, with_tables} = Document.to_html(doc, 0, [])
+      assert {:ok, without} = Document.to_html(doc, 0, extract_tables: false)
+      assert with_tables =~ "<table>"
+      refute without =~ "<table"
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.to_html(doc, 99, [])
+    end
+
+    test "raises FunctionClauseError for a non-list options argument" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_html(doc, 0, :opts) end
+    end
+  end
+
+  describe "to_html!/3" do
+    test "returns the html for a page with options applied" do
+      doc = Document.open!(@valid_pdf)
+      html = Document.to_html!(doc, 0, detect_headings: false)
+      assert html =~ "<p>Page One</p>"
+      refute html =~ "<h1"
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.to_html!(doc, 99, []) end
     end
   end
 

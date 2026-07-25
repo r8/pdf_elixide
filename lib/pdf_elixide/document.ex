@@ -393,7 +393,10 @@ defmodule PdfElixide.Document do
     * `:strip_running_headers_footers` — drop text lines that repeat in
       the top/bottom band of a majority of pages. Defaults to `false`.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
-      component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
+      component letters (`ﬁ` to `fi`, and so on). Accepted for forward
+      compatibility, but currently has no effect on Markdown output:
+      upstream applies it only on its plain-text assembly path, which the
+      Markdown converter does not use. Defaults to `false`.
     * `:annotate_skipped_pages` — emit a block quote naming any page that
       is a scan with no usable text layer, rather than rendering it blank.
       Defaults to `true`.
@@ -538,6 +541,198 @@ defmodule PdfElixide.Document do
        do: true
 
   defp writes_images?(_options), do: false
+
+  @typedoc """
+  Options accepted by the `to_html` and `to_html!` functions.
+
+  Only the options that upstream actually reads on its HTML path are
+  exposed, so every one of them changes the output. In particular
+  `:bold_markers`, `:annotate_skipped_pages`,
+  `:strip_running_headers_footers` and `:expand_ligatures` — all valid for
+  `to_markdown/2` — are not part of this list, because `pdf_oxide` never
+  consults them while converting to HTML. Like any other undeclared key,
+  passing one is silently ignored rather than an error. A *declared* key
+  given a value of the wrong type is reported as
+  `{:error, %PdfElixide.Error{reason: :other}}`, with a message naming the
+  offending field, rather than raising.
+
+    * `:preserve_layout` — emit one absolutely positioned `<div>` per text
+      span, carrying that span's coordinates and font size in inline CSS
+      (`pt` units), in place of the semantic flow of `<p>`/`<h1>`/`<ul>`
+      elements. Colour is written only for non-black text. Note that this
+      mode emits *only* those positioned spans: headings, lists and tables
+      are not produced, so `:detect_headings` and `:extract_tables` have no
+      effect under it. Defaults to `false`.
+
+      The result is **not** directly renderable, and reproducing the page
+      needs two corrections from you. Upstream writes the PDF's own
+      user-space coordinates verbatim, so the `top` value is measured from
+      the *bottom* of the page while CSS `top` measures from the top: flip
+      it yourself with `top = height - y`, taking the page height from
+      `PdfElixide.Document.Page.height/1`. And the per-page wrapper
+      `to_html/1` emits carries no styling, so it is not a positioned
+      containing block and gives the spans no page-sized box to resolve
+      against — add `position: relative` and an explicit size to each
+      wrapper, or every page will pile up in the same place.
+    * `:detect_headings` — cluster font sizes to emit `<h1>`–`<h6>`
+      elements instead of plain `<p>` paragraphs. Defaults to `true`.
+    * `:extract_tables` — detect tables and render them as
+      `<table>`/`<thead>`/`<tbody>` markup, with `colspan` and `rowspan` on
+      the cells. Defaults to `true`.
+    * `:include_images` — emit `<img>` elements. Defaults to `false`, since
+      embedded images can add hundreds of kilobytes per page. Images are
+      appended to the end of the page in a `<div class="page-images">`
+      rather than placed at their position in the content.
+    * `:embed_images` — when `true`, images are inlined as base64 data
+      URIs and `:image_output_dir` is ignored. When `false`, they are
+      written to `:image_output_dir` and referenced by path — and if that
+      option is `nil`, no image is emitted at all. Only applies when
+      `:include_images` is `true`. Defaults to `true`.
+    * `:image_output_dir` — directory to write extracted images to, used
+      only when `:include_images` is `true` and `:embed_images` is
+      `false`. It is created if missing, and one that cannot be created
+      is an `:io` error. The writes themselves are best-effort: upstream
+      drops an image that fails to encode or write, so a successful call
+      does not guarantee every image reached disk. Defaults to `nil`.
+
+      Upstream interpolates the resulting path into the `src` attribute
+      **without HTML escaping**, so a directory whose name contains `"` or
+      `&` produces malformed markup. Never build this path from untrusted
+      input: a crafted directory name can close the attribute and inject
+      others.
+    * `:include_form_fields` — inline AcroForm field values at their
+      positions on the page. Defaults to `true`.
+    * `:max_image_pixels` — skip images whose width times height exceeds
+      this count. `nil` means `pdf_oxide`'s own 16 MP limit, not "no
+      limit" — pass a large integer to lift it, or `0` to skip every
+      image. Defaults to `nil`.
+    * `:reading_order` — how text blocks are ordered:
+      `:structure_tree` (follow a tagged PDF's structure tree, falling
+      back to an XY-cut), `:column_aware`, or `:top_to_bottom`. Defaults
+      to `:structure_tree`.
+
+  Defaults mirror `pdf_oxide`'s `ConversionOptions::default()`, so calling
+  `to_html/1` is equivalent to `to_html/2` with no options.
+  """
+  @type html_opts :: [
+          preserve_layout: boolean(),
+          detect_headings: boolean(),
+          extract_tables: boolean(),
+          include_images: boolean(),
+          embed_images: boolean(),
+          image_output_dir: Path.t() | nil,
+          include_form_fields: boolean(),
+          max_image_pixels: non_neg_integer() | nil,
+          reading_order: :structure_tree | :column_aware | :top_to_bottom
+        ]
+
+  @doc """
+  Converts the document to HTML.
+
+  With a keyword list (or nothing) as the second argument, converts the
+  whole document, wrapping each page in a
+  `<div class="page" data-page="N">` element whose `N` is the one-based
+  page number. With a zero-based integer, converts that single page
+  instead, without the wrapper.
+
+      Document.to_html(doc)
+      Document.to_html(doc, detect_headings: false)
+      Document.to_html(doc, 0)
+
+  The result is an HTML *fragment*, not a standalone document: there is no
+  doctype, no `<html>`/`<body>`, and no stylesheet — bring your own, or
+  wrap the fragment yourself. A page with no extractable content converts
+  to an empty string, as does a document that is encrypted and could not
+  be decrypted.
+
+  See `t:html_opts/0` for the available options.
+  """
+  @spec to_html(t()) :: {:ok, String.t()} | {:error, Error.t()}
+  @spec to_html(t(), html_opts() | non_neg_integer()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_html(doc, page_index_or_opts \\ [])
+
+  def to_html(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_html_options(opts)
+    Wrap.call(fn -> call_html_all(ref, options) end)
+  end
+
+  def to_html(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    to_html(doc, page_index, [])
+  end
+
+  @doc """
+  Converts the document to HTML, raising an error if it fails.
+  """
+  @spec to_html!(t()) :: String.t()
+  @spec to_html!(t(), html_opts() | non_neg_integer()) :: String.t()
+  def to_html!(doc, page_index_or_opts \\ [])
+
+  def to_html!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    case to_html(doc, opts) do
+      {:ok, html} -> html
+      {:error, error} -> raise error
+    end
+  end
+
+  def to_html!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    to_html!(doc, page_index, [])
+  end
+
+  @doc """
+  Converts the page at the given zero-based index to HTML.
+
+  See `t:html_opts/0` for the available options.
+  """
+  @spec to_html(t(), non_neg_integer(), html_opts()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_html(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_html_options(opts)
+    Wrap.call(fn -> call_html(ref, page_index, options) end)
+  end
+
+  @doc """
+  Converts the page at the given zero-based index to HTML, raising an
+  error if it fails.
+  """
+  @spec to_html!(t(), non_neg_integer(), html_opts()) :: String.t()
+  def to_html!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    case to_html(doc, page_index, opts) do
+      {:ok, html} -> html
+      {:error, error} -> raise error
+    end
+  end
+
+  defp build_html_options(opts) do
+    %{
+      preserve_layout: Keyword.get(opts, :preserve_layout, false),
+      detect_headings: Keyword.get(opts, :detect_headings, true),
+      extract_tables: Keyword.get(opts, :extract_tables, true),
+      include_images: Keyword.get(opts, :include_images, false),
+      embed_images: Keyword.get(opts, :embed_images, true),
+      image_output_dir: Keyword.get(opts, :image_output_dir),
+      include_form_fields: Keyword.get(opts, :include_form_fields, true),
+      max_image_pixels: Keyword.get(opts, :max_image_pixels),
+      reading_order: Keyword.get(opts, :reading_order, :structure_tree)
+    }
+  end
+
+  # Same dirty-CPU / dirty-IO split as the Markdown pair above.
+  defp call_html_all(ref, options) do
+    if writes_images?(options),
+      do: Native.document_to_html_all_to_dir(ref, options),
+      else: Native.document_to_html_all(ref, options)
+  end
+
+  defp call_html(ref, page_index, options) do
+    if writes_images?(options),
+      do: Native.document_to_html_to_dir(ref, page_index, options),
+      else: Native.document_to_html(ref, page_index, options)
+  end
 
   @doc """
   Extracts the words of the whole document.

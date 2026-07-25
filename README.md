@@ -19,6 +19,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Get the page count
 - Extract text from a specific page
 - Convert a page or the whole document to Markdown, with headings, tables, images, and reading order under your control
+- Convert a page or the whole document to HTML, either as semantic markup or as absolutely positioned spans carrying each fragment's PDF coordinates
 - Extract words with bounding boxes and font metadata
 - Extract text lines (each with its bounding box and constituent words)
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
@@ -141,6 +142,41 @@ The defaults mirror `pdf_oxide`'s own, so `to_markdown(doc)` and
 table extraction, image embedding, form-field inlining, running header/footer
 stripping, ligature expansion, reading order, and bold-marker behaviour — is
 documented under `t:PdfElixide.Document.markdown_opts/0`.
+
+### Converting to HTML
+
+`to_html` mirrors `to_markdown`, emitting HTML instead: `<h1>`–`<h6>` for
+detected headings, `<table>` for detected tables, and `<img>` for images.
+
+```elixir
+alias PdfElixide.Document
+
+# The whole document, each page wrapped in <div class="page" data-page="N">.
+{:ok, html} = Document.to_html(doc)
+
+# A single page (zero-based index), with no page wrapper.
+{:ok, html} = Document.to_html(doc, 0)
+
+# Either form takes options.
+{:ok, html} = Document.to_html(doc, detect_headings: false)
+{:ok, html} = Document.to_html(doc, 0, extract_tables: false)
+
+# One absolutely positioned div per text span instead of semantic markup.
+{:ok, html} = Document.to_html(doc, preserve_layout: true)
+
+# And from a page struct.
+{:ok, html} = Document.Page.to_html(Document.page!(doc, 0))
+```
+
+The result is a *fragment*: no doctype, no `<html>`/`<body>`, and no stylesheet,
+so you supply the surrounding page. Options are the subset of the Markdown ones
+that `pdf_oxide` actually applies while converting to HTML, plus the HTML-only
+`:preserve_layout` — see `t:PdfElixide.Document.html_opts/0`.
+
+`:preserve_layout` output is positioned but not ready to render: the coordinates
+are raw PDF user-space values, measured from the *bottom* of the page, so you
+flip them yourself (`top = height - y`) and give each page wrapper
+`position: relative` and a size. The typedoc covers both corrections.
 
 ### Releasing a document
 

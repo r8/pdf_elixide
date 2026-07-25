@@ -130,6 +130,28 @@ defmodule PdfElixide.Document.Page do
   end
 
   @doc """
+  Converts the page to an HTML fragment.
+
+  See `t:PdfElixide.Document.html_opts/0` for the available options.
+  """
+  @spec to_html(t(), Document.html_opts()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_html(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.to_html(doc, index, opts)
+  end
+
+  @doc """
+  Same as `to_html/2` but raises an error if it fails.
+  """
+  @spec to_html!(t(), Document.html_opts()) :: String.t()
+  def to_html!(page, opts \\ []) when is_list(opts) do
+    case to_html(page, opts) do
+      {:ok, html} -> html
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
   Extracts the words of the page, each with its bounding box and font metadata.
   """
   @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}

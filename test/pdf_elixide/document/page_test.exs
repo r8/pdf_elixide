@@ -132,6 +132,53 @@ defmodule PdfElixide.Document.PageTest do
     end
   end
 
+  describe "to_html/1" do
+    test "delegates to Document.to_html/3 for the page" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert Page.to_html(page) == Document.to_html(doc, 1, [])
+      assert {:ok, html} = Page.to_html(page)
+      assert html =~ "<h1>Page Two</h1>"
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.to_html(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "to_html/2" do
+    test "passes options through to Document.to_html/3" do
+      doc = Document.open!(@table_pdf)
+      page = Document.page!(doc, 0)
+      assert {:ok, with_tables} = Page.to_html(page)
+      assert {:ok, without} = Page.to_html(page, extract_tables: false)
+      assert with_tables =~ "<table>"
+      refute without =~ "<table"
+    end
+  end
+
+  describe "to_html!/1" do
+    test "returns the html directly" do
+      doc = Document.open!(@valid_pdf)
+      assert Page.to_html!(Document.page!(doc, 0)) =~ "Page One"
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.to_html!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "to_html!/2" do
+    test "returns the html with options applied" do
+      doc = Document.open!(@valid_pdf)
+      html = Page.to_html!(Document.page!(doc, 0), detect_headings: false)
+      assert html =~ "<p>Page One</p>"
+      refute html =~ "<h1"
+    end
+  end
+
   describe "words/1" do
     test "delegates to Document.words/2 for the page" do
       doc = Document.open!(@valid_pdf)

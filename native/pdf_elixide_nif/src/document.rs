@@ -43,7 +43,7 @@ impl OpenOptionsNif {
     }
 }
 
-/// The reading-order strategy requested for a Markdown conversion.
+/// The reading-order strategy requested for a Markdown or HTML conversion.
 #[derive(NifUnitEnum, Debug)]
 pub enum ReadingOrderNif {
     StructureTree,
@@ -56,6 +56,36 @@ pub enum ReadingOrderNif {
 pub enum BoldMarkersNif {
     Conservative,
     Aggressive,
+}
+
+/// Creates the image output directory up front, for options that make upstream
+/// write image files (`include_images` without `embed_images`, plus a
+/// directory).
+///
+/// Upstream drops the result of its own `create_dir_all` and only logs a failed
+/// `save_as_png`, so an unusable directory would otherwise surface as a
+/// successful conversion with the image reference quietly missing. Creating it
+/// here turns that into an `:io` error, matching what upstream does on its
+/// non-converter export path.
+fn ensure_image_output_dir(
+    include_images: bool,
+    embed_images: bool,
+    image_output_dir: Option<&str>,
+) -> NifResult<()> {
+    if !include_images || embed_images {
+        return Ok(());
+    }
+
+    let Some(dir) = image_output_dir else {
+        return Ok(());
+    };
+
+    std::fs::create_dir_all(dir).map_err(|e| {
+        tagged_err(
+            atoms::io(),
+            format!("Failed to create image output directory {dir}: {e}"),
+        )
+    })
 }
 
 /// The subset of `ConversionOptions` exposed to Elixir. Every remaining field
@@ -77,33 +107,12 @@ pub struct MarkdownOptionsNif {
 }
 
 impl MarkdownOptionsNif {
-    /// Whether these options make upstream write image files.
-    fn writes_images(&self) -> bool {
-        self.include_images && !self.embed_images && self.image_output_dir.is_some()
-    }
-
-    /// Creates the image output directory up front.
-    ///
-    /// Upstream drops the result of its own `create_dir_all` and only logs a
-    /// failed `save_as_png`, so an unusable directory would otherwise surface
-    /// as a successful conversion with the image reference quietly missing.
-    /// Creating it here turns that into an `:io` error, matching what upstream
-    /// does on its non-Markdown export path.
     fn ensure_image_output_dir(&self) -> NifResult<()> {
-        if !self.writes_images() {
-            return Ok(());
-        }
-
-        let Some(dir) = &self.image_output_dir else {
-            return Ok(());
-        };
-
-        std::fs::create_dir_all(dir).map_err(|e| {
-            tagged_err(
-                atoms::io(),
-                format!("Failed to create image output directory {dir}: {e}"),
-            )
-        })
+        ensure_image_output_dir(
+            self.include_images,
+            self.embed_images,
+            self.image_output_dir.as_deref(),
+        )
     }
 }
 
@@ -131,6 +140,58 @@ impl From<MarkdownOptionsNif> for ConversionOptions {
             bold_marker_behavior: match o.bold_markers {
                 BoldMarkersNif::Conservative => BoldMarkerBehavior::Conservative,
                 BoldMarkersNif::Aggressive => BoldMarkerBehavior::Aggressive,
+            },
+            ..Default::default()
+        }
+    }
+}
+
+/// The subset of `ConversionOptions` that affects HTML output. Fields upstream
+/// reads only on its Markdown path (`bold_marker_behavior`,
+/// `annotate_skipped_pages`, `strip_running_headers_footers`) or only on its
+/// plain-text path (`expand_ligatures`) are deliberately not exposed, and
+/// `preserve_layout` is exposed here only, being HTML-only upstream.
+#[derive(NifMap, Debug)]
+pub struct HtmlOptionsNif {
+    pub preserve_layout: bool,
+    pub detect_headings: bool,
+    pub extract_tables: bool,
+    pub include_images: bool,
+    pub embed_images: bool,
+    pub image_output_dir: Option<String>,
+    pub include_form_fields: bool,
+    pub max_image_pixels: Option<u64>,
+    pub reading_order: ReadingOrderNif,
+}
+
+impl HtmlOptionsNif {
+    fn ensure_image_output_dir(&self) -> NifResult<()> {
+        ensure_image_output_dir(
+            self.include_images,
+            self.embed_images,
+            self.image_output_dir.as_deref(),
+        )
+    }
+}
+
+impl From<HtmlOptionsNif> for ConversionOptions {
+    fn from(o: HtmlOptionsNif) -> Self {
+        ConversionOptions {
+            preserve_layout: o.preserve_layout,
+            detect_headings: o.detect_headings,
+            extract_tables: o.extract_tables,
+            include_images: o.include_images,
+            embed_images: o.embed_images,
+            image_output_dir: o.image_output_dir,
+            include_form_fields: o.include_form_fields,
+            max_image_pixels: o.max_image_pixels,
+            reading_order_mode: match o.reading_order {
+                // `mcid_order` is an extraction-time detail upstream fills in.
+                ReadingOrderNif::StructureTree => {
+                    ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
+                }
+                ReadingOrderNif::ColumnAware => ReadingOrderMode::ColumnAware,
+                ReadingOrderNif::TopToBottom => ReadingOrderMode::TopToBottomLeftToRight,
             },
             ..Default::default()
         }
@@ -311,8 +372,8 @@ fn document_to_markdown_all(
 
 // The `_to_dir` pair is identical to the two above but for the scheduler. The
 // Elixir side routes here when the options make upstream create directories and
-// write PNGs (`MarkdownOptionsNif::writes_images`), so those writes stay off the
-// dirty CPU pool — the same split as `image_to_binary` versus `image_save`.
+// write PNGs, so those writes stay off the dirty CPU pool — the same split as
+// `image_to_binary` versus `image_save`.
 
 /// Converts a single page (zero-indexed) to Markdown, writing images to disk.
 #[rustler::nif(schedule = "DirtyIo")]
@@ -331,6 +392,65 @@ fn document_to_markdown_all_to_dir(
     options: MarkdownOptionsNif,
 ) -> NifResult<String> {
     markdown_all(&resource, options)
+}
+
+fn html_page(
+    resource: &DocumentResource,
+    page_index: usize,
+    options: HtmlOptionsNif,
+) -> NifResult<String> {
+    let doc = resource.doc.lock()?;
+    ensure_page_in_range(&doc, page_index)?;
+    options.ensure_image_output_dir()?;
+
+    doc.to_html(page_index, &options.into()).map_err(to_nif_err)
+}
+
+fn html_all(resource: &DocumentResource, options: HtmlOptionsNif) -> NifResult<String> {
+    let doc = resource.doc.lock()?;
+    options.ensure_image_output_dir()?;
+
+    doc.to_html_all(&options.into()).map_err(to_nif_err)
+}
+
+/// Converts a single page (zero-indexed) to an HTML fragment.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_to_html(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+    options: HtmlOptionsNif,
+) -> NifResult<String> {
+    html_page(&resource, page_index, options)
+}
+
+/// Converts all pages to HTML, each wrapped in a `<div class="page">`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_to_html_all(
+    resource: ResourceArc<DocumentResource>,
+    options: HtmlOptionsNif,
+) -> NifResult<String> {
+    html_all(&resource, options)
+}
+
+// The dirty-IO pair, for the same reason as the Markdown one above.
+
+/// Converts a single page (zero-indexed) to HTML, writing images to disk.
+#[rustler::nif(schedule = "DirtyIo")]
+fn document_to_html_to_dir(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+    options: HtmlOptionsNif,
+) -> NifResult<String> {
+    html_page(&resource, page_index, options)
+}
+
+/// Converts all pages to HTML, writing images to disk.
+#[rustler::nif(schedule = "DirtyIo")]
+fn document_to_html_all_to_dir(
+    resource: ResourceArc<DocumentResource>,
+    options: HtmlOptionsNif,
+) -> NifResult<String> {
+    html_all(&resource, options)
 }
 
 /// Extracts words (with bounding boxes) from a single page (zero-indexed).
