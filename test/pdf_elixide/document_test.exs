@@ -41,6 +41,11 @@ defmodule PdfElixide.DocumentTest do
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @annotation_colors_pdf Path.join(@fixtures, "annotation_colors.pdf")
+  # Two real pages under a /Pages node whose /Count says three, so page 2 has
+  # no page object to resolve and is the only fixture whose text extraction
+  # fails for one page and succeeds for the others.
+  @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
+  @unreachable_page 2
   @password "secret"
 
   describe "page_count/1" do
@@ -112,6 +117,63 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       assert {:ok, text} = Document.text(doc)
       assert text =~ "\f"
+    end
+  end
+
+  describe "text/1 on_page_error" do
+    test "skips a page that cannot be extracted, by default" do
+      doc = Document.open!(@broken_page_pdf)
+
+      # The skipped page keeps its slot: the separator goes in before the
+      # extraction is attempted, so the result still splits into page_count
+      # parts and the failure is indistinguishable from a blank page.
+      assert {:ok, text} = Document.text(doc)
+      assert String.split(text, "\f") == ["One", "Two", ""]
+      assert Document.text(doc, on_page_error: :skip) == {:ok, text}
+    end
+
+    test ":halt fails the call, naming the page" do
+      doc = Document.open!(@broken_page_pdf)
+
+      assert {:error, %Error{reason: reason, message: message}} =
+               Document.text(doc, on_page_error: :halt)
+
+      assert message =~ "page #{@unreachable_page}: "
+
+      # Same reason atom the equivalent per-page call reports — only the
+      # message differs, by the prefix naming the page.
+      assert {:error, %Error{reason: ^reason, message: per_page}} =
+               Document.text(doc, @unreachable_page)
+
+      assert message == "page #{@unreachable_page}: " <> per_page
+    end
+
+    test ":halt raises through text!/1" do
+      doc = Document.open!(@broken_page_pdf)
+
+      assert_raise Error, ~r/^page #{@unreachable_page}: /, fn ->
+        Document.text!(doc, on_page_error: :halt)
+      end
+    end
+
+    test "is inert on the per-page arities, which always propagate" do
+      doc = Document.open!(@broken_page_pdf)
+      page = Document.page!(doc, @unreachable_page)
+
+      for opts <- [[], [on_page_error: :skip], [on_page_error: :halt]] do
+        assert {:error, %Error{}} = Document.text(doc, @unreachable_page, opts)
+        assert {:error, %Error{}} = Page.text(page, opts)
+        assert {:ok, "One"} = Document.text(doc, 0, opts)
+      end
+    end
+
+    test "rejects a value that is not :skip or :halt" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:error, %Error{reason: :other, message: message}} =
+               Document.text(doc, on_page_error: :abort)
+
+      assert message =~ "on_page_error"
     end
   end
 

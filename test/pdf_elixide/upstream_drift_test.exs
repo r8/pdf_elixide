@@ -36,11 +36,15 @@ defmodule PdfElixide.UpstreamDriftTest do
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
+  @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
 
   @columns 0
   @artifacts 1
   @ruleless 3
   @kerned 4
+
+  # In @broken_page_pdf: /Count says three pages, two page objects exist.
+  @unreachable 2
 
   defp open(path) do
     doc = Document.open!(path)
@@ -204,6 +208,34 @@ defmodule PdfElixide.UpstreamDriftTest do
                  )
                )
       end
+    end
+  end
+
+  describe "whole-document text on a page that fails" do
+    test "a failed page still costs only its own slot" do
+      # `Document.text/1` does not call upstream's `extract_all_text` — it
+      # cannot, having a `ConversionOptions` and an `:on_page_error` to honour
+      # that the whole-document form accepts neither of. The NIF reimplements
+      # the loop, and `:skip` is its default purely because that is upstream's
+      # policy, so the two must keep agreeing about what a failed page does.
+      #
+      # This pins the half a caller can see: the separator goes in *before* the
+      # fallible extraction, so a failed page leaves an empty slot rather than
+      # vanishing, and the document still succeeds. The other half — that
+      # upstream's own loop still produces the identical string — is pinned in
+      # `document.rs`, which can reach `extract_all_text` where Elixir cannot.
+      #
+      # If upstream starts failing the document instead (its `to_plain_text_all`
+      # already does), don't relax the assertion: reconsider whether `:skip`
+      # should still be the default.
+      doc = open(@broken_page_pdf)
+
+      # Precondition: the page really is unextractable on its own. Upstream
+      # degrades nearly every damaged page to empty text, so a fixture that
+      # stopped failing here would let the assertion below pass vacuously.
+      assert {:error, _} = Document.text(doc, @unreachable)
+
+      assert String.split(Document.text!(doc), "\f") == ["One", "Two", ""]
     end
   end
 

@@ -83,6 +83,19 @@ fn validate_mode(field: &str, mode: &RectFilterModeNif) -> NifResult<()> {
     Ok(())
 }
 
+/// What the whole-document text loop does with a page that fails to extract:
+/// `:skip` it (the default, and upstream's own policy) or `:halt` the call.
+///
+/// Read only by `document_extract_all_text`. The per-page NIF decodes it with
+/// the rest of the map and ignores it, having a single page whose error it
+/// always propagates — the same inert-on-one-path shape `:expand_ligatures`
+/// has in the Markdown options.
+#[derive(NifUnitEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnPageErrorNif {
+    Skip,
+    Halt,
+}
+
 /// A region filter: the rectangle plus the mode it is applied under. Absent
 /// when the caller passed no `:region`.
 pub struct RegionFilter {
@@ -384,6 +397,7 @@ pub struct TextOptionsNif {
     pub exclude_regions_mode: RectFilterModeNif,
     pub exclude_layers: Vec<String>,
     pub exclude_inks: Vec<String>,
+    pub on_page_error: OnPageErrorNif,
 }
 
 impl TextOptionsNif {
@@ -402,6 +416,9 @@ pub struct TextOptions {
     pub region: Option<RegionFilter>,
     pub exclude_layers: Vec<String>,
     pub exclude_inks: Vec<String>,
+    /// Ours, not upstream's — deliberately kept out of `conversion`, which is
+    /// the options type `pdf_oxide` receives.
+    pub on_page_error: OnPageErrorNif,
 }
 
 impl TextOptions {
@@ -429,6 +446,7 @@ impl From<TextOptionsNif> for TextOptions {
             region,
             exclude_layers: o.exclude_layers,
             exclude_inks: o.exclude_inks,
+            on_page_error: o.on_page_error,
         }
     }
 }

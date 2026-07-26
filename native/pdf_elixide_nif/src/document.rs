@@ -13,11 +13,11 @@ use crate::{
     annotations::{annotation_to_nif, AnnotationNif},
     atoms,
     char::{char_to_nif, CharNif},
-    error::{tagged_err, to_nif_err},
+    error::{tagged_err, to_nif_err, to_nif_page_err},
     extract_options::{
-        CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, RegionFilter, SpansOptions,
-        SpansOptionsNif, TablesOptions, TablesOptionsNif, TextOptions, TextOptionsNif,
-        WordsOptions, WordsOptionsNif,
+        CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, OnPageErrorNif, RegionFilter,
+        SpansOptions, SpansOptionsNif, TablesOptions, TablesOptionsNif, TextOptions,
+        TextOptionsNif, WordsOptions, WordsOptionsNif,
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
@@ -370,10 +370,38 @@ fn document_extract_text(
     })
 }
 
-/// Extracts text content from all pages, separated by form-feed characters.
+/// Concatenates every page's text, separated by form feeds.
 ///
-/// Mirrors upstream `extract_all_text`: the same `\x0c` separator, and the same
-/// choice to log and skip a page that fails rather than failing the document.
+/// Free rather than inline in the NIF so the parity test below can drive it
+/// with a `&PdfDocument` of its own, no resource involved.
+///
+/// The `\x0c` goes in *before* the fallible extraction, so a page that fails
+/// still leaves its (empty) slot behind: the result always splits into exactly
+/// `page_count` parts, and a skipped page is indistinguishable from a blank
+/// one. That is upstream `extract_all_text`'s shape, byte for byte, and the
+/// parity test pins it.
+fn extract_all_text_pages(doc: &PdfDocument, options: &TextOptions) -> NifResult<String> {
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut text = String::new();
+    for page_index in 0..count {
+        if page_index > 0 {
+            text.push('\x0c');
+        }
+        match extract_text_page(doc, page_index, options) {
+            Ok(page_text) => text.push_str(&page_text),
+            // The default: a failed page contributes nothing and does not fail
+            // the document, as upstream `extract_all_text` swallows it (it logs
+            // the error, which this crate cannot — no logging dependency). Only
+            // `:halt` diverges, and then the message names the page, since the
+            // silent skip is what leaves the caller nothing to go on.
+            Err(_) if options.on_page_error == OnPageErrorNif::Skip => {}
+            Err(e) => return Err(to_nif_page_err(page_index, e)),
+        }
+    }
+    Ok(text)
+}
+
+/// Extracts text content from all pages, separated by form-feed characters.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_extract_all_text(
     resource: ResourceArc<DocumentResource>,
@@ -381,23 +409,7 @@ fn document_extract_all_text(
 ) -> NifResult<String> {
     resource.doc.with_lock(|doc| {
         options.validate()?;
-        let options: TextOptions = options.into();
-
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut text = String::new();
-        for page_index in 0..count {
-            if page_index > 0 {
-                text.push('\x0c');
-            }
-            // A page that fails to extract contributes nothing and does not fail
-            // the document — upstream `extract_all_text` swallows the same way (it
-            // logs; this crate carries no logging dependency). Keeping the
-            // behavior matters: `text/1` now routes through here too.
-            if let Ok(page_text) = extract_text_page(doc, page_index, &options) {
-                text.push_str(&page_text);
-            }
-        }
-        Ok(text)
+        extract_all_text_pages(doc, &options.into())
     })
 }
 
@@ -1052,4 +1064,56 @@ fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
         let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
         Ok(fields.into_iter().map(document_form_field_to_nif).collect())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Upstream canary — a failure here is a signal about `pdf_oxide`, not a
+    /// bug in this crate. See `test/pdf_elixide/upstream_drift_test.exs`.
+    ///
+    /// `extract_all_text_pages` reimplements upstream's `extract_all_text`
+    /// rather than calling it, because upstream offers no way to pass a
+    /// `ConversionOptions` to the whole-document form and no way to see which
+    /// page failed. Everything `PdfElixide.Document.text/1` documents —
+    /// separator before the fallible call, failed page contributing an empty
+    /// slot, the document still succeeding — is therefore a claim about a copy.
+    /// This asserts the copy still matches the original, which no Elixir test
+    /// can do: nothing in the binding reaches `extract_all_text` itself.
+    ///
+    /// If upstream switches to failing the document (as its own
+    /// `to_plain_text_all` already does), or moves the separator after the
+    /// extraction, this fails — and then `:on_page_error`'s default, not the
+    /// assertion, is what has to be reconsidered.
+    #[test]
+    fn whole_document_text_still_matches_upstream_extract_all_text() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test/fixtures/broken_page.pdf"
+        );
+        let doc = PdfDocument::open(path).expect("fixture opens");
+
+        // Precondition: the fixture still has a page that fails on its own.
+        // Without it the comparison below would hold vacuously.
+        assert_eq!(doc.page_count().expect("page count"), 3);
+        assert!(doc.extract_text(2).is_err());
+
+        let options = TextOptions {
+            // What upstream's own `extract_text` sets before delegating.
+            conversion: ConversionOptions {
+                extract_tables: true,
+                ..Default::default()
+            },
+            region: None,
+            exclude_layers: Vec::new(),
+            exclude_inks: Vec::new(),
+            on_page_error: OnPageErrorNif::Skip,
+        };
+
+        assert_eq!(
+            extract_all_text_pages(&doc, &options).expect("skips the failed page"),
+            doc.extract_all_text().expect("upstream skips it too")
+        );
+    }
 }

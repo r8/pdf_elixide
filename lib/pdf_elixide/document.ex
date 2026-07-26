@@ -443,6 +443,34 @@ defmodule PdfElixide.Document do
       suppress. Defaults to `[]`.
     * `:exclude_inks` — names of Separation/DeviceN inks to suppress.
       Defaults to `[]`.
+    * `:on_page_error` — what a page that fails to extract does to the
+      whole-document result: `:skip` it (the default) or `:halt`, failing the
+      call with the first page's error. See below.
+
+  ## `:on_page_error` and partly extractable documents
+
+  Read **only on the whole-document arity**. `text/3` and
+  `PdfElixide.Document.Page.text/2` extract one page and always return its
+  error, so the option is accepted and ignored there.
+
+  `:skip` matches `pdf_oxide`'s `extract_all_text`, which is why it is the
+  default: a failed page contributes an empty string, the page separator is
+  emitted for it either way, and the call still returns `{:ok, text}` with
+  content silently missing. That is the wrong default for an indexing,
+  archival or compliance pipeline, where a document that lost a page must not
+  look like one that never had it — `:halt` gives those callers
+  `{:error, %PdfElixide.Error{}}` instead, with the failing page's zero-based
+  index prefixed to the message.
+
+  Note that `:halt` is not a general corruption detector: upstream degrades
+  almost every damaged page to empty text rather than an error — an
+  undecodable content stream, missing fonts, a scan with no text layer and an
+  undecryptable document all extract as `""`. What remains, and all
+  `:halt` can catch, is a page whose page-tree entry cannot be resolved at
+  all. Every *other* whole-document extractor (`chars/1`, `words/1`,
+  `text_lines/1`, `spans/1`, `paths/1`, `images/1`, `fonts/1`,
+  `annotations/1`, `tables/1`) fails the call on such a page unconditionally,
+  having no upstream counterpart whose policy they must match.
 
   ## Layer and ink filtering drops the other options
 
@@ -470,7 +498,8 @@ defmodule PdfElixide.Document do
           exclude_regions: [Rect.t()],
           exclude_regions_mode: region_mode(),
           exclude_layers: [String.t()],
-          exclude_inks: [String.t()]
+          exclude_inks: [String.t()],
+          on_page_error: :skip | :halt
         ]
 
   @doc """
@@ -486,8 +515,13 @@ defmodule PdfElixide.Document do
       Document.text(doc, 0)
       Document.text(doc, 0, region: word.bbox)
 
-  A page that fails to extract contributes nothing to the whole-document
-  result rather than failing the call, matching `pdf_oxide`.
+  A page that fails to extract contributes an empty string to the
+  whole-document result rather than failing the call, matching `pdf_oxide`.
+  Its separator is emitted regardless, so the result always splits into
+  exactly `page_count/1` parts and a skipped page reads as a blank one. Pass
+  `on_page_error: :halt` to fail the call instead; `t:text_opts/0` describes
+  when a page can fail at all and why the other extractors do not offer the
+  choice.
 
   See `t:text_opts/0` for the available options.
   """
@@ -559,7 +593,8 @@ defmodule PdfElixide.Document do
       exclude_regions: Keyword.get(opts, :exclude_regions, []),
       exclude_regions_mode: Keyword.get(opts, :exclude_regions_mode, :intersects),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
-      exclude_inks: Keyword.get(opts, :exclude_inks, [])
+      exclude_inks: Keyword.get(opts, :exclude_inks, []),
+      on_page_error: Keyword.get(opts, :on_page_error, :skip)
     }
   end
 

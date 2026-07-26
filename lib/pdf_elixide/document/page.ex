@@ -97,6 +97,10 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the text content of the page.
 
+  A page that cannot be extracted is an error here, where
+  `PdfElixide.Document.text/1` skips it by default — `:on_page_error` is a
+  whole-document option and does nothing on this path.
+
   See `t:PdfElixide.Document.text_opts/0` for the available options.
   """
   @spec text(t(), Document.text_opts()) :: {:ok, String.t()} | {:error, Error.t()}

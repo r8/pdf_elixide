@@ -20,6 +20,17 @@ pub fn to_nif_err(e: PdfError) -> Error {
     tagged_err(classify(&e), e.to_string())
 }
 
+/// Same as [`to_nif_err`], but names the page the failure came from.
+///
+/// Used by the whole-document text loop under `on_page_error: :halt`, where the
+/// caller otherwise has no way to tell *which* page failed: the reason atom and
+/// upstream's message are the same whichever page produced them. The atom is
+/// left to [`classify`] so a halted page reports exactly what the equivalent
+/// per-page call would.
+pub fn to_nif_page_err(page_index: usize, e: PdfError) -> Error {
+    tagged_err(classify(&e), format!("page {page_index}: {e}"))
+}
+
 /// Creates a standard "Lock is poisoned" error for poisoned locks.
 ///
 /// Defensive: every guard is now taken through `Closable::with_lock` /
