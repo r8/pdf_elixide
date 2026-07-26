@@ -1,0 +1,44 @@
+%PDF-1.7
+%âãÏÓ
+% metadata_encodings.pdf - one Info text-string encoding per field.
+% /Title      UTF-16BE + BOM, with a surrogate pair
+% /Author     UTF-16LE + BOM
+% /Subject    PDFDocEncoding 0x85 0x90 0x92 (endash quoteright trademark)
+% /Keywords   PDFDocEncoding over the Latin-1 range (0xE9 0xEF)
+% /Creator    raw UTF-8, no BOM
+% /Producer   UTF-8 with an EF BB BF BOM (PDF 2.0)
+% /ModDate    whitespace only -> nil
+% /Trapped    a name, not a string
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>
+endobj
+4 0 obj
+<< /Title <FEFF005400ED00740075006C006F0020D83DDE42>
+   /Author <FFFE4A0061006E00E900200044006F006500>
+   /Subject <504446446F633A208520902092>
+   /Keywords <636166E92C206E61EF7665>
+   /Creator <4372C3A96174657572>
+   /Producer <EFBBBF7064665F656C697869646520E29C93>
+   /CreationDate (D:20240115120000Z)
+   /ModDate (   )
+   /Trapped /Unknown
+>>
+endobj
+xref
+0 5
+0000000000 65535 f 
+0000000457 00000 n 
+0000000506 00000 n 
+0000000563 00000 n 
+0000000634 00000 n 
+trailer
+<< /Size 5 /Root 1 0 R /Info 4 0 R >>
+startxref
+995
+%%EOF

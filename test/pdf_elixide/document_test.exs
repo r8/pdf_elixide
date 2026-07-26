@@ -35,6 +35,10 @@ defmodule PdfElixide.DocumentTest do
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
+  # An /Info dictionary with a different text-string encoding in every field —
+  # the only fixture that can tell PDFDocEncoding from Latin-1, since
+  # @metadata_pdf is pure ASCII.
+  @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @annotation_colors_pdf Path.join(@fixtures, "annotation_colors.pdf")
   @password "secret"
@@ -2530,6 +2534,34 @@ defmodule PdfElixide.DocumentTest do
       assert meta.creation_date == "D:20240115120000Z"
       assert meta.mod_date == nil
       assert meta.trapped == "True"
+    end
+
+    test "decodes every text-string encoding an Info field can carry" do
+      doc = Document.open!(@metadata_encodings_pdf)
+
+      assert {:ok, %Metadata{} = meta} = Document.metadata(doc)
+
+      # UTF-16 both ways, selected by the BOM; the title carries a surrogate pair.
+      assert meta.title == "Título 🙂"
+      assert meta.author == "Jané Doe"
+
+      # PDFDocEncoding, not Latin-1: 0x85/0x90/0x92 are glyphs, not C1 controls…
+      assert meta.subject == "PDFDoc: – ’ ™"
+      # …while 0xA0-0xFF is Latin-1 as before.
+      assert meta.keywords == "café, naïve"
+
+      # /Creator and /Producer go through the same decoder as every other field
+      # rather than upstream's `document_creator/document_producer`, so raw
+      # UTF-8 and PDF 2.0's EF BB BF BOM both work. The BOM is stripped rather
+      # than surviving as a leading U+FEFF, which `String.trim/1` would keep.
+      assert meta.creator == "Créateur"
+      assert meta.producer == "pdf_elixide ✓"
+
+      assert meta.creation_date == "D:20240115120000Z"
+      # A whitespace-only value is nil, same as an absent one…
+      assert meta.mod_date == nil
+      # …and a name still falls back to its text.
+      assert meta.trapped == "Unknown"
     end
 
     test "returns an all-nil struct for a document with no Info dictionary" do

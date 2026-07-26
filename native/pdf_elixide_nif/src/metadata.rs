@@ -31,36 +31,37 @@ pub struct MetadataNif {
     trapped: Option<String>,
 }
 
-/// Decodes a PDF text string (ISO 32000-1 §7.9.2.2). A leading UTF-16 byte-order
-/// mark selects UTF-16; otherwise the bytes are treated as PDFDocEncoding, which
-/// coincides with Latin-1 across the range used by real-world Info strings.
+/// Decodes a PDF text string (ISO 32000-1 §7.9.2.2). The decoding itself is
+/// upstream's public `decode_pdf_text_string` — the same one `pdf_oxide` applies
+/// to optional-content group names: a `FE FF` / `FF FE` byte-order mark selects
+/// UTF-16, a BOM-less buffer that is valid UTF-8 is taken as UTF-8 (non-spec
+/// leniency for the many producers that write it), and anything else is
+/// PDFDocEncoding — Latin-1 except over `0x80`–`0x9F`, where the PDF glyphs
+/// (`0x85` en dash, `0x90` right single quote, `0x92` trademark) sit where the
+/// C1 controls would be.
+///
+/// The one case upstream has no branch for is PDF 2.0's UTF-8 text string
+/// (ISO 32000-2 §7.9.2.2), tagged `EF BB BF`: those bytes *are* valid UTF-8, so
+/// they decode as text but keep the BOM as a leading U+FEFF, which `str::trim`
+/// does not remove (U+FEFF is not `White_Space`). Strip it first.
 fn decode_pdf_text_string(bytes: &[u8]) -> String {
-    match bytes {
-        [0xFE, 0xFF, rest @ ..] => {
-            let units: Vec<u16> = rest
-                .chunks_exact(2)
-                .map(|c| u16::from_be_bytes([c[0], c[1]]))
-                .collect();
-            String::from_utf16_lossy(&units)
-        }
-        [0xFF, 0xFE, rest @ ..] => {
-            let units: Vec<u16> = rest
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect();
-            String::from_utf16_lossy(&units)
-        }
-        _ => bytes.iter().map(|&b| b as char).collect(),
-    }
+    let body = match bytes {
+        [0xEF, 0xBB, 0xBF, rest @ ..] => rest,
+        other => other,
+    };
+
+    pdf_oxide::optional_content::decode_pdf_text_string(body)
 }
 
-/// Reads the document Info dictionary into a `MetadataNif`. `/Producer` and
-/// `/Creator` reuse pdf_oxide's own decoders; the rest are read directly from
-/// the resolved `/Info` dictionary (only those two have public accessors).
+/// Reads the document Info dictionary into a `MetadataNif`. Every field —
+/// `/Producer` and `/Creator` included — is read from the resolved `/Info`
+/// dictionary here rather than through `PdfDocument::document_producer` /
+/// `document_creator`: those decode with a *different*, private upstream
+/// decoder that has no UTF-8 branch, so one struct would otherwise mix two
+/// decodings (a `EF BB BF`-tagged `/Producer` arriving as `ï»¿…` mojibake next
+/// to a correctly decoded `/Title`). Reading them here also gives them the same
+/// `/Name` fallback as `/Trapped`, and resolves `/Info` once instead of thrice.
 fn read_metadata(doc: &PdfDocument) -> MetadataNif {
-    let producer = doc.document_producer();
-    let creator = doc.document_creator();
-
     let info = doc
         .trailer()
         .as_dict()
@@ -83,8 +84,8 @@ fn read_metadata(doc: &PdfDocument) -> MetadataNif {
         author: get("Author"),
         subject: get("Subject"),
         keywords: get("Keywords"),
-        creator,
-        producer,
+        creator: get("Creator"),
+        producer: get("Producer"),
         creation_date: get("CreationDate"),
         mod_date: get("ModDate"),
         trapped: get("Trapped"),
@@ -221,4 +222,83 @@ fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
     Ok((0..count)
         .map(|index| PageLabelExtractor::get_label(&ranges, index))
         .collect())
+}
+
+// Tests ------------------------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::decode_pdf_text_string as decode;
+
+    #[test]
+    fn decodes_ascii_unchanged() {
+        assert_eq!(decode(b"Test Title"), "Test Title");
+        assert_eq!(decode(b""), "");
+    }
+
+    #[test]
+    fn decodes_pdfdoc_encoding_not_latin1() {
+        // 0x80-0x9F are PDFDocEncoding glyphs, not the C1 controls a Latin-1
+        // decoder would produce: en dash, right single quote, trademark
+        // (ISO 32000-1 Table D.2).
+        assert_eq!(
+            decode(b"PDFDoc: \x85 \x90 \x92"),
+            "PDFDoc: \u{2013} \u{2019} \u{2122}"
+        );
+    }
+
+    #[test]
+    fn decodes_the_latin1_range_as_latin1() {
+        assert_eq!(decode(b"caf\xE9, na\xEFve"), "café, naïve");
+    }
+
+    #[test]
+    fn drops_codes_undefined_in_pdfdoc_encoding() {
+        // Upstream's table `filter_map`s, so 0x9F — the one undefined code —
+        // disappears rather than becoming U+FFFD.
+        assert_eq!(decode(b"a\x9Fb"), "ab");
+    }
+
+    #[test]
+    fn decodes_utf16be_with_a_bom() {
+        assert_eq!(decode(b"\xFE\xFF\x00H\x00i"), "Hi");
+        // Surrogate pairs survive: U+1F642.
+        assert_eq!(decode(b"\xFE\xFF\xD8\x3D\xDE\x42"), "🙂");
+    }
+
+    #[test]
+    fn decodes_utf16le_with_a_bom() {
+        assert_eq!(decode(b"\xFF\xFEH\x00i\x00"), "Hi");
+    }
+
+    #[test]
+    fn drops_a_trailing_odd_byte_in_utf16() {
+        assert_eq!(decode(b"\xFE\xFF\x00H\x00"), "H");
+    }
+
+    #[test]
+    fn falls_back_to_lossy_utf8_on_an_unpaired_surrogate() {
+        // Upstream's fallback, pinned rather than endorsed: strict `from_utf16`
+        // fails and the *whole* buffer, BOM included, is then decoded lossily as
+        // UTF-8. This is worse than the `from_utf16_lossy` this binding used to
+        // do itself, and is the accepted price of having a single decoder. A
+        // future upstream `from_utf16_lossy` would be an improvement — update
+        // this assertion then, don't route around it.
+        assert_eq!(
+            decode(b"\xFE\xFF\xD8\x3D\x00A"),
+            "\u{FFFD}\u{FFFD}\u{FFFD}=\u{0}A"
+        );
+    }
+
+    #[test]
+    fn strips_the_pdf_2_0_utf8_bom() {
+        assert_eq!(decode(b"\xEF\xBB\xBFCaf\xC3\xA9"), "Café");
+        // BOM only: empty, so `read_metadata`'s trim-to-`None` rule applies.
+        assert_eq!(decode(b"\xEF\xBB\xBF"), "");
+    }
+
+    #[test]
+    fn decodes_raw_utf8_without_a_bom() {
+        assert_eq!(decode(b"Caf\xC3\xA9"), "Café");
+    }
 }

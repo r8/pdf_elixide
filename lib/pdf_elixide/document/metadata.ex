@@ -9,6 +9,20 @@ defmodule PdfElixide.Document.Metadata do
   For richer, XML-based metadata (which many modern PDFs carry instead of, or in
   addition to, the Info dictionary) see `PdfElixide.Document.xmp_metadata/1`.
 
+  ## Text encoding
+
+  String fields are decoded as PDF text strings (ISO 32000-1 §7.9.2.2): a
+  `FE FF` or `FF FE` byte-order mark selects UTF-16, PDF 2.0's `EF BB BF`
+  selects UTF-8, and anything else is PDFDocEncoding — Latin-1 except over
+  `0x80`–`0x9F`, where the PDF glyphs (`0x85` en dash, `0x90` right single
+  quote, `0x92` trademark) replace the C1 controls.
+
+  A byte-order-mark-less string that happens to be valid UTF-8 is decoded as
+  UTF-8. That is `pdf_oxide`'s deliberate leniency towards the many producers
+  that write raw UTF-8 rather than what the spec says, so a Latin-1 string
+  whose bytes are also well-formed UTF-8 decodes as the latter. A value that
+  decodes to whitespace only is `nil`, as an absent one is.
+
   ## Fields
 
     * `:title`, `:author`, `:subject` — document title, author, and subject.

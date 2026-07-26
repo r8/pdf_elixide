@@ -35,6 +35,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
+  @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
 
   @columns 0
   @artifacts 1
@@ -203,6 +204,27 @@ defmodule PdfElixide.UpstreamDriftTest do
                  )
                )
       end
+    end
+  end
+
+  describe "PDF text-string decoding" do
+    test "a BOM-less buffer that is valid UTF-8 still decodes as UTF-8" do
+      # `metadata/1` decodes /Info strings with the public
+      # `pdf_oxide::optional_content::decode_pdf_text_string`. Its BOM-less
+      # branch tries UTF-8 *before* PDFDocEncoding, which ISO 32000-1 §7.9.2.2
+      # does not sanction — a string with no BOM is PDFDocEncoding, full stop.
+      # Upstream is being lenient for the producers that emit raw UTF-8 anyway.
+      #
+      # The spec-mandated half (0x85 -> en dash, etc.) is pinned in
+      # document_test.exs; only this deliberate non-conformance is upstream's
+      # to change. If the branch goes, every raw-UTF-8 /Info value in the wild
+      # silently starts arriving as mojibake, and this binding has to decide
+      # whether to decode text strings itself. Don't relax the assertion.
+      doc = open(@metadata_encodings_pdf)
+
+      # /Creator is <4372C3A96174657572>: "Créateur" read as UTF-8,
+      # "CrÃ©ateur" read as PDFDocEncoding.
+      assert Document.metadata!(doc).creator == "Créateur"
     end
   end
 end

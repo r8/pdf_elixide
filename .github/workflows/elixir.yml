@@ -131,8 +131,8 @@ jobs:
         run: cargo +nightly fmt --check
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
-      # The crate has no `#[cfg(test)]` modules yet — behavior is pinned by the
-      # Elixir suite. The step is here so the first Rust unit test written is
-      # run rather than silently ignored.
+      # `metadata.rs`'s PDF text-string decoder is pinned at byte level here,
+      # since no fixture can express a malformed UTF-16 buffer. Everything else
+      # is pinned by the Elixir suite.
       - name: Run cargo test
         run: cargo test
