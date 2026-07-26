@@ -5,6 +5,37 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.9.0](https://github.com/r8/pdf_elixide/compare/v0.8.0...v0.9.0) (2026-07-26)
+
+
+
+
+### Features:
+
+* add strict has_structure_tree/1 and has_xfa/1 so a swallowed error is reachable by [@r8](https://github.com/r8)
+
+* add on_page_error to fail whole-document text on an unextractable page by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* return the version and page count from the open NIF so no handle can leak by [@r8](https://github.com/r8)
+
+* match NIF success payloads loosely so a shape change can't raise CaseClauseError by [@r8](https://github.com/r8)
+
+* read a single page label through a range-checked NIF by [@r8](https://github.com/r8)
+
+* decode tables from a borrow instead of cloning for the resource by [@r8](https://github.com/r8)
+
+* return JPEG-stored image bytes without cloning the stored blob by [@r8](https://github.com/r8)
+
+* return an error instead of panicking when a binary allocation fails by [@r8](https://github.com/r8)
+
+* decode Info strings as PDFDocEncoding, uniformly across all fields by [@r8](https://github.com/r8)
+
+* cache page_count on the Document struct at open by [@r8](https://github.com/r8)
+
+* schedule lock-taking document NIFs on dirty CPU schedulers by [@r8](https://github.com/r8)
+
 ## [v0.8.0](https://github.com/r8/pdf_elixide/compare/v0.7.0...v0.8.0) (2026-07-25)
 
 

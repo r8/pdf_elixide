@@ -1,6 +1,6 @@
 [package]
 name = "pdf_elixide_nif"
-version = "0.8.0"
+version = "0.9.0"
 authors = ["Sergey Storchay"]
 edition = "2021"
 description = "Rust NIF for pdf_elixide — Elixir bindings to pdf_oxide via Rustler."
