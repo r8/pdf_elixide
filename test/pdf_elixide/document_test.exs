@@ -44,6 +44,41 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       assert {:ok, 3} = Document.page_count(doc)
     end
+
+    test "is cached on the struct at open" do
+      assert %Document{page_count: 3} = Document.open!(@valid_pdf)
+      assert %Document{page_count: 3} = Document.from_binary!(File.read!(@valid_pdf))
+    end
+
+    test "falls back to the document when nothing was cached at open" do
+      # The uncached state belongs to an encrypted document whose page tree needs
+      # a password, which no fixture produces on demand — build it directly. The
+      # fallback is what answers correctly once `authenticate/2` has run.
+      %Document{} = doc = Document.open!(@valid_pdf)
+      uncached = %{doc | page_count: nil}
+
+      assert {:ok, 3} = Document.page_count(uncached)
+      assert Document.page_count!(uncached) == 3
+
+      # ...and, unlike a cached count, it needs the handle.
+      :ok = Document.close(doc)
+      assert {:error, %Error{reason: :closed}} = Document.page_count(uncached)
+    end
+
+    test "an encrypted document opened without a password still opens and counts" do
+      doc = Document.open!(@encrypted_pdf)
+
+      # This fixture's page tree resolves unauthenticated, so the count caches
+      # like any other document; a fixture whose tree did not would cache `nil`
+      # and take the fallback clause above.
+      assert %Document{page_count: count} = doc
+      assert is_integer(count)
+      assert {:ok, ^count} = Document.page_count(doc)
+      assert length(Document.pages(doc)) == count
+
+      assert {:ok, true} = Document.authenticate(doc, @password)
+      assert {:ok, ^count} = Document.page_count(doc)
+    end
   end
 
   describe "page_count!/1" do
@@ -2628,18 +2663,21 @@ defmodule PdfElixide.DocumentTest do
       :ok = Document.close(doc)
 
       assert {:error, %Error{reason: :closed, message: "Document is closed"}} =
-               Document.page_count(doc)
+               Document.text(doc, 0)
 
-      assert {:error, %Error{reason: :closed}} = Document.text(doc, 0)
       assert {:error, %Error{reason: :closed}} = Document.metadata(doc)
       assert {:error, %Error{reason: :closed}} = PdfElixide.Form.fields(doc)
+
+      # Not page_count/1: it is cached on the struct at open, so it answers
+      # without the handle. Pinned in "struct-backed accessors keep working".
+      assert {:ok, 3} = Document.page_count(doc)
     end
 
     test "bang variants raise on a closed document" do
       doc = Document.open!(@valid_pdf)
       :ok = Document.close(doc)
 
-      error = assert_raise Error, fn -> Document.page_count!(doc) end
+      error = assert_raise Error, fn -> Document.metadata!(doc) end
       assert error.reason == :closed
 
       assert_raise Error, "Document is closed", fn -> Document.text!(doc, 0) end
@@ -2662,6 +2700,8 @@ defmodule PdfElixide.DocumentTest do
 
       assert Document.version(doc) == {1, 4}
       assert Document.source_path(doc) == @valid_pdf
+      assert Document.page_count(doc) == {:ok, 3}
+      assert Document.page_count!(doc) == 3
       assert inspect(doc) == "#PdfElixide.Document<sample.pdf v1.4>"
     end
 
@@ -2674,11 +2714,15 @@ defmodule PdfElixide.DocumentTest do
       assert {:error, %Error{reason: :closed}} = Page.width(page)
     end
 
-    test "enumerating a closed document raises" do
+    test "enumerating a closed document still yields its page handles" do
       doc = Document.open!(@valid_pdf)
       :ok = Document.close(doc)
 
-      assert_raise Error, fn -> Enum.count(doc) end
+      # The count is cached, so enumeration needs no handle. Reading through the
+      # handles it yields does, and reports :closed (test above).
+      assert Enum.count(doc) == 3
+      assert Enum.map(doc, & &1.index) == [0, 1, 2]
+      assert Document.pages(doc) == Enum.to_list(doc)
     end
   end
 

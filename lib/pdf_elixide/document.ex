@@ -23,11 +23,21 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Native.Wrap
 
   @enforce_keys [:ref, :version]
-  defstruct [:ref, :version, :source_path]
+  defstruct [:ref, :version, :page_count, :source_path]
 
+  @typedoc """
+  A handle on an open PDF document.
+
+  `:version` and `:page_count` are read once at open and served from the struct
+  thereafter, since both are immutable for a read-only document. `:page_count`
+  is `nil` when the count could not be determined at open — an encrypted
+  document whose page tree needs a password, opened without one — in which case
+  `page_count/1` asks the document instead.
+  """
   @type t :: %__MODULE__{
           ref: reference(),
           version: {non_neg_integer(), non_neg_integer()},
+          page_count: non_neg_integer() | nil,
           source_path: Path.t() | nil
         }
 
@@ -55,7 +65,13 @@ defmodule PdfElixide.Document do
 
     with {:ok, ref} <- Wrap.call(fn -> Native.document_open(path, options) end),
          {:ok, version} <- Wrap.call(fn -> Native.document_version(ref) end) do
-      {:ok, %__MODULE__{ref: ref, version: version, source_path: path}}
+      {:ok,
+       %__MODULE__{
+         ref: ref,
+         version: version,
+         page_count: cached_page_count(ref),
+         source_path: path
+       }}
     end
   end
 
@@ -79,7 +95,13 @@ defmodule PdfElixide.Document do
 
     with {:ok, ref} <- Wrap.call(fn -> Native.document_from_bytes(bytes, options) end),
          {:ok, version} <- Wrap.call(fn -> Native.document_version(ref) end) do
-      {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
+      {:ok,
+       %__MODULE__{
+         ref: ref,
+         version: version,
+         page_count: cached_page_count(ref),
+         source_path: nil
+       }}
     end
   end
 
@@ -96,6 +118,24 @@ defmodule PdfElixide.Document do
 
   defp build_open_options(opts) do
     %{password: Keyword.get(opts, :password)}
+  end
+
+  # The page count is immutable for a read-only document, so it is read once here
+  # and served from the struct afterwards. A failure is not an open failure: for an
+  # encrypted document whose page tree cannot be decrypted yet, upstream reports
+  # `EncryptedPdf` until `authenticate/2` runs, and refusing to open would be
+  # stricter than upstream itself, which keeps a metadata-broken document usable
+  # because every per-page call surfaces the real error anyway. Such a document
+  # caches nothing and `page_count/1` asks it again.
+  #
+  # A cached number cannot go stale: for an encrypted document upstream either
+  # fails or returns the real `/Count`, and authentication changes only whether
+  # the count is readable, never what it is.
+  defp cached_page_count(ref) do
+    case Wrap.call(fn -> Native.document_page_count(ref) end) do
+      {:ok, count} -> count
+      {:error, _error} -> nil
+    end
   end
 
   @doc """
@@ -121,8 +161,10 @@ defmodule PdfElixide.Document do
 
   Afterwards, functions that read the document return
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
-  it. `version/1` and `source_path/1` keep working, since they read the struct
-  rather than the native handle, and any `PdfElixide.Document.Image` or
+  it. `version/1`, `source_path/1` and `page_count/1` keep working, since they
+  read the struct rather than the native handle — `page_count/1` only for a
+  document whose count was determined at open, which is every document except an
+  encrypted one opened without a password. Any `PdfElixide.Document.Image` or
   `PdfElixide.Document.Font` handles already extracted from the document remain
   valid — they own their data independently.
 
@@ -142,8 +184,19 @@ defmodule PdfElixide.Document do
 
   @doc """
   Returns the number of pages in the given PDF document.
+
+  The count is read once at open and cached on the struct, so this normally
+  costs nothing and keeps working after `close/1`, as `version/1` does.
+
+  The exception is a document whose page tree could not be read at open — an
+  encrypted one opened without a password. Nothing is cached for it, so the
+  count is read from the document on every call: an error until `authenticate/2`
+  succeeds, the real count afterwards, and `{:error, %PdfElixide.Error{reason: :closed}}`
+  once the document is closed.
   """
   @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
+  def page_count(%__MODULE__{page_count: count}) when is_integer(count), do: {:ok, count}
+
   def page_count(%__MODULE__{ref: ref}) do
     Wrap.call(fn -> Native.document_page_count(ref) end)
   end
@@ -1852,6 +1905,9 @@ defmodule PdfElixide.Document do
 
   @doc """
   Returns a lazy handle for every page in the document.
+
+  Reads the page count cached on the struct, so it raises only for a document
+  whose count could not be determined at open — see `page_count/1`.
   """
   @spec pages(t()) :: [Page.t()]
   def pages(%__MODULE__{} = doc) do

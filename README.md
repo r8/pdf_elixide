@@ -96,7 +96,7 @@ alias PdfElixide.Document
 # Version is read directly from the struct — returned as a {major, minor} tuple.
 {1, 4} = Document.version(doc)
 
-# Page count is fetched from the underlying PDF and may fail.
+# Page count is read once at open and served from the struct, like the version.
 {:ok, 3} = Document.page_count(doc)
 
 # Extract text from a single page (zero-based index).
@@ -196,7 +196,11 @@ text = PdfElixide.Document.text!(doc, 0)
 true = PdfElixide.Document.closed?(doc)
 
 # Reading a closed document is an ordinary error, not a crash.
-{:error, %PdfElixide.Error{reason: :closed}} = PdfElixide.Document.page_count(doc)
+{:error, %PdfElixide.Error{reason: :closed}} = PdfElixide.Document.text(doc, 0)
+
+# `version/1`, `source_path/1` and `page_count/1` keep answering — they read the
+# struct rather than the native handle.
+{:ok, 3} = PdfElixide.Document.page_count(doc)
 ```
 
 `close/1` is idempotent, and `PdfElixide.Editor`, `PdfElixide.Document.Image`,
