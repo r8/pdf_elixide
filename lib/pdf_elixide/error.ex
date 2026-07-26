@@ -21,7 +21,13 @@ defmodule PdfElixide.Error do
     * `:not_found` — a referenced object was not found.
     * `:out_of_range` — the page index is outside the document.
     * `:io` — an underlying IO error.
-    * `:lock_poisoned` — the internal resource lock was poisoned.
+    * `:panic` — the native library or upstream `pdf_oxide` panicked on this
+      input, i.e. hit a bug rather than a condition it reports. The handle stays
+      usable, but a panic partway through an operation can leave it holding
+      partially updated state, so `close/1` it and reopen if the error recurs.
+    * `:lock_poisoned` — the internal resource lock was poisoned. Should no
+      longer occur: a native panic is contained before it can poison a lock and
+      is reported as `:panic` instead.
     * `:closed` — the handle was released with `close/1`.
     * `:other` — any error not covered above; `message` is preserved verbatim.
 
@@ -46,6 +52,7 @@ defmodule PdfElixide.Error do
           | :not_found
           | :out_of_range
           | :io
+          | :panic
           | :lock_poisoned
           | :closed
           | :other

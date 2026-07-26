@@ -134,38 +134,36 @@ fn table_to_markdown(
     resource: ResourceArc<TableResource>,
     options: TableMarkdownOptionsNif,
 ) -> NifResult<String> {
-    let table = resource.table.read()?;
-
-    render(
-        &MarkdownOutputConverter::new(),
-        &table,
-        ConversionOptions {
-            bold_marker_behavior: options.bold_markers.into(),
-            ..Default::default()
-        },
-    )
+    resource.table.with_read(|table| {
+        render(
+            &MarkdownOutputConverter::new(),
+            table,
+            ConversionOptions {
+                bold_marker_behavior: options.bold_markers.into(),
+                ..Default::default()
+            },
+        )
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_to_html(resource: ResourceArc<TableResource>) -> NifResult<String> {
-    let table = resource.table.read()?;
-
-    // Defaults throughout: the HTML table renderer reads no configuration at
-    // all, and `preserve_layout` must stay false — upstream's HTML converter
-    // discards the tables entirely and emits positioned `<div>`s instead when it
-    // is set.
-    render(
-        &HtmlOutputConverter::new(),
-        &table,
-        ConversionOptions::default(),
-    )
+    resource.table.with_read(|table| {
+        // Defaults throughout: the HTML table renderer reads no configuration at
+        // all, and `preserve_layout` must stay false — upstream's HTML converter
+        // discards the tables entirely and emits positioned `<div>`s instead when it
+        // is set.
+        render(
+            &HtmlOutputConverter::new(),
+            table,
+            ConversionOptions::default(),
+        )
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_to_text(resource: ResourceArc<TableResource>) -> NifResult<String> {
-    let table = resource.table.read()?;
-
-    Ok(table.render_text())
+    resource.table.with_read(|table| Ok(table.render_text()))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]

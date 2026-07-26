@@ -5,6 +5,7 @@ use rustler::{Encoder, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, Resourc
 
 use crate::{
     atoms,
+    binary::{binary_term, owned_binary},
     error::{tagged_err, to_nif_err},
     geometry::{rect_to_nif, RectNif},
     resource::Closable,
@@ -48,25 +49,6 @@ pub enum PixelFormatNif {
     Cmyk,
 }
 
-/// The image's stored bytes, encoded to Elixir as a flat tagged tuple:
-/// `{:jpeg, <binary>}` (the original DCTDecode blob) or
-/// `{:raw, <binary>, pixel_format}` (bare pixels — not a standalone file).
-pub enum ImageDataNif {
-    Jpeg(Vec<u8>),
-    Raw(Vec<u8>, PixelFormatNif),
-}
-
-impl Encoder for ImageDataNif {
-    fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
-        match self {
-            ImageDataNif::Jpeg(bytes) => (atoms::jpeg(), bytes_to_binary(env, bytes)).encode(env),
-            ImageDataNif::Raw(bytes, format) => {
-                (atoms::raw(), bytes_to_binary(env, bytes), format).encode(env)
-            }
-        }
-    }
-}
-
 impl From<PixelFormat> for PixelFormatNif {
     fn from(format: PixelFormat) -> Self {
         match format {
@@ -75,15 +57,6 @@ impl From<PixelFormat> for PixelFormatNif {
             PixelFormat::CMYK => PixelFormatNif::Cmyk,
         }
     }
-}
-
-/// Copies a byte slice into an Erlang binary term. A bare `Vec<u8>`/`&[u8]` would
-/// encode as a list of integers, so we build an `OwnedBinary` (see
-/// `editor_to_bytes` for the same idiom).
-fn bytes_to_binary<'a>(env: Env<'a>, bytes: &[u8]) -> Term<'a> {
-    let mut bin = OwnedBinary::new(bytes.len()).expect("failed to allocate image binary");
-    bin.as_mut_slice().copy_from_slice(bytes);
-    bin.release(env).encode(env)
 }
 
 /// The image's color space, resolved to a plain atom. `ICCBased(_)` flattens to
@@ -158,23 +131,20 @@ fn image_to_binary(
     resource: ResourceArc<ImageResource>,
     format: OutputFormatNif,
 ) -> NifResult<OwnedBinary> {
-    let image = resource.image.read()?;
+    resource.image.with_read(|image| {
+        let bytes = match format {
+            OutputFormatNif::Png => image.to_png_bytes().map_err(to_nif_err)?,
+            OutputFormatNif::Jpeg => match image.data() {
+                // JPEG-stored, non-CMYK → hand back the original bytes (zero loss),
+                // matching `save_as_jpeg`'s pass-through.
+                ImageData::Jpeg(jpeg) if image.color_space().components() != 4 => jpeg.clone(),
+                // CMYK JPEG or raw pixels → decode + encode.
+                _ => encode_jpeg(image)?,
+            },
+        };
 
-    let bytes = match format {
-        OutputFormatNif::Png => image.to_png_bytes().map_err(to_nif_err)?,
-        OutputFormatNif::Jpeg => match image.data() {
-            // JPEG-stored, non-CMYK → hand back the original bytes (zero loss),
-            // matching `save_as_jpeg`'s pass-through.
-            ImageData::Jpeg(jpeg) if image.color_space().components() != 4 => jpeg.clone(),
-            // CMYK JPEG or raw pixels → decode + encode.
-            _ => encode_jpeg(&image)?,
-        },
-    };
-
-    let mut bin = OwnedBinary::new(bytes.len())
-        .ok_or_else(|| tagged_err(atoms::other(), "failed to allocate image binary"))?;
-    bin.as_mut_slice().copy_from_slice(&bytes);
-    Ok(bin)
+        owned_binary(&bytes, "image")
+    })
 }
 
 /// Writes the image to `path`, encoded as the requested format.
@@ -184,25 +154,38 @@ fn image_save(
     path: String,
     format: OutputFormatNif,
 ) -> NifResult<rustler::Atom> {
-    let image = resource.image.read()?;
+    resource.image.with_read(|image| {
+        match format {
+            OutputFormatNif::Png => image.save_as_png(path).map_err(to_nif_err)?,
+            OutputFormatNif::Jpeg => image.save_as_jpeg(path).map_err(to_nif_err)?,
+        }
 
-    match format {
-        OutputFormatNif::Png => image.save_as_png(path).map_err(to_nif_err)?,
-        OutputFormatNif::Jpeg => image.save_as_jpeg(path).map_err(to_nif_err)?,
-    }
-
-    Ok(atoms::ok())
+        Ok(atoms::ok())
+    })
 }
 
-/// Returns the image's raw stored bytes: the original JPEG blob for a
-/// JPEG-stored image, or the bare decoded pixels (with their layout) otherwise.
+/// Returns the image's raw stored bytes as a flat tagged tuple:
+/// `{:jpeg, <binary>}` (the original DCTDecode blob) or
+/// `{:raw, <binary>, pixel_format}` (bare pixels — not a standalone file).
+///
+/// The tuple is built here rather than through an `Encoder` impl so the
+/// allocation can fail into an error term, and so the bytes are copied straight
+/// out of the guard's borrow instead of being cloned into an intermediate `Vec`
+/// first.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn image_data(resource: ResourceArc<ImageResource>) -> NifResult<ImageDataNif> {
-    let image = resource.image.read()?;
-
-    Ok(match image.data() {
-        ImageData::Jpeg(bytes) => ImageDataNif::Jpeg(bytes.clone()),
-        ImageData::Raw { pixels, format } => ImageDataNif::Raw(pixels.clone(), (*format).into()),
+fn image_data<'a>(env: Env<'a>, resource: ResourceArc<ImageResource>) -> NifResult<Term<'a>> {
+    resource.image.with_read(|image| {
+        Ok(match image.data() {
+            ImageData::Jpeg(bytes) => {
+                (atoms::jpeg(), binary_term(env, bytes, "image")?).encode(env)
+            }
+            ImageData::Raw { pixels, format } => (
+                atoms::raw(),
+                binary_term(env, pixels, "image")?,
+                PixelFormatNif::from(*format),
+            )
+                .encode(env),
+        })
     })
 }
 

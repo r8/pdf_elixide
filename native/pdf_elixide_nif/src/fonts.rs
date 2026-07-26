@@ -6,9 +6,9 @@ use pdf_oxide::{
     object::Object,
     PdfDocument,
 };
-use rustler::{Encoder, Env, NifMap, NifResult, OwnedBinary, ResourceArc, Term};
+use rustler::{Encoder, Env, NifMap, NifResult, ResourceArc, Term};
 
-use crate::{atoms, resource::Closable, FontResource};
+use crate::{atoms, binary::binary_term, resource::Closable, FontResource};
 
 #[derive(NifMap)]
 #[rustler(encode)]
@@ -137,15 +137,11 @@ fn page_resources(doc: &PdfDocument, page_index: usize) -> Object {
 /// program (e.g. the standard 14).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn font_data<'a>(env: Env<'a>, resource: ResourceArc<FontResource>) -> NifResult<Term<'a>> {
-    let font = resource.font.read()?;
-
-    Ok(match font.embedded_font_data.as_deref() {
-        Some(bytes) => {
-            let mut bin = OwnedBinary::new(bytes.len()).expect("failed to allocate font binary");
-            bin.as_mut_slice().copy_from_slice(bytes);
-            bin.release(env).encode(env)
-        }
-        None => rustler::types::atom::nil().encode(env),
+    resource.font.with_read(|font| {
+        Ok(match font.embedded_font_data.as_deref() {
+            Some(bytes) => binary_term(env, bytes, "font")?,
+            None => rustler::types::atom::nil().encode(env),
+        })
     })
 }
 

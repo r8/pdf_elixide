@@ -278,43 +278,39 @@ fn document_closed(resource: ResourceArc<DocumentResource>) -> bool {
 /// so a normal scheduler must never wait on it.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
-    let doc = resource.doc.lock()?;
-
-    doc.page_count().map_err(to_nif_err)
+    resource
+        .doc
+        .with_lock(|doc| doc.page_count().map_err(to_nif_err))
 }
 
 /// Returns the PDF specification version as a `(major, minor)` tuple.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_version(resource: ResourceArc<DocumentResource>) -> NifResult<(u8, u8)> {
-    let doc = resource.doc.lock()?;
-
-    Ok(doc.version())
+    resource.doc.with_lock(|doc| Ok(doc.version()))
 }
 
 /// Returns whether the PDF document has a structure tree (i.e. is a Tagged PDF).
 /// Any error or missing tree is reported as `false`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
-    let doc = resource.doc.lock()?;
-
-    Ok(doc.structure_tree().ok().flatten().is_some())
+    resource
+        .doc
+        .with_lock(|doc| Ok(doc.structure_tree().ok().flatten().is_some()))
 }
 
 /// Returns whether the PDF document contains XFA (XML Forms Architecture) form
 /// data. Any error is reported as `false`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_has_xfa(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
-    let mut doc = resource.doc.lock()?;
-
-    Ok(pdf_oxide::xfa::XfaExtractor::has_xfa(&mut doc).unwrap_or(false))
+    resource
+        .doc
+        .with_lock(|doc| Ok(pdf_oxide::xfa::XfaExtractor::has_xfa(doc).unwrap_or(false)))
 }
 
 /// Returns whether the PDF document is encrypted.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_is_encrypted(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
-    let doc = resource.doc.lock()?;
-
-    Ok(doc.is_encrypted())
+    resource.doc.with_lock(|doc| Ok(doc.is_encrypted()))
 }
 
 /// Authenticates against the document's encryption with the given password.
@@ -325,9 +321,9 @@ fn document_authenticate(
     resource: ResourceArc<DocumentResource>,
     password: Binary,
 ) -> NifResult<bool> {
-    let doc = resource.doc.lock()?;
-
-    doc.authenticate(password.as_slice()).map_err(to_nif_err)
+    resource
+        .doc
+        .with_lock(|doc| doc.authenticate(password.as_slice()).map_err(to_nif_err))
 }
 
 /// Extracts one page's text under the caller's options.
@@ -365,12 +361,13 @@ fn document_extract_text(
     page_index: usize,
     options: TextOptionsNif,
 ) -> NifResult<String> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    options.validate()?;
+        options.validate()?;
 
-    extract_text_page(&doc, page_index, &options.into()).map_err(to_nif_err)
+        extract_text_page(doc, page_index, &options.into()).map_err(to_nif_err)
+    })
 }
 
 /// Extracts text content from all pages, separated by form-feed characters.
@@ -382,25 +379,26 @@ fn document_extract_all_text(
     resource: ResourceArc<DocumentResource>,
     options: TextOptionsNif,
 ) -> NifResult<String> {
-    let doc = resource.doc.lock()?;
-    options.validate()?;
-    let options: TextOptions = options.into();
+    resource.doc.with_lock(|doc| {
+        options.validate()?;
+        let options: TextOptions = options.into();
 
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut text = String::new();
-    for page_index in 0..count {
-        if page_index > 0 {
-            text.push('\x0c');
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut text = String::new();
+        for page_index in 0..count {
+            if page_index > 0 {
+                text.push('\x0c');
+            }
+            // A page that fails to extract contributes nothing and does not fail
+            // the document — upstream `extract_all_text` swallows the same way (it
+            // logs; this crate carries no logging dependency). Keeping the
+            // behavior matters: `text/1` now routes through here too.
+            if let Ok(page_text) = extract_text_page(doc, page_index, &options) {
+                text.push_str(&page_text);
+            }
         }
-        // A page that fails to extract contributes nothing and does not fail
-        // the document — upstream `extract_all_text` swallows the same way (it
-        // logs; this crate carries no logging dependency). Keeping the
-        // behavior matters: `text/1` now routes through here too.
-        if let Ok(page_text) = extract_text_page(&doc, page_index, &options) {
-            text.push_str(&page_text);
-        }
-    }
-    Ok(text)
+        Ok(text)
+    })
 }
 
 fn markdown_page(
@@ -408,19 +406,21 @@ fn markdown_page(
     page_index: usize,
     options: MarkdownOptionsNif,
 ) -> NifResult<String> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
-    options.ensure_image_output_dir()?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+        options.ensure_image_output_dir()?;
 
-    doc.to_markdown(page_index, &options.into())
-        .map_err(to_nif_err)
+        doc.to_markdown(page_index, &options.into())
+            .map_err(to_nif_err)
+    })
 }
 
 fn markdown_all(resource: &DocumentResource, options: MarkdownOptionsNif) -> NifResult<String> {
-    let doc = resource.doc.lock()?;
-    options.ensure_image_output_dir()?;
+    resource.doc.with_lock(|doc| {
+        options.ensure_image_output_dir()?;
 
-    doc.to_markdown_all(&options.into()).map_err(to_nif_err)
+        doc.to_markdown_all(&options.into()).map_err(to_nif_err)
+    })
 }
 
 /// Converts a single page (zero-indexed) to Markdown.
@@ -471,18 +471,20 @@ fn html_page(
     page_index: usize,
     options: HtmlOptionsNif,
 ) -> NifResult<String> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
-    options.ensure_image_output_dir()?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+        options.ensure_image_output_dir()?;
 
-    doc.to_html(page_index, &options.into()).map_err(to_nif_err)
+        doc.to_html(page_index, &options.into()).map_err(to_nif_err)
+    })
 }
 
 fn html_all(resource: &DocumentResource, options: HtmlOptionsNif) -> NifResult<String> {
-    let doc = resource.doc.lock()?;
-    options.ensure_image_output_dir()?;
+    resource.doc.with_lock(|doc| {
+        options.ensure_image_output_dir()?;
 
-    doc.to_html_all(&options.into()).map_err(to_nif_err)
+        doc.to_html_all(&options.into()).map_err(to_nif_err)
+    })
 }
 
 /// Converts a single page (zero-indexed) to an HTML fragment.
@@ -570,16 +572,17 @@ fn document_words(
     page_index: usize,
     options: WordsOptionsNif,
 ) -> NifResult<Vec<WordNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    options.validate()?;
+        options.validate()?;
 
-    let words = extract_words_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
-    Ok(words
-        .into_iter()
-        .map(|word| word_to_nif(word, page_index))
-        .collect())
+        let words = extract_words_page(doc, page_index, &options.into()).map_err(to_nif_err)?;
+        Ok(words
+            .into_iter()
+            .map(|word| word_to_nif(word, page_index))
+            .collect())
+    })
 }
 
 /// Extracts words (with bounding boxes) from all pages, in page order.
@@ -588,21 +591,22 @@ fn document_all_words(
     resource: ResourceArc<DocumentResource>,
     options: WordsOptionsNif,
 ) -> NifResult<Vec<WordNif>> {
-    let doc = resource.doc.lock()?;
-    options.validate()?;
-    let options: WordsOptions = options.into();
+    resource.doc.with_lock(|doc| {
+        options.validate()?;
+        let options: WordsOptions = options.into();
 
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut words = Vec::new();
-    for page_index in 0..count {
-        let page_words = extract_words_page(&doc, page_index, &options).map_err(to_nif_err)?;
-        words.extend(
-            page_words
-                .into_iter()
-                .map(|word| word_to_nif(word, page_index)),
-        );
-    }
-    Ok(words)
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut words = Vec::new();
+        for page_index in 0..count {
+            let page_words = extract_words_page(doc, page_index, &options).map_err(to_nif_err)?;
+            words.extend(
+                page_words
+                    .into_iter()
+                    .map(|word| word_to_nif(word, page_index)),
+            );
+        }
+        Ok(words)
+    })
 }
 
 fn extract_text_lines_page(
@@ -635,16 +639,18 @@ fn document_text_lines(
     page_index: usize,
     options: LinesOptionsNif,
 ) -> NifResult<Vec<TextLineNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    options.validate()?;
+        options.validate()?;
 
-    let lines = extract_text_lines_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
-    Ok(lines
-        .into_iter()
-        .map(|line| text_line_to_nif(line, page_index))
-        .collect())
+        let lines =
+            extract_text_lines_page(doc, page_index, &options.into()).map_err(to_nif_err)?;
+        Ok(lines
+            .into_iter()
+            .map(|line| text_line_to_nif(line, page_index))
+            .collect())
+    })
 }
 
 /// Extracts text lines (each with its words) from all pages, in page order.
@@ -653,21 +659,23 @@ fn document_all_text_lines(
     resource: ResourceArc<DocumentResource>,
     options: LinesOptionsNif,
 ) -> NifResult<Vec<TextLineNif>> {
-    let doc = resource.doc.lock()?;
-    options.validate()?;
-    let options: LinesOptions = options.into();
+    resource.doc.with_lock(|doc| {
+        options.validate()?;
+        let options: LinesOptions = options.into();
 
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut lines = Vec::new();
-    for page_index in 0..count {
-        let page_lines = extract_text_lines_page(&doc, page_index, &options).map_err(to_nif_err)?;
-        lines.extend(
-            page_lines
-                .into_iter()
-                .map(|line| text_line_to_nif(line, page_index)),
-        );
-    }
-    Ok(lines)
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut lines = Vec::new();
+        for page_index in 0..count {
+            let page_lines =
+                extract_text_lines_page(doc, page_index, &options).map_err(to_nif_err)?;
+            lines.extend(
+                page_lines
+                    .into_iter()
+                    .map(|line| text_line_to_nif(line, page_index)),
+            );
+        }
+        Ok(lines)
+    })
 }
 
 fn extract_chars_page(
@@ -695,16 +703,17 @@ fn document_chars(
     page_index: usize,
     options: CharsOptionsNif,
 ) -> NifResult<Vec<CharNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    options.validate()?;
+        options.validate()?;
 
-    let chars = extract_chars_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
-    Ok(chars
-        .into_iter()
-        .map(|ch| char_to_nif(ch, page_index))
-        .collect())
+        let chars = extract_chars_page(doc, page_index, &options.into()).map_err(to_nif_err)?;
+        Ok(chars
+            .into_iter()
+            .map(|ch| char_to_nif(ch, page_index))
+            .collect())
+    })
 }
 
 /// Extracts characters (with bounding boxes and font metadata) from all pages,
@@ -714,17 +723,18 @@ fn document_all_chars(
     resource: ResourceArc<DocumentResource>,
     options: CharsOptionsNif,
 ) -> NifResult<Vec<CharNif>> {
-    let doc = resource.doc.lock()?;
-    options.validate()?;
-    let options: CharsOptions = options.into();
+    resource.doc.with_lock(|doc| {
+        options.validate()?;
+        let options: CharsOptions = options.into();
 
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut chars = Vec::new();
-    for page_index in 0..count {
-        let page_chars = extract_chars_page(&doc, page_index, &options).map_err(to_nif_err)?;
-        chars.extend(page_chars.into_iter().map(|ch| char_to_nif(ch, page_index)));
-    }
-    Ok(chars)
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut chars = Vec::new();
+        for page_index in 0..count {
+            let page_chars = extract_chars_page(doc, page_index, &options).map_err(to_nif_err)?;
+            chars.extend(page_chars.into_iter().map(|ch| char_to_nif(ch, page_index)));
+        }
+        Ok(chars)
+    })
 }
 
 /// Extracts one page's spans under the caller's options.
@@ -761,16 +771,17 @@ fn document_spans(
     page_index: usize,
     options: SpansOptionsNif,
 ) -> NifResult<Vec<SpanNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    options.validate()?;
+        options.validate()?;
 
-    let spans = extract_spans_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
-    Ok(spans
-        .into_iter()
-        .map(|span| span_to_nif(span, page_index))
-        .collect())
+        let spans = extract_spans_page(doc, page_index, &options.into()).map_err(to_nif_err)?;
+        Ok(spans
+            .into_iter()
+            .map(|span| span_to_nif(span, page_index))
+            .collect())
+    })
 }
 
 /// Extracts spans (runs of text sharing one text state) from all pages, in
@@ -780,21 +791,22 @@ fn document_all_spans(
     resource: ResourceArc<DocumentResource>,
     options: SpansOptionsNif,
 ) -> NifResult<Vec<SpanNif>> {
-    let doc = resource.doc.lock()?;
-    options.validate()?;
-    let options: SpansOptions = options.into();
+    resource.doc.with_lock(|doc| {
+        options.validate()?;
+        let options: SpansOptions = options.into();
 
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut spans = Vec::new();
-    for page_index in 0..count {
-        let page_spans = extract_spans_page(&doc, page_index, &options).map_err(to_nif_err)?;
-        spans.extend(
-            page_spans
-                .into_iter()
-                .map(|span| span_to_nif(span, page_index)),
-        );
-    }
-    Ok(spans)
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut spans = Vec::new();
+        for page_index in 0..count {
+            let page_spans = extract_spans_page(doc, page_index, &options).map_err(to_nif_err)?;
+            spans.extend(
+                page_spans
+                    .into_iter()
+                    .map(|span| span_to_nif(span, page_index)),
+            );
+        }
+        Ok(spans)
+    })
 }
 
 /// Extracts vector paths (lines, curves, rectangles, shapes) from a single page
@@ -804,42 +816,43 @@ fn document_paths(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<PathNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    let paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
-    Ok(paths
-        .into_iter()
-        .map(|path| path_to_nif(path, page_index))
-        .collect())
+        let paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
+        Ok(paths
+            .into_iter()
+            .map(|path| path_to_nif(path, page_index))
+            .collect())
+    })
 }
 
 /// Extracts vector paths from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
-    let doc = resource.doc.lock()?;
-
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut paths = Vec::new();
-    for page_index in 0..count {
-        let page_paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
-        paths.extend(
-            page_paths
-                .into_iter()
-                .map(|path| path_to_nif(path, page_index)),
-        );
-    }
-    Ok(paths)
+    resource.doc.with_lock(|doc| {
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut paths = Vec::new();
+        for page_index in 0..count {
+            let page_paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
+            paths.extend(
+                page_paths
+                    .into_iter()
+                    .map(|path| path_to_nif(path, page_index)),
+            );
+        }
+        Ok(paths)
+    })
 }
 
 /// Reads the document outline (bookmarks / table of contents) as a tree of
 /// `OutlineItemNif`. Returns an empty list when the document has no outline.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_outline(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<OutlineItemNif>> {
-    let doc = resource.doc.lock()?;
-
-    let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
-    Ok(items.into_iter().map(outline_item_to_nif).collect())
+    resource.doc.with_lock(|doc| {
+        let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
+        Ok(items.into_iter().map(outline_item_to_nif).collect())
+    })
 }
 
 /// Reads the annotations of a single page (zero-indexed) as `AnnotationNif`
@@ -849,14 +862,15 @@ fn document_annotations(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<AnnotationNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    let annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
-    Ok(annotations
-        .into_iter()
-        .map(|annotation| annotation_to_nif(annotation, page_index))
-        .collect())
+        let annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
+        Ok(annotations
+            .into_iter()
+            .map(|annotation| annotation_to_nif(annotation, page_index))
+            .collect())
+    })
 }
 
 /// Reads the annotations across all pages, in page order.
@@ -864,19 +878,19 @@ fn document_annotations(
 fn document_all_annotations(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Vec<AnnotationNif>> {
-    let doc = resource.doc.lock()?;
-
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut annotations = Vec::new();
-    for page_index in 0..count {
-        let page_annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
-        annotations.extend(
-            page_annotations
-                .into_iter()
-                .map(|annotation| annotation_to_nif(annotation, page_index)),
-        );
-    }
-    Ok(annotations)
+    resource.doc.with_lock(|doc| {
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut annotations = Vec::new();
+        for page_index in 0..count {
+            let page_annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
+            annotations.extend(
+                page_annotations
+                    .into_iter()
+                    .map(|annotation| annotation_to_nif(annotation, page_index)),
+            );
+        }
+        Ok(annotations)
+    })
 }
 
 /// Extracts raster images (photos, logos, scanned pictures) from a single page
@@ -886,32 +900,33 @@ fn document_images(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<ImageNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    let images = doc.extract_images(page_index).map_err(to_nif_err)?;
-    Ok(images
-        .into_iter()
-        .map(|image| image_to_nif(image, page_index))
-        .collect())
+        let images = doc.extract_images(page_index).map_err(to_nif_err)?;
+        Ok(images
+            .into_iter()
+            .map(|image| image_to_nif(image, page_index))
+            .collect())
+    })
 }
 
 /// Extracts raster images from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_images(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<ImageNif>> {
-    let doc = resource.doc.lock()?;
-
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut images = Vec::new();
-    for page_index in 0..count {
-        let page_images = doc.extract_images(page_index).map_err(to_nif_err)?;
-        images.extend(
-            page_images
-                .into_iter()
-                .map(|image| image_to_nif(image, page_index)),
-        );
-    }
-    Ok(images)
+    resource.doc.with_lock(|doc| {
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut images = Vec::new();
+        for page_index in 0..count {
+            let page_images = doc.extract_images(page_index).map_err(to_nif_err)?;
+            images.extend(
+                page_images
+                    .into_iter()
+                    .map(|image| image_to_nif(image, page_index)),
+            );
+        }
+        Ok(images)
+    })
 }
 
 /// Extracts the fonts referenced by a single page (zero-indexed), with their
@@ -921,23 +936,24 @@ fn document_fonts(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<FontNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    Ok(extract_page_fonts(&doc, page_index))
+        Ok(extract_page_fonts(doc, page_index))
+    })
 }
 
 /// Extracts the fonts referenced across all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_fonts(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FontNif>> {
-    let doc = resource.doc.lock()?;
-
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut fonts = Vec::new();
-    for page_index in 0..count {
-        fonts.extend(extract_page_fonts(&doc, page_index));
-    }
-    Ok(fonts)
+    resource.doc.with_lock(|doc| {
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut fonts = Vec::new();
+        for page_index in 0..count {
+            fonts.extend(extract_page_fonts(doc, page_index));
+        }
+        Ok(fonts)
+    })
 }
 
 /// Detects one page's tables under the caller's detection config.
@@ -965,14 +981,15 @@ fn document_tables(
     page_index: usize,
     options: TablesOptionsNif,
 ) -> NifResult<Vec<TableNif>> {
-    let doc = resource.doc.lock()?;
-    ensure_page_in_range(&doc, page_index)?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    let tables = extract_tables_page(&doc, page_index, &options.into()).map_err(to_nif_err)?;
-    Ok(tables
-        .into_iter()
-        .map(|table| table_to_nif(table, page_index))
-        .collect())
+        let tables = extract_tables_page(doc, page_index, &options.into()).map_err(to_nif_err)?;
+        Ok(tables
+            .into_iter()
+            .map(|table| table_to_nif(table, page_index))
+            .collect())
+    })
 }
 
 /// Detects tables on all pages, in page order.
@@ -981,20 +998,21 @@ fn document_all_tables(
     resource: ResourceArc<DocumentResource>,
     options: TablesOptionsNif,
 ) -> NifResult<Vec<TableNif>> {
-    let doc = resource.doc.lock()?;
-    let options: TablesOptions = options.into();
+    resource.doc.with_lock(|doc| {
+        let options: TablesOptions = options.into();
 
-    let count = doc.page_count().map_err(to_nif_err)?;
-    let mut tables = Vec::new();
-    for page_index in 0..count {
-        let page_tables = extract_tables_page(&doc, page_index, &options).map_err(to_nif_err)?;
-        tables.extend(
-            page_tables
-                .into_iter()
-                .map(|table| table_to_nif(table, page_index)),
-        );
-    }
-    Ok(tables)
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut tables = Vec::new();
+        for page_index in 0..count {
+            let page_tables = extract_tables_page(doc, page_index, &options).map_err(to_nif_err)?;
+            tables.extend(
+                page_tables
+                    .into_iter()
+                    .map(|table| table_to_nif(table, page_index)),
+            );
+        }
+        Ok(tables)
+    })
 }
 
 /// Returns the page's width in points (MediaBox urx - llx).
@@ -1003,12 +1021,12 @@ fn document_get_page_width(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<f32> {
-    let doc = resource.doc.lock()?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    ensure_page_in_range(&doc, page_index)?;
-
-    let (llx, _lly, urx, _ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
-    Ok(urx - llx)
+        let (llx, _lly, urx, _ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
+        Ok(urx - llx)
+    })
 }
 
 /// Returns the page's height in points (MediaBox ury - lly).
@@ -1017,19 +1035,19 @@ fn document_get_page_height(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<f32> {
-    let doc = resource.doc.lock()?;
+    resource.doc.with_lock(|doc| {
+        ensure_page_in_range(doc, page_index)?;
 
-    ensure_page_in_range(&doc, page_index)?;
-
-    let (_llx, lly, _urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
-    Ok(ury - lly)
+        let (_llx, lly, _urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
+        Ok(ury - lly)
+    })
 }
 
 /// Extracts form fields from the PDF document.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
-    let doc = resource.doc.lock()?;
-
-    let fields = FormExtractor::extract_fields(&doc).map_err(to_nif_err)?;
-    Ok(fields.into_iter().map(document_form_field_to_nif).collect())
+    resource.doc.with_lock(|doc| {
+        let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
+        Ok(fields.into_iter().map(document_form_field_to_nif).collect())
+    })
 }

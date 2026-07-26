@@ -8,6 +8,7 @@ use pdf_oxide::{
 use crate::resource::Closable;
 
 mod annotations;
+mod binary;
 mod char;
 mod color;
 mod document;
@@ -41,7 +42,7 @@ pub(crate) mod atoms {
         standard, custom, identity,
         // Error reason tags (see error.rs / PdfElixide.Error)
         encrypted, wrong_password, invalid_pdf, unsupported,
-        not_found, out_of_range, io, lock_poisoned, closed, other
+        not_found, out_of_range, io, lock_poisoned, panic, closed, other
     }
 }
 

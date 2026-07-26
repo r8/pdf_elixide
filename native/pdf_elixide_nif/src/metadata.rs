@@ -96,9 +96,7 @@ fn read_metadata(doc: &PdfDocument) -> MetadataNif {
 /// not an error.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_info(resource: ResourceArc<DocumentResource>) -> NifResult<MetadataNif> {
-    let doc = resource.doc.lock()?;
-
-    Ok(read_metadata(&doc))
+    resource.doc.with_lock(|doc| Ok(read_metadata(doc)))
 }
 
 // XMP metadata -----------------------------------------------------------------------------------
@@ -160,10 +158,10 @@ fn xmp_to_nif(xmp: XmpMetadata) -> XmpMetadataNif {
 fn document_xmp_metadata(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Option<XmpMetadataNif>> {
-    let doc = resource.doc.lock()?;
-
-    let xmp = XmpExtractor::extract(&doc).map_err(to_nif_err)?;
-    Ok(xmp.map(xmp_to_nif))
+    resource.doc.with_lock(|doc| {
+        let xmp = XmpExtractor::extract(doc).map_err(to_nif_err)?;
+        Ok(xmp.map(xmp_to_nif))
+    })
 }
 
 // Permissions ------------------------------------------------------------------------------------
@@ -203,9 +201,9 @@ fn permissions_to_nif(perms: PdfPermissions) -> PermissionsNif {
 fn document_permissions(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Option<PermissionsNif>> {
-    let doc = resource.doc.lock()?;
-
-    Ok(doc.permissions().map(permissions_to_nif))
+    resource
+        .doc
+        .with_lock(|doc| Ok(doc.permissions().map(permissions_to_nif)))
 }
 
 // Page labels ------------------------------------------------------------------------------------
@@ -215,13 +213,13 @@ fn document_permissions(
 /// behavior).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<String>> {
-    let doc = resource.doc.lock()?;
-
-    let ranges = PageLabelExtractor::extract(&doc).map_err(to_nif_err)?;
-    let count = doc.page_count().map_err(to_nif_err)?;
-    Ok((0..count)
-        .map(|index| PageLabelExtractor::get_label(&ranges, index))
-        .collect())
+    resource.doc.with_lock(|doc| {
+        let ranges = PageLabelExtractor::extract(doc).map_err(to_nif_err)?;
+        let count = doc.page_count().map_err(to_nif_err)?;
+        Ok((0..count)
+            .map(|index| PageLabelExtractor::get_label(&ranges, index))
+            .collect())
+    })
 }
 
 // Tests ------------------------------------------------------------------------------------------
