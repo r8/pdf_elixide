@@ -26,7 +26,6 @@ defmodule PdfElixide.Native do
   def document_from_bytes(_bytes, _options), do: err()
   def document_close(_doc), do: err()
   def document_closed(_doc), do: err()
-  def document_version(_doc), do: err()
   def document_page_count(_doc), do: err()
   def document_has_structure_tree(_doc), do: err()
   def document_has_xfa(_doc), do: err()

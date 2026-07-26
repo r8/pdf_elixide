@@ -59,6 +59,26 @@ defmodule PdfElixide.DocumentTest do
       assert %Document{page_count: 3} = Document.from_binary!(File.read!(@valid_pdf))
     end
 
+    test "arrives together with the version and the handle, from one native call" do
+      # Both openers destructure a single `{ref, version, page_count}` payload, so
+      # this is where that payload's shape is pinned: a change to its arity or
+      # field order fails here rather than in whichever accessor noticed first.
+      assert %Document{version: {1, 4}, page_count: 3} = Document.open!(@valid_pdf)
+
+      assert %Document{version: {1, 4}, page_count: 3} =
+               Document.from_binary!(File.read!(@valid_pdf))
+    end
+
+    test "an encrypted document opened with the right password caches its count" do
+      # A regression floor for reading the count *after* the password is applied:
+      # authentication is what makes an encrypted page tree readable. Weaker than
+      # it looks — this fixture's tree resolves unauthenticated too (see the test
+      # below), so no checked-in fixture can actually distinguish the orderings.
+      # The `cached_fields` doc comment in document.rs is the real defence.
+      assert %Document{page_count: count} = Document.open!(@encrypted_pdf, password: @password)
+      assert is_integer(count)
+    end
+
     test "falls back to the document when nothing was cached at open" do
       # The uncached state belongs to an encrypted document whose page tree needs
       # a password, which no fixture produces on demand — build it directly. The

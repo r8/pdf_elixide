@@ -227,32 +227,82 @@ pub fn ensure_page_in_range(doc: &PdfDocument, page_index: usize) -> NifResult<(
     Ok(())
 }
 
-/// Opens a PDF document from the specified file path.
+/// What both open NIFs hand back: the handle, plus the two fields
+/// `%PdfElixide.Document{}` caches at open, in one call.
+///
+/// One call rather than three is what closes the leak window: an open followed
+/// by a separate version call left the opened document stranded until the BEAM
+/// collected the handle if that second call failed.
+///
+/// A bare tuple rather than a `NifMap` struct: unlike `ImageNif`/`FontNif`/
+/// `TableNif` this payload has no public Elixir struct behind it, and its only
+/// consumers are `Document.open/2` and `Document.from_binary/2`. Give it a
+/// `NifMap` if a third cached field appears, or a second consumer.
+type OpenedDocument = (ResourceArc<DocumentResource>, (u8, u8), Option<usize>);
+
+/// Reads the fields `%PdfElixide.Document{}` caches at open: the PDF version,
+/// and the page count when it can be read.
+///
+/// **A page count that cannot be read is `None`, not an open failure.** For an
+/// encrypted document whose page tree needs a password, upstream reports
+/// `EncryptedPdf` until `document_authenticate` runs, and refusing to open such
+/// a document would be stricter than upstream's own `page_indices()`, which
+/// deliberately keeps a metadata-broken document usable — every per-page call
+/// surfaces the real error anyway. Elixir's `page_count/1` falls back to
+/// `document_page_count` for exactly that document, so it answers correctly
+/// once authentication has run. Swallowing here is the same deliberate choice
+/// `document_has_structure_tree` makes below, spelled the same way.
+///
+/// Both reads go through `with_lock` rather than reading the `PdfDocument`
+/// before it is moved into the `Closable`, so a panic in upstream's page-tree
+/// walk stays contained as it is on every other call: a panic reading the
+/// version fails the open, a panic reading the count only leaves it `None`.
+/// That is why they are two calls and not one closure. The lock is
+/// uncontended — the handle has not reached the BEAM yet — and a failed read
+/// drops the local `ResourceArc`, freeing the document rather than leaking it.
+///
+/// Callers must read *after* applying the open options: authentication is what
+/// makes an encrypted document's page tree readable, so reading first would
+/// silently downgrade a correctly-passworded document to `None`.
+fn cached_fields(resource: &DocumentResource) -> NifResult<((u8, u8), Option<usize>)> {
+    let version = resource.doc.with_lock(|doc| Ok(doc.version()))?;
+    let page_count = resource
+        .doc
+        .with_lock(|doc| Ok(doc.page_count().ok()))
+        .ok()
+        .flatten();
+
+    Ok((version, page_count))
+}
+
+/// Opens a PDF document from the specified file path, returning the handle
+/// together with the version and page count Elixir caches on the struct.
 #[rustler::nif(schedule = "DirtyIo")]
-fn document_open(
-    path: String,
-    options: OpenOptionsNif,
-) -> NifResult<ResourceArc<DocumentResource>> {
+fn document_open(path: String, options: OpenOptionsNif) -> NifResult<OpenedDocument> {
     let doc = PdfDocument::open(path).map_err(to_nif_err)?;
     options.apply(&doc)?;
 
-    Ok(ResourceArc::new(DocumentResource {
+    let resource = ResourceArc::new(DocumentResource {
         doc: Closable::new("Document", doc),
-    }))
+    });
+    let (version, page_count) = cached_fields(&resource)?;
+
+    Ok((resource, version, page_count))
 }
 
-/// Opens a PDF document from the given binary data.
+/// Opens a PDF document from the given binary data, returning the handle
+/// together with the version and page count Elixir caches on the struct.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_from_bytes(
-    bytes: Binary,
-    options: OpenOptionsNif,
-) -> NifResult<ResourceArc<DocumentResource>> {
+fn document_from_bytes(bytes: Binary, options: OpenOptionsNif) -> NifResult<OpenedDocument> {
     let doc = PdfDocument::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
     options.apply(&doc)?;
 
-    Ok(ResourceArc::new(DocumentResource {
+    let resource = ResourceArc::new(DocumentResource {
         doc: Closable::new("Document", doc),
-    }))
+    });
+    let (version, page_count) = cached_fields(&resource)?;
+
+    Ok((resource, version, page_count))
 }
 
 /// Releases the document's native memory now, rather than waiting for the BEAM
@@ -281,12 +331,6 @@ fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usi
     resource
         .doc
         .with_lock(|doc| doc.page_count().map_err(to_nif_err))
-}
-
-/// Returns the PDF specification version as a `(major, minor)` tuple.
-#[rustler::nif(schedule = "DirtyCpu")]
-fn document_version(resource: ResourceArc<DocumentResource>) -> NifResult<(u8, u8)> {
-    resource.doc.with_lock(|doc| Ok(doc.version()))
 }
 
 /// Returns whether the PDF document has a structure tree (i.e. is a Tagged PDF).

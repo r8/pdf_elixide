@@ -21,11 +21,13 @@ defmodule PdfElixide.Native.SchedulingTest do
 
   @src Path.expand("../../../native/pdf_elixide_nif/src", __DIR__)
 
-  # Every accessor on `Closable`. `close`/`is_closed` are excluded: they recover a
-  # poisoned lock and never wait on an extraction.
-  @locking_calls [".lock()", ".read()"]
+  # Every accessor on `Closable`. Spelled as the call sites are — the guard-taking
+  # `lock`/`read` are private and only ever reached through these two, so matching
+  # `.lock()`/`.read()` would match nothing. `close`/`is_closed` are excluded: they
+  # recover a poisoned lock and never wait on an extraction.
+  @locking_calls [".with_lock(", ".with_read("]
 
-  # Sanity floor for the block parser, well under the 68 stubs registered in
+  # Sanity floor for the block parser, well under the 67 stubs registered in
   # `PdfElixide.Native`, so a parsing regression fails loudly instead of finding
   # nothing to check.
   @min_nifs 60

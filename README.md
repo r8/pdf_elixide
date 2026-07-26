@@ -96,7 +96,8 @@ alias PdfElixide.Document
 # Version is read directly from the struct — returned as a {major, minor} tuple.
 {1, 4} = Document.version(doc)
 
-# Page count is read once at open and served from the struct, like the version.
+# Page count comes back with the handle from the call that opened the document
+# and is served from the struct, like the version.
 {:ok, 3} = Document.page_count(doc)
 
 # Extract text from a single page (zero-based index).

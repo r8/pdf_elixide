@@ -30,11 +30,15 @@ defmodule PdfElixide.Document do
   @typedoc """
   A handle on an open PDF document.
 
-  `:version` and `:page_count` are read once at open and served from the struct
-  thereafter, since both are immutable for a read-only document. `:page_count`
-  is `nil` when the count could not be determined at open — an encrypted
-  document whose page tree needs a password, opened without one — in which case
-  `page_count/1` asks the document instead.
+  `:version` and `:page_count` arrive with the handle, from the same native call
+  that opens the document, and are served from the struct thereafter, since both
+  are immutable for a read-only document. A cached count cannot go stale: for an
+  encrypted document upstream either fails or returns the real `/Count`, and
+  authentication changes only whether the count is *readable*, never what it is.
+
+  `:page_count` is `nil` when the count could not be determined at open — an
+  encrypted document whose page tree needs a password, opened without one — in
+  which case `page_count/1` asks the document instead.
   """
   @type t :: %__MODULE__{
           ref: reference(),
@@ -65,13 +69,13 @@ defmodule PdfElixide.Document do
   def open(path, opts \\ []) when is_binary(path) and is_list(opts) do
     options = build_open_options(opts)
 
-    with {:ok, ref} <- Wrap.call(fn -> Native.document_open(path, options) end),
-         {:ok, version} <- Wrap.call(fn -> Native.document_version(ref) end) do
+    with {:ok, {ref, version, page_count}} <-
+           Wrap.call(fn -> Native.document_open(path, options) end) do
       {:ok,
        %__MODULE__{
          ref: ref,
          version: version,
-         page_count: cached_page_count(ref),
+         page_count: page_count,
          source_path: path
        }}
     end
@@ -95,13 +99,13 @@ defmodule PdfElixide.Document do
   def from_binary(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
     options = build_open_options(opts)
 
-    with {:ok, ref} <- Wrap.call(fn -> Native.document_from_bytes(bytes, options) end),
-         {:ok, version} <- Wrap.call(fn -> Native.document_version(ref) end) do
+    with {:ok, {ref, version, page_count}} <-
+           Wrap.call(fn -> Native.document_from_bytes(bytes, options) end) do
       {:ok,
        %__MODULE__{
          ref: ref,
          version: version,
-         page_count: cached_page_count(ref),
+         page_count: page_count,
          source_path: nil
        }}
     end
@@ -120,24 +124,6 @@ defmodule PdfElixide.Document do
 
   defp build_open_options(opts) do
     %{password: Keyword.get(opts, :password)}
-  end
-
-  # The page count is immutable for a read-only document, so it is read once here
-  # and served from the struct afterwards. A failure is not an open failure: for an
-  # encrypted document whose page tree cannot be decrypted yet, upstream reports
-  # `EncryptedPdf` until `authenticate/2` runs, and refusing to open would be
-  # stricter than upstream itself, which keeps a metadata-broken document usable
-  # because every per-page call surfaces the real error anyway. Such a document
-  # caches nothing and `page_count/1` asks it again.
-  #
-  # A cached number cannot go stale: for an encrypted document upstream either
-  # fails or returns the real `/Count`, and authentication changes only whether
-  # the count is readable, never what it is.
-  defp cached_page_count(ref) do
-    case Wrap.call(fn -> Native.document_page_count(ref) end) do
-      {:ok, count} -> count
-      {:error, _error} -> nil
-    end
   end
 
   @doc """
@@ -187,8 +173,9 @@ defmodule PdfElixide.Document do
   @doc """
   Returns the number of pages in the given PDF document.
 
-  The count is read once at open and cached on the struct, so this normally
-  costs nothing and keeps working after `close/1`, as `version/1` does.
+  The count arrives with the handle from the call that opens the document and is
+  cached on the struct, so this normally costs nothing and keeps working after
+  `close/1`, as `version/1` does.
 
   The exception is a document whose page tree could not be read at open — an
   encrypted one opened without a password. Nothing is cached for it, so the
