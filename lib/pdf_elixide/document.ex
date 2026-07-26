@@ -1857,8 +1857,9 @@ defmodule PdfElixide.Document do
   Extracts the raster images of the whole document.
 
   Returns every page's images concatenated into a single flat list, in page
-  order, as `PdfElixide.Document.Image` structs. Pixel data is normalized to PNG
-  bytes.
+  order, as `PdfElixide.Document.Image` structs. The pixel data is not carried on
+  the struct — encode it on demand with `PdfElixide.Document.Image.to_binary/2`
+  or `PdfElixide.Document.Image.save/3`.
   """
   @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{ref: ref}) do
@@ -1882,8 +1883,10 @@ defmodule PdfElixide.Document do
   Extracts the raster images of the page at the given zero-based index.
 
   Returns `{:ok, []}` when the page has no images. Each image — a photo, logo, or
-  scanned picture — is carried as a `PdfElixide.Document.Image` struct with its
-  pixel data normalized to PNG bytes.
+  scanned picture — is carried as a `PdfElixide.Document.Image` struct, which
+  holds the metadata and a handle rather than the pixel data itself; encode it on
+  demand with `PdfElixide.Document.Image.to_binary/2` or
+  `PdfElixide.Document.Image.save/3`.
   """
   @spec images(t(), non_neg_integer()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{ref: ref}, page_index)

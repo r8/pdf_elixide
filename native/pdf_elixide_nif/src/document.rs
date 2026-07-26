@@ -894,7 +894,9 @@ fn document_all_annotations(
 }
 
 /// Extracts raster images (photos, logos, scanned pictures) from a single page
-/// (zero-indexed). Pixel data is normalized to PNG bytes.
+/// (zero-indexed). Each one carries its metadata plus a handle to the image
+/// itself; the pixel data is encoded lazily, by `image_to_binary` /
+/// `image_save`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_images(
     resource: ResourceArc<DocumentResource>,

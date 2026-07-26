@@ -27,7 +27,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Detect tables, read their rows and cells, and render one as Markdown, HTML, or plain text
 - Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style
 - Read the document outline (bookmarks / table of contents) as a nested tree
-- Extract raster images (photos, logos, scans) as PNG bytes with their on-page geometry
+- Extract raster images (photos, logos, scans) with their on-page geometry, encoding them to PNG or JPEG on demand
 - Extract the fonts a page uses (type, encoding, weight) and pull out embedded font programs
 - Read annotations (links, notes, highlights, form widgets) with their geometry, contents, colors, and flags
 - Extract AcroForm fields (name, kind, value)
