@@ -31,6 +31,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @moduletag :upstream_drift
 
   alias PdfElixide.Document
+  alias PdfElixide.Error
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
@@ -236,6 +237,35 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert {:error, _} = Document.text(doc, @unreachable)
 
       assert String.split(Document.text!(doc), "\f") == ["One", "Two", ""]
+    end
+
+    test "fonts tolerate the same page, alone among the other extractors" do
+      # `extract_page_fonts` (`fonts.rs`) is infallible by construction because
+      # `PdfDocument::page_font_face_lookups` is: upstream's per-page walk
+      # `continue`s past a page that does not resolve, past a page object that
+      # is not a dictionary, past a dangling `/Resources` reference, and past a
+      # font that fails to load (`if load_fonts_public(..).is_ok()`). It pushes
+      # an empty lookup for each and returns `Ok`.
+      #
+      # That is the whole reason `fonts/1` is exempt from the claim `text/1`'s
+      # `:on_page_error` docs make about every other whole-document extractor,
+      # and why it needs no `:on_page_error` of its own. If upstream starts
+      # propagating instead, don't relax the assertion: `fonts` loses its
+      # justification for swallowing and the binding has to decide whether an
+      # unreadable page should fail the call.
+      doc = open(@broken_page_pdf)
+
+      # Precondition, as above: the page really is unresolvable.
+      assert {:error, %Error{reason: :invalid_pdf}} = Document.text(doc, @unreachable)
+
+      # Yet fonts reports it as a page with no fonts...
+      assert {:ok, []} = Document.fonts(doc, @unreachable)
+
+      # ...and the whole-document call succeeds with the two readable pages,
+      # where the extractors that have no upstream loop to match propagate.
+      assert [0, 1] = doc |> Document.fonts!() |> Enum.map(& &1.page)
+      assert {:error, %Error{}} = Document.chars(doc)
+      assert {:error, %Error{}} = Document.images(doc)
     end
   end
 

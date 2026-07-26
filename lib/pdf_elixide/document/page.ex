@@ -316,7 +316,9 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the fonts referenced by the page.
 
-  Returns `{:ok, []}` when the page references no fonts.
+  Returns `{:ok, []}` when the page references no fonts — and also when the page
+  or its `/Resources` could not be read, which `PdfElixide.Document.fonts/2`
+  explains.
   """
   @spec fonts(t()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{doc: doc, index: index}) do

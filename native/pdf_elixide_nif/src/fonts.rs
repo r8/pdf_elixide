@@ -90,9 +90,22 @@ pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> F
 }
 
 /// Extracts every font referenced by a single page's Resources, with rich
-/// metadata. Mirrors `PdfDocument::page_font_face_lookups`' tolerant preamble:
-/// a page whose Resources can't be loaded simply yields no fonts (an empty
-/// `Vec`) rather than erroring.
+/// metadata.
+///
+/// Infallible by construction, mirroring `PdfDocument::page_font_face_lookups`
+/// (`pdf_oxide/src/document.rs:22679`) — not just its Resources-resolving
+/// preamble but its whole per-page body, including the
+/// `if self.load_fonts_public(..).is_ok()` at `:22710`. There are four points
+/// where a page contributes no fonts instead of an error: an unresolvable page
+/// (`get_page`), a page object that is not a dictionary (`as_dict`), a dangling
+/// `/Resources` reference (`load_object`) — all three in `page_resources` — and
+/// a font that fails to load, below.
+///
+/// So an empty `Vec` means either "references no fonts" or "could not be read",
+/// and unlike the predicates in `document.rs` that distinction is *not* restored
+/// by a strict variant: this one matches an upstream loop's policy, which the
+/// binding follows rather than second-guesses. `Document.fonts/1,2` say so, and
+/// `upstream_drift_test.exs` pins it.
 pub fn extract_page_fonts(doc: &PdfDocument, page_index: usize) -> Vec<FontNif> {
     let resources = page_resources(doc, page_index);
 

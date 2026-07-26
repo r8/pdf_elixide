@@ -203,18 +203,63 @@ defmodule PdfElixide.Document do
 
   @doc """
   Returns whether the PDF document is a Tagged PDF with a structure tree.
+
+  Answers `false` for a document whose structure tree cannot be *read* as well
+  as for one that has none: a corrupt `/StructTreeRoot` is reported the same way
+  an untagged document is. Use `has_structure_tree/1` to tell the two apart. A
+  handle that cannot be used at all — a closed document, a native panic — still
+  raises.
   """
   @spec has_structure_tree?(t()) :: boolean()
   def has_structure_tree?(%__MODULE__{ref: ref}) do
-    predicate!(fn -> Native.document_has_structure_tree(ref) end)
+    tolerant_predicate!(fn -> Native.document_has_structure_tree(ref) end)
+  end
+
+  @doc """
+  Returns whether the PDF document is a Tagged PDF with a structure tree,
+  reporting a structure tree that cannot be read.
+
+  The strict counterpart of `has_structure_tree?/1`, which cannot distinguish
+  `false` from a failure. `pdf_oxide` keeps the three states apart — tagged
+  (`{:ok, true}`), untagged (`{:ok, false}`) and unparseable
+  (`{:error, %PdfElixide.Error{}}`) — and this is where that third one survives.
+
+  There is no bang variant, for the same reason `closed?/1` has none: the
+  predicate above already returns a bare boolean, and it is the only shape a
+  raising variant could add.
+  """
+  @spec has_structure_tree(t()) :: {:ok, boolean()} | {:error, Error.t()}
+  def has_structure_tree(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.document_has_structure_tree(ref) end)
   end
 
   @doc """
   Returns whether the PDF document contains XFA (XML Forms Architecture) form data.
+
+  Answers `false` for a document whose catalog or `/AcroForm` entry cannot be
+  read as well as for one that carries no XFA. Use `has_xfa/1` to tell the two
+  apart; a closed document or a native panic still raises.
   """
   @spec has_xfa?(t()) :: boolean()
   def has_xfa?(%__MODULE__{ref: ref}) do
-    predicate!(fn -> Native.document_has_xfa(ref) end)
+    tolerant_predicate!(fn -> Native.document_has_xfa(ref) end)
+  end
+
+  @doc """
+  Returns whether the PDF document contains XFA (XML Forms Architecture) form
+  data, reporting a catalog that cannot be read.
+
+  The strict counterpart of `has_xfa?/1`. Note that only a *broken* document
+  reaches the error: `pdf_oxide` already answers `{:ok, false}` for every
+  structural absence — a catalog that is not a dictionary, a missing
+  `/AcroForm`, a missing `/XFA` — so an error here means the catalog itself or
+  the `/AcroForm` reference could not be resolved.
+
+  Has no bang variant, as `has_structure_tree/1` explains.
+  """
+  @spec has_xfa(t()) :: {:ok, boolean()} | {:error, Error.t()}
+  def has_xfa(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.document_has_xfa(ref) end)
   end
 
   @doc """
@@ -227,10 +272,28 @@ defmodule PdfElixide.Document do
 
   # Predicates return a bare boolean, so a NIF failure (a closed document, a
   # poisoned lock) has nowhere to go but a raise — as the bang variants do.
+  # `encrypted?/1` is the only user left: upstream's `is_encrypted()` is
+  # infallible, so nothing but a handle failure can reach it.
   defp predicate!(fun) do
     case Wrap.call(fun) do
       {:ok, value} -> value
       {:error, error} -> raise error
+    end
+  end
+
+  # The reasons `Closable` itself produces, as opposed to the ones the NIF maps
+  # from a `pdf_oxide::Error`. A tolerant predicate answers `false` for a
+  # document whose feature cannot be determined, but a handle that cannot be
+  # used at all still raises, exactly as `predicate!/1` always did — which is
+  # what keeps this pair's behavior identical to the swallow it replaced, back
+  # when the NIF discarded the upstream error before Elixir could see it.
+  @handle_reasons [:closed, :lock_poisoned, :panic]
+
+  defp tolerant_predicate!(fun) do
+    case Wrap.call(fun) do
+      {:ok, value} -> value
+      {:error, %Error{reason: reason} = error} when reason in @handle_reasons -> raise error
+      {:error, _error} -> false
     end
   end
 
@@ -454,10 +517,16 @@ defmodule PdfElixide.Document do
   undecodable content stream, missing fonts, a scan with no text layer and an
   undecryptable document all extract as `""`. What remains, and all
   `:halt` can catch, is a page whose page-tree entry cannot be resolved at
-  all. Every *other* whole-document extractor (`chars/1`, `words/1`,
-  `text_lines/1`, `spans/1`, `paths/1`, `images/1`, `fonts/1`,
-  `annotations/1`, `tables/1`) fails the call on such a page unconditionally,
-  having no upstream counterpart whose policy they must match.
+  all. Most *other* whole-document extractors (`chars/1`, `words/1`,
+  `text_lines/1`, `spans/1`, `paths/1`, `images/1`, `annotations/1`,
+  `tables/1`) fail the call on such a page unconditionally, having no upstream
+  counterpart whose policy they must match.
+
+  `fonts/1` is the exception, and it needs no option: it *does* have an
+  upstream counterpart — `PdfDocument::page_font_face_lookups` — and follows
+  its policy, so an unresolvable page contributes no fonts and the document
+  still succeeds. `fonts/1` and `fonts/2` document what that makes an empty
+  list mean.
 
   ## Layer and ink filtering drops the other options
 
@@ -1754,6 +1823,12 @@ defmodule PdfElixide.Document do
   Returns every page's fonts concatenated into a single flat list, in page order,
   as `PdfElixide.Document.Font` structs. A font used on several pages appears once
   per page.
+
+  A page whose fonts cannot be read contributes nothing and does not fail the
+  call — see `fonts/2` for what that covers. Along with `text/1` this is the
+  only whole-document extractor that tolerates such a page, and the only one
+  that does so with no option to say otherwise: both follow an upstream loop's
+  policy, and upstream's font walk has no `:halt` to offer.
   """
   @spec fonts(t()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{ref: ref}) do
@@ -1779,6 +1854,16 @@ defmodule PdfElixide.Document do
   Returns `{:ok, []}` when the page references no fonts. Each font is carried as a
   `PdfElixide.Document.Font` struct with its metadata; the raw embedded font
   program (when present) is pulled on demand with `PdfElixide.Document.Font.data/1`.
+
+  **An empty list also covers a page that could not be read.** `pdf_oxide`'s own
+  per-page font walk (`PdfDocument::page_font_face_lookups`) yields no fonts
+  rather than an error for a page whose page-tree entry does not resolve, a page
+  object that is not a dictionary, a dangling `/Resources` reference, or a font
+  that fails to load — and this binding follows that policy rather than
+  second-guessing it. Only an out-of-range index and a failed handle are errors.
+  Unlike `has_structure_tree?/1`, there is no strict variant to fall back on; a
+  caller who must know whether the *page* is readable at all can ask `text/3`,
+  which does propagate.
   """
   @spec fonts(t(), non_neg_integer()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{ref: ref}, page_index)

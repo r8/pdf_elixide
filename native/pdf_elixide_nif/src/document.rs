@@ -250,8 +250,11 @@ type OpenedDocument = (ResourceArc<DocumentResource>, (u8, u8), Option<usize>);
 /// deliberately keeps a metadata-broken document usable — every per-page call
 /// surfaces the real error anyway. Elixir's `page_count/1` falls back to
 /// `document_page_count` for exactly that document, so it answers correctly
-/// once authentication has run. Swallowing here is the same deliberate choice
-/// `document_has_structure_tree` makes below, spelled the same way.
+/// once authentication has run — the escape hatch that makes swallowing safe
+/// here, and the reason this is the *only* remaining swallow in the NIF. The
+/// predicates below used to spell it the same way and had no such hatch, so
+/// their tolerance now lives in Elixir (`Document.tolerant_predicate!/1`),
+/// where a caller can ask for the error instead.
 ///
 /// Both reads go through `with_lock` rather than reading the `PdfDocument`
 /// before it is moved into the `Closable`, so a panic in upstream's page-tree
@@ -334,21 +337,35 @@ fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usi
 }
 
 /// Returns whether the PDF document has a structure tree (i.e. is a Tagged PDF).
-/// Any error or missing tree is reported as `false`.
+///
+/// Strict: a structure tree that fails to *parse* is an error, not `false`.
+/// Upstream keeps the three states apart on purpose — `Ok(Some)` for a tagged
+/// document, `Ok(None)` for an untagged one, `Err` for a broken
+/// `/StructTreeRoot` — so collapsing the last two here would put the error
+/// beyond any caller's reach. Elixir applies the tolerance instead:
+/// `has_structure_tree?/1` degrades this to `false`, `has_structure_tree/1`
+/// reports it.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
     resource
         .doc
-        .with_lock(|doc| Ok(doc.structure_tree().ok().flatten().is_some()))
+        .with_lock(|doc| Ok(doc.structure_tree().map_err(to_nif_err)?.is_some()))
 }
 
 /// Returns whether the PDF document contains XFA (XML Forms Architecture) form
-/// data. Any error is reported as `false`.
+/// data.
+///
+/// Strict, for the same reason as `document_has_structure_tree`, and with less
+/// to lose by it: upstream's `has_xfa` already answers `Ok(false)` for every
+/// *structural* absence (no catalog dictionary, no `/AcroForm`, no `/XFA`), so
+/// its `Err` arms are only an unreadable catalog and a dangling `/AcroForm`
+/// reference. Swallowing them would add no tolerance upstream had not already
+/// applied.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_has_xfa(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
     resource
         .doc
-        .with_lock(|doc| Ok(pdf_oxide::xfa::XfaExtractor::has_xfa(doc).unwrap_or(false)))
+        .with_lock(|doc| pdf_oxide::xfa::XfaExtractor::has_xfa(doc).map_err(to_nif_err))
 }
 
 /// Returns whether the PDF document is encrypted.

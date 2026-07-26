@@ -2287,6 +2287,30 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "has_structure_tree/1" do
+    test "returns {:ok, false} for the untagged sample fixture" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.has_structure_tree(doc) == {:ok, false}
+    end
+
+    test "returns {:ok, true} for a tagged PDF" do
+      doc = Document.open!(@tagged_pdf)
+      assert Document.has_structure_tree(doc) == {:ok, true}
+    end
+
+    # The point of the strict variant: the tolerant one collapses every failure
+    # into `false`, so a caller who needs to tell "untagged" from "unreadable"
+    # has this. No fixture reaches the error branch through the document itself
+    # — an encrypted document's catalog still parses — so the closed handle is
+    # what pins that the error survives to Elixir at all.
+    test "reports a failure the predicate would have swallowed" do
+      doc = Document.open!(@tagged_pdf)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Document.has_structure_tree(doc)
+    end
+  end
+
   describe "has_xfa?/1" do
     test "returns false for a plain PDF" do
       doc = Document.open!(@valid_pdf)
@@ -2296,6 +2320,25 @@ defmodule PdfElixide.DocumentTest do
     test "returns false for a non-XFA AcroForm PDF" do
       doc = Document.open!(@form_pdf)
       refute Document.has_xfa?(doc)
+    end
+  end
+
+  describe "has_xfa/1" do
+    test "returns {:ok, false} for a plain PDF" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.has_xfa(doc) == {:ok, false}
+    end
+
+    test "returns {:ok, false} for a non-XFA AcroForm PDF" do
+      doc = Document.open!(@form_pdf)
+      assert Document.has_xfa(doc) == {:ok, false}
+    end
+
+    test "reports a failure the predicate would have swallowed" do
+      doc = Document.open!(@form_pdf)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Document.has_xfa(doc)
     end
   end
 
@@ -2802,6 +2845,11 @@ defmodule PdfElixide.DocumentTest do
       assert_raise Error, "Document is closed", fn -> Document.text!(doc, 0) end
     end
 
+    # `has_structure_tree?/1` and `has_xfa?/1` answer `false` for a document
+    # whose feature cannot be read, but `:closed` is a failure of the *handle*,
+    # not of the document, so it still raises — the line the tolerant predicates
+    # draw, and the reason their strict variants are the only way to see an
+    # upstream error.
     test "predicates raise on a closed document" do
       doc = Document.open!(@valid_pdf)
       :ok = Document.close(doc)
