@@ -3,6 +3,9 @@ defmodule PdfElixide.Document do
   Read-only representation of a PDF document.
   """
 
+  # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
+  # unaliased: a bare `Path` alias shadows `Elixir.Path`, silently turning every
+  # filesystem-path `Path.t()` in this module into the struct type.
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
@@ -10,7 +13,6 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
-  alias PdfElixide.Document.Path
   alias PdfElixide.Document.Permissions
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
@@ -1672,17 +1674,17 @@ defmodule PdfElixide.Document do
   Returns every page's paths concatenated into a single flat list, in page
   order, as `PdfElixide.Document.Path` structs.
   """
-  @spec paths(t()) :: {:ok, [Path.t()]} | {:error, Error.t()}
+  @spec paths(t()) :: {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
   def paths(%__MODULE__{ref: ref}) do
     with {:ok, paths} <- Wrap.call(fn -> Native.document_all_paths(ref) end) do
-      {:ok, Enum.map(paths, &Path.from_nif/1)}
+      {:ok, Enum.map(paths, &PdfElixide.Document.Path.from_nif/1)}
     end
   end
 
   @doc """
   Extracts the vector paths of the whole document, raising an error if it fails.
   """
-  @spec paths!(t()) :: [Path.t()]
+  @spec paths!(t()) :: [PdfElixide.Document.Path.t()]
   def paths!(%__MODULE__{} = doc) do
     case paths(doc) do
       {:ok, paths} -> paths
@@ -1697,11 +1699,12 @@ defmodule PdfElixide.Document do
   curve, rectangle, or filled shape — is carried as a `PdfElixide.Document.Path`
   struct.
   """
-  @spec paths(t(), non_neg_integer()) :: {:ok, [Path.t()]} | {:error, Error.t()}
+  @spec paths(t(), non_neg_integer()) ::
+          {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
   def paths(%__MODULE__{ref: ref}, page_index)
       when is_integer(page_index) and page_index >= 0 do
     with {:ok, paths} <- Wrap.call(fn -> Native.document_paths(ref, page_index) end) do
-      {:ok, Enum.map(paths, &Path.from_nif/1)}
+      {:ok, Enum.map(paths, &PdfElixide.Document.Path.from_nif/1)}
     end
   end
 
@@ -1709,7 +1712,7 @@ defmodule PdfElixide.Document do
   Extracts the vector paths of the page at the given zero-based index, raising an
   error if it fails.
   """
-  @spec paths!(t(), non_neg_integer()) :: [Path.t()]
+  @spec paths!(t(), non_neg_integer()) :: [PdfElixide.Document.Path.t()]
   def paths!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
     case paths(doc, page_index) do
@@ -1946,7 +1949,7 @@ defmodule PdfElixide.Document do
     import Inspect.Algebra
 
     def inspect(%PdfElixide.Document{version: {maj, min}, source_path: path}, _opts) do
-      src = if path, do: Elixir.Path.basename(path), else: "<binary>"
+      src = if path, do: Path.basename(path), else: "<binary>"
       concat(["#PdfElixide.Document<", src, " v", to_string(maj), ".", to_string(min), ">"])
     end
   end

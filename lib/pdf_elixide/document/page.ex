@@ -3,12 +3,14 @@ defmodule PdfElixide.Document.Page do
   Representation of a page of a PDF document.
   """
 
+  # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
+  # unaliased: a bare `Path` alias shadows `Elixir.Path`, silently turning every
+  # filesystem-path `Path.t()` in this module into the struct type.
   alias PdfElixide.Document
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
-  alias PdfElixide.Document.Path
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
@@ -266,7 +268,7 @@ defmodule PdfElixide.Document.Page do
 
   Returns `{:ok, []}` when the page has no vector graphics.
   """
-  @spec paths(t()) :: {:ok, [Path.t()]} | {:error, Error.t()}
+  @spec paths(t()) :: {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
   def paths(%__MODULE__{doc: doc, index: index}) do
     Document.paths(doc, index)
   end
@@ -274,7 +276,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Same as `paths/1` but raises an error if it fails.
   """
-  @spec paths!(t()) :: [Path.t()]
+  @spec paths!(t()) :: [PdfElixide.Document.Path.t()]
   def paths!(page) do
     case paths(page) do
       {:ok, paths} -> paths

@@ -29,3 +29,6 @@ pdf_elixide-*.tar
 
 # RustlerPrecompiled checksum files
 checksum-*.exs
+
+# Dialyzer PLTs
+/plts/

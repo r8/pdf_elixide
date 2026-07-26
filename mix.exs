@@ -13,6 +13,7 @@ defmodule PdfElixide.MixProject do
       description: description(),
       package: package(),
       docs: docs(),
+      dialyzer: dialyzer(),
       deps: deps()
     ]
   end
@@ -64,6 +65,23 @@ defmodule PdfElixide.MixProject do
     ]
   end
 
+  # Both PLTs live in one gitignored directory, so CI caches a single path and
+  # `rm -rf plts` is a complete reset. `files/0` is a whitelist, so nothing here
+  # ever ships to Hex.
+  #
+  # The `overspecs`/`underspecs` family is deliberately absent: every NIF result
+  # reaches Elixir as `term()` through `PdfElixide.Native.Wrap.call/1`, so those
+  # flags would report a warning for nearly every public function whose spec is
+  # more precise than the wrapper can prove — which is the whole design.
+  defp dialyzer do
+    [
+      plt_core_path: "plts",
+      plt_local_path: "plts",
+      list_unused_filters: true,
+      flags: [:error_handling, :extra_return, :missing_return, :unknown]
+    ]
+  end
+
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
@@ -77,6 +95,7 @@ defmodule PdfElixide.MixProject do
       {:rustler_precompiled, "~> 0.7"},
       {:rustler, ">= 0.0.0", optional: true, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:igniter, "~> 0.5", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.0", only: [:dev], runtime: false},
       {:git_hooks, "~> 0.8.0", only: [:dev], runtime: false},

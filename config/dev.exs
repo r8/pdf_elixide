@@ -20,7 +20,8 @@ config :git_hooks,
         {:cmd, "mix format --check-formatted"},
         {:cmd, "cargo +nightly fmt --check"},
         {:cmd, "mix credo --strict"},
-        {:cmd, "mix test --color"}
+        {:cmd, "mix test --color"},
+        {:cmd, "mix dialyzer --quiet-with-result"}
       ]
     ]
   ]

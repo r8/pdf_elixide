@@ -25,6 +25,7 @@ jobs:
             otp: "26.2.5"
           - elixir: "1.19.5"
             otp: "28.4.2"
+            dialyzer: true
 
     steps:
       - uses: actions/checkout@v6
@@ -47,3 +48,29 @@ jobs:
         run: mix credo --strict
       - name: Run formatter
         run: mix format --check-formatted
+      # Dialyzer runs on the newest Elixir/OTP leg only: success typings differ
+      # subtly across OTP releases, and the analysis is a gate, not a matrix.
+      # It shares this job because `config/test.exs` force-builds the NIF, so a
+      # separate job would pay the whole cargo build a second time.
+      - name: Restore PLT cache
+        id: plt-cache
+        if: matrix.dialyzer
+        uses: actions/cache/restore@v5
+        with:
+          path: plts
+          key: plt-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            plt-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+      - name: Build PLT
+        if: matrix.dialyzer && steps.plt-cache.outputs.cache-hit != 'true'
+        run: mix dialyzer --plt
+      # Saved before the analysis runs, so a red build still caches its PLT.
+      - name: Save PLT cache
+        if: matrix.dialyzer && steps.plt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: plts
+          key: ${{ steps.plt-cache.outputs.cache-primary-key }}
+      - name: Run dialyzer
+        if: matrix.dialyzer
+        run: mix dialyzer --format github --format dialyxir
