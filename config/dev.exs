@@ -11,7 +11,7 @@ config :git_hooks,
         {:cmd, "mix format"},
         {:cmd, "mix credo --strict"},
         {:cmd, "cargo +nightly fmt"},
-        {:cmd, "cargo check --offline"},
+        {:cmd, "cargo clippy --offline --all-targets -- -D warnings"},
         {:file, "priv/hooks/stage-cargo-lock.sh"}
       ]
     ],

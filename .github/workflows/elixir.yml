@@ -34,16 +34,45 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
+      # `config/test.exs` force-builds the NIF, so this job compiles the whole
+      # Rust tree. Pin the toolchain rather than inheriting whichever rustc the
+      # runner image happens to ship.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      # Caches ~/.cargo and the workspace-root `target/` (rustler writes there,
+      # which is rust-cache's default `. -> target`). The key it derives already
+      # includes the job and matrix, so the two legs never race on save.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
       - name: Restore dependencies cache
         uses: actions/cache@v5
         with:
           path: ./deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
+      # Separate entry from `deps`, and keyed by OTP/Elixir because BEAM
+      # artifacts are version-specific. A warm `_build` cannot serve a stale
+      # NIF: `use Rustler` registers every file under `native/pdf_elixide_nif/`
+      # as an `@external_resource` of `PdfElixide.Native`, so any Rust edit
+      # forces that module to recompile, which re-invokes `cargo rustc`.
+      - name: Restore build cache
+        uses: actions/cache@v5
+        with:
+          path: _build
+          key: ${{ runner.os }}-build-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-build-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
       - name: Install dependencies
         run: mix deps.get
+      - name: Check for unused dependencies
+        run: mix deps.unlock --check-unused
+      - name: Audit dependencies
+        run: mix hex.audit
+      - name: Compile
+        run: mix compile --warnings-as-errors
+      # `mix compile` does not compile `test/`, so the flag is repeated here to
+      # cover warnings in the test files themselves.
       - name: Run tests
-        run: mix test
+        run: mix test --warnings-as-errors
       - name: Run credo
         run: mix credo --strict
       - name: Run formatter
@@ -74,3 +103,36 @@ jobs:
       - name: Run dialyzer
         if: matrix.dialyzer
         run: mix dialyzer --format github --format dialyxir
+
+  # A sibling job rather than steps in the matrix above: none of these depend on
+  # Elixir or OTP, so running them per-leg would be pure duplication. They build
+  # the dev profile, where the `build` job's NIF is a release build with LTO, so
+  # the two share only the registry cache.
+  rust:
+    name: "Rust (fmt, clippy, test)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      # `rustfmt.toml` sets `imports_granularity` and `group_imports`, both
+      # nightly-only — hence `cargo +nightly fmt`, matching the git hooks.
+      # Nightly is installed first so stable remains the default toolchain.
+      - name: Set up Rust nightly (rustfmt)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - name: Set up Rust stable (clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+      - name: Check Rust formatting
+        run: cargo +nightly fmt --check
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+      # The crate has no `#[cfg(test)]` modules yet — behavior is pinned by the
+      # Elixir suite. The step is here so the first Rust unit test written is
+      # run rather than silently ignored.
+      - name: Run cargo test
+        run: cargo test

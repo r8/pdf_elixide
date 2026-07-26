@@ -280,7 +280,7 @@ fn document_closed(resource: ResourceArc<DocumentResource>) -> bool {
 fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
     let doc = resource.doc.lock()?;
 
-    Ok(doc.page_count().map_err(to_nif_err)?)
+    doc.page_count().map_err(to_nif_err)
 }
 
 /// Returns the PDF specification version as a `(major, minor)` tuple.
@@ -349,7 +349,7 @@ fn extract_text_page(
         let inks: HashSet<String> = options.exclude_inks.iter().cloned().collect();
         return match &options.region {
             Some(RegionFilter { rect, mode }) => {
-                doc.extract_text_filtered_in_rect(page_index, layers, inks, rect.clone(), *mode)
+                doc.extract_text_filtered_in_rect(page_index, layers, inks, *rect, *mode)
             }
             None => doc.extract_text_filtered(page_index, layers, inks),
         };
@@ -951,11 +951,9 @@ fn extract_tables_page(
     options: &TablesOptions,
 ) -> Result<Vec<pdf_oxide::structure::table_extractor::Table>> {
     match &options.region {
-        Some(rect) => doc.extract_tables_in_rect_with_config(
-            page_index,
-            rect.clone(),
-            options.detection.clone(),
-        ),
+        Some(rect) => {
+            doc.extract_tables_in_rect_with_config(page_index, *rect, options.detection.clone())
+        }
         None => doc.extract_tables_with_config(page_index, options.detection.clone()),
     }
 }

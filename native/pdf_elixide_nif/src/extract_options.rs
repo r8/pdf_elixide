@@ -421,9 +421,7 @@ impl From<TextOptionsNif> for TextOptions {
                 extract_tables: o.extract_tables,
                 expand_ligatures: o.expand_ligatures,
                 table_detection_config: o.table_detection.map(Into::into),
-                include_region: region
-                    .as_ref()
-                    .map(|filter| (filter.rect.clone(), filter.mode)),
+                include_region: region.as_ref().map(|filter| (filter.rect, filter.mode)),
                 exclude_regions: o.exclude_regions.into_iter().map(rect_from_nif).collect(),
                 exclude_regions_mode: exclude_mode,
                 ..Default::default()
