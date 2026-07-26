@@ -156,6 +156,10 @@ defmodule PdfElixide.Document.Image do
   `opts[:format]` is `:png` (the default) or `:jpeg`. For a `:jpeg` source image
   the original bytes are returned untouched (zero loss), except CMYK JPEGs which
   are re-encoded to RGB.
+
+  That pass-through copies the stored blob once, straight into the returned
+  binary; the PNG and re-encoding paths hold the encoded image and the binary at
+  the same time, so they peak at roughly twice the output size.
   """
   @spec to_binary(t(), image_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do

@@ -152,6 +152,11 @@ defmodule PdfElixide.Editor do
   `:incremental` is not supported here — upstream returns
   `{:error, _}` because incremental updates can only be appended to
   the original file.
+
+  The whole document is serialised in native memory before being copied
+  into the returned binary, so peak usage is roughly twice the output
+  size (on top of the editor itself). For very large documents prefer
+  `save/3`, which streams to the file without that second buffer.
   """
   @spec to_binary(t(), save_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do

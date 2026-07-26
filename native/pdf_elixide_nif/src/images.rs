@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{borrow::Cow, io::Cursor};
 
 use pdf_oxide::extractors::{ColorSpace, ImageData, PdfImage, PixelFormat};
 use rustler::{Encoder, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc, Term};
@@ -126,20 +126,27 @@ pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
 /// binary. PNG goes through `to_png_bytes`; JPEG passes the original bytes
 /// through for non-CMYK JPEG-stored images (zero loss) and otherwise decodes and
 /// re-encodes.
+///
+/// The pass-through branch yields a `Cow::Borrowed` of the blob still held by the
+/// resource, so it is copied once — straight into the Erlang binary — rather than
+/// being cloned into an intermediate `Vec` first. The encoding branches own their
+/// output already, so that single copy is all any path costs.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn image_to_binary(
     resource: ResourceArc<ImageResource>,
     format: OutputFormatNif,
 ) -> NifResult<OwnedBinary> {
     resource.image.with_read(|image| {
-        let bytes = match format {
-            OutputFormatNif::Png => image.to_png_bytes().map_err(to_nif_err)?,
+        let bytes: Cow<[u8]> = match format {
+            OutputFormatNif::Png => Cow::Owned(image.to_png_bytes().map_err(to_nif_err)?),
             OutputFormatNif::Jpeg => match image.data() {
                 // JPEG-stored, non-CMYK → hand back the original bytes (zero loss),
                 // matching `save_as_jpeg`'s pass-through.
-                ImageData::Jpeg(jpeg) if image.color_space().components() != 4 => jpeg.clone(),
+                ImageData::Jpeg(jpeg) if image.color_space().components() != 4 => {
+                    Cow::Borrowed(jpeg.as_slice())
+                }
                 // CMYK JPEG or raw pixels → decode + encode.
-                _ => encode_jpeg(image)?,
+                _ => Cow::Owned(encode_jpeg(image)?),
             },
         };
 
