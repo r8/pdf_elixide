@@ -50,6 +50,13 @@ defmodule PdfElixide.Document.Table do
   Rendering goes through `:ref`, a handle to the detected table held on the Rust
   side, so it works only on a table that came from extraction — not on a
   hand-built struct — and stops working once `close/1` releases it.
+
+  That handle means a `%Table{}` holds the same table twice: the decoded `:rows`
+  you read here, and behind `:ref` the detected table as `pdf_oxide` built it,
+  kept because only it carries the glyph metrics the renderers need. Both live
+  until `close/1` or garbage collection, so on a table-dense page — and more so
+  with `PdfElixide.Document.tables/1`, which returns every page's tables at once —
+  close the tables you are done rendering.
   """
   alias PdfElixide.Document.Table.Cell
   alias PdfElixide.Document.Table.Row
@@ -240,7 +247,9 @@ defmodule PdfElixide.Document.Table do
 
   The table is normally freed when the BEAM garbage-collects the handle;
   `close/1` frees it now, which is worth doing when walking many tables and
-  keeping only their text. The struct's own fields — rows, cells, spans — are
+  keeping only their text — what it frees is upstream's own copy of the table,
+  glyph metrics and all, which is the larger of the two representations a
+  `%Table{}` holds. The struct's own fields — rows, cells, spans — are
   plain data and stay readable afterwards; only `to_markdown/2`, `to_html/1`, and
   `to_text/1` stop working, returning `{:error, %PdfElixide.Error{reason:
   :closed}}` (bang variants raise it).

@@ -11,7 +11,7 @@ use crate::{
     error::to_nif_err,
     geometry::{rect_to_nif, RectNif},
     resource::Closable,
-    span::{span_to_nif, SpanNif},
+    span::{span_ref_to_nif, SpanNif},
     TableResource,
 };
 
@@ -46,55 +46,59 @@ pub struct TableCellNif {
     spans: Vec<SpanNif>,
 }
 
+/// Decodes a table, and hands the upstream value itself to the resource.
+///
+/// Rendering needs that upstream value: its cells carry `TextSpan`s whose glyph
+/// metrics decide bold markers and inter-token spacing, and those do not survive
+/// a trip through the decoded map. So the decoded fields are built from a
+/// *borrow* and `table` is moved into the resource last — the fields of a struct
+/// expression are evaluated in the order they are written, so the `rows` borrow
+/// has ended by then. Cloning for the resource instead would put two full deep
+/// copies of every cell, span and per-glyph vector on the heap at once; decoding
+/// from a borrow copies only what `TableNif` actually keeps, which is never the
+/// glyph metrics.
 pub fn table_to_nif(table: Table, page: usize) -> TableNif {
-    // `is_real_grid` borrows the rows, so evaluate it before consuming them.
-    let real_grid = table.is_real_grid();
-    // The decoded fields below consume the table, so the resource gets a clone.
-    // Rendering needs the upstream value itself: its cells carry `TextSpan`s
-    // whose glyph metrics decide bold markers and inter-token spacing, and those
-    // do not survive a trip through the decoded map.
-    let resource = ResourceArc::new(TableResource {
-        table: Closable::new("Table", table.clone()),
-    });
-
     TableNif {
         page,
-        resource,
+        // `Rect` is `Copy`, so this reads `bbox` rather than moving it out.
         bbox: table.bbox.map(rect_to_nif),
         col_count: table.col_count,
         has_header: table.has_header,
-        real_grid,
+        real_grid: table.is_real_grid(),
         rows: table
             .rows
-            .into_iter()
+            .iter()
             .map(|row| table_row_to_nif(row, page))
             .collect(),
+        resource: ResourceArc::new(TableResource {
+            table: Closable::new("Table", table),
+        }),
     }
 }
 
-fn table_row_to_nif(row: TableRow, page: usize) -> TableRowNif {
+fn table_row_to_nif(row: &TableRow, page: usize) -> TableRowNif {
     TableRowNif {
         header: row.is_header,
         cells: row
             .cells
-            .into_iter()
+            .iter()
             .map(|cell| table_cell_to_nif(cell, page))
             .collect(),
     }
 }
 
-fn table_cell_to_nif(cell: TableCell, page: usize) -> TableCellNif {
+fn table_cell_to_nif(cell: &TableCell, page: usize) -> TableCellNif {
     TableCellNif {
-        text: cell.text,
+        text: cell.text.clone(),
         bbox: cell.bbox.map(rect_to_nif),
         colspan: cell.colspan,
         rowspan: cell.rowspan,
         header: cell.is_header,
-        mcids: cell.mcids,
+        mcids: cell.mcids.clone(),
         spans: cell
             .spans
-            .into_iter()
-            .map(|span| span_to_nif(span, page))
+            .iter()
+            .map(|span| span_ref_to_nif(span, page))
             .collect(),
     }
 }

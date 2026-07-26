@@ -1571,6 +1571,11 @@ defmodule PdfElixide.Document do
   Detection is heuristic — see `PdfElixide.Document.Table` for the
   `:real_grid?` flag and how to filter out likely false positives, and
   `t:tables_opts/0` for the available options.
+
+  Every returned table keeps the detected table alive on the Rust side for
+  `PdfElixide.Document.Table.to_markdown/2` and friends, so the whole-document
+  form holds all of them at once. Prefer the per-page arity, or
+  `PdfElixide.Document.Table.close/1` as you go, on a table-dense document.
   """
   @spec tables(t()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   @spec tables(t(), tables_opts() | non_neg_integer()) :: {:ok, [Table.t()]} | {:error, Error.t()}
