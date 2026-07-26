@@ -125,7 +125,7 @@ defmodule PdfElixide.Editor do
     options = build_save_options(opts)
 
     case Wrap.call(fn -> Native.editor_save(ref, path, options) end) do
-      {:ok, :ok} -> :ok
+      {:ok, _} -> :ok
       {:error, _} = err -> err
     end
   end

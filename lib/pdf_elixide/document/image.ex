@@ -191,7 +191,7 @@ defmodule PdfElixide.Document.Image do
     format = save_format!(opts, path)
 
     case Wrap.call(fn -> Native.image_save(ref, path, format) end) do
-      {:ok, :ok} -> :ok
+      {:ok, _} -> :ok
       {:error, _} = err -> err
     end
   end
