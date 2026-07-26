@@ -272,7 +272,11 @@ fn document_closed(resource: ResourceArc<DocumentResource>) -> bool {
 }
 
 /// Returns the number of pages in the PDF document.
-#[rustler::nif]
+///
+/// Dirty despite looking like a cheap accessor: it takes the document lock,
+/// which a concurrent extraction on the same handle can hold for seconds,
+/// so a normal scheduler must never wait on it.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
     let doc = resource.doc.lock()?;
 
@@ -280,7 +284,7 @@ fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usi
 }
 
 /// Returns the PDF specification version as a `(major, minor)` tuple.
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 fn document_version(resource: ResourceArc<DocumentResource>) -> NifResult<(u8, u8)> {
     let doc = resource.doc.lock()?;
 
@@ -306,7 +310,7 @@ fn document_has_xfa(resource: ResourceArc<DocumentResource>) -> NifResult<bool> 
 }
 
 /// Returns whether the PDF document is encrypted.
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 fn document_is_encrypted(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
     let doc = resource.doc.lock()?;
 
@@ -996,7 +1000,7 @@ fn document_all_tables(
 }
 
 /// Returns the page's width in points (MediaBox urx - llx).
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 fn document_get_page_width(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
@@ -1010,7 +1014,7 @@ fn document_get_page_width(
 }
 
 /// Returns the page's height in points (MediaBox ury - lly).
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 fn document_get_page_height(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
