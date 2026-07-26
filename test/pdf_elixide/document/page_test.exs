@@ -469,12 +469,31 @@ defmodule PdfElixide.Document.PageTest do
       doc = Document.open!(@valid_pdf)
       assert {:ok, "3"} = Page.label(Document.page!(doc, 2))
     end
+
+    test "agrees with Document.page_labels/1" do
+      doc = Document.open!(@metadata_pdf)
+      labels = Document.page_labels!(doc)
+
+      for {label, index} <- Enum.with_index(labels) do
+        assert Page.label(%Page{doc: doc, index: index}) == {:ok, label}
+      end
+    end
+
+    test "returns :out_of_range for a page past the end" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Page.label(%Page{doc: doc, index: 99})
+    end
   end
 
   describe "label!/1" do
     test "returns the label directly" do
       doc = Document.open!(@metadata_pdf)
       assert Page.label!(Document.page!(doc, 0)) == "i"
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.label!(%Page{doc: doc, index: 99}) end
     end
   end
 end

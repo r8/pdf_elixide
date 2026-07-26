@@ -81,6 +81,7 @@ defmodule PdfElixide.Native do
   def document_xmp_metadata(_doc), do: err()
   def document_permissions(_doc), do: err()
   def document_page_labels(_doc), do: err()
+  def document_page_label(_doc, _page_index), do: err()
 
   # Editor operations
   def editor_open(_path), do: err()

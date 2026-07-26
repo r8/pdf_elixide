@@ -10,7 +10,7 @@ use pdf_oxide::{
 };
 use rustler::{NifMap, NifResult, ResourceArc};
 
-use crate::{error::to_nif_err, DocumentResource};
+use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource};
 
 // Info dictionary --------------------------------------------------------------------------------
 
@@ -219,6 +219,25 @@ fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
         Ok((0..count)
             .map(|index| PageLabelExtractor::get_label(&ranges, index))
             .collect())
+    })
+}
+
+/// Returns one page's logical page label. Upstream has no single-label accessor
+/// on `PdfDocument` — `Pdf::page_label` takes `&mut self` and is itself
+/// `get_label(&self.page_labels()?, page)` — so the label ranges are extracted
+/// per call, and `document_page_labels` remains the bulk path.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_page_label(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<String> {
+    resource.doc.with_lock(|doc| {
+        // Load-bearing: `get_label` is infallible and falls back to the decimal
+        // page number, so an out-of-range index would silently yield a label.
+        ensure_page_in_range(doc, page_index)?;
+
+        let ranges = PageLabelExtractor::extract(doc).map_err(to_nif_err)?;
+        Ok(PageLabelExtractor::get_label(&ranges, page_index))
     })
 }
 

@@ -71,12 +71,16 @@ defmodule PdfElixide.Document.Page do
   This is the human-facing page number the PDF may define, independent of the
   zero-based physical index. Pages outside any declared label range fall back to
   their decimal page number.
+
+  A page whose `:index` is not a page of the document — only reachable from a
+  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
+
+  Every call re-reads the document's label ranges, so use
+  `PdfElixide.Document.page_labels/1` to label a whole document.
   """
   @spec label(t()) :: {:ok, String.t()} | {:error, Error.t()}
-  def label(%__MODULE__{doc: doc, index: index}) do
-    with {:ok, labels} <- Document.page_labels(doc) do
-      {:ok, Enum.at(labels, index)}
-    end
+  def label(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
+    Wrap.call(fn -> Native.document_page_label(ref, index) end)
   end
 
   @doc """

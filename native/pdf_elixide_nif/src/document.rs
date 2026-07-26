@@ -216,7 +216,7 @@ impl From<HtmlOptionsNif> for ConversionOptions {
 /// Returns an `:out_of_range` error if `page_index` is not a valid page of
 /// `doc`. Upstream reports a bad index as a generic `InvalidPdf`, so we check
 /// bounds here to give callers a distinct, matchable reason.
-fn ensure_page_in_range(doc: &PdfDocument, page_index: usize) -> NifResult<()> {
+pub fn ensure_page_in_range(doc: &PdfDocument, page_index: usize) -> NifResult<()> {
     let count = doc.page_count().map_err(to_nif_err)?;
     if page_index >= count {
         return Err(tagged_err(

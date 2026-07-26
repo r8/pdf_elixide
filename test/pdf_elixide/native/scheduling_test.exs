@@ -25,7 +25,7 @@ defmodule PdfElixide.Native.SchedulingTest do
   # poisoned lock and never wait on an extraction.
   @locking_calls [".lock()", ".read()"]
 
-  # Sanity floor for the block parser, well under the 67 stubs registered in
+  # Sanity floor for the block parser, well under the 68 stubs registered in
   # `PdfElixide.Native`, so a parsing regression fails loudly instead of finding
   # nothing to check.
   @min_nifs 60
