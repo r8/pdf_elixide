@@ -193,6 +193,9 @@ defmodule PdfElixide.Document.Image do
   The output format is taken from `opts[:format]` when given, otherwise inferred
   from the path extension (`.png` → PNG, `.jpg`/`.jpeg` → JPEG). An unknown
   extension with no `:format` option raises `ArgumentError`.
+
+  The path must be a valid-UTF-8 binary — see the "File paths" section of
+  `PdfElixide`.
   """
   @spec save(t(), Path.t(), image_opts()) :: :ok | {:error, Error.t()}
   def save(%__MODULE__{ref: ref}, path, opts \\ [])

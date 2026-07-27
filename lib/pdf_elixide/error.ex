@@ -50,7 +50,10 @@ defmodule PdfElixide.Error do
       given twice, a declared key given a value the native layer cannot decode,
       and a declared key whose value is out of range (`{:min_overlap, 2.0}`). A
       value the native layer cannot decode outside an options map — a form
-      field value that is not a tagged tuple — raises the same way.
+      field value that is not a tagged tuple, a file path that is not valid
+      UTF-8 — raises the same way. For paths, see the "File paths" section of
+      `PdfElixide`: a bad one is a caller bug reported here, never an `:io`
+      error.
 
   The message always names the offending key, so a typo is reported rather than
   silently ignored and a wrong value is reported rather than silently applied.

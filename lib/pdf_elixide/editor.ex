@@ -17,6 +17,9 @@ defmodule PdfElixide.Editor do
 
   @doc """
   Opens a PDF document for editing from the specified file path.
+
+  The path must be a valid-UTF-8 binary — see the "File paths" section of
+  `PdfElixide`.
   """
   @spec open(Path.t()) :: {:ok, t()} | {:error, Error.t()}
   def open(path) when is_binary(path) do
@@ -28,6 +31,9 @@ defmodule PdfElixide.Editor do
   @doc """
   Opens a PDF document for editing from the specified file path,
   raising an error if it fails.
+
+  The path must be a valid-UTF-8 binary — see the "File paths" section of
+  `PdfElixide`.
   """
   @spec open!(Path.t()) :: t()
   def open!(path) when is_binary(path) do
@@ -128,6 +134,9 @@ defmodule PdfElixide.Editor do
 
   @doc """
   Writes all in-memory changes to a PDF file at the given path.
+
+  The path must be a valid-UTF-8 binary — see the "File paths" section of
+  `PdfElixide`.
   """
   @spec save(t(), Path.t(), save_opts()) :: :ok | {:error, Error.t()}
   def save(%__MODULE__{ref: ref}, path, opts \\ [])
@@ -142,6 +151,9 @@ defmodule PdfElixide.Editor do
 
   @doc """
   Writes all in-memory changes to a PDF file at the given path, raising an error if it fails.
+
+  The path must be a valid-UTF-8 binary — see the "File paths" section of
+  `PdfElixide`.
   """
   @spec save!(t(), Path.t(), save_opts()) :: :ok
   def save!(%__MODULE__{} = editor, path, opts \\ [])

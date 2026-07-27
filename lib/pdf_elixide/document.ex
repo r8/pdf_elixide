@@ -75,6 +75,9 @@ defmodule PdfElixide.Document do
 
   @doc """
   Opens a PDF document from the specified file path.
+
+  The path must be a valid-UTF-8 binary — see the "File paths" section of
+  `PdfElixide`.
   """
   @spec open(Path.t(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
   def open(path, opts \\ []) when is_binary(path) and is_list(opts) do
@@ -94,6 +97,9 @@ defmodule PdfElixide.Document do
 
   @doc """
   Opens a PDF document from the specified file path, raising an error if it fails.
+
+  The path must be a valid-UTF-8 binary — see the "File paths" section of
+  `PdfElixide`.
   """
   @spec open!(Path.t(), open_opts()) :: t()
   def open!(path, opts \\ []) when is_binary(path) and is_list(opts) do
@@ -738,7 +744,9 @@ defmodule PdfElixide.Document do
       `false`. It is created if missing, and one that cannot be created
       is an `:io` error. The writes themselves are best-effort: upstream
       drops an image that fails to encode or write, so a successful call
-      does not guarantee every image reached disk. Defaults to `nil`.
+      does not guarantee every image reached disk. It must be a valid-UTF-8
+      binary like every other path — see the "File paths" section of
+      `PdfElixide`. Defaults to `nil`.
     * `:include_form_fields` — inline AcroForm field values at their
       positions on the page. Defaults to `true`.
     * `:strip_running_headers_footers` — drop text lines that repeat in
@@ -967,7 +975,9 @@ defmodule PdfElixide.Document do
       `false`. It is created if missing, and one that cannot be created
       is an `:io` error. The writes themselves are best-effort: upstream
       drops an image that fails to encode or write, so a successful call
-      does not guarantee every image reached disk. Defaults to `nil`.
+      does not guarantee every image reached disk. It must be a valid-UTF-8
+      binary like every other path — see the "File paths" section of
+      `PdfElixide`. Defaults to `nil`.
 
       Upstream interpolates the resulting path into the `src` attribute
       **without HTML escaping**, so a directory whose name contains `"` or

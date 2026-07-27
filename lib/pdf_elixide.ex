@@ -11,5 +11,34 @@ defmodule PdfElixide do
       save).
     * `PdfElixide.Form` — AcroForm field access for both documents
       and editors.
+
+  ## File paths
+
+  Every path this library accepts — `PdfElixide.Document.open/2`,
+  `PdfElixide.Editor.open/1`, `PdfElixide.Editor.save/3`,
+  `PdfElixide.Document.Image.save/3`, and the `:image_output_dir` conversion
+  option — is a binary that **must be valid UTF-8**. The native layer decodes it
+  as a Rust `String`, so a path carrying any other byte raises `ArgumentError`
+  before the filesystem is touched; it is never an `:io` error. See the
+  "Errors versus exceptions" section of `PdfElixide.Error`.
+
+  That is worth knowing on Linux, where the BEAM's default filename encoding
+  treats names as raw bytes: a path handed back by `File.ls/1` or
+  `Path.wildcard/1` can be a binary no UTF-8 spelling can express, and passing
+  it here raises rather than reporting a filesystem error. Read such a file
+  yourself and use `PdfElixide.Document.from_binary/2` or
+  `PdfElixide.Editor.from_binary/1`, which take opaque bytes. macOS and Windows
+  run the VM with UTF-8 filename encoding, so the question does not arise there.
+
+  Byte paths are deliberately not supported. `pdf_oxide` types its own
+  `image_output_dir` as a `String`, so that one option could not accept them
+  whatever this binding did, and Windows has no mapping from arbitrary bytes to
+  a path — support would be both non-uniform across the API and
+  platform-dependent. Contrast a *password*, which genuinely is a byte string
+  and is decoded as one; see `t:PdfElixide.Document.open_opts/0`.
+
+  Only the binary form of `Path.t()` is accepted. `Path.t()` is `IO.chardata()`,
+  so these specs are broader than the guards beneath them: a charlist raises
+  `FunctionClauseError`.
   """
 end
