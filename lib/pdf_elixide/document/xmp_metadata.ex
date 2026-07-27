@@ -77,7 +77,49 @@ defmodule PdfElixide.Document.XmpMetadata do
   # Builds an `XmpMetadata` from the raw map returned by the NIF. Fields already
   # arrive in their final shape (strings, lists, a map, and `nil`s).
   @spec from_nif(map()) :: t()
-  def from_nif(map) when is_map(map) do
-    struct(__MODULE__, map)
+  def from_nif(%{
+        title: title,
+        creators: creators,
+        description: description,
+        subjects: subjects,
+        language: language,
+        rights: rights,
+        format: format,
+        creator_tool: creator_tool,
+        create_date: create_date,
+        modify_date: modify_date,
+        metadata_date: metadata_date,
+        producer: producer,
+        keywords: keywords,
+        pdf_version: pdf_version,
+        trapped: trapped,
+        rights_usage_terms: rights_usage_terms,
+        rights_marked: rights_marked,
+        rights_web_statement: rights_web_statement,
+        custom: custom,
+        raw_xml: raw_xml
+      }) do
+    %__MODULE__{
+      title: title,
+      creators: creators,
+      description: description,
+      subjects: subjects,
+      language: language,
+      rights: rights,
+      format: format,
+      creator_tool: creator_tool,
+      create_date: create_date,
+      modify_date: modify_date,
+      metadata_date: metadata_date,
+      producer: producer,
+      keywords: keywords,
+      pdf_version: pdf_version,
+      trapped: trapped,
+      rights_usage_terms: rights_usage_terms,
+      rights_marked: rights_marked,
+      rights_web_statement: rights_web_statement,
+      custom: custom,
+      raw_xml: raw_xml
+    }
   end
 end

@@ -53,7 +53,27 @@ defmodule PdfElixide.Document.Permissions do
   @doc false
   # Builds a `Permissions` from the raw map returned by the NIF.
   @spec from_nif(map()) :: t()
-  def from_nif(map) when is_map(map) do
-    struct(__MODULE__, map)
+  def from_nif(%{
+        print_low_res: print_low_res,
+        modify: modify,
+        copy: copy,
+        annotate: annotate,
+        fill_forms: fill_forms,
+        accessibility: accessibility,
+        assemble: assemble,
+        print_high_res: print_high_res,
+        raw: raw
+      }) do
+    %__MODULE__{
+      print_low_res: print_low_res,
+      modify: modify,
+      copy: copy,
+      annotate: annotate,
+      fill_forms: fill_forms,
+      accessibility: accessibility,
+      assemble: assemble,
+      print_high_res: print_high_res,
+      raw: raw
+    }
   end
 end

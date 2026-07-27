@@ -155,9 +155,60 @@ defmodule PdfElixide.Document.Annotation do
   # as structs, destination/action/field_type as tagged terms); only
   # `annotation_type` is renamed to the `:type` field.
   @spec from_nif(map()) :: t()
-  def from_nif(map) when is_map(map) do
-    {type, rest} = Map.pop(map, :annotation_type)
-    struct(__MODULE__, Map.put(rest, :type, type))
+  def from_nif(%{
+        page: page,
+        annotation_type: type,
+        subtype: subtype,
+        raw_subtype: raw_subtype,
+        contents: contents,
+        rect: rect,
+        author: author,
+        subject: subject,
+        creation_date: creation_date,
+        modification_date: modification_date,
+        destination: destination,
+        action: action,
+        quad_points: quad_points,
+        color: color,
+        interior_color: interior_color,
+        opacity: opacity,
+        flags: flags,
+        border: border,
+        field_type: field_type,
+        field_name: field_name,
+        field_value: field_value,
+        default_value: default_value,
+        field_flags: field_flags,
+        options: options,
+        appearance_state: appearance_state
+      }) do
+    %__MODULE__{
+      page: page,
+      type: type,
+      subtype: subtype,
+      raw_subtype: raw_subtype,
+      contents: contents,
+      rect: rect,
+      author: author,
+      subject: subject,
+      creation_date: creation_date,
+      modification_date: modification_date,
+      destination: destination,
+      action: action,
+      quad_points: quad_points,
+      color: color,
+      interior_color: interior_color,
+      opacity: opacity,
+      flags: flags,
+      border: border,
+      field_type: field_type,
+      field_name: field_name,
+      field_value: field_value,
+      default_value: default_value,
+      field_flags: field_flags,
+      options: options,
+      appearance_state: appearance_state
+    }
   end
 
   defimpl Inspect do
