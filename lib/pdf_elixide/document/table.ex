@@ -260,7 +260,10 @@ defmodule PdfElixide.Document.Table do
   `to_text/1` stop working, returning `{:error, %PdfElixide.Error{reason:
   :closed}}` (bang variants raise it).
 
-  Infallible and idempotent, so there is no `close!/1`.
+  Infallible and idempotent, so there is no `close!/1`. It does take the handle's
+  lock exclusively, so it waits for an in-flight render on the same table rather
+  than interrupting it — it frees the table as soon as the handle is idle, not
+  preemptively.
   """
   @spec close(t()) :: :ok
   def close(%__MODULE__{ref: ref}), do: Native.table_close(ref)

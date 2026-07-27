@@ -74,6 +74,10 @@ defmodule PdfElixide.Editor do
   `close/1` frees it now, which matters for long-lived processes that open many
   documents. Calling it is optional and idempotent.
 
+  It takes the same lock every other call on the handle takes, so it waits for an
+  in-flight call on the same editor — a save can hold that lock for seconds.
+  *Immediately* means as soon as the handle is idle, not preemptively.
+
   **Unsaved edits are discarded** — call `save/3` or `to_binary/2` first.
   Afterwards, functions that read or mutate the editor return
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise

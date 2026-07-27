@@ -52,7 +52,9 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<ResourceArc<EditorResource>> {
 
 /// Releases the editor's native memory now, rather than waiting for the BEAM to
 /// garbage-collect the handle. Idempotent; later calls on the handle fail with
-/// `:closed`, and any unsaved edits are discarded.
+/// `:closed`, and any unsaved edits are discarded. Takes the editor lock, so it
+/// waits for an in-flight call on the same handle to return rather than
+/// interrupting it — see [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
     resource.editor.close();

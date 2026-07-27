@@ -82,11 +82,21 @@ impl<T> Closable<T> {
     /// Drops the value now, freeing its memory. Idempotent, and infallible: a
     /// poisoned lock is recovered, since releasing memory is safe regardless of
     /// what a previous panic left behind.
+    ///
+    /// It takes the lock like any other access, so an in-flight
+    /// [`Closable::with_lock`] or [`Closable::with_read`] on the same handle
+    /// delays it until that call returns: "now" means as soon as the handle is
+    /// idle, not preemptively. That wait is why every `*_close` NIF is
+    /// dirty-scheduled.
     pub fn close(&self) {
         let mut guard = self.value.write().unwrap_or_else(|e| e.into_inner());
         *guard = None;
     }
 
+    /// Whether the value has been released, recovering a poisoned lock the same
+    /// way [`Closable::close`] does. It still takes the read lock, so an
+    /// in-flight exclusive access on the same handle delays it — which is why
+    /// the `*_closed` NIFs are dirty-scheduled too, cheap as the check looks.
     pub fn is_closed(&self) -> bool {
         self.value
             .read()

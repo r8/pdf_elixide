@@ -320,7 +320,9 @@ fn document_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<
 
 /// Releases the document's native memory now, rather than waiting for the BEAM
 /// to garbage-collect the handle. Idempotent; later calls on the handle fail
-/// with `:closed`.
+/// with `:closed`. Takes the document lock, so it waits for an in-flight call on
+/// the same handle to return rather than interrupting it — see
+/// [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_close(resource: ResourceArc<DocumentResource>) -> Atom {
     resource.doc.close();

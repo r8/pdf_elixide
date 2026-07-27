@@ -197,7 +197,9 @@ fn image_data<'a>(env: Env<'a>, resource: ResourceArc<ImageResource>) -> NifResu
 }
 
 /// Releases the image's pixel data now, rather than waiting for the BEAM to
-/// garbage-collect the handle. Idempotent.
+/// garbage-collect the handle. Idempotent. Takes the handle's lock exclusively,
+/// so it waits for an in-flight read on the same handle to return — see
+/// [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn image_close(resource: ResourceArc<ImageResource>) -> rustler::Atom {
     resource.image.close();

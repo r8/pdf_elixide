@@ -170,6 +170,11 @@ fn table_to_text(resource: ResourceArc<TableResource>) -> NifResult<String> {
     resource.table.with_read(|table| Ok(table.render_text()))
 }
 
+/// Releases the detected table now, rather than waiting for the BEAM to
+/// garbage-collect the handle. Idempotent; the rendering NIFs above then fail
+/// with `:closed`. Takes the handle's lock exclusively, so it waits for an
+/// in-flight render on the same handle to return — see
+/// [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_close(resource: ResourceArc<TableResource>) -> Atom {
     resource.table.close();
@@ -177,6 +182,7 @@ fn table_close(resource: ResourceArc<TableResource>) -> Atom {
     atoms::ok()
 }
 
+/// Returns whether the table has been released with `table_close`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_closed(resource: ResourceArc<TableResource>) -> bool {
     resource.table.is_closed()

@@ -224,6 +224,10 @@ defmodule PdfElixide.Document.Image do
   handle; `close/1` frees them now, which is worth doing when walking many large
   images. Calling it is optional and idempotent.
 
+  It takes the handle's lock exclusively, so it waits for an in-flight `data/1`,
+  `to_binary/2` or `save/3` on the same image — re-encoding a large raster is not
+  instant. *Immediately* means as soon as the handle is idle, not preemptively.
+
   Afterwards `data/1`, `to_binary/2`, and `save/3` return
   `{:error, %PdfElixide.Error{reason: :closed}}` (bang variants raise it); the
   metadata fields on the struct keep working. An image's lifetime is independent

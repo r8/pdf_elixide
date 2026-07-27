@@ -7,7 +7,10 @@ defmodule PdfElixide.Native.SchedulingTest do
   the same handle holds it for seconds, so a plain `#[rustler::nif]` that takes
   the lock parks a normal BEAM scheduler thread for that whole duration — enough
   such callers and the VM stops scheduling processes, firing timers and sending
-  distribution heartbeats.
+  distribution heartbeats. `Closable::close` and `Closable::is_closed` take that
+  same `RwLock` — they recover a poisoned lock rather than erroring, but nothing
+  lets them jump an in-flight guard — so the `*_close` / `*_closed` NIFs are in
+  scope here too, cheap as their own work looks.
 
   If you add a NIF that reaches a resource, give it `schedule = "DirtyCpu"` (or
   `"DirtyIo"` for filesystem work) rather than relaxing this test.
@@ -21,11 +24,14 @@ defmodule PdfElixide.Native.SchedulingTest do
 
   @src Path.expand("../../../native/pdf_elixide_nif/src", __DIR__)
 
-  # Every accessor on `Closable`. Spelled as the call sites are — the guard-taking
-  # `lock`/`read` are private and only ever reached through these two, so matching
-  # `.lock()`/`.read()` would match nothing. `close`/`is_closed` are excluded: they
-  # recover a poisoned lock and never wait on an extraction.
-  @locking_calls [".with_lock(", ".with_read("]
+  # Every entry point on `Closable` that takes its `RwLock`, spelled as the call
+  # sites are — the guard-taking `lock`/`read` are private and only ever reached
+  # through `with_lock`/`with_read`, so matching `.lock()`/`.read()` would match
+  # nothing. `close`/`is_closed` are here because recovering a poisoned lock is
+  # not the same as not waiting for one: `close` is an `RwLock::write` that drains
+  # every in-flight guard, and `is_closed` an `RwLock::read` that waits behind a
+  # held write guard.
+  @locking_calls [".with_lock(", ".with_read(", ".close()", ".is_closed()"]
 
   # Sanity floor for the block parser, well under the 67 stubs registered in
   # `PdfElixide.Native`, so a parsing regression fails loudly instead of finding

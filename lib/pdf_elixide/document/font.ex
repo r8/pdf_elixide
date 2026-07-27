@@ -134,6 +134,10 @@ defmodule PdfElixide.Document.Font do
   and idempotent. Because a font can be shared between pages, the underlying
   bytes are freed once no other extracted handle still references the same font.
 
+  It takes the handle's lock exclusively, so it waits for an in-flight `data/1`
+  on the same font. *Immediately* means as soon as the handle is idle, not
+  preemptively.
+
   Afterwards `data/1` returns `{:error, %PdfElixide.Error{reason: :closed}}`
   (and `data!/1` raises it); the metadata fields on the struct keep working. A
   font's lifetime is independent of the document it came from — closing either

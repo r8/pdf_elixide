@@ -159,6 +159,10 @@ defmodule PdfElixide.Document do
   it now, which matters for long-lived processes that open many documents.
   Calling it is optional and idempotent.
 
+  It takes the same lock every other call on the handle takes, so it waits for an
+  in-flight call on the same document — an extraction can hold that lock for
+  seconds. *Immediately* means as soon as the handle is idle, not preemptively.
+
   Afterwards, functions that read the document return
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
   it. `version/1`, `source_path/1` and `page_count/1` keep working, since they
