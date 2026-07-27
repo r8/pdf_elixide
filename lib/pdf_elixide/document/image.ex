@@ -243,6 +243,12 @@ defmodule PdfElixide.Document.Image do
   def closed?(%__MODULE__{ref: ref}), do: Native.image_closed(ref)
 
   # Validates an explicit :format option, returning the atom or raising.
+  #
+  # The `:png` default of `to_binary/2` has no builder to pin — it is a bare
+  # atom argument, not a `NifMap` field, so it is absent from
+  # `option_defaults_test.exs`. `document_test.exs`'s "defaults to PNG bytes"
+  # magic-byte assertion is what holds it, and `save/3`'s extension inference
+  # below is pinned there too; both are load-bearing.
   defp validate_format!(format) when format in [:png, :jpeg], do: format
 
   defp validate_format!(other) do

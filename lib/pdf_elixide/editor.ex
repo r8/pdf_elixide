@@ -185,6 +185,8 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:save)` — changing one has to fail there first.
   defp build_save_options(opts) do
     opts = Keyword.validate!(opts, @save_opts_keys)
 
@@ -195,6 +197,11 @@ defmodule PdfElixide.Editor do
       garbage_collect: Keyword.get(opts, :garbage_collect, true)
     }
   end
+
+  @doc false
+  # See `PdfElixide.Document.__option_defaults__/1` for why this exists.
+  @spec __option_defaults__(:save) :: map()
+  def __option_defaults__(:save), do: build_save_options([])
 
   defimpl Inspect do
     import Inspect.Algebra

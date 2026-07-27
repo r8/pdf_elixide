@@ -5,7 +5,9 @@ defmodule PdfElixide.ExtractionOptionsTest do
   Every assertion here pins an *observable* difference rather than merely
   checking that an option is accepted — an option that decodes but does
   nothing is the failure mode worth catching. The upstream-deprecation
-  canaries live separately, in `PdfElixide.UpstreamDriftTest`.
+  canaries live separately, in `PdfElixide.UpstreamDriftTest`, and the value
+  each option takes when it is *not* passed lives in
+  `PdfElixide.OptionDefaultsTest`.
   """
   use ExUnit.Case, async: true
 
@@ -41,25 +43,6 @@ defmodule PdfElixide.ExtractionOptionsTest do
   end
 
   defp texts(items), do: Enum.map(items, & &1.text)
-
-  describe "defaults are unchanged" do
-    setup do: %{doc: open(@extraction_pdf)}
-
-    test "an empty option list matches the no-option arity", %{doc: doc} do
-      assert Document.text!(doc, @columns, []) == Document.text!(doc, @columns)
-      assert Document.text!(doc, []) == Document.text!(doc)
-      assert Document.words!(doc, @columns, []) == Document.words!(doc, @columns)
-      assert Document.words!(doc, []) == Document.words!(doc)
-      assert Document.chars!(doc, @columns, []) == Document.chars!(doc, @columns)
-      assert Document.text_lines!(doc, @columns, []) == Document.text_lines!(doc, @columns)
-      assert Document.spans!(doc, @columns, []) == Document.spans!(doc, @columns)
-    end
-
-    test "tables/3 with no options matches tables/2", %{doc: doc} do
-      assert texts_of_tables(Document.tables!(doc, @ruleless, [])) ==
-               texts_of_tables(Document.tables!(doc, @ruleless))
-    end
-  end
 
   describe "text/3" do
     setup do: %{doc: open(@extraction_pdf), table_doc: open(@table_pdf)}
@@ -563,6 +546,4 @@ defmodule PdfElixide.ExtractionOptionsTest do
       assert_raise ArgumentError, ~r/keyword list/, fn -> Document.words(doc, 0, [:nope]) end
     end
   end
-
-  defp texts_of_tables(tables), do: Enum.map(tables, & &1.rows)
 end

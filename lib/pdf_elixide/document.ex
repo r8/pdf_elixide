@@ -133,6 +133,8 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # The default below is pinned by `option_defaults_test.exs`, through
+  # `__option_defaults__(:open)` — changing it has to fail there first.
   defp build_open_options(opts) do
     opts = Keyword.validate!(opts, @open_opts_keys)
     %{password: Keyword.get(opts, :password)}
@@ -698,6 +700,8 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:text)` — changing one has to fail there first.
   defp build_text_options(opts) do
     opts = Keyword.validate!(opts, @text_opts_keys)
 
@@ -870,6 +874,9 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:markdown)` — changing one has to fail there
+  # first.
   defp build_markdown_options(opts) do
     opts = Keyword.validate!(opts, @markdown_opts_keys)
 
@@ -1086,6 +1093,8 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:html)` — changing one has to fail there first.
   defp build_html_options(opts) do
     opts = Keyword.validate!(opts, @html_opts_keys)
 
@@ -1255,6 +1264,9 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:words)` — changing one has to fail there
+  # first.
   defp build_words_options(opts) do
     opts = Keyword.validate!(opts, @words_opts_keys)
 
@@ -1364,6 +1376,9 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:text_lines)` — changing one has to fail there
+  # first.
   defp build_text_lines_options(opts) do
     opts = Keyword.validate!(opts, @text_lines_opts_keys)
 
@@ -1472,6 +1487,9 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:chars)` — changing one has to fail there
+  # first.
   defp build_chars_options(opts) do
     opts = Keyword.validate!(opts, @chars_opts_keys)
 
@@ -1686,6 +1704,9 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:spans)` — changing one has to fail there
+  # first.
   defp build_spans_options(opts) do
     opts = Keyword.validate!(opts, @spans_opts_keys)
 
@@ -1709,6 +1730,10 @@ defmodule PdfElixide.Document do
   # option was wrong.
   defp build_span_merging_option(nil), do: nil
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:span_merging)`, which passes `[]` to reach
+  # this clause rather than the `nil` one — changing one has to fail there
+  # first.
   defp build_span_merging_option(opts) when is_list(opts) do
     opts = Keyword.validate!(opts, @span_merging_opts_keys)
 
@@ -1732,6 +1757,10 @@ defmodule PdfElixide.Document do
 
   defp build_adaptive_threshold_option(nil), do: nil
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:adaptive_threshold)`, which passes `[]` to
+  # reach this clause rather than the `nil` one — changing one has to fail
+  # there first.
   defp build_adaptive_threshold_option(opts) when is_list(opts) do
     opts = Keyword.validate!(opts, @adaptive_threshold_opts_keys)
 
@@ -1928,6 +1957,9 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:tables)` — changing one has to fail there
+  # first.
   defp build_tables_options(opts) do
     opts = Keyword.validate!(opts, @tables_opts_keys)
 
@@ -1948,6 +1980,10 @@ defmodule PdfElixide.Document do
   # Takes an already-validated keyword list: `tables/2,3` allows `:region`
   # alongside the detection keys, while the `:table_detection` option of the
   # `text` functions does not, so each caller checks its own key list.
+  #
+  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
+  # through `__option_defaults__(:table_detection)`, which passes `[]` so the
+  # map form is built at all — changing one has to fail there first.
   defp build_table_detection(opts) do
     %{
       preset: Keyword.get(opts, :preset, :default),
@@ -1965,6 +2001,38 @@ defmodule PdfElixide.Document do
       text_fallback: Keyword.get(opts, :text_fallback)
     }
   end
+
+  @doc false
+  # The exact option map each `build_*_options/1` produces for an empty list —
+  # every default this library owns, reachable from a test.
+  #
+  # A `NifMap` decode is total, so a builder that stopped emitting a key fails
+  # loudly on the next call and any test catches it. A changed default *value*
+  # is the drift nothing catches: `f(doc, key: default) == f(doc)` cannot fail,
+  # both sides going through this same builder to the same map, and roughly
+  # half the keys default to `nil` and are observable on no fixture at all.
+  #
+  # `test/pdf_elixide/option_defaults_test.exs` therefore compares these maps
+  # against hand-written ones, key by key. This function delegates rather than
+  # restating a single number, so it cannot disagree with the builders — only
+  # the test can, which is the point.
+  #
+  # The three nested families reach their list-taking clause, since `[]` rather
+  # than `nil` is what forces the map form; `:preset` is the only key in them
+  # whose default is not `nil`.
+  @spec __option_defaults__(atom()) :: map()
+  def __option_defaults__(:open), do: build_open_options([])
+  def __option_defaults__(:text), do: build_text_options([])
+  def __option_defaults__(:markdown), do: build_markdown_options([])
+  def __option_defaults__(:html), do: build_html_options([])
+  def __option_defaults__(:words), do: build_words_options([])
+  def __option_defaults__(:text_lines), do: build_text_lines_options([])
+  def __option_defaults__(:chars), do: build_chars_options([])
+  def __option_defaults__(:spans), do: build_spans_options([])
+  def __option_defaults__(:tables), do: build_tables_options([])
+  def __option_defaults__(:table_detection), do: build_table_detection_option([])
+  def __option_defaults__(:span_merging), do: build_span_merging_option([])
+  def __option_defaults__(:adaptive_threshold), do: build_adaptive_threshold_option([])
 
   @doc """
   Extracts the vector paths of the whole document.

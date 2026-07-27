@@ -189,10 +189,17 @@ defmodule PdfElixide.Document.Table do
     end
   end
 
+  # The default below is pinned by `option_defaults_test.exs`, through
+  # `__option_defaults__(:markdown)` — changing it has to fail there first.
   defp build_markdown_options(opts) do
     opts = Keyword.validate!(opts, @markdown_opts_keys)
     %{bold_markers: Keyword.get(opts, :bold_markers, :conservative)}
   end
+
+  @doc false
+  # See `PdfElixide.Document.__option_defaults__/1` for why this exists.
+  @spec __option_defaults__(:markdown) :: map()
+  def __option_defaults__(:markdown), do: build_markdown_options([])
 
   @doc """
   Renders the table as an HTML `<table>` fragment.
