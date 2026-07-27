@@ -20,6 +20,11 @@ defmodule PdfElixide.DocumentTest do
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
+  # Encryption revision 4 (AES-128), where the password is a PDFDocEncoded byte
+  # string rather than the UTF-8 @encrypted_pdf's revision 6 requires. Its user
+  # password is Latin-1 "café", whose 0xE9 is not valid UTF-8 — the only fixture
+  # that can prove a byte password reaches upstream unmangled.
+  @latin1_pdf Path.join(@fixtures, "encrypted_latin1.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
@@ -47,6 +52,7 @@ defmodule PdfElixide.DocumentTest do
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
   @unreachable_page 2
   @password "secret"
+  @latin1_password "caf" <> <<0xE9>>
 
   describe "page_count/1" do
     test "returns {:ok, 3} for the valid fixture" do
@@ -2407,6 +2413,46 @@ defmodule PdfElixide.DocumentTest do
 
       assert {:error, %Error{reason: :wrong_password}} =
                Document.from_binary(bytes, password: "wrong")
+    end
+  end
+
+  # `open/2`'s `:password` and `authenticate/2` reach the same upstream call,
+  # which hashes raw bytes and never validates UTF-8, so they must accept and
+  # reject exactly the same values. The open option used to decode as a Rust
+  # `String`, which rejected a non-UTF-8 password as a `NifMap` field-decode
+  # failure — `%Error{reason: :other}` — while `authenticate/2` accepted it.
+  describe "non-UTF-8 passwords" do
+    test "open/2 accepts a PDFDocEncoded password that is not valid UTF-8" do
+      refute String.valid?(@latin1_password)
+      assert {:ok, %Document{}} = Document.open(@latin1_pdf, password: @latin1_password)
+    end
+
+    test "from_binary/2 accepts the same bytes" do
+      bytes = File.read!(@latin1_pdf)
+      assert {:ok, %Document{}} = Document.from_binary(bytes, password: @latin1_password)
+    end
+
+    test "the UTF-8 spelling of the same password is rejected" do
+      assert {:error, %Error{reason: :wrong_password}} =
+               Document.open(@latin1_pdf, password: "café")
+    end
+
+    test "open/2 and authenticate/2 accept the same bytes" do
+      doc = Document.open!(@latin1_pdf, password: @latin1_password)
+      assert {:ok, true} = Document.authenticate(doc, @latin1_password)
+    end
+
+    test "open/2 and authenticate/2 reject the same bytes" do
+      assert {:error, %Error{reason: :wrong_password}} =
+               Document.open(@encrypted_pdf, password: <<0xFF, 0xFE>>)
+
+      doc = Document.open!(@encrypted_pdf)
+      assert {:ok, false} = Document.authenticate(doc, <<0xFF, 0xFE>>)
+    end
+
+    test "extracts text after open-with-a-byte-password" do
+      doc = Document.open!(@latin1_pdf, password: @latin1_password)
+      assert Document.text!(doc, 0) =~ "Page One"
     end
   end
 

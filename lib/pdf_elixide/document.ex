@@ -56,11 +56,17 @@ defmodule PdfElixide.Document do
       for the bang variants). When omitted or `nil`, no authentication
       attempt is made beyond `pdf_oxide`'s built-in empty-password try.
 
+  The password is a *byte string*, not necessarily valid UTF-8: a password for
+  a PDF of encryption revision 4 or lower is PDFDocEncoded, so `"caf" <> <<0xE9>>`
+  is a legitimate password that no UTF-8 spelling can express. These bytes reach
+  the same upstream check `authenticate/2` uses, so the two accept and reject
+  exactly the same values.
+
   To *check* a password against an already-open document without treating a
   wrong one as an error, use `authenticate/2`, which returns `{:ok, false}`
   rather than a `:wrong_password` error.
   """
-  @type open_opts :: [password: String.t()]
+  @type open_opts :: [password: binary()]
 
   @doc """
   Opens a PDF document from the specified file path.
@@ -308,8 +314,11 @@ defmodule PdfElixide.Document do
   cannot be produced — this is a password *check*, so a wrong password is a
   normal `{:ok, false}` result and `{:error, _}` is reserved for PDF/crypto
   errors.
+
+  The password is a byte string and is not required to be valid UTF-8 — see
+  `t:open_opts/0`, whose `:password` option takes the same values.
   """
-  @spec authenticate(t(), String.t()) :: {:ok, boolean()} | {:error, Error.t()}
+  @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
     Wrap.call(fn -> Native.document_authenticate(ref, password) end)
   end
@@ -319,7 +328,7 @@ defmodule PdfElixide.Document do
 
   Still returns `false` (does not raise) for a wrong password.
   """
-  @spec authenticate!(t(), String.t()) :: boolean()
+  @spec authenticate!(t(), binary()) :: boolean()
   def authenticate!(doc, password) when is_binary(password) do
     case authenticate(doc, password) do
       {:ok, result} -> result

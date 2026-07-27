@@ -32,15 +32,25 @@ use crate::{
     DocumentResource,
 };
 
-#[derive(NifMap, Debug)]
-pub struct OpenOptionsNif {
-    pub password: Option<String>,
+/// The `:password` is a `Binary`, not a `String`, for the same reason
+/// `document_authenticate` takes one: upstream authenticates over raw bytes
+/// (`PdfDocument::authenticate(&[u8])`), and a revision ≤ 4 password is a
+/// PDFDocEncoded byte string that need not be valid UTF-8. Decoding it as a
+/// `String` rejected such a password here — as a `NifMap` field-decode failure,
+/// so `%Error{reason: :other}` rather than `:wrong_password` — while
+/// `document_authenticate` accepted the very same bytes.
+///
+/// No `Debug`: `Binary` has no `Debug` impl, and a password has no business in
+/// a derived debug string anyway.
+#[derive(NifMap)]
+pub struct OpenOptionsNif<'a> {
+    pub password: Option<Binary<'a>>,
 }
 
-impl OpenOptionsNif {
+impl OpenOptionsNif<'_> {
     fn apply(self, doc: &PdfDocument) -> NifResult<()> {
         if let Some(pw) = self.password {
-            let ok = doc.authenticate(pw.as_bytes()).map_err(to_nif_err)?;
+            let ok = doc.authenticate(pw.as_slice()).map_err(to_nif_err)?;
             if !ok {
                 return Err(tagged_err(
                     atoms::wrong_password(),
@@ -281,7 +291,7 @@ fn cached_fields(resource: &DocumentResource) -> NifResult<((u8, u8), Option<usi
 /// Opens a PDF document from the specified file path, returning the handle
 /// together with the version and page count Elixir caches on the struct.
 #[rustler::nif(schedule = "DirtyIo")]
-fn document_open(path: String, options: OpenOptionsNif) -> NifResult<OpenedDocument> {
+fn document_open(path: String, options: OpenOptionsNif<'_>) -> NifResult<OpenedDocument> {
     let doc = PdfDocument::open(path).map_err(to_nif_err)?;
     options.apply(&doc)?;
 
@@ -296,7 +306,7 @@ fn document_open(path: String, options: OpenOptionsNif) -> NifResult<OpenedDocum
 /// Opens a PDF document from the given binary data, returning the handle
 /// together with the version and page count Elixir caches on the struct.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_from_bytes(bytes: Binary, options: OpenOptionsNif) -> NifResult<OpenedDocument> {
+fn document_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedDocument> {
     let doc = PdfDocument::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
     options.apply(&doc)?;
 
