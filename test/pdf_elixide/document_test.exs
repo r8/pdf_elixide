@@ -196,10 +196,9 @@ defmodule PdfElixide.DocumentTest do
     test "rejects a value that is not :skip or :halt" do
       doc = Document.open!(@valid_pdf)
 
-      assert {:error, %Error{reason: :other, message: message}} =
-               Document.text(doc, on_page_error: :abort)
-
-      assert message =~ "on_page_error"
+      assert_raise ArgumentError, ~r/on_page_error/, fn ->
+        Document.text(doc, on_page_error: :abort)
+      end
     end
   end
 
@@ -453,14 +452,28 @@ defmodule PdfElixide.DocumentTest do
       end
     end
 
-    test "returns {:error, reason} for an option of the wrong type" do
+    test "raises for an option of the wrong type" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, %Error{reason: :other}} = Document.to_markdown(doc, detect_headings: "yes")
+
+      assert_raise ArgumentError, ~r/:detect_headings/, fn ->
+        Document.to_markdown(doc, detect_headings: "yes")
+      end
     end
 
-    test "returns {:error, reason} for an unknown reading_order value" do
+    test "raises for an unknown reading_order value" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, %Error{reason: :other}} = Document.to_markdown(doc, reading_order: :nope)
+
+      assert_raise ArgumentError, ~r/:reading_order/, fn ->
+        Document.to_markdown(doc, reading_order: :nope)
+      end
+    end
+
+    test "raises for an unknown key" do
+      doc = Document.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:detect_heading/, fn ->
+        Document.to_markdown(doc, detect_heading: true)
+      end
     end
   end
 
@@ -780,24 +793,31 @@ defmodule PdfElixide.DocumentTest do
       end
     end
 
-    test "returns {:error, reason} for an option of the wrong type" do
+    test "raises for an option of the wrong type" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, %Error{reason: :other}} = Document.to_html(doc, detect_headings: "yes")
+
+      assert_raise ArgumentError, ~r/:detect_headings/, fn ->
+        Document.to_html(doc, detect_headings: "yes")
+      end
     end
 
-    test "returns {:error, reason} for an unknown reading_order value" do
+    test "raises for an unknown reading_order value" do
       doc = Document.open!(@valid_pdf)
-      assert {:error, %Error{reason: :other}} = Document.to_html(doc, reading_order: :nope)
+
+      assert_raise ArgumentError, ~r/:reading_order/, fn ->
+        Document.to_html(doc, reading_order: :nope)
+      end
     end
 
-    test "ignores a Markdown-only option instead of failing" do
+    test "raises for a Markdown-only option rather than ignoring it" do
       doc = Document.open!(@valid_pdf)
-      assert {:ok, plain} = Document.to_html(doc)
-      # Options this function does not declare never reach the NIF, so a
-      # Markdown-only key is dropped rather than rejected — it would have no
-      # effect on HTML in any case.
-      assert Document.to_html(doc, bold_markers: :aggressive) == {:ok, plain}
-      assert Document.to_html(doc, annotate_skipped_pages: false) == {:ok, plain}
+
+      # These keys are valid for `to_markdown/2` but upstream never consults
+      # them on the HTML path, so accepting them would silently promise an
+      # effect that cannot happen.
+      for opt <- [[bold_markers: :aggressive], [annotate_skipped_pages: false]] do
+        assert_raise ArgumentError, fn -> Document.to_html(doc, opt) end
+      end
     end
   end
 
@@ -2004,18 +2024,22 @@ defmodule PdfElixide.DocumentTest do
       assert aggressive =~ "| Age |"
     end
 
-    test "ignores unknown options" do
+    test "raises for an unknown option" do
       doc = Document.open!(@table_pdf)
       [table] = Document.tables!(doc, 0)
 
-      assert Table.to_markdown(table, detect_headings: false) == Table.to_markdown(table)
+      assert_raise ArgumentError, ~r/:detect_headings/, fn ->
+        Table.to_markdown(table, detect_headings: false)
+      end
     end
 
-    test "returns {:error, reason} for a wrongly typed option" do
+    test "raises for a wrongly typed option" do
       doc = Document.open!(@table_pdf)
       [table] = Document.tables!(doc, 0)
 
-      assert {:error, %Error{reason: :other}} = Table.to_markdown(table, bold_markers: :nope)
+      assert_raise ArgumentError, ~r/:bold_markers/, fn ->
+        Table.to_markdown(table, bold_markers: :nope)
+      end
     end
 
     test "returns {:error, reason} for a closed table" do

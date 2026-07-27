@@ -66,6 +66,16 @@ impl From<RectFilterModeNif> for RectFilterMode {
 /// The single range test also rejects NaN and both infinities, every IEEE
 /// comparison against NaN being false. Erlang floats can be neither, so that
 /// is belt-and-braces.
+///
+/// **Unreachable from Elixir, and kept anyway.** `Document.validate_region_mode!/2`
+/// now applies the identical bound before building the options map, so a bad
+/// ratio raises `ArgumentError` there rather than arriving here — the binding
+/// reports every caller mistake as an exception, and a `tagged_err` cannot be
+/// told apart from a genuine `:other` PDF failure by the time it reaches
+/// `Native.Wrap.call/1`. This stays as defence in depth for any future caller
+/// that reaches the NIF by another route, the same posture as
+/// `MAX_OUTLINE_DEPTH` in `outline.rs`. Keep the message in step with the
+/// Elixir one if either changes.
 fn validate_mode(field: &str, mode: &RectFilterModeNif) -> NifResult<()> {
     if let RectFilterModeNif::MinOverlap(ratio) = mode {
         if !(0.0..=1.0).contains(ratio) {

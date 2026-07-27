@@ -37,11 +37,26 @@ defmodule PdfElixide.Error do
   ## Errors versus exceptions
 
   This struct is reserved for PDF and runtime failures. A malformed *argument*
-  raises instead, even from a non-bang function — `FunctionClauseError` when a
-  guard rejects it (e.g. a negative page index) and `ArgumentError` when the
-  native layer cannot decode it (e.g. a form field value that is not a tagged
-  tuple) — because that is a bug in the calling code rather than a condition of
-  the document.
+  raises instead, even from a non-bang function, because that is a bug in the
+  calling code rather than a condition of the document:
+
+    * `FunctionClauseError` when a guard rejects it — a negative page index, an
+      options argument that is not a keyword list.
+    * `ArgumentError` for everything else, including every way an option can be
+      wrong: an unknown key (`detect_heading:` for `:detect_headings`), a key
+      given twice, a declared key given a value the native layer cannot decode,
+      and a declared key whose value is out of range (`{:min_overlap, 2.0}`). A
+      value the native layer cannot decode outside an options map — a form
+      field value that is not a tagged tuple — raises the same way.
+
+  The message always names the offending key, so a typo is reported rather than
+  silently ignored and a wrong value is reported rather than silently applied.
+  Build option lists with `Keyword.merge/2` rather than `++`, since a duplicated
+  key is rejected instead of resolved to the first occurrence.
+
+  Nothing about the *caller* therefore arrives as a `%PdfElixide.Error{}`; if
+  you get one, the arguments were accepted and the document, the filesystem or
+  the handle is what failed.
   """
 
   @type reason ::

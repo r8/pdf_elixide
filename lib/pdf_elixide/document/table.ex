@@ -93,14 +93,18 @@ defmodule PdfElixide.Document.Table do
   * `:bold_markers` — how `**bold**` markers are placed around spans whose font
     is bold: `:conservative` (the default) skips whitespace-only spans,
     `:aggressive` wraps them too. This is the only conversion option upstream's
-    table renderer reads, which is why `to_html/1` takes none; unknown keys are
-    ignored, and a wrongly typed value returns `{:error, %PdfElixide.Error{reason:
-    :other}}` rather than raising.
+    table renderer reads, which is why `to_html/1` takes none.
+
+  An unknown key, or a `:bold_markers` value other than those two, raises
+  `ArgumentError` naming the offending key; see the "Errors versus exceptions"
+  section of `PdfElixide.Error`.
 
   Bold markers are suppressed in the header row of a multi-row table either way,
   since a Markdown header is already rendered bold by readers.
   """
   @type markdown_opts :: [bold_markers: :conservative | :aggressive]
+
+  @markdown_opts_keys [:bold_markers]
 
   @doc """
   The cell at the zero-based row `row_index` and column `col`, or `nil` when
@@ -169,7 +173,8 @@ defmodule PdfElixide.Document.Table do
   """
   @spec to_markdown(t(), markdown_opts()) :: {:ok, String.t()} | {:error, Error.t()}
   def to_markdown(%__MODULE__{ref: ref}, opts \\ []) when is_reference(ref) and is_list(opts) do
-    Wrap.call(fn -> Native.table_to_markdown(ref, build_markdown_options(opts)) end)
+    options = build_markdown_options(opts)
+    Wrap.call(fn -> Native.table_to_markdown(ref, options) end)
   end
 
   @doc """
@@ -185,6 +190,7 @@ defmodule PdfElixide.Document.Table do
   end
 
   defp build_markdown_options(opts) do
+    opts = Keyword.validate!(opts, @markdown_opts_keys)
     %{bold_markers: Keyword.get(opts, :bold_markers, :conservative)}
   end
 

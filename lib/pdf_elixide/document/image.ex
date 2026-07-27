@@ -72,8 +72,16 @@ defmodule PdfElixide.Document.Image do
           | :device_n
           | :pattern
 
-  @typedoc "Options for `to_binary/2` and `save/3`."
+  @typedoc """
+  Options for `to_binary/2` and `save/3`.
+
+  An unknown key, or a `:format` other than `:png` or `:jpeg`, raises
+  `ArgumentError` naming the offending key; see the "Errors versus exceptions"
+  section of `PdfElixide.Error`.
+  """
   @type image_opts :: [format: :png | :jpeg]
+
+  @image_opts_keys [:format]
 
   @typedoc "The layout of raw (uncompressed) pixel data from `data/1`."
   @type pixel_format :: :rgb | :grayscale | :cmyk
@@ -163,6 +171,7 @@ defmodule PdfElixide.Document.Image do
   """
   @spec to_binary(t(), image_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, @image_opts_keys)
     format = validate_format!(Keyword.get(opts, :format, :png))
     Wrap.call(fn -> Native.image_to_binary(ref, format) end)
   end
@@ -238,7 +247,7 @@ defmodule PdfElixide.Document.Image do
 
   # For save/3: the explicit :format wins, otherwise infer from the extension.
   defp save_format!(opts, path) do
-    case Keyword.fetch(opts, :format) do
+    case opts |> Keyword.validate!(@image_opts_keys) |> Keyword.fetch(:format) do
       {:ok, format} -> validate_format!(format)
       :error -> format_from_ext!(path)
     end

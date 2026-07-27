@@ -31,6 +31,24 @@ defmodule PdfElixide.Native.WrapTest do
                Wrap.call(fn -> :erlang.error("something went wrong") end)
     end
 
+    test "a Rustler field-decode message raises ArgumentError instead" do
+      # Rustler reports an undecodable `NifMap` field by raising a plain
+      # string. A bad option is a caller bug, so it must raise rather than
+      # become an error struct — and the message names the field, which is why
+      # it is worth keeping instead of collapsing to a bare :badarg.
+      assert_raise ArgumentError, "Could not decode field :detect_headings on %{}", fn ->
+        Wrap.call(fn -> :erlang.error("Could not decode field :detect_headings on %{}") end)
+      end
+    end
+
+    test "any other bare string still becomes an :other error" do
+      # The clause above matches on Rustler's wording. Should that wording ever
+      # change, the fallback below is what the caller gets — the behavior this
+      # library shipped before, not a crash.
+      assert {:error, %Error{reason: :other, message: "Could not decide anything"}} =
+               Wrap.call(fn -> :erlang.error("Could not decide anything") end)
+    end
+
     test "normalizes an unloaded NIF to :other" do
       assert {:error, %Error{reason: :other, message: ":nif_not_loaded"}} =
                Wrap.call(fn -> :erlang.nif_error(:nif_not_loaded) end)

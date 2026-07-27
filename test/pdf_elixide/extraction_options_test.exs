@@ -11,7 +11,6 @@ defmodule PdfElixide.ExtractionOptionsTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
-  alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
@@ -380,14 +379,21 @@ defmodule PdfElixide.ExtractionOptionsTest do
       [first | _] = Document.words!(doc, @ruleless)
 
       for ratio <- [-0.1, -1.0, 1.1, 2.0] do
-        assert {:error, %Error{reason: :other, message: message}} =
-                 Document.words(doc, @ruleless,
-                   region: first.bbox,
-                   region_mode: {:min_overlap, ratio}
-                 )
+        error =
+          assert_raise ArgumentError, fn ->
+            Document.words(doc, @ruleless,
+              region: first.bbox,
+              region_mode: {:min_overlap, ratio}
+            )
+          end
+
+        message = Exception.message(error)
 
         assert message =~ ":region_mode"
         assert message =~ "between 0.0 and 1.0"
+        # The ratio echoes back in the float form it was passed, not as an
+        # integer-looking `-1`.
+        assert message =~ inspect(ratio)
       end
     end
 
@@ -397,13 +403,12 @@ defmodule PdfElixide.ExtractionOptionsTest do
       # This is the arm where an unchecked ratio does the most damage: a
       # negative one matches every object, so the exclusion would silently
       # empty the page instead of dropping one region.
-      assert {:error, %Error{reason: :other, message: message}} =
-               Document.text(doc, @ruleless,
-                 exclude_regions: [first.bbox],
-                 exclude_regions_mode: {:min_overlap, -1.0}
-               )
-
-      assert message =~ ":exclude_regions_mode"
+      assert_raise ArgumentError, ~r/:exclude_regions_mode/, fn ->
+        Document.text(doc, @ruleless,
+          exclude_regions: [first.bbox],
+          exclude_regions_mode: {:min_overlap, -1.0}
+        )
+      end
     end
 
     test "every extractor that takes a mode rejects it", %{doc: doc} do
@@ -423,7 +428,15 @@ defmodule PdfElixide.ExtractionOptionsTest do
             fn -> Document.text_lines(doc, opts) end,
             fn -> Document.spans(doc, opts) end
           ] do
-        assert {:error, %Error{reason: :other}} = call.()
+        assert_raise ArgumentError, ~r/:region_mode/, call
+      end
+    end
+
+    test "a ratio that is not a number falls through to the NIF's decoder", %{doc: doc} do
+      # The Elixir pre-check owns the *range* only; type checking stays in one
+      # place. Either way the caller gets an `ArgumentError` naming the field.
+      assert_raise ArgumentError, ~r/:region_mode/, fn ->
+        Document.words(doc, @ruleless, region_mode: {:min_overlap, :half})
       end
     end
 
@@ -463,35 +476,57 @@ defmodule PdfElixide.ExtractionOptionsTest do
   describe "option errors" do
     setup do: %{doc: open(@valid_pdf)}
 
-    test "a declared key with a wrong-typed value is an :other error", %{doc: doc} do
-      assert {:error, %Error{reason: :other, message: message}} =
-               Document.words(doc, 0, include_artifacts: "yes")
-
-      assert message =~ ":include_artifacts"
+    test "a declared key with a wrong-typed value raises, naming the key", %{doc: doc} do
+      assert_raise ArgumentError, ~r/:include_artifacts/, fn ->
+        Document.words(doc, 0, include_artifacts: "yes")
+      end
     end
 
     test "a bad value inside a nested option map names the outer field", %{doc: doc} do
       # Rustler reports the field it failed to decode, and for a nested map
       # that is the nesting key rather than the offending leaf.
-      assert {:error, %Error{reason: :other, message: message}} =
-               Document.tables(doc, 0, preset: :nope)
-
-      assert message =~ ":detection"
+      assert_raise ArgumentError, ~r/:detection/, fn ->
+        Document.tables(doc, 0, preset: :nope)
+      end
     end
 
-    test "a wrong-typed nested option value is an :other error, not a raise", %{doc: doc} do
+    test "a wrong-typed nested option value raises, naming the outer key", %{doc: doc} do
       # These three keys take a keyword list, but a value of any other shape
       # must still reach the NIF's decoder rather than blowing up in a private
       # builder — the whole point of the rule is that the message names the
-      # option the caller got wrong.
+      # option the caller got wrong, which a `FunctionClauseError` on a private
+      # builder could not.
       for {call, field} <- [
             {fn -> Document.text(doc, 0, table_detection: :bad) end, ":table_detection"},
             {fn -> Document.spans(doc, 0, span_merging: :bad) end, ":span_merging"},
             {fn -> Document.spans(doc, 0, span_merging: [adaptive: :bad]) end, ":span_merging"}
           ] do
-        assert {:error, %Error{reason: :other, message: message}} = call.()
-        assert message =~ field
+        assert_raise ArgumentError, ~r/#{field}/, call
       end
+    end
+
+    test "an unknown key nested inside an option map raises too", %{doc: doc} do
+      assert_raise ArgumentError, ~r/:no_such_option/, fn ->
+        Document.spans(doc, 0, span_merging: [no_such_option: true])
+      end
+
+      assert_raise ArgumentError, ~r/:no_such_option/, fn ->
+        Document.spans(doc, 0, span_merging: [adaptive: [no_such_option: true]])
+      end
+
+      assert_raise ArgumentError, ~r/:no_such_option/, fn ->
+        Document.text(doc, 0, table_detection: [no_such_option: true])
+      end
+    end
+
+    test "a key valid for a sibling extractor is still unknown here", %{doc: doc} do
+      # `:region` is a `tables/3` key, but not a `:table_detection` one — the
+      # two lists are checked separately.
+      assert_raise ArgumentError, ~r/:region/, fn ->
+        Document.text(doc, 0, table_detection: [region: nil])
+      end
+
+      assert Document.tables!(doc, 0, region: nil) == Document.tables!(doc, 0)
     end
 
     test "nil still means unset for every nested option", %{doc: doc} do
@@ -502,12 +537,30 @@ defmodule PdfElixide.ExtractionOptionsTest do
                Document.spans!(doc, 0, span_merging: [])
     end
 
-    test "an unknown key is ignored rather than an error", %{doc: doc} do
-      assert Document.words!(doc, 0, no_such_option: true) == Document.words!(doc, 0)
+    test "an unknown key raises rather than being ignored", %{doc: doc} do
+      # A typo must not silently do nothing, and the message names both the
+      # offending key and what was allowed instead.
+      error =
+        assert_raise ArgumentError, fn -> Document.words(doc, 0, no_such_option: true) end
+
+      message = Exception.message(error)
+
+      assert message =~ ":no_such_option"
+      assert message =~ ":include_artifacts"
+    end
+
+    test "a near-miss typo of a real key raises", %{doc: doc} do
+      assert_raise ArgumentError, ~r/:include_artifact/, fn ->
+        Document.words(doc, 0, include_artifact: true)
+      end
     end
 
     test "a non-list, non-integer second argument raises", %{doc: doc} do
       assert_raise FunctionClauseError, fn -> Document.words(doc, :nope) end
+    end
+
+    test "a list that is not a keyword list raises", %{doc: doc} do
+      assert_raise ArgumentError, ~r/keyword list/, fn -> Document.words(doc, 0, [:nope]) end
     end
   end
 

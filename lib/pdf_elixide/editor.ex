@@ -108,6 +108,10 @@ defmodule PdfElixide.Editor do
 
   Defaults mirror `pdf_oxide`'s `SaveOptions::full_rewrite()`, so
   calling `save/2` is equivalent to `save/3` with no options.
+
+  An unknown key, or a declared key given a value that is not a boolean,
+  raises `ArgumentError` naming the offending key; see the "Errors versus
+  exceptions" section of `PdfElixide.Error`.
   """
   @type save_opts :: [
           incremental: boolean(),
@@ -115,6 +119,8 @@ defmodule PdfElixide.Editor do
           linearize: boolean(),
           garbage_collect: boolean()
         ]
+
+  @save_opts_keys [:incremental, :compress, :linearize, :garbage_collect]
 
   @doc """
   Writes all in-memory changes to a PDF file at the given path.
@@ -176,6 +182,8 @@ defmodule PdfElixide.Editor do
   end
 
   defp build_save_options(opts) do
+    opts = Keyword.validate!(opts, @save_opts_keys)
+
     %{
       incremental: Keyword.get(opts, :incremental, false),
       compress: Keyword.get(opts, :compress, true),

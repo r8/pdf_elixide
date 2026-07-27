@@ -324,9 +324,11 @@ means "this page", and both can be followed by options.
 Each function documents its own list — `t:PdfElixide.Document.text_opts/0`,
 `words_opts/0`, `text_lines_opts/0`, `chars_opts/0`, `spans_opts/0` and
 `tables_opts/0` — including a few combinations `pdf_oxide` cannot serve at
-once, where the typedoc names exactly which options get dropped. An unknown
-key is ignored; a known key with a wrong-typed value comes back as
-`{:error, %PdfElixide.Error{reason: :other}}` naming the field.
+once, where the typedoc names exactly which options get dropped. Options are
+validated strictly: an unknown key, a wrong-typed value and an out-of-range
+value all raise `ArgumentError` naming the offending key, so a typo is
+reported rather than silently doing nothing. `%PdfElixide.Error{}` is reserved
+for failures of the document, the filesystem or the handle.
 
 ### Extracting words
 

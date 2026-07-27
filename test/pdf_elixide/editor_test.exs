@@ -114,12 +114,23 @@ defmodule PdfElixide.EditorTest do
       assert {:error, _reason} = Editor.to_binary(editor, incremental: true)
     end
 
-    test "to_binary/2 with a non-boolean option returns an error rather than crashing" do
+    test "to_binary/2 with a non-boolean option raises, naming the option" do
       editor = Editor.open!(@form_pdf)
 
-      # An undecodable option map is reported by the NIF as a message string,
-      # so it arrives as an ordinary error struct.
-      assert {:error, %Error{reason: :other}} = Editor.to_binary(editor, compress: "yes")
+      # The NIF reports an undecodable option map as a message string naming
+      # the field; `Native.Wrap.call/1` turns that into an `ArgumentError`,
+      # since a bad option is a caller bug rather than a document failure.
+      assert_raise ArgumentError, ~r/:compress/, fn ->
+        Editor.to_binary(editor, compress: "yes")
+      end
+    end
+
+    test "to_binary/2 with an unknown option raises" do
+      editor = Editor.open!(@form_pdf)
+
+      assert_raise ArgumentError, ~r/:compres/, fn ->
+        Editor.to_binary(editor, compres: true)
+      end
     end
   end
 

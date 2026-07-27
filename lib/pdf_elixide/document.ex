@@ -65,8 +65,13 @@ defmodule PdfElixide.Document do
   To *check* a password against an already-open document without treating a
   wrong one as an error, use `authenticate/2`, which returns `{:ok, false}`
   rather than a `:wrong_password` error.
+
+  An unknown key, or a `:password` that is not a binary, raises `ArgumentError`
+  — see the "Errors versus exceptions" section of `PdfElixide.Error`.
   """
   @type open_opts :: [password: binary()]
+
+  @open_opts_keys [:password]
 
   @doc """
   Opens a PDF document from the specified file path.
@@ -129,6 +134,7 @@ defmodule PdfElixide.Document do
   end
 
   defp build_open_options(opts) do
+    opts = Keyword.validate!(opts, @open_opts_keys)
     %{password: Keyword.get(opts, :password)}
   end
 
@@ -303,6 +309,32 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # The one *semantic* option check this library owns, as opposed to the type
+  # checks the NIF's own decode performs. Upstream evaluates
+  # `overlap_with_rect(rect) >= ratio` where the overlap is clamped to
+  # `[0.0, 1.0]`, so an out-of-range ratio would fail silently and wrongly — a
+  # negative one matches every object, one above `1.0` matches none.
+  #
+  # It is checked here rather than left to the NIF (which keeps an identical
+  # check as defence in depth) so it reports the same `ArgumentError` as every
+  # other bad option value; a `tagged_err` cannot, being indistinguishable from
+  # a genuine `:other` PDF failure by the time it reaches `Wrap.call/1`.
+  # Pure arithmetic is also the one thing safe to duplicate in Elixir: the
+  # bound is ours, not sourced from upstream, so it cannot drift. A ratio that
+  # is not a number deliberately falls through to the NIF's decoder, which is
+  # what keeps the type checking in one place.
+  defp validate_region_mode!(opts, key) do
+    case Keyword.get(opts, key, :intersects) do
+      {:min_overlap, ratio} when is_number(ratio) and (ratio < 0.0 or ratio > 1.0) ->
+        raise ArgumentError,
+              "invalid :#{key} {:min_overlap, #{inspect(ratio)}}: " <>
+                "the ratio must be between 0.0 and 1.0"
+
+      mode ->
+        mode
+    end
+  end
+
   @doc """
   Authenticates against the document's encryption with the given password.
 
@@ -452,8 +484,8 @@ defmodule PdfElixide.Document do
 
   ## `:min_overlap` details
 
-  `ratio` must be between `0.0` and `1.0`; anything outside that range is
-  `{:error, %PdfElixide.Error{reason: :other}}`. The bound is checked here
+  `ratio` must be between `0.0` and `1.0`; anything outside that range raises
+  `ArgumentError`, like any other bad option value. The bound is checked here
   rather than upstream, which validates it nowhere — no other `pdf_oxide`
   binding can even select this mode, so an out-of-range value would otherwise
   fail silently and wrongly (a negative one matches every object, and one
@@ -551,8 +583,9 @@ defmodule PdfElixide.Document do
 
   Options `to_markdown/2` accepts but this function does not —
   `:reading_order`, `:include_form_fields`, `:strip_running_headers_footers`
-  — are omitted because upstream's text assembler never reads them. Like any
-  other undeclared key, passing one is silently ignored.
+  — are omitted because upstream's text assembler never reads them. Passing
+  one raises `ArgumentError`, as any other undeclared key does; see the
+  "Errors versus exceptions" section of `PdfElixide.Error`.
   """
   @type text_opts :: [
           extract_tables: boolean(),
@@ -566,6 +599,19 @@ defmodule PdfElixide.Document do
           exclude_inks: [String.t()],
           on_page_error: :skip | :halt
         ]
+
+  @text_opts_keys [
+    :extract_tables,
+    :expand_ligatures,
+    :table_detection,
+    :region,
+    :region_mode,
+    :exclude_regions,
+    :exclude_regions_mode,
+    :exclude_layers,
+    :exclude_inks,
+    :on_page_error
+  ]
 
   @doc """
   Extracts text content.
@@ -649,14 +695,16 @@ defmodule PdfElixide.Document do
   end
 
   defp build_text_options(opts) do
+    opts = Keyword.validate!(opts, @text_opts_keys)
+
     %{
       extract_tables: Keyword.get(opts, :extract_tables, true),
       expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
       table_detection: build_table_detection_option(Keyword.get(opts, :table_detection)),
       region: Keyword.get(opts, :region),
-      region_mode: Keyword.get(opts, :region_mode, :intersects),
+      region_mode: validate_region_mode!(opts, :region_mode),
       exclude_regions: Keyword.get(opts, :exclude_regions, []),
-      exclude_regions_mode: Keyword.get(opts, :exclude_regions_mode, :intersects),
+      exclude_regions_mode: validate_region_mode!(opts, :exclude_regions_mode),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, []),
       on_page_error: Keyword.get(opts, :on_page_error, :skip)
@@ -709,6 +757,10 @@ defmodule PdfElixide.Document do
 
   Defaults mirror `pdf_oxide`'s `ConversionOptions::default()`, so calling
   `to_markdown/1` is equivalent to `to_markdown/2` with no options.
+
+  An unknown key, or a declared key given a value of the wrong type, raises
+  `ArgumentError` naming the offending key; see the "Errors versus exceptions"
+  section of `PdfElixide.Error`.
   """
   @type markdown_opts :: [
           detect_headings: boolean(),
@@ -724,6 +776,21 @@ defmodule PdfElixide.Document do
           reading_order: :structure_tree | :column_aware | :top_to_bottom,
           bold_markers: :conservative | :aggressive
         ]
+
+  @markdown_opts_keys [
+    :detect_headings,
+    :extract_tables,
+    :include_images,
+    :embed_images,
+    :image_output_dir,
+    :include_form_fields,
+    :strip_running_headers_footers,
+    :expand_ligatures,
+    :annotate_skipped_pages,
+    :max_image_pixels,
+    :reading_order,
+    :bold_markers
+  ]
 
   @doc """
   Converts the document to Markdown.
@@ -800,6 +867,8 @@ defmodule PdfElixide.Document do
   end
 
   defp build_markdown_options(opts) do
+    opts = Keyword.validate!(opts, @markdown_opts_keys)
+
     %{
       detect_headings: Keyword.get(opts, :detect_headings, true),
       extract_tables: Keyword.get(opts, :extract_tables, true),
@@ -845,11 +914,10 @@ defmodule PdfElixide.Document do
   `:bold_markers`, `:annotate_skipped_pages`,
   `:strip_running_headers_footers` and `:expand_ligatures` — all valid for
   `to_markdown/2` — are not part of this list, because `pdf_oxide` never
-  consults them while converting to HTML. Like any other undeclared key,
-  passing one is silently ignored rather than an error. A *declared* key
-  given a value of the wrong type is reported as
-  `{:error, %PdfElixide.Error{reason: :other}}`, with a message naming the
-  offending field, rather than raising.
+  consults them while converting to HTML. Passing one raises `ArgumentError`,
+  as any other undeclared key does, and so does a *declared* key given a value
+  of the wrong type; the message names the offending key. See the "Errors
+  versus exceptions" section of `PdfElixide.Error`.
 
     * `:preserve_layout` — emit one absolutely positioned `<div>` per text
       span, carrying that span's coordinates and font size in inline CSS
@@ -920,6 +988,18 @@ defmodule PdfElixide.Document do
           max_image_pixels: non_neg_integer() | nil,
           reading_order: :structure_tree | :column_aware | :top_to_bottom
         ]
+
+  @html_opts_keys [
+    :preserve_layout,
+    :detect_headings,
+    :extract_tables,
+    :include_images,
+    :embed_images,
+    :image_output_dir,
+    :include_form_fields,
+    :max_image_pixels,
+    :reading_order
+  ]
 
   @doc """
   Converts the document to HTML.
@@ -1003,6 +1083,8 @@ defmodule PdfElixide.Document do
   end
 
   defp build_html_options(opts) do
+    opts = Keyword.validate!(opts, @html_opts_keys)
+
     %{
       preserve_layout: Keyword.get(opts, :preserve_layout, false),
       detect_headings: Keyword.get(opts, :detect_headings, true),
@@ -1088,6 +1170,8 @@ defmodule PdfElixide.Document do
           profile: extraction_profile() | nil
         ]
 
+  @words_opts_keys [:include_artifacts, :region, :region_mode, :word_gap_threshold, :profile]
+
   @doc """
   Extracts words, each with its bounding box and font metadata as a
   `PdfElixide.Document.Word` struct.
@@ -1168,12 +1252,14 @@ defmodule PdfElixide.Document do
   end
 
   defp build_words_options(opts) do
+    opts = Keyword.validate!(opts, @words_opts_keys)
+
     %{
       include_artifacts: Keyword.get(opts, :include_artifacts, true),
       word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
       profile: Keyword.get(opts, :profile),
       region: Keyword.get(opts, :region),
-      region_mode: Keyword.get(opts, :region_mode, :intersects)
+      region_mode: validate_region_mode!(opts, :region_mode)
     }
   end
 
@@ -1195,6 +1281,8 @@ defmodule PdfElixide.Document do
           line_gap_threshold: float() | nil,
           profile: extraction_profile() | nil
         ]
+
+  @text_lines_opts_keys [:line_gap_threshold | @words_opts_keys]
 
   @doc """
   Extracts text lines, each with its bounding box and constituent words as a
@@ -1273,13 +1361,15 @@ defmodule PdfElixide.Document do
   end
 
   defp build_text_lines_options(opts) do
+    opts = Keyword.validate!(opts, @text_lines_opts_keys)
+
     %{
       include_artifacts: Keyword.get(opts, :include_artifacts, true),
       word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
       line_gap_threshold: Keyword.get(opts, :line_gap_threshold),
       profile: Keyword.get(opts, :profile),
       region: Keyword.get(opts, :region),
-      region_mode: Keyword.get(opts, :region_mode, :intersects)
+      region_mode: validate_region_mode!(opts, :region_mode)
     }
   end
 
@@ -1301,6 +1391,8 @@ defmodule PdfElixide.Document do
           exclude_layers: [String.t()],
           exclude_inks: [String.t()]
         ]
+
+  @chars_opts_keys [:region, :region_mode, :exclude_layers, :exclude_inks]
 
   @doc """
   Extracts characters, each with its bounding box, font metadata and
@@ -1377,9 +1469,11 @@ defmodule PdfElixide.Document do
   end
 
   defp build_chars_options(opts) do
+    opts = Keyword.validate!(opts, @chars_opts_keys)
+
     %{
       region: Keyword.get(opts, :region),
-      region_mode: Keyword.get(opts, :region_mode, :intersects),
+      region_mode: validate_region_mode!(opts, :region_mode),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, [])
     }
@@ -1403,10 +1497,9 @@ defmodule PdfElixide.Document do
       overlap.
     * `:use_adaptive_threshold` — derive the space threshold from page gap
       statistics.
-    * `:adaptive` — a keyword list tuning that derivation:
-      `:median_multiplier`, `:min_threshold_pt`, `:max_threshold_pt`,
-      `:use_iqr`, `:min_samples`. Only consulted when
-      `:use_adaptive_threshold` resolves to `true`.
+    * `:adaptive` — a `t:adaptive_threshold_opts/0` keyword list tuning that
+      derivation. Only consulted when `:use_adaptive_threshold` resolves to
+      `true`.
     * `:detect_email_patterns` / `:email_threshold_multiplier` — keep
       addresses from being split at the `@`.
     * `:detect_citation_markers` / `:citation_font_size_ratio` — treat
@@ -1424,13 +1517,51 @@ defmodule PdfElixide.Document do
           column_boundary_threshold_pt: float() | nil,
           severe_overlap_threshold_pt: float() | nil,
           use_adaptive_threshold: boolean() | nil,
-          adaptive: keyword() | nil,
+          adaptive: adaptive_threshold_opts() | nil,
           detect_email_patterns: boolean() | nil,
           email_threshold_multiplier: float() | nil,
           detect_citation_markers: boolean() | nil,
           citation_font_size_ratio: float() | nil,
           merge_tm_tj_runs: boolean() | nil
         ]
+
+  @span_merging_opts_keys [
+    :preset,
+    :space_threshold_em_ratio,
+    :conservative_threshold_pt,
+    :column_boundary_threshold_pt,
+    :severe_overlap_threshold_pt,
+    :use_adaptive_threshold,
+    :adaptive,
+    :detect_email_patterns,
+    :email_threshold_multiplier,
+    :detect_citation_markers,
+    :citation_font_size_ratio,
+    :merge_tm_tj_runs
+  ]
+
+  @typedoc """
+  Options accepted as the `:adaptive` key of `t:span_merging_opts/0`, tuning
+  how a space threshold is derived from a page's gap statistics. Consulted
+  only when `:use_adaptive_threshold` resolves to `true`.
+
+  Every key defaults to `nil`, meaning "keep the preset's value".
+  """
+  @type adaptive_threshold_opts :: [
+          median_multiplier: float() | nil,
+          min_threshold_pt: float() | nil,
+          max_threshold_pt: float() | nil,
+          use_iqr: boolean() | nil,
+          min_samples: non_neg_integer() | nil
+        ]
+
+  @adaptive_threshold_opts_keys [
+    :median_multiplier,
+    :min_threshold_pt,
+    :max_threshold_pt,
+    :use_iqr,
+    :min_samples
+  ]
 
   @typedoc """
   Options accepted by the `spans` and `spans!` functions.
@@ -1467,6 +1598,15 @@ defmodule PdfElixide.Document do
           exclude_layers: [String.t()],
           exclude_inks: [String.t()]
         ]
+
+  @spans_opts_keys [
+    :reading_order,
+    :span_merging,
+    :region,
+    :region_mode,
+    :exclude_layers,
+    :exclude_inks
+  ]
 
   @doc """
   Extracts spans — runs of text sharing one text state — as
@@ -1543,27 +1683,31 @@ defmodule PdfElixide.Document do
   end
 
   defp build_spans_options(opts) do
+    opts = Keyword.validate!(opts, @spans_opts_keys)
+
     %{
       reading_order: Keyword.get(opts, :reading_order, :top_to_bottom),
       span_merging: build_span_merging_option(Keyword.get(opts, :span_merging)),
       region: Keyword.get(opts, :region),
-      region_mode: Keyword.get(opts, :region_mode, :intersects),
+      region_mode: validate_region_mode!(opts, :region_mode),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, [])
     }
   end
 
-  # The nested option builders below each take a keyword list, but a value of
-  # any other shape is passed through untouched rather than rejected by a
-  # guard. That keeps the rule the rest of the library follows: a wrong-typed
-  # value inside an options map fails in the NIF's own decode, surfacing as
-  # `{:error, %Error{reason: :other}}` whose message names the offending
-  # field. A guard here would instead raise a `FunctionClauseError` naming a
-  # private function, which tells the caller nothing about which option was
-  # wrong.
+  # The nested option builders below validate their own key list, but a value
+  # that is not a keyword list at all is passed through untouched rather than
+  # rejected by a guard. That keeps the rule the rest of the library follows: a
+  # wrong-typed value inside an options map fails in the NIF's own decode,
+  # which `Native.Wrap.call/1` turns into an `ArgumentError` naming the
+  # offending field. A guard here would instead raise a `FunctionClauseError`
+  # naming a private function, which tells the caller nothing about which
+  # option was wrong.
   defp build_span_merging_option(nil), do: nil
 
   defp build_span_merging_option(opts) when is_list(opts) do
+    opts = Keyword.validate!(opts, @span_merging_opts_keys)
+
     %{
       preset: Keyword.get(opts, :preset, :default),
       space_threshold_em_ratio: Keyword.get(opts, :space_threshold_em_ratio),
@@ -1585,6 +1729,8 @@ defmodule PdfElixide.Document do
   defp build_adaptive_threshold_option(nil), do: nil
 
   defp build_adaptive_threshold_option(opts) when is_list(opts) do
+    opts = Keyword.validate!(opts, @adaptive_threshold_opts_keys)
+
     %{
       median_multiplier: Keyword.get(opts, :median_multiplier),
       min_threshold_pt: Keyword.get(opts, :min_threshold_pt),
@@ -1643,6 +1789,22 @@ defmodule PdfElixide.Document do
           text_fallback: boolean() | nil
         ]
 
+  @table_detection_opts_keys [
+    :preset,
+    :enabled,
+    :horizontal_strategy,
+    :vertical_strategy,
+    :column_tolerance,
+    :row_tolerance,
+    :min_table_cells,
+    :min_table_columns,
+    :regular_row_ratio,
+    :max_table_columns,
+    :column_merge_threshold,
+    :v_split_gap,
+    :text_fallback
+  ]
+
   @typedoc """
   Options accepted by the `tables` and `tables!` functions: every
   `t:table_detection_opts/0` key, plus
@@ -1651,11 +1813,31 @@ defmodule PdfElixide.Document do
       overlapping it. Defaults to `nil`. There is no `:region_mode`:
       upstream filters tables by bounding-box intersection only.
 
+  Unlike the `:table_detection` option of the `text` functions, the detection
+  keys are given *flat* here rather than nested under one key.
+
   Note that `:region` here keeps the detection options you passed, whereas
   `pdf_oxide`'s own region call silently substitutes its `:relaxed` preset.
   Pass `preset: :relaxed` to ask for that explicitly.
   """
-  @type tables_opts :: [{:region, Rect.t() | nil} | {atom(), term()}]
+  @type tables_opts :: [
+          region: Rect.t() | nil,
+          preset: :default | :strict | :relaxed,
+          enabled: boolean() | nil,
+          horizontal_strategy: :lines | :text | :both | nil,
+          vertical_strategy: :lines | :text | :both | nil,
+          column_tolerance: float() | nil,
+          row_tolerance: float() | nil,
+          min_table_cells: non_neg_integer() | nil,
+          min_table_columns: non_neg_integer() | nil,
+          regular_row_ratio: float() | nil,
+          max_table_columns: non_neg_integer() | nil,
+          column_merge_threshold: float() | nil,
+          v_split_gap: float() | nil,
+          text_fallback: boolean() | nil
+        ]
+
+  @tables_opts_keys [:region | @table_detection_opts_keys]
 
   @doc """
   Detects tables, as `PdfElixide.Document.Table` structs.
@@ -1743,6 +1925,8 @@ defmodule PdfElixide.Document do
   end
 
   defp build_tables_options(opts) do
+    opts = Keyword.validate!(opts, @tables_opts_keys)
+
     %{
       detection: build_table_detection(opts),
       region: Keyword.get(opts, :region)
@@ -1751,10 +1935,15 @@ defmodule PdfElixide.Document do
 
   defp build_table_detection_option(nil), do: nil
 
-  defp build_table_detection_option(opts) when is_list(opts), do: build_table_detection(opts)
+  defp build_table_detection_option(opts) when is_list(opts) do
+    build_table_detection(Keyword.validate!(opts, @table_detection_opts_keys))
+  end
 
   defp build_table_detection_option(other), do: other
 
+  # Takes an already-validated keyword list: `tables/2,3` allows `:region`
+  # alongside the detection keys, while the `:table_detection` option of the
+  # `text` functions does not, so each caller checks its own key list.
   defp build_table_detection(opts) do
     %{
       preset: Keyword.get(opts, :preset, :default),
