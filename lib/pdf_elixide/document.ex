@@ -983,7 +983,9 @@ defmodule PdfElixide.Document do
       **without HTML escaping**, so a directory whose name contains `"` or
       `&` produces malformed markup. Never build this path from untrusted
       input: a crafted directory name can close the attribute and inject
-      others.
+      others. It is the only unescaped input on this path — every string
+      taken from the PDF itself is escaped, see the "Escaping" section of
+      `to_html/2`.
     * `:include_form_fields` — inline AcroForm field values at their
       positions on the page. Defaults to `true`.
     * `:max_image_pixels` — skip images whose width times height exceeds
@@ -1041,6 +1043,25 @@ defmodule PdfElixide.Document do
   to an empty string, as does a document that is encrypted and could not
   be decrypted.
 
+  ## Escaping
+
+  Text taken from the PDF is escaped by `pdf_oxide` before it reaches the
+  fragment — `&`, `<`, `>` and `"` become entities in span text, headings
+  and table cells alike, in `:preserve_layout` mode as well — so a crafted
+  document cannot inject markup. `'` is left as-is, which is safe only
+  because every attribute the converter emits is double-quoted: don't
+  re-quote the fragment with single quotes.
+
+  A `/Link` annotation's URI is escaped too, and an anchor is emitted only
+  for the `http`, `https`, `mailto`, `tel`, `ftp` and `ftps` schemes —
+  a `javascript:` or `data:` target is dropped, keeping the link text and
+  losing the link. Anchors carry `rel="noopener noreferrer"`.
+
+  The one input that is **not** escaped is `:image_output_dir`, which
+  upstream interpolates into `src` verbatim; see `t:html_opts/0`. So the
+  fragment is safe to render as raw HTML as long as that path is yours and
+  not an untrusted one.
+
   See `t:html_opts/0` for the available options.
   """
   @spec to_html(t()) :: {:ok, String.t()} | {:error, Error.t()}
@@ -1080,7 +1101,8 @@ defmodule PdfElixide.Document do
   @doc """
   Converts the page at the given zero-based index to HTML.
 
-  See `t:html_opts/0` for the available options.
+  See `t:html_opts/0` for the available options, and the "Escaping"
+  section of `to_html/2` for what in the fragment is escaped.
   """
   @spec to_html(t(), non_neg_integer(), html_opts()) ::
           {:ok, String.t()} | {:error, Error.t()}

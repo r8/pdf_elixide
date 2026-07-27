@@ -1,0 +1,43 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /Font << /F1 6 0 R >> >> /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Annots [5 0 R 7 0 R] >>
+endobj
+4 0 obj
+<< /Length 148 >>
+stream
+BT /F1 14 Tf 72 720 Td (<script>alert\("x"\) & 'y'</script>) Tj ET
+BT /F1 14 Tf 72 690 Td (Safe link) Tj ET
+BT /F1 14 Tf 72 660 Td (Bad link) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Link /Rect [72 685 200 706] /Border [0 0 0] /A << /Type /Action /S /URI /URI (https://example.com/?a=1&b=2"x) >> >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Link /Rect [72 655 200 676] /Border [0 0 0] /A << /Type /Action /S /URI /URI (javascript:alert\(1\)) >> >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000184 00000 n 
+0000000269 00000 n 
+0000000467 00000 n 
+0000000624 00000 n 
+0000000721 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+869
+%%EOF

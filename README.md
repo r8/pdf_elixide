@@ -177,6 +177,12 @@ so you supply the surrounding page. Options are the subset of the Markdown ones
 that `pdf_oxide` actually applies while converting to HTML, plus the HTML-only
 `:preserve_layout` — see `t:PdfElixide.Document.html_opts/0`.
 
+Text taken from the PDF is escaped before it reaches the fragment, and a `/Link`
+annotation becomes an anchor only for a safe scheme — so the fragment is safe to
+render as raw HTML. The single exception is `:image_output_dir`, which upstream
+interpolates into `src` unescaped, so that path must be yours rather than
+untrusted input. `PdfElixide.Document.to_html/2` documents both in full.
+
 `:preserve_layout` output is positioned but not ready to render: the coordinates
 are raw PDF user-space values, measured from the *bottom* of the page, so you
 flip them yourself (`top = height - y`) and give each page wrapper

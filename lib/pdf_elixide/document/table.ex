@@ -210,6 +210,10 @@ defmodule PdfElixide.Document.Table do
   The fragment carries no styling and is not wrapped in a document: header rows
   become `<thead>`/`<th>`, the rest `<tbody>`/`<td>`, and merged cells keep their
   `colspan`/`rowspan` as attributes. An empty table renders as `""`.
+
+  Cell text is escaped like every other string `pdf_oxide` puts in HTML — see
+  the "Escaping" section of `PdfElixide.Document.to_html/2`. This renderer has
+  no image path, so nothing in its output is unescaped.
   """
   @spec to_html(t()) :: {:ok, String.t()} | {:error, Error.t()}
   def to_html(%__MODULE__{ref: ref}) when is_reference(ref) do

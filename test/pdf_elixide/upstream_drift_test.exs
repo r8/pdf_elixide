@@ -39,6 +39,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
+  @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
 
   @columns 0
   @artifacts 1
@@ -317,6 +318,65 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert {:error, %Error{reason: :wrong_password}} =
                Document.open(@encrypted_pdf, password: "wrong")
+    end
+  end
+
+  describe "HTML output escaping" do
+    # `to_html/2`'s docs promise that text taken from the PDF cannot inject
+    # markup, and that `:image_output_dir` is the only unescaped input. That
+    # promise is upstream's to keep — `escape_html`
+    # (`src/pipeline/converters/html.rs`) is what makes it true — so it is
+    # pinned here rather than in `document_test.exs`. The complement, that the
+    # image path really is *not* escaped, is pinned there.
+    #
+    # A failure here means the docs are now claiming a safety property the
+    # library no longer has: fix the escaping story before touching the
+    # assertion. Note what is *not* covered — a detected table's cells escape
+    # through a separate `escape_html` call site, and no fixture produces a
+    # table with markup in a cell. Canary 1 covers the function, not that call.
+    setup do: %{doc: open(@html_escaping_pdf)}
+
+    test "text taken from the PDF is escaped in both output modes", %{doc: doc} do
+      # The fixture's first line is literally `<script>alert("x") & 'y'</script>`,
+      # covering all four characters upstream replaces. `'` is deliberately not
+      # among them, which is safe only because every attribute the converter
+      # emits is double-quoted — so it is asserted raw, and a consumer must not
+      # re-quote the fragment with single quotes.
+      escaped = "&lt;script&gt;alert(&quot;x&quot;) &amp; 'y'&lt;/script&gt;"
+
+      assert {:ok, html} = Document.to_html(doc)
+      assert html =~ escaped
+      refute html =~ "<script>"
+
+      # `preserve_layout` is a separate converter path, and the same promise
+      # has to hold there.
+      assert {:ok, positioned} = Document.to_html(doc, preserve_layout: true)
+      assert positioned =~ escaped
+      refute positioned =~ "<script>"
+
+      # Escaping is the converters' job, not the extractor's: plain text comes
+      # back verbatim.
+      assert Document.text!(doc) =~ "<script>alert(\"x\") & 'y'</script>"
+    end
+
+    test "a /Link URI is escaped and the anchor is rel-hardened", %{doc: doc} do
+      # The fixture's link target carries both `&` and `"`, either of which
+      # would break out of the href attribute unescaped.
+      assert {:ok, html} = Document.to_html(doc)
+
+      assert html =~
+               ~s(<a href="https://example.com/?a=1&amp;b=2&quot;x" rel="noopener noreferrer">Safe link</a>)
+    end
+
+    test "a javascript: /Link is dropped, keeping its text", %{doc: doc} do
+      # `is_safe_link_uri` (`src/pipeline/converters/mod.rs`) allows only
+      # http, https, mailto, tel, ftp and ftps. An unsafe scheme loses the
+      # anchor, not the words.
+      assert {:ok, html} = Document.to_html(doc)
+
+      refute html =~ "javascript:"
+      assert html =~ "Bad link"
+      refute html =~ ~s(<a href="javascript)
     end
   end
 end
