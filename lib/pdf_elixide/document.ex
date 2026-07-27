@@ -1892,6 +1892,17 @@ defmodule PdfElixide.Document do
   Returns the top-level `PdfElixide.Document.OutlineItem` structs, each of which
   may carry nested `:children`, forming a tree. Returns `{:ok, []}` when the
   document has no outline.
+
+  **Nesting deeper than 256 levels is rejected** with
+  `%PdfElixide.Error{reason: :unsupported}` rather than truncated, so a malformed
+  or hostile bookmark tree cannot overflow the native stack while the NIF walks
+  it — an overflow in Rust aborts the OS process rather than raising, so it would
+  take the whole VM down. No real table of contents comes close to the limit.
+
+  Note that the cap can only ever be *this* library's last line of defence:
+  `pdf_oxide` parses the outline eagerly into an owned tree with no depth cap and
+  no cycle detection of its own, so a document deep enough to matter fails inside
+  upstream before this conversion runs.
   """
   @spec outline(t()) :: {:ok, [OutlineItem.t()]} | {:error, Error.t()}
   def outline(%__MODULE__{ref: ref}) do

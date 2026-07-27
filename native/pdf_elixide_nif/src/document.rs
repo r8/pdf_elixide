@@ -22,7 +22,7 @@ use crate::{
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
     images::{image_to_nif, ImageNif},
-    outline::{outline_item_to_nif, OutlineItemNif},
+    outline::{outline_to_nif, OutlineItemNif},
     paths::{path_to_nif, PathNif},
     resource::Closable,
     span::{span_to_nif, SpanNif},
@@ -919,12 +919,13 @@ fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
 }
 
 /// Reads the document outline (bookmarks / table of contents) as a tree of
-/// `OutlineItemNif`. Returns an empty list when the document has no outline.
+/// `OutlineItemNif`. Returns an empty list when the document has no outline, and
+/// `:unsupported` for one nested past `outline::MAX_OUTLINE_DEPTH`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_outline(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<OutlineItemNif>> {
     resource.doc.with_lock(|doc| {
         let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
-        Ok(items.into_iter().map(outline_item_to_nif).collect())
+        outline_to_nif(items)
     })
 }
 
