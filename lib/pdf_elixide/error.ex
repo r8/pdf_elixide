@@ -15,7 +15,10 @@ defmodule PdfElixide.Error do
   ## Reasons
 
     * `:encrypted` — the PDF is encrypted and needs a password first.
-    * `:wrong_password` — the supplied password was rejected.
+    * `:wrong_password` — the supplied password was rejected. Comes only from
+      the `:password` option of `open/2`, `open!/2`, `from_binary/2` and
+      `from_binary!/2`; `PdfElixide.Document.authenticate/2` reports a wrong
+      password as `{:ok, false}` instead.
     * `:invalid_pdf` — malformed or unparseable PDF data.
     * `:unsupported` — an unsupported PDF version, feature, or filter.
     * `:not_found` — a referenced object was not found.

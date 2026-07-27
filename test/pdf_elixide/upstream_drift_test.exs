@@ -38,6 +38,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
+  @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
 
   @columns 0
   @artifacts 1
@@ -287,6 +288,35 @@ defmodule PdfElixide.UpstreamDriftTest do
       # /Creator is <4372C3A96174657572>: "Créateur" read as UTF-8,
       # "CrÃ©ateur" read as PDFDocEncoding.
       assert Document.metadata!(doc).creator == "Créateur"
+    end
+  end
+
+  describe "a wrong password is not an upstream error" do
+    test "authenticate reports it as {:ok, false}, and open/2 synthesizes the atom" do
+      # `pdf_oxide::Error` has no wrong-password variant: `authenticate`
+      # returns `Ok(false)`, and `EncryptedPdf` — the only password-adjacent
+      # variant — means "not authenticated yet". So `:wrong_password` is not
+      # produced by `to_nif_err`/`classify` at all; the NIF synthesizes it in
+      # `OpenOptionsNif::apply` from that `false`.
+      #
+      # Both halves below break together if upstream starts returning an
+      # `Error` for a rejected password: `document_authenticate` maps a real
+      # `Err` through `to_nif_err`, so the check turns into
+      # `{:error, %Error{reason: :other}}`, and the open path — which routes
+      # the same `Err` through the same `?` before it can reach its own
+      # `if !ok` — degrades from `:wrong_password` to `:other`, silently
+      # breaking every caller matching on it.
+      #
+      # The fix then is an arm in `classify` (`native/.../error.rs`) mapping
+      # the new variant to `:wrong_password`, plus a re-read of
+      # `authenticate/2`'s documented `{:ok, false}` contract — not a relaxed
+      # assertion here.
+      doc = open(@encrypted_pdf)
+
+      assert {:ok, false} = Document.authenticate(doc, "wrong")
+
+      assert {:error, %Error{reason: :wrong_password}} =
+               Document.open(@encrypted_pdf, password: "wrong")
     end
   end
 end

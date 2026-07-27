@@ -72,6 +72,19 @@ pub fn closed_err(label: &str) -> Error {
 /// Maps a `pdf_oxide::Error` variant to a stable reason atom. Anything not
 /// explicitly mapped (including feature-gated variants) falls through to
 /// `:other`, with the original message preserved by the caller.
+///
+/// **`:wrong_password` is a deliberate gap here.** Upstream has no such
+/// variant: `PdfDocument::authenticate` reports a rejected password as
+/// `Ok(false)`, and `EncryptedPdf` — the only password-adjacent variant — means
+/// "not authenticated yet", not "wrong password". The atom is therefore
+/// *synthesized* by `OpenOptionsNif::apply` (`crate::document`) from that
+/// `false`, and nothing routed through `classify` can produce it.
+///
+/// If upstream ever does grow a wrong-password variant, it lands on the `_`
+/// arm below and `open(password:)` starts reporting `%Error{reason: :other}`,
+/// silently breaking every caller matching `:wrong_password`. The canary in
+/// `test/pdf_elixide/upstream_drift_test.exs` is what catches that; the fix
+/// then is an explicit arm here, not a relaxed assertion there.
 fn classify(e: &PdfError) -> Atom {
     match e {
         PdfError::EncryptedPdf => atoms::encrypted(),
@@ -87,6 +100,8 @@ fn classify(e: &PdfError) -> Atom {
         | PdfError::UnsupportedFilter(_) => atoms::unsupported(),
         PdfError::ObjectNotFound(_, _) => atoms::not_found(),
         PdfError::Io(_) => atoms::io(),
+        // Also where a future upstream wrong-password variant would land —
+        // see the deliberate gap described above.
         _ => atoms::other(),
     }
 }

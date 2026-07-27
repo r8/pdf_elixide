@@ -48,6 +48,11 @@ pub struct OpenOptionsNif<'a> {
 }
 
 impl OpenOptionsNif<'_> {
+    /// Note this is the *only* producer of `:wrong_password`: upstream has no
+    /// error variant for a rejected password — `authenticate` returns
+    /// `Ok(false)` — so the atom is synthesized here rather than reached
+    /// through `error::classify`, whose doc comment marks the gap and says what
+    /// breaks if upstream closes it.
     fn apply(self, doc: &PdfDocument) -> NifResult<()> {
         if let Some(pw) = self.password {
             let ok = doc.authenticate(pw.as_slice()).map_err(to_nif_err)?;
