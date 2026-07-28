@@ -3,14 +3,17 @@ defmodule PdfElixide.Native.SchedulingTest do
   Canary for the NIF scheduling invariant.
 
   **A NIF that can block on a `Closable` lock must not run on a normal
-  scheduler.** `Closable::lock` is an `RwLock::write` and a long extraction on
-  the same handle holds it for seconds, so a plain `#[rustler::nif]` that takes
-  the lock parks a normal BEAM scheduler thread for that whole duration — enough
-  such callers and the VM stops scheduling processes, firing timers and sending
-  distribution heartbeats. `Closable::close` and `Closable::is_closed` take that
-  same `RwLock` — they recover a poisoned lock rather than erroring, but nothing
-  lets them jump an in-flight guard — so the `*_close` / `*_closed` NIFs are in
-  scope here too, cheap as their own work looks.
+  scheduler.** Reads take that lock shared, so they no longer wait on each other
+  — but a plain `#[rustler::nif]` would still park a normal BEAM scheduler
+  thread, because the extraction it runs is CPU-bound for seconds whichever
+  guard it holds, and because a shared guard still waits behind an exclusive one
+  (`document_authenticate`, an editor call, or a `close`), which waits in turn
+  for every reader ahead of it. Enough such callers and the VM stops scheduling
+  processes, firing timers and sending distribution heartbeats. `Closable::close`
+  and `Closable::is_closed` take the same `RwLock` — they recover a poisoned lock
+  rather than erroring, but nothing lets them jump an in-flight guard — so the
+  `*_close` / `*_closed` NIFs are in scope here too, cheap as their own work
+  looks.
 
   If you add a NIF that reaches a resource, give it `schedule = "DirtyCpu"` (or
   `"DirtyIo"` for filesystem work) rather than relaxing this test.

@@ -27,6 +27,10 @@ defmodule PdfElixide.DocumentTest do
   @latin1_pdf Path.join(@fixtures, "encrypted_latin1.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
+  # The only fixture carrying XFA, and it carries it behind an *indirect*
+  # /AcroForm reference — the branch a check that only looked at an inline
+  # dictionary would silently answer `false` for.
+  @xfa_pdf Path.join(@fixtures, "xfa.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
@@ -2351,6 +2355,11 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@form_pdf)
       refute Document.has_xfa?(doc)
     end
+
+    test "returns true for an XFA PDF reached through an indirect /AcroForm" do
+      doc = Document.open!(@xfa_pdf)
+      assert Document.has_xfa?(doc)
+    end
   end
 
   describe "has_xfa/1" do
@@ -2362,6 +2371,11 @@ defmodule PdfElixide.DocumentTest do
     test "returns {:ok, false} for a non-XFA AcroForm PDF" do
       doc = Document.open!(@form_pdf)
       assert Document.has_xfa(doc) == {:ok, false}
+    end
+
+    test "returns {:ok, true} for an XFA PDF reached through an indirect /AcroForm" do
+      doc = Document.open!(@xfa_pdf)
+      assert Document.has_xfa(doc) == {:ok, true}
     end
 
     test "reports a failure the predicate would have swallowed" do

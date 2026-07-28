@@ -96,7 +96,7 @@ fn read_metadata(doc: &PdfDocument) -> MetadataNif {
 /// not an error.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_info(resource: ResourceArc<DocumentResource>) -> NifResult<MetadataNif> {
-    resource.doc.with_lock(|doc| Ok(read_metadata(doc)))
+    resource.doc.with_read(|doc| Ok(read_metadata(doc)))
 }
 
 // XMP metadata -----------------------------------------------------------------------------------
@@ -158,7 +158,7 @@ fn xmp_to_nif(xmp: XmpMetadata) -> XmpMetadataNif {
 fn document_xmp_metadata(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Option<XmpMetadataNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let xmp = XmpExtractor::extract(doc).map_err(to_nif_err)?;
         Ok(xmp.map(xmp_to_nif))
     })
@@ -203,7 +203,7 @@ fn document_permissions(
 ) -> NifResult<Option<PermissionsNif>> {
     resource
         .doc
-        .with_lock(|doc| Ok(doc.permissions().map(permissions_to_nif)))
+        .with_read(|doc| Ok(doc.permissions().map(permissions_to_nif)))
 }
 
 // Page labels ------------------------------------------------------------------------------------
@@ -213,7 +213,7 @@ fn document_permissions(
 /// behavior).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<String>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let ranges = PageLabelExtractor::extract(doc).map_err(to_nif_err)?;
         let count = doc.page_count().map_err(to_nif_err)?;
         Ok((0..count)
@@ -231,7 +231,7 @@ fn document_page_label(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<String> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         // Load-bearing: `get_label` is infallible and falls back to the decimal
         // page number, so an out-of-range index would silently yield a label.
         ensure_page_in_range(doc, page_index)?;

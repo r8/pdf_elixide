@@ -271,7 +271,7 @@ type OpenedDocument = (ResourceArc<DocumentResource>, (u8, u8), Option<usize>);
 /// their tolerance now lives in Elixir (`Document.tolerant_predicate!/1`),
 /// where a caller can ask for the error instead.
 ///
-/// Both reads go through `with_lock` rather than reading the `PdfDocument`
+/// Both reads go through `with_read` rather than reading the `PdfDocument`
 /// before it is moved into the `Closable`, so a panic in upstream's page-tree
 /// walk stays contained as it is on every other call: a panic reading the
 /// version fails the open, a panic reading the count only leaves it `None`.
@@ -283,10 +283,10 @@ type OpenedDocument = (ResourceArc<DocumentResource>, (u8, u8), Option<usize>);
 /// makes an encrypted document's page tree readable, so reading first would
 /// silently downgrade a correctly-passworded document to `None`.
 fn cached_fields(resource: &DocumentResource) -> NifResult<((u8, u8), Option<usize>)> {
-    let version = resource.doc.with_lock(|doc| Ok(doc.version()))?;
+    let version = resource.doc.with_read(|doc| Ok(doc.version()))?;
     let page_count = resource
         .doc
-        .with_lock(|doc| Ok(doc.page_count().ok()))
+        .with_read(|doc| Ok(doc.page_count().ok()))
         .ok()
         .flatten();
 
@@ -325,8 +325,9 @@ fn document_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<
 
 /// Releases the document's native memory now, rather than waiting for the BEAM
 /// to garbage-collect the handle. Idempotent; later calls on the handle fail
-/// with `:closed`. Takes the document lock, so it waits for an in-flight call on
-/// the same handle to return rather than interrupting it — see
+/// with `:closed`. Takes the document lock *exclusively*, so it waits for every
+/// in-flight call on the same handle to return rather than interrupting them —
+/// with reads running shared there can be many at once. See
 /// [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_close(resource: ResourceArc<DocumentResource>) -> Atom {
@@ -343,14 +344,15 @@ fn document_closed(resource: ResourceArc<DocumentResource>) -> bool {
 
 /// Returns the number of pages in the PDF document.
 ///
-/// Dirty despite looking like a cheap accessor: it takes the document lock,
-/// which a concurrent extraction on the same handle can hold for seconds,
-/// so a normal scheduler must never wait on it.
+/// Dirty despite looking like a cheap accessor: it takes the document lock, and
+/// a shared lock still waits behind an exclusive one — `document_authenticate`
+/// or `document_close`, either of which waits in turn for every in-flight
+/// extraction. A normal scheduler must never wait on that chain.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
     resource
         .doc
-        .with_lock(|doc| doc.page_count().map_err(to_nif_err))
+        .with_read(|doc| doc.page_count().map_err(to_nif_err))
 }
 
 /// Returns whether the PDF document has a structure tree (i.e. is a Tagged PDF).
@@ -366,7 +368,39 @@ fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usi
 fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
     resource
         .doc
-        .with_lock(|doc| Ok(doc.structure_tree().map_err(to_nif_err)?.is_some()))
+        .with_read(|doc| Ok(doc.structure_tree().map_err(to_nif_err)?.is_some()))
+}
+
+/// Upstream's `XfaExtractor::has_xfa` (`src/xfa/extractor.rs`), transcribed
+/// against `&PdfDocument`.
+///
+/// Its `&mut PdfDocument` is vestigial: the body calls only `catalog()` and a
+/// private `resolve_object` that is one `load_object` call, both `&self`. But a
+/// `&mut` in the signature would force this NIF back onto `Closable::with_lock`
+/// and make a cheap predicate serialize every concurrent read on the handle —
+/// the whole point of reading shared. Twelve transcribed lines are cheaper than
+/// that, and `has_xfa_matches_upstream` below is the canary that they still
+/// agree.
+///
+/// Deliberately *not* upstream's own `pdf_document_has_xfa` (`src/ffi.rs`),
+/// which reimplements the same check inequivalently: it never resolves an
+/// indirect `/AcroForm` reference, and collapses every error to `false`, which
+/// would silently reverse the strictness `document_has_xfa` documents below.
+fn has_xfa(doc: &PdfDocument) -> Result<bool> {
+    let catalog = doc.catalog()?;
+    let Some(catalog_dict) = catalog.as_dict() else {
+        return Ok(false);
+    };
+
+    let acroform = match catalog_dict.get("AcroForm") {
+        Some(obj) => match obj.as_reference() {
+            Some(reference) => doc.load_object(reference)?,
+            None => obj.clone(),
+        },
+        None => return Ok(false),
+    };
+
+    Ok(acroform.as_dict().is_some_and(|d| d.contains_key("XFA")))
 }
 
 /// Returns whether the PDF document contains XFA (XML Forms Architecture) form
@@ -378,22 +412,34 @@ fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifRe
 /// its `Err` arms are only an unreadable catalog and a dangling `/AcroForm`
 /// reference. Swallowing them would add no tolerance upstream had not already
 /// applied.
+///
+/// Reads through the local `has_xfa` above rather than calling upstream, whose
+/// signature would demand an exclusive lock for no reason — see its comment.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_has_xfa(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
     resource
         .doc
-        .with_lock(|doc| pdf_oxide::xfa::XfaExtractor::has_xfa(doc).map_err(to_nif_err))
+        .with_read(|doc| has_xfa(doc).map_err(to_nif_err))
 }
 
 /// Returns whether the PDF document is encrypted.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_is_encrypted(resource: ResourceArc<DocumentResource>) -> NifResult<bool> {
-    resource.doc.with_lock(|doc| Ok(doc.is_encrypted()))
+    resource.doc.with_read(|doc| Ok(doc.is_encrypted()))
 }
 
 /// Authenticates against the document's encryption with the given password.
 /// Returns `Ok(true)` on success (or if the PDF is not encrypted),
 /// `Ok(false)` if the password was invalid.
+///
+/// **The one document NIF that takes the lock exclusively**, though upstream's
+/// `authenticate` is `&self` like everything else here. A first successful
+/// authentication invalidates upstream's object cache — objects loaded before it
+/// still hold ciphertext strings, so a later cache hit would return them forever
+/// (upstream issue #323) — and nothing upstream stops a concurrent `load_object`
+/// from straddling that `clear()`. `with_lock` is what makes the invalidation
+/// atomic against every reader on the handle. It costs nothing: this is a
+/// one-shot call, where the extractors it excludes are the hot path.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_authenticate(
     resource: ResourceArc<DocumentResource>,
@@ -439,7 +485,7 @@ fn document_extract_text(
     page_index: usize,
     options: TextOptionsNif,
 ) -> NifResult<String> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         options.validate()?;
@@ -485,7 +531,7 @@ fn document_extract_all_text(
     resource: ResourceArc<DocumentResource>,
     options: TextOptionsNif,
 ) -> NifResult<String> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         options.validate()?;
         extract_all_text_pages(doc, &options.into())
     })
@@ -496,7 +542,7 @@ fn markdown_page(
     page_index: usize,
     options: MarkdownOptionsNif,
 ) -> NifResult<String> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
         options.ensure_image_output_dir()?;
 
@@ -506,7 +552,7 @@ fn markdown_page(
 }
 
 fn markdown_all(resource: &DocumentResource, options: MarkdownOptionsNif) -> NifResult<String> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         options.ensure_image_output_dir()?;
 
         doc.to_markdown_all(&options.into()).map_err(to_nif_err)
@@ -561,7 +607,7 @@ fn html_page(
     page_index: usize,
     options: HtmlOptionsNif,
 ) -> NifResult<String> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
         options.ensure_image_output_dir()?;
 
@@ -570,7 +616,7 @@ fn html_page(
 }
 
 fn html_all(resource: &DocumentResource, options: HtmlOptionsNif) -> NifResult<String> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         options.ensure_image_output_dir()?;
 
         doc.to_html_all(&options.into()).map_err(to_nif_err)
@@ -662,7 +708,7 @@ fn document_words(
     page_index: usize,
     options: WordsOptionsNif,
 ) -> NifResult<Vec<WordNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         options.validate()?;
@@ -681,7 +727,7 @@ fn document_all_words(
     resource: ResourceArc<DocumentResource>,
     options: WordsOptionsNif,
 ) -> NifResult<Vec<WordNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         options.validate()?;
         let options: WordsOptions = options.into();
 
@@ -729,7 +775,7 @@ fn document_text_lines(
     page_index: usize,
     options: LinesOptionsNif,
 ) -> NifResult<Vec<TextLineNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         options.validate()?;
@@ -749,7 +795,7 @@ fn document_all_text_lines(
     resource: ResourceArc<DocumentResource>,
     options: LinesOptionsNif,
 ) -> NifResult<Vec<TextLineNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         options.validate()?;
         let options: LinesOptions = options.into();
 
@@ -793,7 +839,7 @@ fn document_chars(
     page_index: usize,
     options: CharsOptionsNif,
 ) -> NifResult<Vec<CharNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         options.validate()?;
@@ -813,7 +859,7 @@ fn document_all_chars(
     resource: ResourceArc<DocumentResource>,
     options: CharsOptionsNif,
 ) -> NifResult<Vec<CharNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         options.validate()?;
         let options: CharsOptions = options.into();
 
@@ -861,7 +907,7 @@ fn document_spans(
     page_index: usize,
     options: SpansOptionsNif,
 ) -> NifResult<Vec<SpanNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         options.validate()?;
@@ -881,7 +927,7 @@ fn document_all_spans(
     resource: ResourceArc<DocumentResource>,
     options: SpansOptionsNif,
 ) -> NifResult<Vec<SpanNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         options.validate()?;
         let options: SpansOptions = options.into();
 
@@ -906,7 +952,7 @@ fn document_paths(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<PathNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         let paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
@@ -920,7 +966,7 @@ fn document_paths(
 /// Extracts vector paths from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let count = doc.page_count().map_err(to_nif_err)?;
         let mut paths = Vec::new();
         for page_index in 0..count {
@@ -940,7 +986,7 @@ fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
 /// `:unsupported` for one nested past `outline::MAX_OUTLINE_DEPTH`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_outline(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<OutlineItemNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
         outline_to_nif(items)
     })
@@ -953,7 +999,7 @@ fn document_annotations(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<AnnotationNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         let annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
@@ -969,7 +1015,7 @@ fn document_annotations(
 fn document_all_annotations(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Vec<AnnotationNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let count = doc.page_count().map_err(to_nif_err)?;
         let mut annotations = Vec::new();
         for page_index in 0..count {
@@ -994,7 +1040,7 @@ fn document_images(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<ImageNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         let images = doc.extract_images(page_index).map_err(to_nif_err)?;
@@ -1008,7 +1054,7 @@ fn document_images(
 /// Extracts raster images from all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_images(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<ImageNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let count = doc.page_count().map_err(to_nif_err)?;
         let mut images = Vec::new();
         for page_index in 0..count {
@@ -1030,7 +1076,7 @@ fn document_fonts(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Vec<FontNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         Ok(extract_page_fonts(doc, page_index))
@@ -1040,7 +1086,7 @@ fn document_fonts(
 /// Extracts the fonts referenced across all pages, in page order.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_fonts(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FontNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let count = doc.page_count().map_err(to_nif_err)?;
         let mut fonts = Vec::new();
         for page_index in 0..count {
@@ -1075,7 +1121,7 @@ fn document_tables(
     page_index: usize,
     options: TablesOptionsNif,
 ) -> NifResult<Vec<TableNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         let tables = extract_tables_page(doc, page_index, &options.into()).map_err(to_nif_err)?;
@@ -1092,7 +1138,7 @@ fn document_all_tables(
     resource: ResourceArc<DocumentResource>,
     options: TablesOptionsNif,
 ) -> NifResult<Vec<TableNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let options: TablesOptions = options.into();
 
         let count = doc.page_count().map_err(to_nif_err)?;
@@ -1115,7 +1161,7 @@ fn document_get_page_width(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<f32> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         let (llx, _lly, urx, _ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
@@ -1129,7 +1175,7 @@ fn document_get_page_height(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<f32> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
         let (_llx, lly, _urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
@@ -1140,7 +1186,7 @@ fn document_get_page_height(
 /// Extracts form fields from the PDF document.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
-    resource.doc.with_lock(|doc| {
+    resource.doc.with_read(|doc| {
         let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
         Ok(fields.into_iter().map(document_form_field_to_nif).collect())
     })
@@ -1149,6 +1195,48 @@ fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture(name: &str) -> String {
+        format!(
+            "{}/../../test/fixtures/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        )
+    }
+
+    /// Upstream canary for the local `has_xfa`, which exists only to shed
+    /// upstream's vestigial `&mut` and must otherwise answer exactly what
+    /// `XfaExtractor::has_xfa` answers. No Elixir test can make this comparison:
+    /// nothing in the binding reaches the upstream function any more.
+    ///
+    /// The three fixtures are the three branches — `xfa.pdf` reaches `/XFA`
+    /// through an indirect `/AcroForm` reference (the branch upstream's own C
+    /// FFI shortcut skips, which is why that shortcut was not copied),
+    /// `form.pdf` has an `/AcroForm` without `/XFA`, and `sample.pdf` has no
+    /// `/AcroForm` at all.
+    ///
+    /// If upstream ever starts looking somewhere else for XFA, this fails — and
+    /// then the copy is what has to be brought back into line, not the
+    /// assertion.
+    #[test]
+    fn has_xfa_matches_upstream() {
+        for (name, expected) in [
+            ("xfa.pdf", true),
+            ("form.pdf", false),
+            ("sample.pdf", false),
+        ] {
+            let mut doc = PdfDocument::open(fixture(name)).expect("fixture opens");
+
+            // Precondition: `xfa.pdf` really is the positive case, so the
+            // comparison below cannot pass by both sides answering `false`.
+            assert_eq!(has_xfa(&doc).expect("local copy"), expected, "{name}");
+            assert_eq!(
+                has_xfa(&doc).expect("local copy"),
+                pdf_oxide::xfa::XfaExtractor::has_xfa(&mut doc).expect("upstream"),
+                "{name}"
+            );
+        }
+    }
 
     /// Upstream canary — a failure here is a signal about `pdf_oxide`, not a
     /// bug in this crate. See `test/pdf_elixide/upstream_drift_test.exs`.
@@ -1168,11 +1256,7 @@ mod tests {
     /// assertion, is what has to be reconsidered.
     #[test]
     fn whole_document_text_still_matches_upstream_extract_all_text() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test/fixtures/broken_page.pdf"
-        );
-        let doc = PdfDocument::open(path).expect("fixture opens");
+        let doc = PdfDocument::open(fixture("broken_page.pdf")).expect("fixture opens");
 
         // Precondition: the fixture still has a page that fails on its own.
         // Without it the comparison below would hold vacuously.

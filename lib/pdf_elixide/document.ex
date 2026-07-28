@@ -2,6 +2,48 @@ defmodule PdfElixide.Document do
   @moduledoc """
   Read-only representation of a PDF document.
 
+  ## Sharing a document across processes
+
+  A `%Document{}` is safe to pass to other processes, and its reads run
+  *concurrently*: every function here takes the native handle's lock shared, so
+  N processes extracting from one document do not queue behind each other. There
+  is no need to keep a document inside the process that opened it, nor to open
+  the same file once per worker.
+
+  Two things to know about the edges:
+
+    * `authenticate/2` is the exception — it takes the lock exclusively, because
+      a first successful authentication invalidates a cache upstream that a
+      concurrent read must not be halfway through. Authenticate *before* fanning
+      the document out to workers.
+    * `close/1` is exclusive too, and waits for every in-flight call on the
+      handle to return. Afterwards every reader gets
+      `{:error, %PdfElixide.Error{reason: :closed}}`, so close only once the
+      workers are done.
+
+  There is also one **correctness** hazard, and it belongs to the underlying
+  library rather than to this binding. On a tagged PDF that declares
+  `/ActualText` both inside a page's content stream and on a structure element
+  covering the same marked content, the record of which declaration wins is kept
+  per *page index* on the shared document instead of per call. Two extractions
+  that touch the same page can therefore cross-contaminate, and one of them
+  returns the wrong replacement text for that page — text no error accompanies.
+  Concurrency is only one way to trigger it: two calls in a row on one handle do
+  it too, which is why this is not a reason to stop sharing a document. Fanning
+  the work out **by page** avoids it entirely, since workers that never share a
+  page never collide; the shape to avoid is two whole-document extractions
+  running on one handle at once. `test/pdf_elixide/upstream_drift_test.exs` pins
+  the behavior, and its comments carry the detail.
+
+  What the concurrency does *not* do is scale linearly: the underlying library
+  serializes the first, uncached read of each PDF object across threads, and
+  only lets already-cached reads through in parallel. Expect contention on a
+  document being read for the first time, and near-full parallelism afterwards.
+
+  `PdfElixide.Editor` is different in kind — it mutates, so every call on one
+  editor takes its lock exclusively and concurrent use of a single editor
+  serializes.
+
   ## Whole-document extraction and memory
 
   Every extractor here has a whole-document arity — `chars/1`, `words/1`,
@@ -221,9 +263,10 @@ defmodule PdfElixide.Document do
   it now, which matters for long-lived processes that open many documents.
   Calling it is optional and idempotent.
 
-  It takes the same lock every other call on the handle takes, so it waits for an
-  in-flight call on the same document — an extraction can hold that lock for
-  seconds. *Immediately* means as soon as the handle is idle, not preemptively.
+  It takes the handle's lock *exclusively*, where reads take it shared, so it
+  waits for every in-flight call on the same document — and an extraction can
+  hold its share of that lock for seconds. *Immediately* means as soon as the
+  handle is idle, not preemptively.
 
   Afterwards, functions that read the document return
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
@@ -415,6 +458,13 @@ defmodule PdfElixide.Document do
 
   The password is a byte string and is not required to be valid UTF-8 — see
   `t:open_opts/0`, whose `:password` option takes the same values.
+
+  This is the one read-side function that takes the document's lock
+  *exclusively*: a first successful authentication invalidates a cache upstream
+  whose stale entries would otherwise keep returning undecrypted text, and no
+  concurrent read may be halfway through it. So it waits for in-flight calls on
+  the handle and blocks new ones for its duration — authenticate before sharing
+  the document with other processes, not after.
   """
   @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
@@ -806,6 +856,14 @@ defmodule PdfElixide.Document do
       does not guarantee every image reached disk. It must be a valid-UTF-8
       binary like every other path — see the "File paths" section of
       `PdfElixide`. Defaults to `nil`.
+
+      **Give every concurrent conversion its own directory.** Filenames are
+      upstream's and fixed — `pageN_M.png`, one-based page then one-based
+      position in that page's *kept* image list — so two conversions writing
+      to one directory overwrite each other's files, non-atomically. That
+      includes two conversions of the same document: `:max_image_pixels`
+      changes which images are kept and so renumbers the rest, making one
+      name mean different pictures in different calls.
     * `:include_form_fields` — inline AcroForm field values at their
       positions on the page. Defaults to `true`.
     * `:strip_running_headers_footers` — drop text lines that repeat in
@@ -1041,6 +1099,14 @@ defmodule PdfElixide.Document do
       does not guarantee every image reached disk. It must be a valid-UTF-8
       binary like every other path — see the "File paths" section of
       `PdfElixide`. Defaults to `nil`.
+
+      **Give every concurrent conversion its own directory.** Filenames are
+      upstream's and fixed — `pageN_M.png`, one-based page then one-based
+      position in that page's *kept* image list — so two conversions writing
+      to one directory overwrite each other's files, non-atomically. That
+      includes two conversions of the same document: `:max_image_pixels`
+      changes which images are kept and so renumbers the rest, making one
+      name mean different pictures in different calls.
 
       Upstream interpolates the resulting path into the `src` attribute
       **without HTML escaping**, so a directory whose name contains `"` or

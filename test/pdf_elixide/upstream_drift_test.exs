@@ -40,6 +40,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
+  @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
 
   @columns 0
   @artifacts 1
@@ -377,6 +378,63 @@ defmodule PdfElixide.UpstreamDriftTest do
       refute html =~ "javascript:"
       assert html =~ "Bad link"
       refute html =~ ~s(<a href="javascript)
+    end
+  end
+
+  describe "competing /ActualText scopes" do
+    # Upstream keeps the record of which MCIDs had an *in-stream* (BDC)
+    # `/ActualText` in `PdfDocument::mc_actualtext_mcids` (`src/document.rs`) —
+    # document-global state keyed only by page index. It is written at the tail
+    # of `extract_spans_impl` and read back in a *later*, separate lock
+    # acquisition by the struct-tree applier (`apply_actualtext_to_spans` and
+    # the two assemblers). That makes it per-invocation scratch parked in shared
+    # storage, not a cache: nothing ties the value read to the call that wrote
+    # it.
+    #
+    # `actualtext.pdf` is built to make the consequence observable. MCID 0
+    # carries `/ActualText (INLINE)` in a Form XObject's content stream, and the
+    # structure element whose MCR covers that same MCID carries
+    # `/ActualText (ANCESTOR)`. ISO 32000-1:2008 §14.9.4 gives the innermost
+    # declaration precedence, so `"INLINE"` is the correct extraction — and it
+    # is what upstream produces exactly once per handle.
+    #
+    # The reason it degrades is the Form XObject span cache: a repeat extraction
+    # is served from `xobject_spans_cache` (`src/extractors/text.rs`), which
+    # returns early *without* re-scanning the XObject's BDCs, so that call
+    # records an empty set and clears the page's entry. The ancestor replacement
+    # then wins where it should have been declined.
+    #
+    # Why it is pinned here: `PdfElixide.Document`'s "Sharing a document across
+    # processes" section documents this as the one place concurrent same-page
+    # extraction can return wrong text, and the binding cannot fix it — the
+    # field is `pub(crate)` with no way to make it invocation-local. These
+    # canaries assert it *sequentially*, so they carry no timing assumption at
+    # all. **A failure means upstream repaired the state model**: relax the
+    # moduledoc hazard and the `Closable` doc comment in
+    # `native/pdf_elixide_nif/src/resource.rs`, then re-pin the new truth here.
+    test "a repeat span extraction of one page loses MC-scope precedence" do
+      doc = open(@actualtext_pdf)
+
+      assert texts(Document.spans!(doc, 0)) == ["INLINE"]
+
+      # Same call, same handle, same options — a different answer, and the
+      # wrong one.
+      assert texts(Document.spans!(doc, 0)) == ["ANCESTOR"]
+    end
+
+    test "an earlier span extraction changes a later text extraction" do
+      # On its own, `text/2` is stable and correct however often it is called:
+      # it reaches the page span cache rather than re-entering the extractor.
+      untouched = open(@actualtext_pdf)
+      assert Document.text!(untouched, 0) == "INLINE"
+      assert Document.text!(untouched, 0) == "INLINE"
+
+      # But an unrelated extraction of the same page first is enough to change
+      # what it returns. This is the shape that makes concurrency unsafe: two
+      # calls that share nothing but the page index, and the second is wrong.
+      poisoned = open(@actualtext_pdf)
+      assert texts(Document.spans!(poisoned, 0)) == ["INLINE"]
+      assert Document.text!(poisoned, 0) == "ANCESTOR"
     end
   end
 end
