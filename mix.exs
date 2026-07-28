@@ -61,7 +61,67 @@ defmodule PdfElixide.MixProject do
       source_url: @source,
       source_ref: "v#{@version}",
       main: "readme",
-      extras: ["README.md": [title: "Overview"], "CHANGELOG.md": []]
+      extras: ["README.md": [title: "Overview"], "CHANGELOG.md": []],
+      groups_for_modules: groups_for_modules()
+    ]
+  end
+
+  # Explicit module lists rather than prefix regexes: a regex would silently
+  # absorb a new module whose name happens to match, and the point of writing
+  # the inventory by hand is that `test/pdf_elixide/doc_groups_test.exs` can
+  # then fail when it disagrees with `lib/`. That test is load-bearing — it
+  # asserts every module with a real `@moduledoc` appears here exactly once, so
+  # nothing falls into ExDoc's trailing ungrouped bucket unnoticed.
+  #
+  # Groups render in declaration order, so this is reading order, not
+  # alphabetical. `PdfElixide.Error` sits under Documents because the
+  # `PdfElixide` moduledoc sends readers to its "Errors versus exceptions"
+  # section from the same page; `PdfElixide.Form` reads from a document *or* an
+  # editor, but the mutating half is what a reader comes looking for.
+  #
+  # `PdfElixide.Document.Path` is spelled out, as everywhere else — see the
+  # comments in `lib/pdf_elixide/document.ex` on never aliasing it bare.
+  defp groups_for_modules do
+    [
+      Documents: [
+        PdfElixide,
+        PdfElixide.Document,
+        PdfElixide.Document.Page,
+        PdfElixide.Error
+      ],
+      "Document metadata": [
+        PdfElixide.Document.Metadata,
+        PdfElixide.Document.XmpMetadata,
+        PdfElixide.Document.Permissions,
+        PdfElixide.Document.OutlineItem
+      ],
+      "Extracted content": [
+        PdfElixide.Document.Char,
+        PdfElixide.Document.Word,
+        PdfElixide.Document.TextLine,
+        PdfElixide.Document.Span,
+        PdfElixide.Document.Table,
+        PdfElixide.Document.Table.Row,
+        PdfElixide.Document.Table.Cell,
+        PdfElixide.Document.Path,
+        PdfElixide.Document.Image,
+        PdfElixide.Document.Font,
+        PdfElixide.Document.Annotation,
+        PdfElixide.Document.Annotation.Flags
+      ],
+      "Geometry and color": [
+        PdfElixide.Geometry.Rect,
+        PdfElixide.Color,
+        PdfElixide.Color.RGB,
+        PdfElixide.Color.CMYK,
+        PdfElixide.Color.Gray,
+        PdfElixide.Color.Unknown
+      ],
+      "Editing and forms": [
+        PdfElixide.Editor,
+        PdfElixide.Form,
+        PdfElixide.Form.Field
+      ]
     ]
   end
 
