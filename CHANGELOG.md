@@ -5,6 +5,25 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.10.0](https://github.com/r8/pdf_elixide/compare/v0.9.0...v0.10.0) (2026-07-28)
+
+
+
+
+### Features:
+
+* read documents through a shared lock so one handle serves concurrent reads by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* report the index and count when page/2 rejects an out-of-range page by [@r8](https://github.com/r8)
+
+* unify bad option error handling by [@r8](https://github.com/r8)
+
+* decode the open-option password as bytes so a non-UTF-8 password works by [@r8](https://github.com/r8)
+
+* cap outline conversion depth so a hostile bookmark tree can't abort the VM by [@r8](https://github.com/r8)
+
 ## [v0.9.0](https://github.com/r8/pdf_elixide/compare/v0.8.0...v0.9.0) (2026-07-26)
 
 
