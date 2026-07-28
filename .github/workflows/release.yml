@@ -8,8 +8,40 @@ on:
       - "*"
 
 jobs:
+  # The single place the project version is read, and the gate on the tag that
+  # carries it. `PdfElixide.Native` builds its `base_url` as
+  # `<repo>/releases/download/v#{version}` (lib/pdf_elixide/native.ex), so a
+  # release tagged anything but `v<mix version>` publishes archives that
+  # `rustler_precompiled` will never look for. The check lives inside the step
+  # rather than in a job-level `if:` because a skipped job skips everything that
+  # `needs:` it, which would skip the whole build matrix on a push to main.
+  verify_tag:
+    name: Verify the tag matches the project version
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.project-version.outputs.version }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Extract project version
+        id: project-version
+        shell: bash
+        run: |
+          # Get the project version from mix.exs
+          version="$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the mix.exs version $version. \
+          The NIFs would be published under this tag while consumers download them from \
+          releases/download/v$version. Retag as v$version, or bump mix.exs."
+            exit 1
+          fi
+
   build_release:
     name: NIF ${{ matrix.nif }} - ${{ matrix.job.target }} (${{ matrix.job.os }})
+    needs: verify_tag
     runs-on: ${{ matrix.job.os }}
     permissions:
       # For creating a new release.
@@ -58,12 +90,6 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v6
 
-      - name: Extract project version
-        shell: bash
-        run: |
-          # Get the project version from mix.exs
-          echo "PROJECT_VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)" >> $GITHUB_ENV
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -80,7 +106,7 @@ jobs:
         uses: philss/rustler-precompiled-action@v1.1.5
         with:
           project-name: pdf_elixide_nif
-          project-version: ${{ env.PROJECT_VERSION }}
+          project-version: ${{ needs.verify_tag.outputs.version }}
           target: ${{ matrix.job.target }}
           nif-version: ${{ matrix.nif }}
           use-cross: ${{ matrix.job.use-cross }}

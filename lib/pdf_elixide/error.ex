@@ -63,6 +63,16 @@ defmodule PdfElixide.Error do
   Nothing about the *caller* therefore arrives as a `%PdfElixide.Error{}`; if
   you get one, the arguments were accepted and the document, the filesystem or
   the handle is what failed.
+
+  Predicates ending in `?` are the mirror image. They return a bare boolean, so
+  a failure has nowhere to be reported and this struct is raised instead — from
+  a function with no `!` in its name. Only a failure of the *handle* reaches
+  there: `PdfElixide.Document.has_structure_tree?/1` and
+  `PdfElixide.Document.has_xfa?/1` answer `false` for a document whose feature
+  cannot be read (their strict counterparts `PdfElixide.Document.has_structure_tree/1`
+  and `PdfElixide.Document.has_xfa/1` return the error instead), while
+  `PdfElixide.Document.encrypted?/1` asks something upstream cannot fail.
+  `closed?/1` never raises on any handle.
   """
 
   @type reason ::

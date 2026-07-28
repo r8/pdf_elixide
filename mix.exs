@@ -14,6 +14,11 @@ defmodule PdfElixide.MixProject do
       package: package(),
       docs: docs(),
       dialyzer: dialyzer(),
+      # `test/support` holds helpers required from `test_helper.exs`, not test
+      # files. Elixir 1.19 warns about any file under `test/` that matches
+      # neither filter; older versions load nothing but `*_test.exs` and ignore
+      # this key.
+      test_ignore_filters: [&String.starts_with?(&1, "test/support/")],
       deps: deps()
     ]
   end

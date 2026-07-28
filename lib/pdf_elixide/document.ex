@@ -378,6 +378,10 @@ defmodule PdfElixide.Document do
 
   @doc """
   Returns whether the PDF document is encrypted.
+
+  A closed document or a native panic raises — see the "Errors versus
+  exceptions" section of `PdfElixide.Error`. Nothing else can fail here:
+  `pdf_oxide`'s encryption check is infallible.
   """
   @spec encrypted?(t()) :: boolean()
   def encrypted?(%__MODULE__{ref: ref}) do
