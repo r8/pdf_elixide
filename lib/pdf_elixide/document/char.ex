@@ -26,25 +26,7 @@ defmodule PdfElixide.Document.Char do
     :mcid
   ]
 
-  defstruct [
-    :text,
-    :page,
-    :bbox,
-    :font_size,
-    :font,
-    :font_weight,
-    :bold?,
-    :italic?,
-    :monospace?,
-    :color,
-    :origin,
-    :rotation,
-    :advance_width,
-    :rendered_advance,
-    :ascent,
-    :descent,
-    :mcid
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           text: String.t(),

@@ -8,12 +8,7 @@ defmodule PdfElixide.Document.TextLine do
 
   @enforce_keys [:text, :page, :bbox, :words]
 
-  defstruct [
-    :text,
-    :page,
-    :bbox,
-    :words
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           text: String.t(),

@@ -7,12 +7,7 @@ defmodule PdfElixide.Color.CMYK do
   """
   @enforce_keys [:c, :m, :y, :k]
 
-  defstruct [
-    :c,
-    :m,
-    :y,
-    :k
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           c: float(),

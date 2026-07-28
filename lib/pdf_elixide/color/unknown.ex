@@ -8,7 +8,7 @@ defmodule PdfElixide.Color.Unknown do
   """
   @enforce_keys [:components]
 
-  defstruct [:components]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{components: [float()]}
 end

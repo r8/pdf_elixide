@@ -22,7 +22,10 @@ defmodule PdfElixide.Color do
   `:interior_color` carry the raw `/C` and `/IC` component arrays, so any of the
   four structs can appear there.
   """
-  alias PdfElixide.Color.{CMYK, Gray, RGB, Unknown}
+  alias PdfElixide.Color.CMYK
+  alias PdfElixide.Color.Gray
+  alias PdfElixide.Color.RGB
+  alias PdfElixide.Color.Unknown
 
   @typedoc """
   Any extracted color.

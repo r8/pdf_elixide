@@ -25,11 +25,7 @@ defmodule PdfElixide.Document.OutlineItem do
 
   @enforce_keys [:title, :dest, :children]
 
-  defstruct [
-    :title,
-    :dest,
-    :children
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           title: String.t(),

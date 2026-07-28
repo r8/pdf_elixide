@@ -48,19 +48,7 @@ defmodule PdfElixide.Document.Font do
     :ref
   ]
 
-  defstruct [
-    :page,
-    :resource_name,
-    :base_font,
-    :subtype,
-    :encoding,
-    :embedded?,
-    :subset?,
-    :weight,
-    :bold?,
-    :italic?,
-    :ref
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           page: non_neg_integer(),

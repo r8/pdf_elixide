@@ -27,25 +27,7 @@ defmodule PdfElixide.Document.Span do
     :mcid
   ]
 
-  defstruct [
-    :text,
-    :page,
-    :bbox,
-    :font_size,
-    :font,
-    :font_weight,
-    :bold?,
-    :italic?,
-    :monospace?,
-    :color,
-    :rotation,
-    :char_spacing,
-    :word_spacing,
-    :horizontal_scaling,
-    :text_rise,
-    :heading_level,
-    :mcid
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           text: String.t(),

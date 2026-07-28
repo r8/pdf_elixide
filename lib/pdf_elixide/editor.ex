@@ -27,6 +27,9 @@ defmodule PdfElixide.Editor do
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
+  # Spelled out rather than `defstruct @enforce_keys`, unlike the value structs:
+  # `:source_path` is nil for an editor built from a binary, so it cannot be
+  # enforced.
   @enforce_keys [:ref]
   defstruct [:ref, :source_path]
 

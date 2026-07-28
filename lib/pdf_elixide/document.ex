@@ -118,6 +118,10 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
+  # Spelled out rather than `defstruct @enforce_keys`, unlike the value structs:
+  # `:page_count` is nil for a document whose page tree was unreadable at open,
+  # and `:source_path` is nil for one built from a binary, so neither can be
+  # enforced.
   @enforce_keys [:ref, :version]
   defstruct [:ref, :version, :page_count, :source_path]
 
@@ -753,7 +757,6 @@ defmodule PdfElixide.Document do
 
   See `t:text_opts/0` for the available options.
   """
-  @spec text(t()) :: {:ok, String.t()} | {:error, Error.t()}
   @spec text(t(), text_opts() | non_neg_integer()) :: {:ok, String.t()} | {:error, Error.t()}
   def text(doc, page_index_or_opts \\ [])
 
@@ -770,7 +773,6 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts text content, raising an error if it fails.
   """
-  @spec text!(t()) :: String.t()
   @spec text!(t(), text_opts() | non_neg_integer()) :: String.t()
   def text!(doc, page_index_or_opts \\ [])
 
@@ -939,7 +941,6 @@ defmodule PdfElixide.Document do
 
   See `t:markdown_opts/0` for the available options.
   """
-  @spec to_markdown(t()) :: {:ok, String.t()} | {:error, Error.t()}
   @spec to_markdown(t(), markdown_opts() | non_neg_integer()) ::
           {:ok, String.t()} | {:error, Error.t()}
   def to_markdown(doc, page_index_or_opts \\ [])
@@ -957,7 +958,6 @@ defmodule PdfElixide.Document do
   @doc """
   Converts the document to Markdown, raising an error if it fails.
   """
-  @spec to_markdown!(t()) :: String.t()
   @spec to_markdown!(t(), markdown_opts() | non_neg_integer()) :: String.t()
   def to_markdown!(doc, page_index_or_opts \\ [])
 
@@ -1193,7 +1193,6 @@ defmodule PdfElixide.Document do
 
   See `t:html_opts/0` for the available options.
   """
-  @spec to_html(t()) :: {:ok, String.t()} | {:error, Error.t()}
   @spec to_html(t(), html_opts() | non_neg_integer()) ::
           {:ok, String.t()} | {:error, Error.t()}
   def to_html(doc, page_index_or_opts \\ [])
@@ -1211,7 +1210,6 @@ defmodule PdfElixide.Document do
   @doc """
   Converts the document to HTML, raising an error if it fails.
   """
-  @spec to_html!(t()) :: String.t()
   @spec to_html!(t(), html_opts() | non_neg_integer()) :: String.t()
   def to_html!(doc, page_index_or_opts \\ [])
 
@@ -1365,7 +1363,6 @@ defmodule PdfElixide.Document do
 
   See `t:words_opts/0` for the available options.
   """
-  @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}
   @spec words(t(), words_opts() | non_neg_integer()) :: {:ok, [Word.t()]} | {:error, Error.t()}
   def words(doc, page_index_or_opts \\ [])
 
@@ -1385,7 +1382,6 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts words, raising an error if it fails.
   """
-  @spec words!(t()) :: [Word.t()]
   @spec words!(t(), words_opts() | non_neg_integer()) :: [Word.t()]
   def words!(doc, page_index_or_opts \\ [])
 
@@ -1484,7 +1480,6 @@ defmodule PdfElixide.Document do
 
   See `t:text_lines_opts/0` for the available options.
   """
-  @spec text_lines(t()) :: {:ok, [TextLine.t()]} | {:error, Error.t()}
   @spec text_lines(t(), text_lines_opts() | non_neg_integer()) ::
           {:ok, [TextLine.t()]} | {:error, Error.t()}
   def text_lines(doc, page_index_or_opts \\ [])
@@ -1505,7 +1500,6 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts text lines, raising an error if it fails.
   """
-  @spec text_lines!(t()) :: [TextLine.t()]
   @spec text_lines!(t(), text_lines_opts() | non_neg_integer()) :: [TextLine.t()]
   def text_lines!(doc, page_index_or_opts \\ [])
 
@@ -1608,7 +1602,6 @@ defmodule PdfElixide.Document do
 
   See `t:chars_opts/0` for the available options.
   """
-  @spec chars(t()) :: {:ok, [Char.t()]} | {:error, Error.t()}
   @spec chars(t(), chars_opts() | non_neg_integer()) :: {:ok, [Char.t()]} | {:error, Error.t()}
   def chars(doc, page_index_or_opts \\ [])
 
@@ -1628,7 +1621,6 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts characters, raising an error if it fails.
   """
-  @spec chars!(t()) :: [Char.t()]
   @spec chars!(t(), chars_opts() | non_neg_integer()) :: [Char.t()]
   def chars!(doc, page_index_or_opts \\ [])
 
@@ -1835,7 +1827,6 @@ defmodule PdfElixide.Document do
 
   See `t:spans_opts/0` for the available options.
   """
-  @spec spans(t()) :: {:ok, [Span.t()]} | {:error, Error.t()}
   @spec spans(t(), spans_opts() | non_neg_integer()) :: {:ok, [Span.t()]} | {:error, Error.t()}
   def spans(doc, page_index_or_opts \\ [])
 
@@ -1855,7 +1846,6 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts spans, raising an error if it fails.
   """
-  @spec spans!(t()) :: [Span.t()]
   @spec spans!(t(), spans_opts() | non_neg_integer()) :: [Span.t()]
   def spans!(doc, page_index_or_opts \\ [])
 
@@ -2089,7 +2079,6 @@ defmodule PdfElixide.Document do
   see the "Whole-document extraction and memory" section of
   `PdfElixide.Document`.
   """
-  @spec tables(t()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   @spec tables(t(), tables_opts() | non_neg_integer()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   def tables(doc, page_index_or_opts \\ [])
 
@@ -2109,7 +2098,6 @@ defmodule PdfElixide.Document do
   @doc """
   Detects tables, raising an error if it fails.
   """
-  @spec tables!(t()) :: [Table.t()]
   @spec tables!(t(), tables_opts() | non_neg_integer()) :: [Table.t()]
   def tables!(doc, page_index_or_opts \\ [])
 

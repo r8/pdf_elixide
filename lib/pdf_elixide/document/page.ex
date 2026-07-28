@@ -38,7 +38,7 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Native.Wrap
 
   @enforce_keys [:doc, :index]
-  defstruct [:doc, :index]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           doc: Document.t(),

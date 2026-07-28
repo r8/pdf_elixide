@@ -8,15 +8,7 @@ defmodule PdfElixide.Document.Table.Cell do
 
   @enforce_keys [:text, :bbox, :colspan, :rowspan, :header?, :mcids, :spans]
 
-  defstruct [
-    :text,
-    :bbox,
-    :colspan,
-    :rowspan,
-    :header?,
-    :mcids,
-    :spans
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           text: String.t(),

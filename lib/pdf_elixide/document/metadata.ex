@@ -47,17 +47,7 @@ defmodule PdfElixide.Document.Metadata do
     :trapped
   ]
 
-  defstruct [
-    :title,
-    :author,
-    :subject,
-    :keywords,
-    :creator,
-    :producer,
-    :creation_date,
-    :mod_date,
-    :trapped
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           title: String.t() | nil,

@@ -9,12 +9,7 @@ defmodule PdfElixide.Geometry.Rect do
   """
   @enforce_keys [:x, :y, :width, :height]
 
-  defstruct [
-    :x,
-    :y,
-    :width,
-    :height
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           x: float(),

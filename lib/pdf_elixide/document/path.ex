@@ -42,18 +42,7 @@ defmodule PdfElixide.Document.Path do
     :layer
   ]
 
-  defstruct [
-    :page,
-    :bbox,
-    :operations,
-    :stroke_color,
-    :fill_color,
-    :stroke_width,
-    :line_cap,
-    :line_join,
-    :dash_pattern,
-    :layer
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           page: non_neg_integer(),

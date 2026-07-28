@@ -51,17 +51,7 @@ defmodule PdfElixide.Document.Image do
     :rotation_degrees
   ]
 
-  defstruct [
-    :page,
-    :bbox,
-    :width,
-    :height,
-    :format,
-    :ref,
-    :color_space,
-    :bits_per_component,
-    :rotation_degrees
-  ]
+  defstruct @enforce_keys
 
   @typedoc """
   The stored color space, resolved to an atom. `:icc_based` covers any
@@ -275,7 +265,7 @@ defmodule PdfElixide.Document.Image do
   end
 
   defp format_from_ext!(path) do
-    case path |> Elixir.Path.extname() |> String.downcase() do
+    case path |> Path.extname() |> String.downcase() do
       ".png" ->
         :png
 

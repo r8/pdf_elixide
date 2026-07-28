@@ -7,15 +7,7 @@ defmodule PdfElixide.Document.Word do
 
   @enforce_keys [:text, :page, :bbox, :font_size, :font, :bold?, :italic?]
 
-  defstruct [
-    :text,
-    :page,
-    :bbox,
-    :font_size,
-    :font,
-    :bold?,
-    :italic?
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           text: String.t(),

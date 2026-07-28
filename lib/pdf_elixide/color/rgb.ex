@@ -7,11 +7,7 @@ defmodule PdfElixide.Color.RGB do
   """
   @enforce_keys [:r, :g, :b]
 
-  defstruct [
-    :r,
-    :g,
-    :b
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           r: float(),

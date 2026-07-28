@@ -7,7 +7,7 @@ defmodule PdfElixide.Color.Gray do
   """
   @enforce_keys [:gray]
 
-  defstruct [:gray]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{gray: float()}
 end

@@ -16,10 +16,7 @@ defmodule PdfElixide.Document.Table.Row do
 
   @enforce_keys [:header?, :cells]
 
-  defstruct [
-    :header?,
-    :cells
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           header?: boolean(),

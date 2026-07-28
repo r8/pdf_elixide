@@ -7,11 +7,7 @@ defmodule PdfElixide.Form.Field do
   """
   @enforce_keys [:name, :kind, :value]
 
-  defstruct [
-    :name,
-    :kind,
-    :value
-  ]
+  defstruct @enforce_keys
 
   @typedoc """
   The field's type, as declared by the PDF's `/FT` entry.

@@ -84,15 +84,7 @@ defmodule PdfElixide.Document.Table do
 
   @enforce_keys [:page, :bbox, :col_count, :has_header?, :real_grid?, :rows, :ref]
 
-  defstruct [
-    :page,
-    :bbox,
-    :col_count,
-    :has_header?,
-    :real_grid?,
-    :rows,
-    :ref
-  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           page: non_neg_integer(),
