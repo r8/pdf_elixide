@@ -106,6 +106,12 @@ impl From<ColorSpace> for ColorSpaceNif {
 /// Converts an extracted `PdfImage` into its NIF representation: eager metadata
 /// plus a resource handle to the image itself, so the pixel data is encoded
 /// lazily (on `image_to_binary` / `image_save`) rather than at extraction time.
+///
+/// Only the *encode* is deferred. The whole `PdfImage` is moved into the
+/// resource here, so its decoded pixels — or its original JPEG blob — stay
+/// resident until the handle is closed or garbage-collected. That is what makes
+/// `Document.images/1` hold every image in the document at once, which its
+/// `@doc` and the `PdfElixide.Document` moduledoc both spell out.
 pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
     ImageNif {
         page,

@@ -1,6 +1,60 @@
 defmodule PdfElixide.Document do
   @moduledoc """
   Read-only representation of a PDF document.
+
+  ## Whole-document extraction and memory
+
+  Every extractor here has a whole-document arity — `chars/1`, `words/1`,
+  `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `images/1`, `fonts/1`,
+  `annotations/1`, `text/1`, `to_markdown/1` and `to_html/1`. Each walks all
+  pages inside a **single** native call and returns one flat list, so its cost
+  scales with the whole document rather than with what the caller keeps. At the
+  moment the call returns, the results exist twice — once as the native vector
+  and once as the Elixir terms encoded from it — so peak usage is roughly double
+  the final list. `chars/1` is the extreme: one struct per glyph, each with its
+  own text and font-name binary. `spans/1` describes the same text in runs
+  rather than glyphs and is usually the cheaper way to ask.
+
+  Three of them hold native memory *after* the call as well, because each
+  returned struct carries a handle:
+
+    * `images/1` — every image's decoded pixels, or its original JPEG bytes,
+      one buffer per image. The struct does not carry the pixel data, but the
+      handle behind it does, from extraction onward; `PdfElixide.Document.Image.to_binary/2`
+      defers the *encode*, not the load.
+    * `fonts/1` — one handle per page per font, with no sharing across pages, so
+      a single font used throughout a long document yields as many handles as
+      there are pages.
+    * `tables/1` — the full detected table, including the per-glyph metrics the
+      struct itself omits.
+
+  A handle is invisible to the BEAM's memory accounting, so nothing pressures
+  the VM to collect it. On a large document, release them with
+  `PdfElixide.Document.Image.close/1`, `PdfElixide.Document.Font.close/1` or
+  `PdfElixide.Document.Table.close/1` as you finish with each.
+
+  ### Working a page at a time
+
+  `PdfElixide.Document` implements `Enumerable` over its pages, and
+  `PdfElixide.Document.Page` offers every extractor, so bounding memory needs no
+  extra API — only one page's results are live at a time:
+
+      # Constant memory: each page's chars become garbage when the function returns.
+      Enum.reduce(doc, 0, fn page, acc -> acc + length(Page.chars!(page)) end)
+
+      # Or as a lazy sequence.
+      Stream.flat_map(doc, &Page.chars!/1)
+
+  One page is the floor: a page's own results are still built and encoded whole,
+  since there is no incremental encoder at the native boundary.
+
+  Concatenating pages this way reproduces the whole-document arity exactly for
+  the list-returning extractors, which is what `test/pdf_elixide/per_page_equivalence_test.exs`
+  pins. The three that return one value do **not** round-trip so simply, since
+  each joins pages itself: `text/1` separates them with a form feed and applies
+  `:on_page_error` (see the "`:on_page_error` and partly extractable documents"
+  section of `t:text_opts/0`), `to_markdown/1` joins with a `---` break, and
+  `to_html/1` wraps each page in a `<div class="page">`.
   """
 
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
@@ -646,6 +700,11 @@ defmodule PdfElixide.Document do
   when a page can fail at all and why the other extractors do not offer the
   choice.
 
+  The whole-document form builds every page's text in memory at once — see the
+  "Whole-document extraction and memory" section of `PdfElixide.Document`,
+  which also explains why extracting page by page does not reproduce this
+  function's page separators.
+
   See `t:text_opts/0` for the available options.
   """
   @spec text(t()) :: {:ok, String.t()} | {:error, Error.t()}
@@ -819,6 +878,10 @@ defmodule PdfElixide.Document do
       Document.to_markdown(doc)
       Document.to_markdown(doc, detect_headings: false)
       Document.to_markdown(doc, 0)
+
+  The whole-document form builds the entire conversion in memory at once, which
+  `:include_images` can make considerably larger — see the "Whole-document
+  extraction and memory" section of `PdfElixide.Document`.
 
   See `t:markdown_opts/0` for the available options.
   """
@@ -1043,6 +1106,10 @@ defmodule PdfElixide.Document do
   to an empty string, as does a document that is encrypted and could not
   be decrypted.
 
+  The whole-document form builds the entire conversion in memory at once, which
+  `:include_images` can make considerably larger — see the "Whole-document
+  extraction and memory" section of `PdfElixide.Document`.
+
   ## Escaping
 
   Text taken from the PDF is escaped by `pdf_oxide` before it reaches the
@@ -1230,6 +1297,10 @@ defmodule PdfElixide.Document do
       Document.words(doc, 0)
       Document.words(doc, 0, region: heading.bbox)
 
+  The whole-document form builds every page's words in memory at once — see the
+  "Whole-document extraction and memory" section of `PdfElixide.Document` for
+  when to prefer the per-page arity.
+
   See `t:words_opts/0` for the available options.
   """
   @spec words(t()) :: {:ok, [Word.t()]} | {:error, Error.t()}
@@ -1339,6 +1410,10 @@ defmodule PdfElixide.Document do
   With a keyword list (or nothing) as the second argument, returns every
   page's lines concatenated into a single flat list, in page order. With a
   zero-based integer, returns that single page's lines instead.
+
+  The whole-document form builds every page's lines in memory at once — see the
+  "Whole-document extraction and memory" section of `PdfElixide.Document` for
+  when to prefer the per-page arity.
 
   See `t:text_lines_opts/0` for the available options.
   """
@@ -1452,6 +1527,12 @@ defmodule PdfElixide.Document do
   With a keyword list (or nothing) as the second argument, returns every
   page's characters concatenated into a single flat list, in page order. With
   a zero-based integer, returns that single page's characters instead.
+
+  This is the most memory-hungry extractor here — one struct per glyph, each
+  carrying its own text and font-name binary — so the whole-document form is
+  the one most worth avoiding on a large document. See the "Whole-document
+  extraction and memory" section of `PdfElixide.Document`, and consider
+  `spans/1`, which describes the same text in runs rather than glyphs.
 
   See `t:chars_opts/0` for the available options.
   """
@@ -1669,6 +1750,11 @@ defmodule PdfElixide.Document do
   With a keyword list (or nothing) as the second argument, returns every
   page's spans concatenated into a single flat list, in page order. With a
   zero-based integer, returns that single page's spans instead.
+
+  A span covers a run of text rather than one glyph, so this is the cheaper way
+  to ask for what `chars/1` returns when per-glyph detail is not needed. The
+  whole-document form still builds every page's spans in memory at once — see
+  the "Whole-document extraction and memory" section of `PdfElixide.Document`.
 
   See `t:spans_opts/0` for the available options.
   """
@@ -1922,7 +2008,9 @@ defmodule PdfElixide.Document do
   Every returned table keeps the detected table alive on the Rust side for
   `PdfElixide.Document.Table.to_markdown/2` and friends, so the whole-document
   form holds all of them at once. Prefer the per-page arity, or
-  `PdfElixide.Document.Table.close/1` as you go, on a table-dense document.
+  `PdfElixide.Document.Table.close/1` as you go, on a table-dense document —
+  see the "Whole-document extraction and memory" section of
+  `PdfElixide.Document`.
   """
   @spec tables(t()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   @spec tables(t(), tables_opts() | non_neg_integer()) :: {:ok, [Table.t()]} | {:error, Error.t()}
@@ -2071,6 +2159,10 @@ defmodule PdfElixide.Document do
 
   Returns every page's paths concatenated into a single flat list, in page
   order, as `PdfElixide.Document.Path` structs.
+
+  This builds every page's paths in memory at once — see the "Whole-document
+  extraction and memory" section of `PdfElixide.Document` for when to prefer
+  `paths/2`.
   """
   @spec paths(t()) :: {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
   def paths(%__MODULE__{ref: ref}) do
@@ -2131,6 +2223,12 @@ defmodule PdfElixide.Document do
   only whole-document extractor that tolerates such a page, and the only one
   that does so with no option to say otherwise: both follow an upstream loop's
   policy, and upstream's font walk has no `:halt` to offer.
+
+  Each returned font keeps a native handle, and fonts are not shared across
+  pages, so a single font used throughout a long document yields one handle per
+  page — all of them live at once here. Prefer `fonts/2`, or
+  `PdfElixide.Document.Font.close/1` as you go; see the "Whole-document
+  extraction and memory" section of `PdfElixide.Document`.
   """
   @spec fonts(t()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{ref: ref}) do
@@ -2230,6 +2328,10 @@ defmodule PdfElixide.Document do
   Returns every page's annotations concatenated into a single flat list, in page
   order, as `PdfElixide.Document.Annotation` structs. Each carries its zero-based
   `:page` index. Returns `{:ok, []}` when the document has no annotations.
+
+  This builds every page's annotations in memory at once — see the
+  "Whole-document extraction and memory" section of `PdfElixide.Document` for
+  when to prefer `annotations/2`.
   """
   @spec annotations(t()) :: {:ok, [Annotation.t()]} | {:error, Error.t()}
   def annotations(%__MODULE__{ref: ref}) do
@@ -2285,6 +2387,12 @@ defmodule PdfElixide.Document do
   order, as `PdfElixide.Document.Image` structs. The pixel data is not carried on
   the struct — encode it on demand with `PdfElixide.Document.Image.to_binary/2`
   or `PdfElixide.Document.Image.save/3`.
+
+  What is deferred there is the *encode*, not the load: each struct's handle
+  holds that image's decoded pixels — or its original JPEG bytes — from
+  extraction onward, so this arity keeps every image in the document resident at
+  once. Prefer `images/2`, or `PdfElixide.Document.Image.close/1` as you go; see
+  the "Whole-document extraction and memory" section of `PdfElixide.Document`.
   """
   @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{ref: ref}) do

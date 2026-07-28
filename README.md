@@ -336,6 +336,41 @@ value all raise `ArgumentError` naming the offending key, so a typo is
 reported rather than silently doing nothing. `%PdfElixide.Error{}` is reserved
 for failures of the document, the filesystem or the handle.
 
+### Whole-document forms and memory
+
+Every extractor's whole-document arity walks all pages in a single native call
+and returns one flat list, so its cost scales with the document rather than with
+what you keep. At the moment the call returns, the results exist twice — as the
+native vector and as the Elixir terms encoded from it — so peak usage is roughly
+double the final list. `chars/1` is the extreme, one struct per glyph; `spans/1`
+describes the same text in runs and is usually the cheaper way to ask.
+
+Three of them hold native memory after the call as well, because each returned
+struct carries a handle: `images/1` keeps every image's pixels (or its original
+JPEG bytes) resident from extraction onward, `fonts/1` mints one handle per page
+per font with no sharing across pages, and `tables/1` keeps each detected table
+whole. Release them with `close/1` as you finish with each — see
+[Releasing a document](#releasing-a-document).
+
+`PdfElixide.Document` implements `Enumerable` over its pages and
+`PdfElixide.Document.Page` offers every extractor, so bounding memory needs no
+extra API:
+
+```elixir
+alias PdfElixide.Document.Page
+
+# Constant memory — each page's chars become garbage when the function returns.
+total = Enum.reduce(doc, 0, fn page, acc -> acc + length(Page.chars!(page)) end)
+
+# Or as a lazy sequence.
+doc |> Stream.flat_map(&Page.chars!/1) |> Enum.take(100)
+```
+
+One page is the floor: a page's own results are still built and encoded whole.
+Concatenating pages this way matches the whole-document arity exactly for the
+list-returning extractors, but not for `text/1`, `to_markdown/1` or `to_html/1`,
+each of which joins its pages with a separator of its own.
+
 ### Extracting words
 
 Word extraction keeps the positional and font information that plain text
