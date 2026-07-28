@@ -1,6 +1,37 @@
 defmodule PdfElixide.Form do
   @moduledoc """
-  Representation of the form fields within a PDF document.
+  AcroForm field access for documents and editors.
+
+  `fields/1` reads from *either* source — a read-only `PdfElixide.Document` or a
+  mutable `PdfElixide.Editor` (`t:source/0`) — so inspecting a form needs no
+  editor. Writing does: `set_value/3` takes an `Editor` only, since a document
+  cannot be changed.
+
+      # Inspect, read-only.
+      doc = PdfElixide.Document.open!("form.pdf")
+      fields = PdfElixide.Form.fields!(doc)
+
+      # Fill and persist.
+      editor = PdfElixide.Editor.open!("form.pdf")
+      :ok = PdfElixide.Form.set_value(editor, "full_name", {:text, "Jane Doe"})
+      :ok = PdfElixide.Form.set_value(editor, "subscribe", {:boolean, true})
+      :ok = PdfElixide.Editor.save(editor, "filled.pdf")
+
+  Fields come back as `PdfElixide.Form.Field` structs, and the tagged tuple a
+  field's `:value` carries is the same shape `set_value/3` accepts, so a value
+  read from one form can be written straight into another.
+
+  Fields are addressed by name, and only an existing field can be set — there is
+  no way to add one. A name that is not in the form is
+  `{:error, %PdfElixide.Error{}}`.
+
+  Which lock `fields/1` takes follows its source. On a `PdfElixide.Document` it
+  is an ordinary shared read, so several processes can list one document's
+  fields at once. On a `PdfElixide.Editor` it takes the editor's lock
+  *exclusively*, exactly as `set_value/3` and every other editor call does — so
+  concurrent form work on one editor serializes, whether it writes or only
+  reads. See the "Sharing a document across processes" section of
+  `PdfElixide.Document`.
   """
 
   alias PdfElixide.Document

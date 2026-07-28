@@ -3,6 +3,8 @@ defmodule PdfElixide.Document.Table do
   A table detected on a PDF page, with its zero-based page index, bounding box,
   and rows.
 
+  ## Detection is a guess
+
   Tables are *detected* by a spatial algorithm rather than read from explicit
   markup, so a detection is a best guess. The `:real_grid?` flag reports
   whether the detection looks like a genuine data grid (at least two rows and
@@ -17,6 +19,8 @@ defmodule PdfElixide.Document.Table do
   or too many.
 
   `:bbox` is `nil` when the detector could not determine the table's extent.
+
+  ## Reading cells
 
   Read a value out with `cell/3` or `cell_text/3`, both zero-based and both
   `nil` when the index falls outside the table:
@@ -34,11 +38,15 @@ defmodule PdfElixide.Document.Table do
   fewer cells than `:col_count`, and the positions after the merge no longer line
   up with the visual column.
 
+  ## Enumerating
+
   A table is enumerable over its rows, and each row over its cells, so the whole
   grid of text is one nested `Enum.map/2`:
 
       Enum.map(table, fn row -> Enum.map(row, & &1.text) end)
       #=> [["Age", "0.042", "0.011", "0.001"], ...]
+
+  ## Rendering
 
   A single table renders on its own with `to_markdown/2`, `to_html/1`, or
   `to_text/1` — the same output `PdfElixide.Document.to_markdown/2` and
@@ -46,6 +54,8 @@ defmodule PdfElixide.Document.Table do
 
       Table.to_markdown(table)
       #=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\\n|---|---|---|---|\\n..."}
+
+  ## The native handle
 
   Rendering goes through `:ref`, a handle to the detected table held on the Rust
   side, so it works only on a table that came from extraction — not on a
@@ -57,6 +67,13 @@ defmodule PdfElixide.Document.Table do
   until `close/1` or garbage collection, so on a table-dense page — and more so
   with `PdfElixide.Document.tables/1`, which returns every page's tables at once —
   close the tables you are done rendering.
+
+  The handle is shareable, and rendering through it runs concurrently:
+  `to_markdown/2`, `to_html/1` and `to_text/1` all take it shared, over a table
+  the handle already owns, so rendering one table from several processes runs in
+  parallel. `close/1` is exclusive and waits for a render already in flight.
+  Same model as the "Sharing a document across processes" section of
+  `PdfElixide.Document`.
   """
   alias PdfElixide.Document.Table.Cell
   alias PdfElixide.Document.Table.Row

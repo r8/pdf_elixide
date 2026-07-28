@@ -32,17 +32,15 @@ defmodule PdfElixide.Document do
   it too, which is why this is not a reason to stop sharing a document. Fanning
   the work out **by page** avoids it entirely, since workers that never share a
   page never collide; the shape to avoid is two whole-document extractions
-  running on one handle at once. `test/pdf_elixide/upstream_drift_test.exs` pins
-  the behavior, and its comments carry the detail.
+  running on one handle at once.
 
   What the concurrency does *not* do is scale linearly: the underlying library
   serializes the first, uncached read of each PDF object across threads, and
   only lets already-cached reads through in parallel. Expect contention on a
   document being read for the first time, and near-full parallelism afterwards.
 
-  `PdfElixide.Editor` is different in kind — it mutates, so every call on one
-  editor takes its lock exclusively and concurrent use of a single editor
-  serializes.
+  `PdfElixide.Editor` is different in kind, because it mutates — see its
+  moduledoc for how a single editor behaves under concurrent use.
 
   ## Whole-document extraction and memory
 
@@ -91,8 +89,8 @@ defmodule PdfElixide.Document do
   since there is no incremental encoder at the native boundary.
 
   Concatenating pages this way reproduces the whole-document arity exactly for
-  the list-returning extractors, which is what `test/pdf_elixide/per_page_equivalence_test.exs`
-  pins. The three that return one value do **not** round-trip so simply, since
+  the list-returning extractors. The three that return one value do **not**
+  round-trip so simply, since
   each joins pages itself: `text/1` separates them with a form feed and applies
   `:on_page_error` (see the "`:on_page_error` and partly extractable documents"
   section of `t:text_opts/0`), `to_markdown/1` joins with a `---` break, and
@@ -266,7 +264,8 @@ defmodule PdfElixide.Document do
   It takes the handle's lock *exclusively*, where reads take it shared, so it
   waits for every in-flight call on the same document — and an extraction can
   hold its share of that lock for seconds. *Immediately* means as soon as the
-  handle is idle, not preemptively.
+  handle is idle, not preemptively. That is one of the two edges the "Sharing a
+  document across processes" section above is about.
 
   Afterwards, functions that read the document return
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
@@ -277,9 +276,9 @@ defmodule PdfElixide.Document do
   `PdfElixide.Document.Font` handles already extracted from the document remain
   valid — they own their data independently.
 
-      doc = PdfElixide.Document.open!("sample.pdf")
-      text = PdfElixide.Document.text!(doc, 0)
-      :ok = PdfElixide.Document.close(doc)
+      doc = Document.open!("sample.pdf")
+      text = Document.text!(doc, 0)
+      :ok = Document.close(doc)
 
   """
   @spec close(t()) :: :ok
@@ -344,10 +343,6 @@ defmodule PdfElixide.Document do
   `false` from a failure. `pdf_oxide` keeps the three states apart — tagged
   (`{:ok, true}`), untagged (`{:ok, false}`) and unparseable
   (`{:error, %PdfElixide.Error{}}`) — and this is where that third one survives.
-
-  There is no bang variant, for the same reason `closed?/1` has none: the
-  predicate above already returns a bare boolean, and it is the only shape a
-  raising variant could add.
   """
   @spec has_structure_tree(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_structure_tree(%__MODULE__{ref: ref}) do
@@ -375,8 +370,6 @@ defmodule PdfElixide.Document do
   structural absence — a catalog that is not a dictionary, a missing
   `/AcroForm`, a missing `/XFA` — so an error here means the catalog itself or
   the `/AcroForm` reference could not be resolved.
-
-  Has no bang variant, as `has_structure_tree/1` explains.
   """
   @spec has_xfa(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_xfa(%__MODULE__{ref: ref}) do
@@ -460,11 +453,10 @@ defmodule PdfElixide.Document do
   `t:open_opts/0`, whose `:password` option takes the same values.
 
   This is the one read-side function that takes the document's lock
-  *exclusively*: a first successful authentication invalidates a cache upstream
-  whose stale entries would otherwise keep returning undecrypted text, and no
-  concurrent read may be halfway through it. So it waits for in-flight calls on
-  the handle and blocks new ones for its duration — authenticate before sharing
-  the document with other processes, not after.
+  *exclusively*, so it waits for in-flight calls on the handle and blocks new
+  ones for its duration. Authenticate before sharing the document with other
+  processes, not after — see the "Sharing a document across processes" section
+  above, whose other edge is `close/1`.
   """
   @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
@@ -1477,6 +1469,11 @@ defmodule PdfElixide.Document do
   page's lines concatenated into a single flat list, in page order. With a
   zero-based integer, returns that single page's lines instead.
 
+      Document.text_lines(doc)
+      Document.text_lines(doc, include_artifacts: false)
+      Document.text_lines(doc, 0)
+      Document.text_lines(doc, 0, region: heading.bbox)
+
   The whole-document form builds every page's lines in memory at once — see the
   "Whole-document extraction and memory" section of `PdfElixide.Document` for
   when to prefer the per-page arity.
@@ -1593,6 +1590,11 @@ defmodule PdfElixide.Document do
   With a keyword list (or nothing) as the second argument, returns every
   page's characters concatenated into a single flat list, in page order. With
   a zero-based integer, returns that single page's characters instead.
+
+      Document.chars(doc)
+      Document.chars(doc, region: heading.bbox)
+      Document.chars(doc, 0)
+      Document.chars(doc, 0, region_mode: :fully_contained)
 
   This is the most memory-hungry extractor here — one struct per glyph, each
   carrying its own text and font-name binary — so the whole-document form is
@@ -1816,6 +1818,11 @@ defmodule PdfElixide.Document do
   With a keyword list (or nothing) as the second argument, returns every
   page's spans concatenated into a single flat list, in page order. With a
   zero-based integer, returns that single page's spans instead.
+
+      Document.spans(doc)
+      Document.spans(doc, reading_order: :column_aware)
+      Document.spans(doc, 0)
+      Document.spans(doc, 0, span_merging: [preset: :aggressive])
 
   A span covers a run of text rather than one glyph, so this is the cheaper way
   to ask for what `chars/1` returns when per-glyph detail is not needed. The
@@ -2287,8 +2294,7 @@ defmodule PdfElixide.Document do
   A page whose fonts cannot be read contributes nothing and does not fail the
   call — see `fonts/2` for what that covers. Along with `text/1` this is the
   only whole-document extractor that tolerates such a page, and the only one
-  that does so with no option to say otherwise: both follow an upstream loop's
-  policy, and upstream's font walk has no `:halt` to offer.
+  that does so with no option to say otherwise.
 
   Each returned font keeps a native handle, and fonts are not shared across
   pages, so a single font used throughout a long document yields one handle per
@@ -2321,15 +2327,12 @@ defmodule PdfElixide.Document do
   `PdfElixide.Document.Font` struct with its metadata; the raw embedded font
   program (when present) is pulled on demand with `PdfElixide.Document.Font.data/1`.
 
-  **An empty list also covers a page that could not be read.** `pdf_oxide`'s own
-  per-page font walk (`PdfDocument::page_font_face_lookups`) yields no fonts
-  rather than an error for a page whose page-tree entry does not resolve, a page
-  object that is not a dictionary, a dangling `/Resources` reference, or a font
-  that fails to load — and this binding follows that policy rather than
-  second-guessing it. Only an out-of-range index and a failed handle are errors.
-  Unlike `has_structure_tree?/1`, there is no strict variant to fall back on; a
-  caller who must know whether the *page* is readable at all can ask `text/3`,
-  which does propagate.
+  **An empty list also covers a page that could not be read** — one whose
+  page-tree entry, `/Resources` reference or fonts do not resolve yields no
+  fonts rather than an error. Only an out-of-range index and a failed handle are
+  errors. Unlike `has_structure_tree?/1`, there is no strict variant to fall back
+  on; a caller who must know whether the *page* is readable at all can ask
+  `text/3`, which does propagate.
   """
   @spec fonts(t(), non_neg_integer()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{ref: ref}, page_index)
@@ -2364,11 +2367,6 @@ defmodule PdfElixide.Document do
   or hostile bookmark tree cannot overflow the native stack while the NIF walks
   it — an overflow in Rust aborts the OS process rather than raising, so it would
   take the whole VM down. No real table of contents comes close to the limit.
-
-  Note that the cap can only ever be *this* library's last line of defence:
-  `pdf_oxide` parses the outline eagerly into an owned tree with no depth cap and
-  no cycle detection of its own, so a document deep enough to matter fails inside
-  upstream before this conversion runs.
   """
   @spec outline(t()) :: {:ok, [OutlineItem.t()]} | {:error, Error.t()}
   def outline(%__MODULE__{ref: ref}) do

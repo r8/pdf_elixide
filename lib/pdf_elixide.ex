@@ -12,6 +12,24 @@ defmodule PdfElixide do
     * `PdfElixide.Form` — AcroForm field access for both documents
       and editors.
 
+  Reading a document is open, extract, close:
+
+      doc = PdfElixide.Document.open!("report.pdf")
+      text = PdfElixide.Document.text!(doc, 0)
+      markdown = PdfElixide.Document.to_markdown!(doc)
+      :ok = PdfElixide.Document.close(doc)
+
+  ## Concurrency
+
+  Every handle this library returns may be passed to other processes. A
+  document, image, font or table reads through a *shared* lock, so one handle
+  serves concurrent reads; an editor mutates, so its calls take the handle
+  exclusively and serialize. The full account — what
+  `PdfElixide.Document.authenticate/2` and `PdfElixide.Document.close/1` do to
+  calls already in flight, why throughput is not linear, and the one tagged-PDF
+  hazard that makes fanning out *by page* the shape to prefer — is the "Sharing
+  a document across processes" section of `PdfElixide.Document`.
+
   ## File paths
 
   Every path this library accepts — `PdfElixide.Document.open/2`,
@@ -30,12 +48,9 @@ defmodule PdfElixide do
   `PdfElixide.Editor.from_binary/1`, which take opaque bytes. macOS and Windows
   run the VM with UTF-8 filename encoding, so the question does not arise there.
 
-  Byte paths are deliberately not supported. `pdf_oxide` types its own
-  `image_output_dir` as a `String`, so that one option could not accept them
-  whatever this binding did, and Windows has no mapping from arbitrary bytes to
-  a path — support would be both non-uniform across the API and
-  platform-dependent. Contrast a *password*, which genuinely is a byte string
-  and is decoded as one; see `t:PdfElixide.Document.open_opts/0`.
+  Byte paths are deliberately not supported. Contrast a *password*, which
+  genuinely is a byte string and is decoded as one; see
+  `t:PdfElixide.Document.open_opts/0`.
 
   Only the binary form of `Path.t()` is accepted. `Path.t()` is `IO.chardata()`,
   so these specs are broader than the guards beneath them: a charlist raises

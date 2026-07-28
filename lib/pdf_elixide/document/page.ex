@@ -1,6 +1,24 @@
 defmodule PdfElixide.Document.Page do
   @moduledoc """
-  Representation of a page of a PDF document.
+  A handle to one page of a `PdfElixide.Document`.
+
+  A `%Page{}` is just its document and a zero-based `:index` — it holds no
+  native resource of its own, which is why there is no `Page.close/1` and why
+  building one costs nothing. It stays valid exactly as long as its document
+  does: closing the document makes every page handle taken from it report
+  `{:error, %PdfElixide.Error{reason: :closed}}`.
+
+  Get one from `PdfElixide.Document.page/2`, all of them from
+  `PdfElixide.Document.pages/1`, or iterate the document directly — it
+  implements `Enumerable` over its pages:
+
+      for page <- doc, do: PdfElixide.Document.Page.text!(page)
+
+  Every extractor `PdfElixide.Document` offers is available here for a single
+  page, taking the same options. Working a page at a time is also the way to
+  bound memory on a large document, since only one page's results are live at
+  once — see the "Whole-document extraction and memory" section of
+  `PdfElixide.Document`.
   """
 
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left

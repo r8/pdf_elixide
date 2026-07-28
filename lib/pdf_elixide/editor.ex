@@ -1,6 +1,26 @@
 defmodule PdfElixide.Editor do
   @moduledoc """
   Mutable, in-memory PDF editor backed by `pdf_oxide`'s `DocumentEditor`.
+
+  Where `PdfElixide.Document` only reads, an editor accumulates changes in
+  memory and writes them out on demand. The shape is open, mutate, write:
+
+      editor = PdfElixide.Editor.open!("form.pdf")
+      :ok = PdfElixide.Form.set_value(editor, "name", {:text, "Ada"})
+      :ok = PdfElixide.Editor.save(editor, "filled.pdf")
+      :ok = PdfElixide.Editor.close(editor)
+
+  Nothing is written until `save/3` or `to_binary/2` runs, and neither consumes
+  the editor — you can keep editing and write again. `close/1` **discards
+  unsaved edits**, so write before you close.
+
+  The editor mutates, and the underlying `DocumentEditor` exposes even its
+  readers as mutations, so *every* call on an editor takes the handle's lock
+  exclusively — including `PdfElixide.Form.fields/1`, which only reads. Where a
+  document's reads take that lock shared and run concurrently, concurrent use of
+  a single editor serializes; give each process its own editor if you need them
+  to work at once. See the "Sharing a document across processes" section of
+  `PdfElixide.Document`.
   """
 
   alias PdfElixide.Error
@@ -91,7 +111,7 @@ defmodule PdfElixide.Editor do
   native handle.
 
       editor = PdfElixide.Editor.open!("form.pdf")
-      :ok = PdfElixide.Form.set_value(editor, "name", "Ada")
+      :ok = PdfElixide.Form.set_value(editor, "name", {:text, "Ada"})
       :ok = PdfElixide.Editor.save(editor, "filled.pdf")
       :ok = PdfElixide.Editor.close(editor)
 

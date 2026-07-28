@@ -24,6 +24,14 @@ defmodule PdfElixide.Document.Image do
   pixel_format}` (bare pixels — not a standalone file; pair them with `:width`,
   `:height`, and `:color_space`, or reach for `to_binary/2` when you want an
   encoded image).
+
+  The handle may be passed to other processes, and its reads run concurrently:
+  `data/1`, `to_binary/2` and `save/3` all take it shared, so encoding one image
+  from several processes does not queue. Unlike a document there is no shared
+  cache underneath — the image is already materialized behind the handle — so
+  those reads really do run in parallel rather than contending. `close/1` is the
+  exclusive one; see its own docs. Same model as the "Sharing a document across
+  processes" section of `PdfElixide.Document`.
   """
   alias PdfElixide.Document.Image
   alias PdfElixide.Error

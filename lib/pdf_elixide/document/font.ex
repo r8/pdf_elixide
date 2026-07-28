@@ -16,6 +16,12 @@ defmodule PdfElixide.Document.Font do
 
   For a non-embedded font (`:embedded?` is `false`, e.g. one of the standard 14)
   `data/1` returns `{:ok, nil}`.
+
+  A font handle may be passed to other processes, and `data/1` takes it shared,
+  so several processes can pull embedded font programs from one document at
+  once, in parallel — the bytes are already held behind the handle, with no
+  shared cache underneath. Only `close/1` is exclusive. Same model as the
+  "Sharing a document across processes" section of `PdfElixide.Document`.
   """
   alias PdfElixide.Document.Font
   alias PdfElixide.Error
