@@ -4,7 +4,7 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/pdf_elixide.svg?style=flat-square)](https://hex.pm/packages/pdf_elixide)
 [![Hex.pm](https://img.shields.io/hexpm/dt/pdf_elixide.svg?style=flat-square)](https://hex.pm/packages/pdf_elixide)
 [![pdf_oxide](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/r8/pdf_elixide/main/native/pdf_elixide_nif/Cargo.toml&query=$.dependencies.pdf_oxide&label=pdf_oxide&color=orange&style=flat-square)](https://crates.io/crates/pdf_oxide)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://github.com/r8/pdf_elixide/blob/main/LICENSE)
 
 Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-performance PDF library written in Rust. Built on top of [Rustler](https://github.com/rusterlium/rustler).
 
@@ -219,72 +219,8 @@ Images, fonts and tables already extracted from a document own their data
 independently — closing the document leaves them usable, and vice versa.
 
 `close/1` takes the handle exclusively, where reads take it shared, so it waits
-for calls already in flight rather than interrupting them — see
-[Sharing a document across processes](#sharing-a-document-across-processes).
-
-### Sharing a document across processes
-
-A `%PdfElixide.Document{}` is safe to pass to another process, and its reads run
-*concurrently*: every function that reads the document takes the native handle's
-lock shared, so N workers extracting from one open document do not queue behind
-each other. Only the struct travels between processes — the PDF stays where it
-was loaded — so there is no reason to open the same file once per worker, nor to
-keep a document inside the process that opened it.
-
-```elixir
-alias PdfElixide.Document
-
-doc = Document.open!("path/to/file.pdf")
-
-# One handle, one page per worker. Fanning out *by page* is the shape to prefer;
-# the /ActualText caveat below says why.
-pages =
-  0..(Document.page_count!(doc) - 1)
-  |> Task.async_stream(&Document.text!(doc, &1), ordered: true)
-  |> Enum.map(fn {:ok, text} -> text end)
-
-# Close once the workers are done. `close/1` waits for calls already in flight,
-# but a read that starts afterwards gets an ordinary :closed error.
-:ok = Document.close(doc)
-```
-
-Three edges are worth knowing:
-
-- `PdfElixide.Document.authenticate/2` is the exception to the shared lock. It
-  takes the handle *exclusively*, because a first successful authentication
-  invalidates a cache underneath that a concurrent read must not be halfway
-  through. Authenticate before you fan the document out, not after.
-- `close/1` is exclusive too, and waits for every in-flight call on the handle
-  rather than interrupting it — *immediately* means as soon as the handle is
-  idle. Afterwards every reader gets
-  `{:error, %PdfElixide.Error{reason: :closed}}`, an ordinary error rather than
-  a crash, so a worker racing a close is safe but may come back empty-handed.
-- On a tagged PDF that declares `/ActualText` both inside a page's content
-  stream and on a structure element covering the same marked content, two
-  extractions that touch the same page can cross-contaminate, and one of them
-  silently returns the wrong replacement text — with no error to notice. That is
-  `pdf_oxide`'s per-page bookkeeping rather than anything this binding does, and
-  concurrency is only one way to reach it: two calls in a row on one handle do
-  it too, which is why it is not a reason to stop sharing. Fanning out **by
-  page** avoids it entirely; the shape to avoid is two whole-document
-  extractions running on one handle at once.
-
-Expect contention rather than linear scaling. `pdf_oxide` serializes the first,
-uncached read of each PDF object across threads and only lets already-cached
-reads through in parallel, so a document being read for the first time contends
-inside the library and runs close to fully parallel only afterwards.
-
-`PdfElixide.Editor` is different in kind, because it mutates: every editor call
-takes its handle *exclusively*, so concurrent use of a single editor serializes
-instead of running in parallel. Give each process its own editor if you need
-them to work at once. `PdfElixide.Form.fields/1` inherits whichever source it is
-handed — a shared read on a document, the editor's exclusive lock on an editor.
-
-`PdfElixide.Document.Image`, `PdfElixide.Document.Font` and
-`PdfElixide.Document.Table` handles are shareable the same way, and without the
-caveat above: each holds a value that is already materialized, with no shared
-cache behind it, so concurrent `to_binary/2`, `data/1` and table rendering
-really do run in parallel.
+for calls already in flight rather than interrupting them — see the
+[Concurrency](guides/concurrency.md) guide.
 
 ### Reading the outline
 

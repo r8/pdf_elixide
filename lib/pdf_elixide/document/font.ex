@@ -21,7 +21,7 @@ defmodule PdfElixide.Document.Font do
   so several processes can pull embedded font programs from one document at
   once, in parallel — the bytes are already held behind the handle, with no
   shared cache underneath. Only `close/1` is exclusive. Same model as the
-  "Sharing a document across processes" section of `PdfElixide.Document`.
+  [Concurrency](guides/concurrency.md) guide describes for a document.
   """
   alias PdfElixide.Document.Font
   alias PdfElixide.Error

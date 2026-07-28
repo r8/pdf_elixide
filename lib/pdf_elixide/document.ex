@@ -8,39 +8,13 @@ defmodule PdfElixide.Document do
   *concurrently*: every function here takes the native handle's lock shared, so
   N processes extracting from one document do not queue behind each other. There
   is no need to keep a document inside the process that opened it, nor to open
-  the same file once per worker.
+  the same file once per worker. `authenticate/2` and `close/1` are the two
+  exceptions, taking the lock exclusively.
 
-  Two things to know about the edges:
-
-    * `authenticate/2` is the exception — it takes the lock exclusively, because
-      a first successful authentication invalidates a cache upstream that a
-      concurrent read must not be halfway through. Authenticate *before* fanning
-      the document out to workers.
-    * `close/1` is exclusive too, and waits for every in-flight call on the
-      handle to return. Afterwards every reader gets
-      `{:error, %PdfElixide.Error{reason: :closed}}`, so close only once the
-      workers are done.
-
-  There is also one **correctness** hazard, and it belongs to the underlying
-  library rather than to this binding. On a tagged PDF that declares
-  `/ActualText` both inside a page's content stream and on a structure element
-  covering the same marked content, the record of which declaration wins is kept
-  per *page index* on the shared document instead of per call. Two extractions
-  that touch the same page can therefore cross-contaminate, and one of them
-  returns the wrong replacement text for that page — text no error accompanies.
-  Concurrency is only one way to trigger it: two calls in a row on one handle do
-  it too, which is why this is not a reason to stop sharing a document. Fanning
-  the work out **by page** avoids it entirely, since workers that never share a
-  page never collide; the shape to avoid is two whole-document extractions
-  running on one handle at once.
-
-  What the concurrency does *not* do is scale linearly: the underlying library
-  serializes the first, uncached read of each PDF object across threads, and
-  only lets already-cached reads through in parallel. Expect contention on a
-  document being read for the first time, and near-full parallelism afterwards.
-
-  `PdfElixide.Editor` is different in kind, because it mutates — see its
-  moduledoc for how a single editor behaves under concurrent use.
+  The [Concurrency](guides/concurrency.md) guide has the rest — the shape to fan
+  work out in, what the two exclusive calls do to calls already in flight, why
+  throughput is not linear, and the one tagged-PDF hazard that makes fanning out
+  *by page* the shape to prefer.
 
   ## Whole-document extraction and memory
 
@@ -268,8 +242,8 @@ defmodule PdfElixide.Document do
   It takes the handle's lock *exclusively*, where reads take it shared, so it
   waits for every in-flight call on the same document — and an extraction can
   hold its share of that lock for seconds. *Immediately* means as soon as the
-  handle is idle, not preemptively. That is one of the two edges the "Sharing a
-  document across processes" section above is about.
+  handle is idle, not preemptively. That is one of the two exclusive calls the
+  [Concurrency](guides/concurrency.md) guide is about.
 
   Afterwards, functions that read the document return
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
@@ -463,8 +437,8 @@ defmodule PdfElixide.Document do
   This is the one read-side function that takes the document's lock
   *exclusively*, so it waits for in-flight calls on the handle and blocks new
   ones for its duration. Authenticate before sharing the document with other
-  processes, not after — see the "Sharing a document across processes" section
-  above, whose other edge is `close/1`.
+  processes, not after — see the [Concurrency](guides/concurrency.md) guide,
+  whose other exclusive call is `close/1`.
   """
   @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do

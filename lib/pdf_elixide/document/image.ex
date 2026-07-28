@@ -30,8 +30,8 @@ defmodule PdfElixide.Document.Image do
   from several processes does not queue. Unlike a document there is no shared
   cache underneath — the image is already materialized behind the handle — so
   those reads really do run in parallel rather than contending. `close/1` is the
-  exclusive one; see its own docs. Same model as the "Sharing a document across
-  processes" section of `PdfElixide.Document`.
+  exclusive one; see its own docs. Same model as the
+  [Concurrency](guides/concurrency.md) guide describes for a document.
   """
   alias PdfElixide.Document.Image
   alias PdfElixide.Error

@@ -19,8 +19,7 @@ defmodule PdfElixide.Editor do
   exclusively — including `PdfElixide.Form.fields/1`, which only reads. Where a
   document's reads take that lock shared and run concurrently, concurrent use of
   a single editor serializes; give each process its own editor if you need them
-  to work at once. See the "Sharing a document across processes" section of
-  `PdfElixide.Document`.
+  to work at once. See the [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Error

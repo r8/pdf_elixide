@@ -26,6 +26,7 @@ jobs:
           - elixir: "1.19.5"
             otp: "28.4.2"
             dialyzer: true
+            docs: true
 
     steps:
       - uses: actions/checkout@v6
@@ -77,6 +78,14 @@ jobs:
         run: mix credo --strict
       - name: Run formatter
         run: mix format --check-formatted
+      # The only gate on the guides in `guides/`. ExDoc warns on an `extras:`
+      # path that is missing from disk, and on a doc link to a guide that was
+      # renamed — then silently drops the link from the HTML rather than
+      # failing. Nothing else would notice: `files/0` does not carry guides and
+      # no test reads `extras:`. One leg only, as with dialyzer below.
+      - name: Build docs
+        if: matrix.docs
+        run: mix docs --warnings-as-errors
       # Dialyzer runs on the newest Elixir/OTP leg only: success typings differ
       # subtly across OTP releases, and the analysis is a gate, not a matrix.
       # It shares this job because `config/test.exs` force-builds the NIF, so a

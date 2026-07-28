@@ -66,7 +66,17 @@ defmodule PdfElixide.MixProject do
       source_url: @source,
       source_ref: "v#{@version}",
       main: "readme",
-      extras: ["README.md": [title: "Overview"], "CHANGELOG.md": []],
+      # Guides live in `guides/` and are deliberately absent from `files/0`:
+      # `mix hex.publish` builds ExDoc from the working tree and uploads the
+      # generated HTML as its own docs tarball, so a guide never travels in the
+      # package source. Nothing else reads this list, which is why CI runs
+      # `mix docs --warnings-as-errors` — ExDoc warns on a path that is missing
+      # here or on disk, and on a moduledoc link to a renamed guide.
+      extras: [
+        "README.md": [title: "Overview"],
+        "guides/concurrency.md": [],
+        "CHANGELOG.md": []
+      ],
       groups_for_modules: groups_for_modules()
     ]
   end
@@ -164,7 +174,10 @@ defmodule PdfElixide.MixProject do
       {:igniter, "~> 0.5", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.0", only: [:dev], runtime: false},
       {:git_hooks, "~> 0.8.0", only: [:dev], runtime: false},
-      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
+      # `:test` as well as `:dev` so CI can run `mix docs` in the environment it
+      # has already compiled. In `:dev` it would force-build the NIF a second
+      # time, for a whole cargo build bought only to read docs chunks.
+      {:ex_doc, ">= 0.0.0", only: [:dev, :test], runtime: false}
     ]
   end
 end

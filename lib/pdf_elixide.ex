@@ -27,8 +27,8 @@ defmodule PdfElixide do
   exclusively and serialize. The full account — what
   `PdfElixide.Document.authenticate/2` and `PdfElixide.Document.close/1` do to
   calls already in flight, why throughput is not linear, and the one tagged-PDF
-  hazard that makes fanning out *by page* the shape to prefer — is the "Sharing
-  a document across processes" section of `PdfElixide.Document`.
+  hazard that makes fanning out *by page* the shape to prefer — is the
+  [Concurrency](guides/concurrency.md) guide.
 
   ## File paths
 

@@ -72,8 +72,8 @@ defmodule PdfElixide.Document.Table do
   `to_markdown/2`, `to_html/1` and `to_text/1` all take it shared, over a table
   the handle already owns, so rendering one table from several processes runs in
   parallel. `close/1` is exclusive and waits for a render already in flight.
-  Same model as the "Sharing a document across processes" section of
-  `PdfElixide.Document`.
+  Same model as the [Concurrency](guides/concurrency.md) guide describes for a
+  document.
   """
   alias PdfElixide.Document.Table.Cell
   alias PdfElixide.Document.Table.Row

@@ -30,8 +30,7 @@ defmodule PdfElixide.Form do
   fields at once. On a `PdfElixide.Editor` it takes the editor's lock
   *exclusively*, exactly as `set_value/3` and every other editor call does — so
   concurrent form work on one editor serializes, whether it writes or only
-  reads. See the "Sharing a document across processes" section of
-  `PdfElixide.Document`.
+  reads. See the [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Document
