@@ -2279,6 +2279,18 @@ defmodule PdfElixide.DocumentTest do
       assert {:error, %Error{reason: :out_of_range}} = Document.page(doc, 99)
     end
 
+    test "reports the same message the NIF does for the same index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range, message: message}} = Document.page(doc, 99)
+
+      # `text/2` reaches `ensure_page_in_range` in the NIF; `page/2` answers from the
+      # cached count and formats its own. Both must word it identically.
+      assert {:error, %Error{reason: :out_of_range, message: ^message}} = Document.text(doc, 99)
+
+      # Guards the degenerate fix where both sides drift to the same generic string.
+      assert message =~ "99"
+    end
+
     test "raises FunctionClauseError for negative index" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.page(doc, -1) end

@@ -2526,8 +2526,12 @@ defmodule PdfElixide.Document do
       {:ok, count} when index < count ->
         {:ok, %Page{doc: doc, index: index}}
 
-      {:ok, _count} ->
-        {:error, %Error{reason: :out_of_range, message: "Page index out of range"}}
+      {:ok, count} ->
+        {:error,
+         %Error{
+           reason: :out_of_range,
+           message: "Page index #{index} out of range (document has #{count} pages)"
+         }}
 
       {:error, _} = error ->
         error
