@@ -14,5 +14,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
-pdf_oxide = "0.3.75"
+pdf_oxide = "0.3.77"
 rustler = "0.37.4"
