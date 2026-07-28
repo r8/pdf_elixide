@@ -2507,7 +2507,13 @@ defmodule PdfElixide.Document do
   end
 
   @doc """
-  Returns a lazy handle for every page in the document.
+  Returns a `PdfElixide.Document.Page` handle for every page in the document.
+
+  The list is built eagerly, but each handle is just the document and a
+  zero-based index and holds no native resource, so building one costs nothing —
+  see `PdfElixide.Document.Page`. To walk a large document without materializing
+  every handle, enumerate the document itself: it implements `Enumerable` over
+  its pages.
 
   Reads the page count cached on the struct, so it raises only for a document
   whose count could not be determined at open — see `page_count/1`.
@@ -2518,7 +2524,11 @@ defmodule PdfElixide.Document do
   end
 
   @doc """
-  Returns a lazy handle for the page at the given zero-based index.
+  Returns a `PdfElixide.Document.Page` handle for the page at the given
+  zero-based index.
+
+  Builds nothing but the handle itself, and reads no page content until an
+  extractor is called on it.
   """
   @spec page(t(), non_neg_integer()) :: {:ok, Page.t()} | {:error, Error.t()}
   def page(%__MODULE__{} = doc, index) when is_integer(index) and index >= 0 do
