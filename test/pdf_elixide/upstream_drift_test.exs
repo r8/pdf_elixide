@@ -41,6 +41,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
   @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
+  @rotation_pdf Path.join(@fixtures, "rotation.pdf")
 
   @columns 0
   @artifacts 1
@@ -50,6 +51,12 @@ defmodule PdfElixide.UpstreamDriftTest do
   # In @broken_page_pdf: /Count says three pages, two page objects exist.
   @unreachable 2
 
+  # In @rotation_pdf, by /Rotate: 90 on the leaf, 180 inherited from an
+  # intermediate /Pages node, -90 (reads as 270), 45 (invalid, reads as 0).
+  @rotate_90 0
+  @rotate_180 1
+  @rotate_0 3
+
   defp open(path) do
     doc = Document.open!(path)
     on_exit(fn -> Document.close(doc) end)
@@ -57,6 +64,9 @@ defmodule PdfElixide.UpstreamDriftTest do
   end
 
   defp texts(items), do: Enum.map(items, & &1.text)
+
+  defp origin(%{bbox: %{x: x, y: y}}), do: {x, y}
+  defp origins(items), do: Enum.map(items, &origin/1)
 
   describe "deprecated word and line knobs" do
     setup do: %{doc: open(@extraction_pdf)}
@@ -435,6 +445,75 @@ defmodule PdfElixide.UpstreamDriftTest do
       poisoned = open(@actualtext_pdf)
       assert texts(Document.spans!(poisoned, 0)) == ["INLINE"]
       assert Document.text!(poisoned, 0) == "ANCESTOR"
+    end
+  end
+
+  describe "which frame a rotated page's boxes are in" do
+    # `PdfElixide.Document`'s "Rotated pages and extracted geometry" section
+    # tells callers that on a rotated page the extractors do not all report in
+    # one coordinate frame. That split is upstream's, and it is not visible from
+    # any signature — hence a canary.
+    #
+    # Where it comes from: `postprocess_spans` (`src/document.rs`) maps span
+    # geometry into the *displayed* frame before reading-order sorting, so a
+    # 180-degree page reads forwards rather than word- and line-reversed. Only
+    # the calls that run it are affected. `extract_spans` does; the
+    # reading-order variants this binding's `spans/2` uses
+    # (`extract_spans_filtered_with_reading_order`) do not, and neither does
+    # `extract_chars`. `extract_words` reaches it through
+    # `pipeline::page_reading_order`, which calls `extract_spans` — so `words`
+    # and `text_lines` are mapped where the `spans` describing the same glyphs
+    # are not.
+    #
+    # The mapping is also selective on quadrant pages: at 90 and 270 degrees
+    # only spans whose own text matrix is rotated are mapped, because
+    # `TextSpan::to_chars` lays glyphs out along the horizontal axis and cannot
+    # express a now-vertical run. `rotation.pdf`'s text is horizontal on every
+    # page, which is what makes the 90-degree page a control for the
+    # 180-degree one.
+    #
+    # A failure means upstream changed *when* it maps. Do not relax it: fix the
+    # moduledoc section, which is the only thing telling callers which
+    # extractor to trust for a box.
+    setup do: %{doc: open(@rotation_pdf)}
+
+    test "an unrotated page reports one frame", %{doc: doc} do
+      assert [span] = Document.spans!(doc, @rotate_0)
+      assert origins(Document.words!(doc, @rotate_0)) |> hd() == origin(span)
+      assert origins(Document.text_lines!(doc, @rotate_0)) == [origin(span)]
+      assert Document.chars!(doc, @rotate_0) |> hd() |> origin() == origin(span)
+    end
+
+    test "a 90-degree page leaves horizontal content raw", %{doc: doc} do
+      # Every extractor still agrees, because the run's own text matrix is not
+      # rotated. This is the control: it fails if upstream starts mapping every
+      # span on a quadrant-rotated page.
+      assert [span] = Document.spans!(doc, @rotate_90)
+      assert origins(Document.words!(doc, @rotate_90)) |> hd() == origin(span)
+      assert origins(Document.text_lines!(doc, @rotate_90)) == [origin(span)]
+    end
+
+    test "a 180-degree page mirrors words and lines but not spans or chars",
+         %{doc: doc} do
+      # The page is 612 x 792 and the text is drawn at (72, 720) with a height
+      # of 24, so the mirrored origin is (612 - 72 - width, 792 - 720 - 24).
+      # The x is compared with a delta because the mirror is computed in f32
+      # upstream and the expectation here in f64.
+      assert [%{bbox: %{x: 72.0, y: 720.0, width: width}} = span] =
+               Document.spans!(doc, @rotate_180)
+
+      assert Document.chars!(doc, @rotate_180) |> hd() |> origin() == {72.0, 720.0}
+
+      mirrored_x = 612.0 - 72.0 - width
+
+      assert [{line_x, 48.0}] = origins(Document.text_lines!(doc, @rotate_180))
+      assert_in_delta line_x, mirrored_x, 0.001
+
+      assert [{first_word_x, 48.0} | _] = origins(Document.words!(doc, @rotate_180))
+      assert_in_delta first_word_x, mirrored_x, 0.001
+
+      # Said plainly: the same line, two frames.
+      refute origins(Document.text_lines!(doc, @rotate_180)) == [origin(span)]
     end
   end
 end

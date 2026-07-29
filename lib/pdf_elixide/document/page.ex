@@ -45,8 +45,17 @@ defmodule PdfElixide.Document.Page do
           index: non_neg_integer()
         }
 
+  @typedoc """
+  A page's clockwise display rotation in degrees — always one of these four.
+  """
+  @type rotation :: 0 | 90 | 180 | 270
+
   @doc """
   Returns the page's width in points.
+
+  This is the MediaBox width, in unrotated user space. It is **not** swapped for
+  a rotated page: a page with `rotation/1` of `90` or `270` displays as
+  height × width. See `rotation/1`.
   """
   @spec width(t()) :: {:ok, float()} | {:error, Error.t()}
   def width(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -66,6 +75,9 @@ defmodule PdfElixide.Document.Page do
 
   @doc """
   Returns the page's height in points.
+
+  This is the MediaBox height, in unrotated user space, and like `width/1` it is
+  not swapped for a rotated page. See `rotation/1`.
   """
   @spec height(t()) :: {:ok, float()} | {:error, Error.t()}
   def height(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -79,6 +91,45 @@ defmodule PdfElixide.Document.Page do
   def height!(page) do
     case height(page) do
       {:ok, h} -> h
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Returns the page's `/Rotate` — the clockwise rotation a viewer applies when
+  displaying it — as `0`, `90`, `180` or `270`.
+
+  A page's own `/Rotate` wins, but the entry is inheritable (ISO 32000-1
+  §7.7.3.4): a page without one takes the value from the nearest ancestor
+  `/Pages` node, and `0` when no ancestor has one either.
+
+  Two normalizations come from `pdf_oxide` and are worth knowing:
+
+    * a value outside `0..359` wraps, so `-90` reads as `270`;
+    * a value that is **not a multiple of 90** is invalid per §7.7.3.3 and reads
+      as `0` — it is *not* rounded down, so `45` is `0`, not `90`.
+
+  `width/1` and `height/1` are MediaBox measurements in unrotated user space and
+  are never swapped to match: a `90`-degree page of a 612 × 792 MediaBox displays
+  792 points wide and 612 tall. Rotation also decides which frame an extracted
+  `bbox` is expressed in — see the "Rotated pages and extracted geometry" section
+  of `PdfElixide.Document`.
+
+  A page whose `:index` is not a page of the document — only reachable from a
+  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
+  """
+  @spec rotation(t()) :: {:ok, rotation()} | {:error, Error.t()}
+  def rotation(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
+    Wrap.call(fn -> Native.document_get_page_rotation(ref, index) end)
+  end
+
+  @doc """
+  Same as `rotation/1` but raises an error if it fails.
+  """
+  @spec rotation!(t()) :: rotation()
+  def rotation!(page) do
+    case rotation(page) do
+      {:ok, degrees} -> degrees
       {:error, error} -> raise error
     end
   end

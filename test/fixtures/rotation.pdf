@@ -1,0 +1,70 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 8 0 R 10 0 R] /Count 4 /Resources << /Font << /F1 12 0 R >> >> /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Rotate 90 >>
+endobj
+4 0 obj
+<< /Length 40 >>
+stream
+BT /F1 24 Tf 72 720 Td (Rotate 90) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Pages /Parent 2 0 R /Kids [6 0 R] /Count 1 /Rotate 180 >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 5 0 R /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 44 >>
+stream
+BT /F1 24 Tf 72 720 Td (Inherited 180) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 9 0 R /Rotate -90 >>
+endobj
+9 0 obj
+<< /Length 42 >>
+stream
+BT /F1 24 Tf 72 720 Td (Negative 90) Tj ET
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 11 0 R /Rotate 45 >>
+endobj
+11 0 obj
+<< /Length 41 >>
+stream
+BT /F1 24 Tf 72 720 Td (Invalid 45) Tj ET
+endstream
+endobj
+12 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000204 00000 n 
+0000000278 00000 n 
+0000000368 00000 n 
+0000000451 00000 n 
+0000000514 00000 n 
+0000000608 00000 n 
+0000000683 00000 n 
+0000000775 00000 n 
+0000000851 00000 n 
+0000000943 00000 n 
+trailer
+<< /Size 13 /Root 1 0 R /ID [<00112233445566778899AABBCCDDEEFF> <00112233445566778899AABBCCDDEEFF>] >>
+startxref
+1041
+%%EOF

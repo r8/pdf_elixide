@@ -69,6 +69,35 @@ defmodule PdfElixide.Document do
   `:on_page_error` (see the "`:on_page_error` and partly extractable documents"
   section of `t:text_opts/0`), `to_markdown/1` joins with a `---` break, and
   `to_html/1` wraps each page in a `<div class="page">`.
+
+  ## Rotated pages and extracted geometry
+
+  A page may carry a `/Rotate` telling a viewer to display it turned — read it
+  with `PdfElixide.Document.Page.rotation/1`. It does **not** mean every
+  coordinate handed back is turned with it, and on a rotated page **the
+  extractors do not all report in the same frame**:
+
+    * `chars/1`, `spans/1`, `paths/1` and `images/1` stay in raw, unrotated user
+      space, whatever the rotation.
+    * `words/1`, `text_lines/1` and the cell boxes of `tables/1` are mapped into
+      the **displayed** frame, because upstream builds them on the span pipeline
+      that reorders a rotated page for reading. The mapping is selective: a
+      `180`-degree page maps everything, while a `90`- or `270`-degree page maps
+      only text whose own text matrix is rotated — a horizontal run on a
+      `/Rotate 90` page keeps raw coordinates, since upstream lays glyphs out
+      along the horizontal axis and could not express it otherwise.
+
+  So on a `180`-degree page, `spans/1` and `words/1` describing the very same
+  line report mirrored boxes. Compare or lay out boxes from **one** extractor,
+  and use `chars/1` or `spans/1` when raw page space is what you want.
+
+  `PdfElixide.Document.Page.width/1` and `PdfElixide.Document.Page.height/1` are
+  MediaBox measurements and are likewise never swapped, so computing the
+  displayed page size is the caller's job.
+
+  This is upstream `pdf_oxide` behavior rather than a choice this binding makes,
+  and it is pinned by `test/pdf_elixide/upstream_drift_test.exs`. A caller that
+  only wants text is unaffected — the distinction matters when bounding boxes do.
   """
 
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left

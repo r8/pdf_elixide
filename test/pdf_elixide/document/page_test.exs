@@ -19,6 +19,7 @@ defmodule PdfElixide.Document.PageTest do
   @form_pdf Path.join(@fixtures, "form.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
+  @rotation_pdf Path.join(@fixtures, "rotation.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -57,6 +58,62 @@ defmodule PdfElixide.Document.PageTest do
     test "returns the height directly" do
       doc = Document.open!(@valid_pdf)
       assert Page.height!(Document.page!(doc, 0)) == 792.0
+    end
+  end
+
+  describe "rotation/1" do
+    test "returns 0 for a page with no /Rotate anywhere above it" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, 0} = Page.rotation(Document.page!(doc, 0))
+    end
+
+    test "reads a /Rotate on the page itself" do
+      doc = Document.open!(@rotation_pdf)
+      assert {:ok, 90} = Page.rotation(Document.page!(doc, 0))
+    end
+
+    test "inherits a /Rotate from an ancestor /Pages node" do
+      # Page 1 carries no /Rotate; the intermediate /Pages node holding it does
+      # (ISO 32000-1 §7.7.3.4).
+      doc = Document.open!(@rotation_pdf)
+      assert {:ok, 180} = Page.rotation(Document.page!(doc, 1))
+    end
+
+    test "wraps a negative /Rotate into 0..270" do
+      doc = Document.open!(@rotation_pdf)
+      assert {:ok, 270} = Page.rotation(Document.page!(doc, 2))
+    end
+
+    test "reports a /Rotate that is not a multiple of 90 as 0, not the nearest one" do
+      # /Rotate 45 is invalid per §7.7.3.3. Upstream returns 0 rather than
+      # flooring to 90, and a caller matching on 0/90/180/270 depends on that.
+      doc = Document.open!(@rotation_pdf)
+      assert {:ok, 0} = Page.rotation(Document.page!(doc, 3))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Page.rotation(%Page{doc: doc, index: 99})
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@rotation_pdf)
+      page = Document.page!(doc, 0)
+      Document.close(doc)
+      assert {:error, %Error{reason: :closed}} = Page.rotation(page)
+    end
+  end
+
+  describe "rotation!/1" do
+    test "returns the rotation directly" do
+      doc = Document.open!(@rotation_pdf)
+      assert Enum.map(doc, &Page.rotation!/1) == [90, 180, 270, 0]
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+
+      assert_raise Error, fn -> Page.rotation!(%Page{doc: doc, index: 99}) end
     end
   end
 

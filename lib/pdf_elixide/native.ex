@@ -75,6 +75,7 @@ defmodule PdfElixide.Native do
   def image_closed(_image), do: err()
   def document_get_page_width(_doc, _page_index), do: err()
   def document_get_page_height(_doc, _page_index), do: err()
+  def document_get_page_rotation(_doc, _page_index), do: err()
   def document_form_fields(_doc), do: err()
   def document_info(_doc), do: err()
   def document_xmp_metadata(_doc), do: err()

@@ -1183,6 +1183,25 @@ fn document_get_page_height(
     })
 }
 
+/// Returns the page's `/Rotate`, normalised to 0, 90, 180 or 270.
+///
+/// Upstream reads the value off the dictionary [`get_page`] returns, which
+/// carries the inherited attributes, so a `/Rotate` on an ancestor `/Pages`
+/// node is honoured (ISO 32000-1 §7.7.3.4). A value that is not a multiple of
+/// 90 is invalid and yields 0 rather than being floored (`pdf_oxide`
+/// `src/document.rs`, `get_page_rotation`).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_get_page_rotation(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<i32> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        doc.get_page_rotation(page_index).map_err(to_nif_err)
+    })
+}
+
 /// Extracts form fields from the PDF document.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
