@@ -192,10 +192,7 @@ defmodule PdfElixide.Document.Table do
   """
   @spec to_markdown!(t(), markdown_opts()) :: String.t()
   def to_markdown!(%__MODULE__{} = table, opts \\ []) do
-    case to_markdown(table, opts) do
-      {:ok, markdown} -> markdown
-      {:error, error} -> raise error
-    end
+    to_markdown(table, opts) |> Wrap.unwrap!()
   end
 
   # The default below is pinned by `option_defaults_test.exs`, through
@@ -235,10 +232,7 @@ defmodule PdfElixide.Document.Table do
   """
   @spec to_html!(t()) :: String.t()
   def to_html!(%__MODULE__{} = table) do
-    case to_html(table) do
-      {:ok, html} -> html
-      {:error, error} -> raise error
-    end
+    to_html(table) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -262,10 +256,7 @@ defmodule PdfElixide.Document.Table do
   """
   @spec to_text!(t()) :: String.t()
   def to_text!(%__MODULE__{} = table) do
-    case to_text(table) do
-      {:ok, text} -> text
-      {:error, error} -> raise error
-    end
+    to_text(table) |> Wrap.unwrap!()
   end
 
   @doc """

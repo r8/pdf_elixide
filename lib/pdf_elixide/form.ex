@@ -60,10 +60,7 @@ defmodule PdfElixide.Form do
   """
   @spec fields!(source()) :: [Field.t()]
   def fields!(source) do
-    case fields(source) do
-      {:ok, fields} -> fields
-      {:error, error} -> raise error
-    end
+    fields(source) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -86,6 +83,8 @@ defmodule PdfElixide.Form do
   """
   @spec set_value!(Editor.t(), String.t(), Field.value()) :: :ok
   def set_value!(%Editor{} = editor, name, value) when is_binary(name) do
+    # Local `case` rather than `Wrap.unwrap!/1`: `set_value/3` answers a bare
+    # `:ok`, not `{:ok, value}`, so there is no payload to unwrap.
     case set_value(editor, name, value) do
       :ok -> :ok
       {:error, error} -> raise error

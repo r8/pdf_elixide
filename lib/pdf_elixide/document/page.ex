@@ -92,10 +92,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec media_box!(t()) :: Rect.t()
   def media_box!(page) do
-    case media_box(page) do
-      {:ok, box} -> box
-      {:error, error} -> raise error
-    end
+    media_box(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -122,10 +119,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec width!(t()) :: float()
   def width!(page) do
-    case width(page) do
-      {:ok, w} -> w
-      {:error, error} -> raise error
-    end
+    width(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -147,10 +141,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec height!(t()) :: float()
   def height!(page) do
-    case height(page) do
-      {:ok, h} -> h
-      {:error, error} -> raise error
-    end
+    height(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -189,10 +180,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec rotation!(t()) :: rotation()
   def rotation!(page) do
-    case rotation(page) do
-      {:ok, degrees} -> degrees
-      {:error, error} -> raise error
-    end
+    rotation(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -251,10 +239,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec has_text_layer?(t()) :: boolean()
   def has_text_layer?(page) do
-    case has_text_layer(page) do
-      {:ok, value} -> value
-      {:error, error} -> raise error
-    end
+    has_text_layer(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -280,10 +265,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec label!(t()) :: String.t()
   def label!(page) do
-    case label(page) do
-      {:ok, label} -> label
-      {:error, error} -> raise error
-    end
+    label(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -305,10 +287,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec text!(t(), Document.text_opts()) :: String.t()
   def text!(page, opts \\ []) when is_list(opts) do
-    case text(page, opts) do
-      {:ok, text} -> text
-      {:error, error} -> raise error
-    end
+    text(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -327,10 +306,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec to_markdown!(t(), Document.markdown_opts()) :: String.t()
   def to_markdown!(page, opts \\ []) when is_list(opts) do
-    case to_markdown(page, opts) do
-      {:ok, markdown} -> markdown
-      {:error, error} -> raise error
-    end
+    to_markdown(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -349,10 +325,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec to_html!(t(), Document.html_opts()) :: String.t()
   def to_html!(page, opts \\ []) when is_list(opts) do
-    case to_html(page, opts) do
-      {:ok, html} -> html
-      {:error, error} -> raise error
-    end
+    to_html(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -370,10 +343,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec words!(t(), Document.words_opts()) :: [Word.t()]
   def words!(page, opts \\ []) when is_list(opts) do
-    case words(page, opts) do
-      {:ok, words} -> words
-      {:error, error} -> raise error
-    end
+    words(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -392,10 +362,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec text_lines!(t(), Document.text_lines_opts()) :: [TextLine.t()]
   def text_lines!(page, opts \\ []) when is_list(opts) do
-    case text_lines(page, opts) do
-      {:ok, lines} -> lines
-      {:error, error} -> raise error
-    end
+    text_lines(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -414,10 +381,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec chars!(t(), Document.chars_opts()) :: [Char.t()]
   def chars!(page, opts \\ []) when is_list(opts) do
-    case chars(page, opts) do
-      {:ok, chars} -> chars
-      {:error, error} -> raise error
-    end
+    chars(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -435,10 +399,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec spans!(t(), Document.spans_opts()) :: [Span.t()]
   def spans!(page, opts \\ []) when is_list(opts) do
-    case spans(page, opts) do
-      {:ok, spans} -> spans
-      {:error, error} -> raise error
-    end
+    spans(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -457,10 +418,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec tables!(t(), Document.tables_opts()) :: [Table.t()]
   def tables!(page, opts \\ []) when is_list(opts) do
-    case tables(page, opts) do
-      {:ok, tables} -> tables
-      {:error, error} -> raise error
-    end
+    tables(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -478,10 +436,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec paths!(t()) :: [PdfElixide.Document.Path.t()]
   def paths!(page) do
-    case paths(page) do
-      {:ok, paths} -> paths
-      {:error, error} -> raise error
-    end
+    paths(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -499,10 +454,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec images!(t()) :: [Image.t()]
   def images!(page) do
-    case images(page) do
-      {:ok, images} -> images
-      {:error, error} -> raise error
-    end
+    images(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -522,10 +474,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec fonts!(t()) :: [Font.t()]
   def fonts!(page) do
-    case fonts(page) do
-      {:ok, fonts} -> fonts
-      {:error, error} -> raise error
-    end
+    fonts(page) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -543,10 +492,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec annotations!(t()) :: [Annotation.t()]
   def annotations!(page) do
-    case annotations(page) do
-      {:ok, annotations} -> annotations
-      {:error, error} -> raise error
-    end
+    annotations(page) |> Wrap.unwrap!()
   end
 
   defimpl Inspect do

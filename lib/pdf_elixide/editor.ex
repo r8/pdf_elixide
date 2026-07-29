@@ -59,10 +59,7 @@ defmodule PdfElixide.Editor do
   """
   @spec open!(Path.t()) :: t()
   def open!(path) when is_binary(path) do
-    case open(path) do
-      {:ok, editor} -> editor
-      {:error, error} -> raise error
-    end
+    open(path) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -81,10 +78,7 @@ defmodule PdfElixide.Editor do
   """
   @spec from_binary!(binary()) :: t()
   def from_binary!(bytes) when is_binary(bytes) do
-    case from_binary(bytes) do
-      {:ok, editor} -> editor
-      {:error, error} -> raise error
-    end
+    from_binary(bytes) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -180,6 +174,9 @@ defmodule PdfElixide.Editor do
   @spec save!(t(), Path.t(), save_opts()) :: :ok
   def save!(%__MODULE__{} = editor, path, opts \\ [])
       when is_binary(path) and is_list(opts) do
+    # Keeps a local `case` where every other bang variant pipes through
+    # `Wrap.unwrap!/1`: `save/3` answers a bare `:ok`, not `{:ok, value}`, so
+    # there is no payload to unwrap.
     case save(editor, path, opts) do
       :ok -> :ok
       {:error, error} -> raise error
@@ -213,10 +210,7 @@ defmodule PdfElixide.Editor do
   """
   @spec to_binary!(t(), save_opts()) :: binary()
   def to_binary!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
-    case to_binary(editor, opts) do
-      {:ok, bytes} -> bytes
-      {:error, error} -> raise error
-    end
+    to_binary(editor, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,

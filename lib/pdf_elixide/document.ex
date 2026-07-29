@@ -252,10 +252,7 @@ defmodule PdfElixide.Document do
   """
   @spec open!(Path.t(), open_opts()) :: t()
   def open!(path, opts \\ []) when is_binary(path) and is_list(opts) do
-    case open(path, opts) do
-      {:ok, doc} -> doc
-      {:error, error} -> raise error
-    end
+    open(path, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -282,10 +279,7 @@ defmodule PdfElixide.Document do
   """
   @spec from_binary!(binary(), open_opts()) :: t()
   def from_binary!(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
-    case from_binary(bytes, opts) do
-      {:ok, doc} -> doc
-      {:error, error} -> raise error
-    end
+    from_binary(bytes, opts) |> Wrap.unwrap!()
   end
 
   # The default below is pinned by `option_defaults_test.exs`, through
@@ -370,10 +364,7 @@ defmodule PdfElixide.Document do
   """
   @spec page_count!(t()) :: non_neg_integer()
   def page_count!(doc) do
-    case page_count(doc) do
-      {:ok, count} -> count
-      {:error, error} -> raise error
-    end
+    page_count(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -440,26 +431,20 @@ defmodule PdfElixide.Document do
   """
   @spec encrypted?(t()) :: boolean()
   def encrypted?(%__MODULE__{ref: ref}) do
-    predicate!(fn -> Native.document_is_encrypted(ref) end)
-  end
-
-  # Predicates return a bare boolean, so a NIF failure (a closed document, a
-  # poisoned lock) has nowhere to go but a raise — as the bang variants do.
-  # `encrypted?/1` is the only user left: upstream's `is_encrypted()` is
-  # infallible, so nothing but a handle failure can reach it.
-  defp predicate!(fun) do
-    case Wrap.call(fun) do
-      {:ok, value} -> value
-      {:error, error} -> raise error
-    end
+    # A predicate returns a bare boolean, so a NIF failure — a closed document,
+    # a poisoned lock — has nowhere to go but a raise, as the bang variants do.
+    # `Wrap.call!/1` rather than `Wrap.unwrap!/1` because there is no non-bang
+    # counterpart here to have run `Wrap.call/1` already.
+    Wrap.call!(fn -> Native.document_is_encrypted(ref) end)
   end
 
   # The reasons `Closable` itself produces, as opposed to the ones the NIF maps
   # from a `pdf_oxide::Error`. A tolerant predicate answers `false` for a
   # document whose feature cannot be determined, but a handle that cannot be
-  # used at all still raises, exactly as `predicate!/1` always did — which is
-  # what keeps this pair's behavior identical to the swallow it replaced, back
-  # when the NIF discarded the upstream error before Elixir could see it.
+  # used at all still raises, exactly as the plain `Wrap.call!/1` above does —
+  # which is what keeps this pair's behavior identical to the swallow it
+  # replaced, back when the NIF discarded the upstream error before Elixir could
+  # see it.
   @handle_reasons [:closed, :lock_poisoned, :panic]
 
   defp tolerant_predicate!(fun) do
@@ -529,10 +514,7 @@ defmodule PdfElixide.Document do
   """
   @spec authenticate!(t(), binary()) :: boolean()
   def authenticate!(doc, password) when is_binary(password) do
-    case authenticate(doc, password) do
-      {:ok, result} -> result
-      {:error, error} -> raise error
-    end
+    authenticate(doc, password) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -554,10 +536,7 @@ defmodule PdfElixide.Document do
   """
   @spec metadata!(t()) :: Metadata.t()
   def metadata!(%__MODULE__{} = doc) do
-    case metadata(doc) do
-      {:ok, metadata} -> metadata
-      {:error, error} -> raise error
-    end
+    metadata(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -579,10 +558,7 @@ defmodule PdfElixide.Document do
   """
   @spec xmp_metadata!(t()) :: XmpMetadata.t() | nil
   def xmp_metadata!(%__MODULE__{} = doc) do
-    case xmp_metadata(doc) do
-      {:ok, xmp} -> xmp
-      {:error, error} -> raise error
-    end
+    xmp_metadata(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -606,10 +582,7 @@ defmodule PdfElixide.Document do
   """
   @spec permissions!(t()) :: Permissions.t() | nil
   def permissions!(%__MODULE__{} = doc) do
-    case permissions(doc) do
-      {:ok, permissions} -> permissions
-      {:error, error} -> raise error
-    end
+    permissions(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -632,10 +605,7 @@ defmodule PdfElixide.Document do
   """
   @spec page_labels!(t()) :: [String.t()]
   def page_labels!(%__MODULE__{} = doc) do
-    case page_labels(doc) do
-      {:ok, labels} -> labels
-      {:error, error} -> raise error
-    end
+    page_labels(doc) |> Wrap.unwrap!()
   end
 
   @typedoc """
@@ -828,10 +798,7 @@ defmodule PdfElixide.Document do
   def text!(doc, page_index_or_opts \\ [])
 
   def text!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case text(doc, opts) do
-      {:ok, text} -> text
-      {:error, error} -> raise error
-    end
+    text(doc, opts) |> Wrap.unwrap!()
   end
 
   def text!(%__MODULE__{} = doc, page_index)
@@ -858,10 +825,7 @@ defmodule PdfElixide.Document do
   @spec text!(t(), non_neg_integer(), text_opts()) :: String.t()
   def text!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case text(doc, page_index, opts) do
-      {:ok, text} -> text
-      {:error, error} -> raise error
-    end
+    text(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -1013,10 +977,7 @@ defmodule PdfElixide.Document do
   def to_markdown!(doc, page_index_or_opts \\ [])
 
   def to_markdown!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case to_markdown(doc, opts) do
-      {:ok, markdown} -> markdown
-      {:error, error} -> raise error
-    end
+    to_markdown(doc, opts) |> Wrap.unwrap!()
   end
 
   def to_markdown!(%__MODULE__{} = doc, page_index)
@@ -1044,10 +1005,7 @@ defmodule PdfElixide.Document do
   @spec to_markdown!(t(), non_neg_integer(), markdown_opts()) :: String.t()
   def to_markdown!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case to_markdown(doc, page_index, opts) do
-      {:ok, markdown} -> markdown
-      {:error, error} -> raise error
-    end
+    to_markdown(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -1265,10 +1223,7 @@ defmodule PdfElixide.Document do
   def to_html!(doc, page_index_or_opts \\ [])
 
   def to_html!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case to_html(doc, opts) do
-      {:ok, html} -> html
-      {:error, error} -> raise error
-    end
+    to_html(doc, opts) |> Wrap.unwrap!()
   end
 
   def to_html!(%__MODULE__{} = doc, page_index)
@@ -1297,10 +1252,7 @@ defmodule PdfElixide.Document do
   @spec to_html!(t(), non_neg_integer(), html_opts()) :: String.t()
   def to_html!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case to_html(doc, page_index, opts) do
-      {:ok, html} -> html
-      {:error, error} -> raise error
-    end
+    to_html(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -1437,10 +1389,7 @@ defmodule PdfElixide.Document do
   def words!(doc, page_index_or_opts \\ [])
 
   def words!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case words(doc, opts) do
-      {:ok, words} -> words
-      {:error, error} -> raise error
-    end
+    words(doc, opts) |> Wrap.unwrap!()
   end
 
   def words!(%__MODULE__{} = doc, page_index)
@@ -1470,10 +1419,7 @@ defmodule PdfElixide.Document do
   @spec words!(t(), non_neg_integer(), words_opts()) :: [Word.t()]
   def words!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case words(doc, page_index, opts) do
-      {:ok, words} -> words
-      {:error, error} -> raise error
-    end
+    words(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -1555,10 +1501,7 @@ defmodule PdfElixide.Document do
   def text_lines!(doc, page_index_or_opts \\ [])
 
   def text_lines!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case text_lines(doc, opts) do
-      {:ok, lines} -> lines
-      {:error, error} -> raise error
-    end
+    text_lines(doc, opts) |> Wrap.unwrap!()
   end
 
   def text_lines!(%__MODULE__{} = doc, page_index)
@@ -1589,10 +1532,7 @@ defmodule PdfElixide.Document do
   @spec text_lines!(t(), non_neg_integer(), text_lines_opts()) :: [TextLine.t()]
   def text_lines!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case text_lines(doc, page_index, opts) do
-      {:ok, lines} -> lines
-      {:error, error} -> raise error
-    end
+    text_lines(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -1676,10 +1616,7 @@ defmodule PdfElixide.Document do
   def chars!(doc, page_index_or_opts \\ [])
 
   def chars!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case chars(doc, opts) do
-      {:ok, chars} -> chars
-      {:error, error} -> raise error
-    end
+    chars(doc, opts) |> Wrap.unwrap!()
   end
 
   def chars!(%__MODULE__{} = doc, page_index)
@@ -1709,10 +1646,7 @@ defmodule PdfElixide.Document do
   @spec chars!(t(), non_neg_integer(), chars_opts()) :: [Char.t()]
   def chars!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case chars(doc, page_index, opts) do
-      {:ok, chars} -> chars
-      {:error, error} -> raise error
-    end
+    chars(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -1904,10 +1838,7 @@ defmodule PdfElixide.Document do
   def spans!(doc, page_index_or_opts \\ [])
 
   def spans!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case spans(doc, opts) do
-      {:ok, spans} -> spans
-      {:error, error} -> raise error
-    end
+    spans(doc, opts) |> Wrap.unwrap!()
   end
 
   def spans!(%__MODULE__{} = doc, page_index)
@@ -1937,10 +1868,7 @@ defmodule PdfElixide.Document do
   @spec spans!(t(), non_neg_integer(), spans_opts()) :: [Span.t()]
   def spans!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case spans(doc, page_index, opts) do
-      {:ok, spans} -> spans
-      {:error, error} -> raise error
-    end
+    spans(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -2156,10 +2084,7 @@ defmodule PdfElixide.Document do
   def tables!(doc, page_index_or_opts \\ [])
 
   def tables!(%__MODULE__{} = doc, opts) when is_list(opts) do
-    case tables(doc, opts) do
-      {:ok, tables} -> tables
-      {:error, error} -> raise error
-    end
+    tables(doc, opts) |> Wrap.unwrap!()
   end
 
   def tables!(%__MODULE__{} = doc, page_index)
@@ -2190,10 +2115,7 @@ defmodule PdfElixide.Document do
   @spec tables!(t(), non_neg_integer(), tables_opts()) :: [Table.t()]
   def tables!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    case tables(doc, page_index, opts) do
-      {:ok, tables} -> tables
-      {:error, error} -> raise error
-    end
+    tables(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
   # Every default below is pinned key-by-key by `option_defaults_test.exs`,
@@ -2295,10 +2217,7 @@ defmodule PdfElixide.Document do
   """
   @spec paths!(t()) :: [PdfElixide.Document.Path.t()]
   def paths!(%__MODULE__{} = doc) do
-    case paths(doc) do
-      {:ok, paths} -> paths
-      {:error, error} -> raise error
-    end
+    paths(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2324,10 +2243,7 @@ defmodule PdfElixide.Document do
   @spec paths!(t(), non_neg_integer()) :: [PdfElixide.Document.Path.t()]
   def paths!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    case paths(doc, page_index) do
-      {:ok, paths} -> paths
-      {:error, error} -> raise error
-    end
+    paths(doc, page_index) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2360,10 +2276,7 @@ defmodule PdfElixide.Document do
   """
   @spec fonts!(t()) :: [Font.t()]
   def fonts!(%__MODULE__{} = doc) do
-    case fonts(doc) do
-      {:ok, fonts} -> fonts
-      {:error, error} -> raise error
-    end
+    fonts(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2395,10 +2308,7 @@ defmodule PdfElixide.Document do
   @spec fonts!(t(), non_neg_integer()) :: [Font.t()]
   def fonts!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    case fonts(doc, page_index) do
-      {:ok, fonts} -> fonts
-      {:error, error} -> raise error
-    end
+    fonts(doc, page_index) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2426,10 +2336,7 @@ defmodule PdfElixide.Document do
   """
   @spec outline!(t()) :: [OutlineItem.t()]
   def outline!(%__MODULE__{} = doc) do
-    case outline(doc) do
-      {:ok, items} -> items
-      {:error, error} -> raise error
-    end
+    outline(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2455,10 +2362,7 @@ defmodule PdfElixide.Document do
   """
   @spec annotations!(t()) :: [Annotation.t()]
   def annotations!(%__MODULE__{} = doc) do
-    case annotations(doc) do
-      {:ok, annotations} -> annotations
-      {:error, error} -> raise error
-    end
+    annotations(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2484,10 +2388,7 @@ defmodule PdfElixide.Document do
   @spec annotations!(t(), non_neg_integer()) :: [Annotation.t()]
   def annotations!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    case annotations(doc, page_index) do
-      {:ok, annotations} -> annotations
-      {:error, error} -> raise error
-    end
+    annotations(doc, page_index) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2516,10 +2417,7 @@ defmodule PdfElixide.Document do
   """
   @spec images!(t()) :: [Image.t()]
   def images!(%__MODULE__{} = doc) do
-    case images(doc) do
-      {:ok, images} -> images
-      {:error, error} -> raise error
-    end
+    images(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2546,10 +2444,7 @@ defmodule PdfElixide.Document do
   @spec images!(t(), non_neg_integer()) :: [Image.t()]
   def images!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    case images(doc, page_index) do
-      {:ok, images} -> images
-      {:error, error} -> raise error
-    end
+    images(doc, page_index) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -2599,10 +2494,7 @@ defmodule PdfElixide.Document do
   """
   @spec page!(t(), non_neg_integer()) :: Page.t()
   def page!(doc, index) when is_integer(index) and index >= 0 do
-    case page(doc, index) do
-      {:ok, page} -> page
-      {:error, error} -> raise error
-    end
+    page(doc, index) |> Wrap.unwrap!()
   end
 
   defimpl Inspect do

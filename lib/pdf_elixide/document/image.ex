@@ -150,10 +150,7 @@ defmodule PdfElixide.Document.Image do
   """
   @spec data!(t()) :: raw_data()
   def data!(%__MODULE__{} = image) do
-    case data(image) do
-      {:ok, raw} -> raw
-      {:error, error} -> raise error
-    end
+    data(image) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -179,10 +176,7 @@ defmodule PdfElixide.Document.Image do
   """
   @spec to_binary!(t(), image_opts()) :: binary()
   def to_binary!(%__MODULE__{} = image, opts \\ []) when is_list(opts) do
-    case to_binary(image, opts) do
-      {:ok, bytes} -> bytes
-      {:error, error} -> raise error
-    end
+    to_binary(image, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -212,6 +206,8 @@ defmodule PdfElixide.Document.Image do
   @spec save!(t(), Path.t(), image_opts()) :: :ok
   def save!(%__MODULE__{} = image, path, opts \\ [])
       when is_binary(path) and is_list(opts) do
+    # Local `case` rather than `Wrap.unwrap!/1`: `save/3` answers a bare `:ok`,
+    # not `{:ok, value}`, so there is no payload to unwrap.
     case save(image, path, opts) do
       :ok -> :ok
       {:error, error} -> raise error

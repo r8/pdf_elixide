@@ -55,6 +55,65 @@ defmodule PdfElixide.Native.WrapTest do
     end
   end
 
+  describe "unwrap!/1" do
+    test "returns the payload of an {:ok, value} tuple" do
+      assert Wrap.unwrap!({:ok, 42}) == 42
+      assert Wrap.unwrap!({:ok, nil}) == nil
+      assert Wrap.unwrap!({:ok, false}) == false
+    end
+
+    test "raises the error struct unchanged" do
+      # The reason must survive: every bang variant's contract is that callers
+      # can rescue a `%PdfElixide.Error{}` and match on it, not merely that
+      # *something* raised.
+      error = %Error{reason: :out_of_range, message: "Page index 99 out of range"}
+
+      raised = assert_raise Error, fn -> Wrap.unwrap!({:error, error}) end
+
+      assert raised == error
+    end
+
+    # There is deliberately no test that a bare `:ok` has no clause. Elixir's
+    # type checker rejects `Wrap.unwrap!(:ok)` at compile time — CI runs
+    # `mix test --warnings-as-errors` — so the only way to assert it at runtime
+    # is `apply/3`, which credo then rejects in turn. Both gates are right: a
+    # caller who passes `:ok` is stopped where it matters, at their call site,
+    # which is stronger than anything this file could assert. The reason the
+    # function stays two-clause is on its `@doc`.
+  end
+
+  describe "call!/1" do
+    test "returns the value of a successful call" do
+      assert Wrap.call!(fn -> {:ok, 42} end) == 42
+      assert Wrap.call!(fn -> :some_atom end) == :some_atom
+    end
+
+    test "raises the normalized error for a returned tagged error" do
+      raised =
+        assert_raise Error, fn -> Wrap.call!(fn -> {:error, {:not_found, "missing"}} end) end
+
+      assert raised.reason == :not_found
+      assert raised.message == "missing"
+    end
+
+    test "raises the normalized error for a raised tagged error" do
+      # The live path: a NIF reports failure by raising, so this is what
+      # `encrypted?/1` hits on a closed handle.
+      raised =
+        assert_raise Error, fn ->
+          Wrap.call!(fn -> :erlang.error({:closed, "Document is closed"}) end)
+        end
+
+      assert raised.reason == :closed
+    end
+
+    test "still lets a caller bug through as ArgumentError" do
+      # `call!/1` composes `call/1`, so the errors-versus-exceptions split it
+      # enforces must survive the composition rather than becoming an %Error{}.
+      assert_raise ArgumentError, fn -> Wrap.call!(fn -> :erlang.error(:badarg) end) end
+    end
+  end
+
   describe "call/1 with an exception it must not swallow" do
     test "re-raises :badarg as ArgumentError rather than mangling it" do
       # A NIF raises :badarg when it cannot decode its arguments. Elixir

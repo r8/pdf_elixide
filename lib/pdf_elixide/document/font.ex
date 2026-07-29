@@ -114,10 +114,7 @@ defmodule PdfElixide.Document.Font do
   """
   @spec data!(t()) :: binary() | nil
   def data!(%__MODULE__{} = font) do
-    case data(font) do
-      {:ok, bytes} -> bytes
-      {:error, error} -> raise error
-    end
+    data(font) |> Wrap.unwrap!()
   end
 
   @doc """
