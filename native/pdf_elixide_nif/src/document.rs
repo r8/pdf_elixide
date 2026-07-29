@@ -21,6 +21,7 @@ use crate::{
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
+    geometry::{rect_from_corners, RectNif},
     images::{image_to_nif, ImageNif},
     outline::{outline_to_nif, OutlineItemNif},
     paths::{path_to_nif, PathNif},
@@ -1155,31 +1156,41 @@ fn document_all_tables(
     })
 }
 
-/// Returns the page's width in points (MediaBox urx - llx).
+/// Returns the page's `/MediaBox` as a normalised rect.
+///
+/// Upstream's `get_page_media_box` hands back the four raw array elements —
+/// `(llx, lly, urx, ury)`, absolute corners in the order the file wrote them —
+/// so a malformed box may arrive reversed. `rect_from_corners` normalises it,
+/// because `PdfElixide.Geometry.Rect` promises a bottom-left origin and
+/// non-negative dimensions, and because `Page.width/1` and `Page.height/1` are
+/// these fields: nothing else computes a page size, so nothing else can
+/// disagree about one. `f32` widens to `f64` exactly, so the width and height
+/// this yields are bit-identical to subtracting the corners in `f32`.
+///
+/// Upstream reads the entry off the dictionary [`get_page`] returns, which
+/// carries the inherited attributes, so a `/MediaBox` on an ancestor `/Pages`
+/// node is honoured — though *which* ancestor wins depends on how the page was
+/// reached; the "Page boxes and the coordinate origin" section of the
+/// `PdfElixide.Document` moduledoc has it.
+/// An indirect reference is resolved both for the array and for each element.
+/// An absent `/MediaBox`, a non-array entry and an array shorter than four are
+/// each an `InvalidPdf` — propagated, never replaced with a default page size.
+/// A non-numeric element is upstream's one silent case: it coerces to 0.0.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_get_page_width(
+fn document_get_page_media_box(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
-) -> NifResult<f32> {
+) -> NifResult<RectNif> {
     resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
-        let (llx, _lly, urx, _ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
-        Ok(urx - llx)
-    })
-}
-
-/// Returns the page's height in points (MediaBox ury - lly).
-#[rustler::nif(schedule = "DirtyCpu")]
-fn document_get_page_height(
-    resource: ResourceArc<DocumentResource>,
-    page_index: usize,
-) -> NifResult<f32> {
-    resource.doc.with_read(|doc| {
-        ensure_page_in_range(doc, page_index)?;
-
-        let (_llx, lly, _urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
-        Ok(ury - lly)
+        let (llx, lly, urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
+        Ok(rect_from_corners(
+            llx.into(),
+            lly.into(),
+            urx.into(),
+            ury.into(),
+        ))
     })
 }
 
@@ -1187,9 +1198,10 @@ fn document_get_page_height(
 ///
 /// Upstream reads the value off the dictionary [`get_page`] returns, which
 /// carries the inherited attributes, so a `/Rotate` on an ancestor `/Pages`
-/// node is honoured (ISO 32000-1 §7.7.3.4). A value that is not a multiple of
-/// 90 is invalid and yields 0 rather than being floored (`pdf_oxide`
-/// `src/document.rs`, `get_page_rotation`).
+/// node is honoured (ISO 32000-1 §7.7.3.4) — with the same which-ancestor-wins
+/// caveat as `document_get_page_media_box` above. A value that is not a
+/// multiple of 90 is invalid and yields 0 rather than being floored
+/// (`pdf_oxide` `src/document.rs`, `get_page_rotation`).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_get_page_rotation(
     resource: ResourceArc<DocumentResource>,

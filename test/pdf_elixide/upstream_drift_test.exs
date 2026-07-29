@@ -31,6 +31,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @moduletag :upstream_drift
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.Page
   alias PdfElixide.Error
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
@@ -42,6 +43,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
   @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
+  @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
 
   @columns 0
   @artifacts 1
@@ -514,6 +516,52 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       # Said plainly: the same line, two frames.
       refute origins(Document.text_lines!(doc, @rotate_180)) == [origin(span)]
+    end
+  end
+
+  describe "inherited page boxes" do
+    # `/MediaBox` and `/Rotate` are inheritable (ISO 32000-1 §7.7.3.4, which
+    # says the *nearest* ancestor wins). Upstream resolves them in two places
+    # that disagree, and which one runs depends on how many pages have been
+    # read:
+    #
+    #   * `get_page_from_tree_inner` (`src/document.rs`) — the per-page
+    #     traversal `get_page` uses by default — merges an ancestor's
+    #     attributes with `inherited.entry(..).or_insert_with(..)`. First
+    #     writer wins, so the *outermost* ancestor survives, against the spec
+    #     and against that code's own comment ("child values override
+    #     parent"); it also never restores the map as it unwinds.
+    #   * `collect_all_pages` does it correctly — `insert` plus a
+    #     snapshot/restore around the recursion — so the *nearest* wins.
+    #
+    # `get_page` switches to the second once the page cache passes
+    # `LAZY_THRESHOLD = 64`. So the same page of the same document answers
+    # differently depending on what was read before it, which is what the two
+    # tests below pin. `inherited_boxes.pdf` page 0 sits under an outer /Pages
+    # of [0 0 200 100] + /Rotate 90 and an inner one of [0 0 300 500] +
+    # /Rotate 180; its other 70 pages exist only to cross that threshold.
+    #
+    # A failure means upstream unified the two walks. That is good news, but
+    # it makes the "Which ancestor an inherited box comes from" subsection of
+    # `PdfElixide.Document`'s "Page boxes and the coordinate origin" wrong —
+    # rewrite it, and say which rule now holds, rather than relaxing this.
+    test "the outermost ancestor wins on the per-page traversal" do
+      page = Document.page!(open(@inherited_boxes_pdf), 0)
+
+      assert %{width: 200.0, height: 100.0} = Page.media_box!(page)
+      assert Page.rotation!(page) == 90
+    end
+
+    test "the nearest ancestor wins once the bulk page-tree walk takes over" do
+      doc = open(@inherited_boxes_pdf)
+
+      # Reading past LAZY_THRESHOLD is the whole trigger; the values are not
+      # the point, and page 0 is deliberately not among them.
+      for i <- 1..70, do: Page.media_box!(Document.page!(doc, i))
+
+      page = Document.page!(doc, 0)
+      assert %{width: 300.0, height: 500.0} = Page.media_box!(page)
+      assert Page.rotation!(page) == 180
     end
   end
 end

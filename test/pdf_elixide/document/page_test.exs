@@ -10,6 +10,7 @@ defmodule PdfElixide.Document.PageTest do
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Error
+  alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
@@ -20,6 +21,7 @@ defmodule PdfElixide.Document.PageTest do
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
+  @media_box_pdf Path.join(@fixtures, "media_box.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -28,10 +30,123 @@ defmodule PdfElixide.Document.PageTest do
     end
   end
 
+  describe "media_box/1" do
+    test "returns the box of a page at the origin" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}} =
+               Page.media_box(Document.page!(doc, 0))
+    end
+
+    # Also the guard against upstream reinterpreting `get_page_media_box`'s
+    # tuple: it returns raw corners `(llx, lly, urx, ury)`, and this page's box
+    # is `[10 20 622 812]`, so a switch to x/y/width/height semantics would
+    # report a width of 622 rather than 612.
+    test "reports a non-zero origin and measures between the corners" do
+      doc = Document.open!(@media_box_pdf)
+
+      assert {:ok, %Rect{x: 10.0, y: 20.0, width: 612.0, height: 792.0}} =
+               Page.media_box(Document.page!(doc, 0))
+    end
+
+    test "normalizes a box whose corners are written in reverse" do
+      # `[612 792 0 0]`. Upstream hands the corners back in file order; the
+      # binding normalizes, because `%Rect{}` promises non-negative dimensions
+      # and `width/1`/`height/1` are these fields.
+      doc = Document.open!(@media_box_pdf)
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}} =
+               Page.media_box(Document.page!(doc, 1))
+    end
+
+    test "inherits the box from an ancestor /Pages node" do
+      # This page carries no /MediaBox; the intermediate /Pages above it has
+      # `[0 0 300 500]`. Which ancestor wins when two of them declare one is
+      # upstream's, and unstable — see `inherited_boxes.pdf` in
+      # `upstream_drift_test.exs`.
+      doc = Document.open!(@media_box_pdf)
+      assert {:ok, %Rect{width: 300.0, height: 500.0}} = Page.media_box(Document.page!(doc, 2))
+    end
+
+    test "resolves an indirect /MediaBox reference" do
+      doc = Document.open!(@media_box_pdf)
+      assert {:ok, %Rect{width: 300.0, height: 400.0}} = Page.media_box(Document.page!(doc, 3))
+    end
+
+    test "resolves an indirect reference in each element of the array" do
+      # An unresolved element reads as 0.0 upstream, collapsing the page to a
+      # zero-area box that clips every extraction — silent, hence the pin.
+      doc = Document.open!(@media_box_pdf)
+      assert {:ok, %Rect{width: 300.0, height: 400.0}} = Page.media_box(Document.page!(doc, 4))
+    end
+
+    test "reports a page with no /MediaBox above it as :invalid_pdf" do
+      # No default page size is substituted: a caller could not tell an assumed
+      # Letter box from a real one.
+      doc = Document.open!(@media_box_pdf)
+      assert {:error, %Error{reason: :invalid_pdf}} = Page.media_box(Document.page!(doc, 5))
+    end
+
+    test "leaves extracted coordinates in the same space as the box" do
+      # The box starts at (10, 20) and the text is drawn at (82, 740). Nothing
+      # rebases a bbox on the box origin — the fact `media_box/1` makes visible,
+      # and the reason `PdfElixide.Document`'s "Page boxes and the coordinate
+      # origin" section tells callers to subtract it themselves.
+      doc = Document.open!(@media_box_pdf)
+      page = Document.page!(doc, 0)
+
+      assert %Rect{x: 10.0, y: 20.0} = Page.media_box!(page)
+      assert [%Char{bbox: %Rect{x: x, y: y}} | _] = Page.chars!(page)
+      assert_in_delta x, 82.0, 0.5
+      assert_in_delta y, 740.0, 0.5
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Page.media_box(%Page{doc: doc, index: 99})
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 0)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Page.media_box(page)
+    end
+  end
+
+  describe "media_box!/1" do
+    test "returns the rect directly" do
+      doc = Document.open!(@valid_pdf)
+
+      assert Page.media_box!(Document.page!(doc, 0)) ==
+               %Rect{x: 0.0, y: 0.0, width: 612.0, height: 792.0}
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.media_box!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
   describe "width/1" do
     test "returns the page width in points" do
       doc = Document.open!(@valid_pdf)
       assert {:ok, 612.0} = Page.width(Document.page!(doc, 0))
+    end
+
+    test "measures between the corners of a box with a non-zero origin" do
+      # `[10 20 622 812]` — 612 wide, not 622.
+      doc = Document.open!(@media_box_pdf)
+      assert {:ok, 612.0} = Page.width(Document.page!(doc, 0))
+    end
+
+    test "is never negative for a box whose corners are reversed" do
+      # This returned -612.0 while width/1 had its own NIF subtracting the raw
+      # corners; it is the rect's `:width` now, so it cannot disagree with
+      # `media_box/1` about the sign or anything else.
+      doc = Document.open!(@media_box_pdf)
+      assert {:ok, 612.0} = Page.width(Document.page!(doc, 1))
     end
 
     test "returns {:error, reason} for an out-of-range page" do
@@ -51,6 +166,11 @@ defmodule PdfElixide.Document.PageTest do
     test "returns the page height in points" do
       doc = Document.open!(@valid_pdf)
       assert {:ok, 792.0} = Page.height(Document.page!(doc, 0))
+    end
+
+    test "is never negative for a box whose corners are reversed" do
+      doc = Document.open!(@media_box_pdf)
+      assert {:ok, 792.0} = Page.height(Document.page!(doc, 1))
     end
   end
 

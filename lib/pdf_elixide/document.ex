@@ -70,6 +70,53 @@ defmodule PdfElixide.Document do
   section of `t:text_opts/0`), `to_markdown/1` joins with a `---` break, and
   `to_html/1` wraps each page in a `<div class="page">`.
 
+  ## Page boxes and the coordinate origin
+
+  Every coordinate this library reports — an extracted `bbox`, a path operation,
+  an image's placement — is in the page's own PDF user space: a bottom-left
+  origin, y increasing upward, measured in points.
+
+  The sheet those coordinates fall on is the page's `/MediaBox`, read with
+  `PdfElixide.Document.Page.media_box/1` as a `PdfElixide.Geometry.Rect`. Its
+  origin is usually `{0.0, 0.0}`, but nothing requires that — a page trimmed out
+  of a larger imposition may start at, say, `{10.0, 20.0}`. **Content
+  coordinates are not rebased on it**: a glyph at the very left edge of such a
+  page reports an `x` near `10.0`, not near `0.0`. Subtract the origin yourself
+  when you want offsets from the page corner:
+
+      box = PdfElixide.Document.Page.media_box!(page)
+      {word.bbox.x - box.x, word.bbox.y - box.y}
+
+  `PdfElixide.Document.Page.width/1` and `PdfElixide.Document.Page.height/1` are
+  that rect's `:width` and `:height`. All three are normalized — a file that
+  writes the box's two corners in the reverse order still yields non-negative
+  dimensions — and a page with no `/MediaBox` anywhere above it is an
+  `%PdfElixide.Error{reason: :invalid_pdf}` rather than an assumed page size.
+  None of the three is turned to match a rotated page; see below.
+
+  `pdf_oxide` exposes no `/CropBox`, `/BleedBox`, `/TrimBox` or `/ArtBox` on a
+  read-only document, so this library has no reader for them.
+
+  ### Which ancestor an inherited box comes from
+
+  `/MediaBox` and `/Rotate` are inheritable: a page declaring neither takes them
+  from an ancestor `/Pages` node. Where exactly one ancestor declares the entry —
+  overwhelmingly the common case — the answer is unambiguous. Where **two**
+  nested ancestors declare it, upstream can give either one:
+
+    * reached one page at a time, upstream's per-page tree walk keeps the
+      **outermost** ancestor's value, contrary to §7.7.3.4;
+    * once enough pages of a document have been read, upstream switches to a
+      bulk page-tree walk that resolves the same attribute the other way, to the
+      **nearest** ancestor.
+
+  So the same page of the same document can report a different box, and a
+  different rotation, depending on how many other pages were read first. This is
+  upstream behavior, pinned by `test/pdf_elixide/upstream_drift_test.exs`;
+  nothing in this binding can pick a winner without reimplementing the page-tree
+  walk. A document whose page tree declares each inheritable entry at one level
+  only — again, almost all of them — is not affected.
+
   ## Rotated pages and extracted geometry
 
   A page may carry a `/Rotate` telling a viewer to display it turned — read it
@@ -91,9 +138,10 @@ defmodule PdfElixide.Document do
   line report mirrored boxes. Compare or lay out boxes from **one** extractor,
   and use `chars/1` or `spans/1` when raw page space is what you want.
 
-  `PdfElixide.Document.Page.width/1` and `PdfElixide.Document.Page.height/1` are
-  MediaBox measurements and are likewise never swapped, so computing the
-  displayed page size is the caller's job.
+  `PdfElixide.Document.Page.media_box/1`, and the
+  `PdfElixide.Document.Page.width/1` / `PdfElixide.Document.Page.height/1`
+  derived from it, are MediaBox measurements and are likewise never swapped, so
+  computing the displayed page size is the caller's job.
 
   This is upstream `pdf_oxide` behavior rather than a choice this binding makes,
   and it is pinned by `test/pdf_elixide/upstream_drift_test.exs`. A caller that

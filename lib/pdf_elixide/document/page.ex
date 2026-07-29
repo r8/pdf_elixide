@@ -34,6 +34,7 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Error
+  alias PdfElixide.Geometry.Rect
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -51,15 +52,69 @@ defmodule PdfElixide.Document.Page do
   @type rotation :: 0 | 90 | 180 | 270
 
   @doc """
+  Returns the page's `/MediaBox` — the sheet it is imposed on — as a
+  `PdfElixide.Geometry.Rect` in unrotated user space.
+
+  The rect is normalized: `:x` and `:y` are the bottom-left corner and `:width`
+  and `:height` are non-negative, even for a file that writes the two corners in
+  the reverse order. It is **not** turned to match `rotation/1`: a `90`-degree
+  page of a 612 × 792 MediaBox still reports 612 × 792 and displays 792 points
+  wide.
+
+  The origin need not be `{0.0, 0.0}`, and when it is not, nothing this library
+  returns is rebased on it — an extracted `bbox` is in the same user space as
+  the media box, so a glyph at the left edge of a page whose box starts at
+  `10.0` reports an `x` near `10.0`, not near `0.0`. See the "Page boxes and the
+  coordinate origin" section of `PdfElixide.Document`.
+
+  `/MediaBox` is inheritable (ISO 32000-1 §7.7.3.4): a page without one takes
+  the box from an ancestor `/Pages` node. When *two* ancestors declare one,
+  which of them wins is not stable — see the same section. An indirect reference
+  is resolved, both for the array itself and for any element of it.
+
+  A page with no `/MediaBox` anywhere above it, or whose entry is not an array,
+  or is an array of fewer than four elements, is malformed and yields
+  `%PdfElixide.Error{reason: :invalid_pdf}` — no default page size is
+  substituted. One malformation is *not* reported: an element that is not a
+  number reads as `0.0`, so such a page reports a smaller box rather than
+  failing.
+
+  A page whose `:index` is not a page of the document — only reachable from a
+  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
+  """
+  @spec media_box(t()) :: {:ok, Rect.t()} | {:error, Error.t()}
+  def media_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
+    Wrap.call(fn -> Native.document_get_page_media_box(ref, index) end)
+  end
+
+  @doc """
+  Same as `media_box/1` but raises an error if it fails.
+  """
+  @spec media_box!(t()) :: Rect.t()
+  def media_box!(page) do
+    case media_box(page) do
+      {:ok, box} -> box
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
   Returns the page's width in points.
 
-  This is the MediaBox width, in unrotated user space. It is **not** swapped for
-  a rotated page: a page with `rotation/1` of `90` or `270` displays as
-  height × width. See `rotation/1`.
+  This is `media_box/1`'s `:width`, in unrotated user space. Like it, the value
+  is never negative and is **not** swapped for a rotated page: a page with
+  `rotation/1` of `90` or `270` displays as height × width. See `rotation/1`.
   """
   @spec width(t()) :: {:ok, float()} | {:error, Error.t()}
-  def width(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
-    Wrap.call(fn -> Native.document_get_page_width(ref, index) end)
+  def width(%__MODULE__{} = page) do
+    # Matching `%Rect{}` rather than reading `box.width` keeps the boundary
+    # loud: if the Rust `#[module = ...]` attribute and this struct ever stop
+    # naming the same module, that is a `CaseClauseError` here instead of a
+    # silently wrong return value.
+    case media_box(page) do
+      {:ok, %Rect{width: width}} -> {:ok, width}
+      {:error, error} -> {:error, error}
+    end
   end
 
   @doc """
@@ -76,12 +131,15 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Returns the page's height in points.
 
-  This is the MediaBox height, in unrotated user space, and like `width/1` it is
-  not swapped for a rotated page. See `rotation/1`.
+  This is `media_box/1`'s `:height`, in unrotated user space, and like `width/1`
+  it is never negative and is not swapped for a rotated page. See `rotation/1`.
   """
   @spec height(t()) :: {:ok, float()} | {:error, Error.t()}
-  def height(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
-    Wrap.call(fn -> Native.document_get_page_height(ref, index) end)
+  def height(%__MODULE__{} = page) do
+    case media_box(page) do
+      {:ok, %Rect{height: height}} -> {:ok, height}
+      {:error, error} -> {:error, error}
+    end
   end
 
   @doc """
@@ -100,8 +158,10 @@ defmodule PdfElixide.Document.Page do
   displaying it — as `0`, `90`, `180` or `270`.
 
   A page's own `/Rotate` wins, but the entry is inheritable (ISO 32000-1
-  §7.7.3.4): a page without one takes the value from the nearest ancestor
-  `/Pages` node, and `0` when no ancestor has one either.
+  §7.7.3.4): a page without one takes the value from an ancestor `/Pages` node,
+  and `0` when no ancestor has one either. When *two* ancestors declare one,
+  which of them wins is not stable — see the "Page boxes and the coordinate
+  origin" section of `PdfElixide.Document`, which covers `/Rotate` as well.
 
   Two normalizations come from `pdf_oxide` and are worth knowing:
 
@@ -109,9 +169,10 @@ defmodule PdfElixide.Document.Page do
     * a value that is **not a multiple of 90** is invalid per §7.7.3.3 and reads
       as `0` — it is *not* rounded down, so `45` is `0`, not `90`.
 
-  `width/1` and `height/1` are MediaBox measurements in unrotated user space and
-  are never swapped to match: a `90`-degree page of a 612 × 792 MediaBox displays
-  792 points wide and 612 tall. Rotation also decides which frame an extracted
+  `media_box/1`, and the `width/1` and `height/1` derived from it, are MediaBox
+  measurements in unrotated user space and are never swapped to match: a
+  `90`-degree page of a 612 × 792 MediaBox displays 792 points wide and 612
+  tall. Rotation also decides which frame an extracted
   `bbox` is expressed in — see the "Rotated pages and extracted geometry" section
   of `PdfElixide.Document`.
 
