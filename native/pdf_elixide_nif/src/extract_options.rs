@@ -622,3 +622,363 @@ impl From<TablesOptionsNif> for TablesOptions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An override map that overrides nothing. Spelled out rather than derived
+    /// from `Default`, so adding a field to `TableDetectionNif` without deciding
+    /// what it does here is a compile error.
+    fn no_table_overrides(preset: TablePresetNif) -> TableDetectionNif {
+        TableDetectionNif {
+            preset,
+            enabled: None,
+            horizontal_strategy: None,
+            vertical_strategy: None,
+            column_tolerance: None,
+            row_tolerance: None,
+            min_table_cells: None,
+            min_table_columns: None,
+            regular_row_ratio: None,
+            max_table_columns: None,
+            column_merge_threshold: None,
+            v_split_gap: None,
+            text_fallback: None,
+        }
+    }
+
+    /// As above, for span merging.
+    fn no_span_overrides(preset: SpanPresetNif) -> SpanMergingNif {
+        SpanMergingNif {
+            preset,
+            space_threshold_em_ratio: None,
+            conservative_threshold_pt: None,
+            column_boundary_threshold_pt: None,
+            severe_overlap_threshold_pt: None,
+            use_adaptive_threshold: None,
+            adaptive: None,
+            detect_email_patterns: None,
+            email_threshold_multiplier: None,
+            detect_citation_markers: None,
+            citation_font_size_ratio: None,
+            merge_tm_tj_runs: None,
+        }
+    }
+
+    fn no_adaptive_overrides() -> AdaptiveThresholdNif {
+        AdaptiveThresholdNif {
+            median_multiplier: None,
+            min_threshold_pt: None,
+            max_threshold_pt: None,
+            use_iqr: None,
+            min_samples: None,
+        }
+    }
+
+    fn table_preset(preset: TablePresetNif) -> TableDetectionConfig {
+        preset.into()
+    }
+
+    fn span_preset(preset: SpanPresetNif) -> SpanMergingConfig {
+        preset.into()
+    }
+
+    /// Sets one override on the `:default` preset and asserts the resolved
+    /// config equals that preset with **only** the named field changed.
+    ///
+    /// The comparison is against a whole struct, not the one field, which is
+    /// what makes this catch misrouting: writing `config.column_tolerance = v`
+    /// in the `row_tolerance` arm compiles, and no fixture separates two float
+    /// thresholds. The two-value form is for the fields whose NIF and upstream
+    /// spellings differ (the strategies).
+    macro_rules! assert_table_override {
+        ($field:ident, $nif_value:expr, $config_value:expr) => {{
+            let mut overrides = no_table_overrides(TablePresetNif::Default);
+            overrides.$field = Some($nif_value);
+
+            let mut expected = table_preset(TablePresetNif::Default);
+            expected.$field = $config_value;
+
+            assert_eq!(
+                TableDetectionConfig::from(overrides),
+                expected,
+                stringify!($field)
+            );
+        }};
+        ($field:ident, $value:expr) => {
+            assert_table_override!($field, $value, $value)
+        };
+    }
+
+    /// The span-merging counterpart of [`assert_table_override`]. Single-valued,
+    /// because every `SpanMergingNif` field is a scalar named exactly as
+    /// upstream names it.
+    macro_rules! assert_span_override {
+        ($field:ident, $value:expr) => {{
+            let mut overrides = no_span_overrides(SpanPresetNif::Default);
+            overrides.$field = Some($value);
+
+            let mut expected = span_preset(SpanPresetNif::Default);
+            expected.$field = $value;
+
+            assert_eq!(
+                SpanMergingConfig::from(overrides),
+                expected,
+                stringify!($field)
+            );
+        }};
+    }
+
+    /// The "resolve presets in Rust, apply overrides by mutating a base" rule,
+    /// stated as one assertion: an override map that overrides nothing must
+    /// leave the preset exactly as upstream built it.
+    ///
+    /// This is what stops a `From` impl being rewritten as a struct literal.
+    /// A literal compiles, passes every Elixir test — `option_defaults_test.exs`
+    /// compares the *keyword defaults*, not the resolved config, and roughly
+    /// half of these keys are observable on no fixture at all — and silently
+    /// resets every field the caller did not name back to `Default`. It is also
+    /// why an upstream release that *adds* a field keeps working rather than
+    /// quietly zeroing it.
+    /// Compared against upstream's *own* constructor rather than against
+    /// `table_preset`, so this pins the preset mapping at the same time: a
+    /// `:strict` that quietly resolved to `relaxed()` would fail here.
+    #[test]
+    fn an_override_map_that_overrides_nothing_is_exactly_the_preset() {
+        for (preset, expected) in [
+            (TablePresetNif::Default, TableDetectionConfig::default()),
+            (TablePresetNif::Strict, TableDetectionConfig::strict()),
+            (TablePresetNif::Relaxed, TableDetectionConfig::relaxed()),
+        ] {
+            assert_eq!(
+                TableDetectionConfig::from(no_table_overrides(preset)),
+                expected
+            );
+        }
+
+        for (preset, expected) in [
+            (SpanPresetNif::Default, SpanMergingConfig::new()),
+            (SpanPresetNif::Aggressive, SpanMergingConfig::aggressive()),
+            (
+                SpanPresetNif::Conservative,
+                SpanMergingConfig::conservative(),
+            ),
+            (SpanPresetNif::Adaptive, SpanMergingConfig::adaptive()),
+            (SpanPresetNif::Legacy, SpanMergingConfig::legacy()),
+        ] {
+            assert_eq!(SpanMergingConfig::from(no_span_overrides(preset)), expected);
+        }
+    }
+
+    /// Every table override lands on its own field and disturbs no other. The
+    /// values are chosen to differ from the `:default` preset, so an arm that
+    /// silently dropped the override would fail rather than coincide.
+    #[test]
+    fn each_table_override_lands_on_its_own_field() {
+        assert_table_override!(enabled, false);
+        assert_table_override!(
+            horizontal_strategy,
+            TableStrategyNif::Lines,
+            TableStrategy::Lines
+        );
+        assert_table_override!(
+            vertical_strategy,
+            TableStrategyNif::Text,
+            TableStrategy::Text
+        );
+        assert_table_override!(column_tolerance, 1.5);
+        assert_table_override!(row_tolerance, 9.5);
+        assert_table_override!(min_table_cells, 7);
+        assert_table_override!(min_table_columns, 5);
+        assert_table_override!(regular_row_ratio, 0.9);
+        assert_table_override!(max_table_columns, 21);
+        assert_table_override!(column_merge_threshold, 3.5);
+        assert_table_override!(v_split_gap, 11.5);
+        assert_table_override!(text_fallback, false);
+    }
+
+    /// The span-merging counterpart. `adaptive` is absent here — it is the one
+    /// override that is not a scalar, and it has tests of its own below.
+    #[test]
+    fn each_span_override_lands_on_its_own_field() {
+        assert_span_override!(space_threshold_em_ratio, 0.42);
+        assert_span_override!(conservative_threshold_pt, 0.75);
+        assert_span_override!(column_boundary_threshold_pt, 12.5);
+        assert_span_override!(severe_overlap_threshold_pt, -1.5);
+        assert_span_override!(use_adaptive_threshold, false);
+        assert_span_override!(detect_email_patterns, true);
+        assert_span_override!(email_threshold_multiplier, 3.5);
+        assert_span_override!(detect_citation_markers, true);
+        assert_span_override!(citation_font_size_ratio, 0.5);
+        assert_span_override!(merge_tm_tj_runs, false);
+    }
+
+    /// `AdaptiveThresholdNif::apply` layers onto the base it is handed, keeping
+    /// every field the caller did not name.
+    ///
+    /// Called directly rather than through a preset, and that is the point: every
+    /// upstream preset today carries either `None` or
+    /// `Some(AdaptiveThresholdConfig::default())`, so routing through one would
+    /// pass whether `apply` respected the base or ignored it. Handing it a base
+    /// that is *not* the default is the only way to tell those apart, and it
+    /// pins the contract for the upstream release where a preset starts carrying
+    /// a tuned config.
+    #[test]
+    fn adaptive_overrides_layer_onto_the_supplied_base() {
+        let base = AdaptiveThresholdConfig {
+            median_multiplier: 2.5,
+            min_threshold_pt: 0.11,
+            max_threshold_pt: 1.9,
+            use_iqr: true,
+            min_samples: 42,
+        };
+
+        // Precondition: the base really is distinguishable from the default, or
+        // the assertions below would hold either way.
+        assert_ne!(base, AdaptiveThresholdConfig::default());
+
+        let mut overrides = no_adaptive_overrides();
+        overrides.median_multiplier = Some(0.75);
+
+        let mut expected = base.clone();
+        expected.median_multiplier = 0.75;
+
+        assert_eq!(overrides.apply(Some(base.clone())), expected);
+        // And with nothing overridden at all, the base survives untouched.
+        assert_eq!(no_adaptive_overrides().apply(Some(base.clone())), base);
+    }
+
+    /// With no base, the overrides layer onto upstream's default rather than
+    /// onto zeroes — `base.unwrap_or_default()`.
+    #[test]
+    fn adaptive_overrides_fall_back_to_the_upstream_default() {
+        let mut overrides = no_adaptive_overrides();
+        overrides.use_iqr = Some(true);
+        overrides.min_samples = Some(9);
+
+        let expected = AdaptiveThresholdConfig {
+            use_iqr: true,
+            min_samples: 9,
+            ..AdaptiveThresholdConfig::default()
+        };
+
+        assert_eq!(overrides.apply(None), expected);
+        assert_eq!(
+            no_adaptive_overrides().apply(None),
+            AdaptiveThresholdConfig::default()
+        );
+    }
+
+    /// The nested case, end to end: an `adaptive` map inside a `SpanMergingNif`
+    /// must reach the resolved config's `adaptive_config`, and must layer onto
+    /// whatever the *preset* carried rather than replacing it — the
+    /// `config.adaptive_config.take()` in `From<SpanMergingNif>`.
+    #[test]
+    fn a_nested_adaptive_map_reaches_the_resolved_config() {
+        let mut overrides = no_span_overrides(SpanPresetNif::Adaptive);
+        let mut adaptive = no_adaptive_overrides();
+        adaptive.max_threshold_pt = Some(1.75);
+        overrides.adaptive = Some(adaptive);
+
+        let mut expected = span_preset(SpanPresetNif::Adaptive);
+        let mut expected_adaptive = expected.adaptive_config.take().unwrap_or_default();
+        expected_adaptive.max_threshold_pt = 1.75;
+        expected.adaptive_config = Some(expected_adaptive);
+
+        assert_eq!(SpanMergingConfig::from(overrides), expected);
+
+        // Precondition: the `:adaptive` preset really does carry a config, so
+        // the `take()` above had something to take.
+        assert!(span_preset(SpanPresetNif::Adaptive)
+            .adaptive_config
+            .is_some());
+    }
+
+    /// A preset with no adaptive config of its own still accepts an `adaptive`
+    /// map, layered onto upstream's default.
+    #[test]
+    fn a_nested_adaptive_map_applies_to_a_preset_that_carries_none() {
+        assert!(span_preset(SpanPresetNif::Default)
+            .adaptive_config
+            .is_none());
+
+        let mut overrides = no_span_overrides(SpanPresetNif::Default);
+        overrides.adaptive = Some(no_adaptive_overrides());
+
+        assert_eq!(
+            SpanMergingConfig::from(overrides).adaptive_config,
+            Some(AdaptiveThresholdConfig::default())
+        );
+    }
+
+    /// Upstream canary, and the reason the presets are resolved in Rust at all:
+    /// their numbers are supposed to stay *upstream's*. If a release collapses
+    /// two of them, every caller picking between them is silently choosing the
+    /// same thing, and no fixture in `mix test` is fine-grained enough to
+    /// notice — `upstream_drift_test.exs` says as much, and can only check that
+    /// each name still resolves to a real constructor.
+    #[test]
+    fn the_presets_are_still_distinct_from_one_another() {
+        let tables = [
+            table_preset(TablePresetNif::Default),
+            table_preset(TablePresetNif::Strict),
+            table_preset(TablePresetNif::Relaxed),
+        ];
+        for (i, a) in tables.iter().enumerate() {
+            for b in &tables[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+
+        let spans = [
+            span_preset(SpanPresetNif::Default),
+            span_preset(SpanPresetNif::Aggressive),
+            span_preset(SpanPresetNif::Conservative),
+            span_preset(SpanPresetNif::Adaptive),
+            span_preset(SpanPresetNif::Legacy),
+        ];
+        for (i, a) in spans.iter().enumerate() {
+            for b in &spans[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    /// Stronger than distinctness: each preset still *means* what its typedoc in
+    /// `PdfElixide.Document` tells callers it means. A release that keeps the
+    /// presets distinct but reverses their character would leave the docs lying,
+    /// and nothing else would catch it.
+    ///
+    /// Only the precise claims are asserted. `t:table_detection_opts/0` also
+    /// calls `:relaxed` "tolerant", which is a summary rather than a field-wise
+    /// claim — it *is* looser on `row_tolerance` and `max_table_columns`, but
+    /// `column_tolerance` runs the other way (10.0 against the default's 15.0).
+    /// Don't promote that word to an assertion; it would pin an upstream quirk
+    /// as if the binding intended it.
+    #[test]
+    fn the_presets_still_mean_what_the_typedocs_say() {
+        // ":strict (demands ruling lines and regular rows)"
+        let strict = table_preset(TablePresetNif::Strict);
+        assert_eq!(strict.horizontal_strategy, TableStrategy::Lines);
+        assert_eq!(strict.vertical_strategy, TableStrategy::Lines);
+        assert!(strict.regular_row_ratio > table_preset(TablePresetNif::Default).regular_row_ratio);
+
+        // ":relaxed (… text-driven)"
+        let relaxed = table_preset(TablePresetNif::Relaxed);
+        assert_eq!(relaxed.horizontal_strategy, TableStrategy::Text);
+        assert_eq!(relaxed.vertical_strategy, TableStrategy::Text);
+
+        // ":aggressive (splits more readily)" / ":conservative (merges across
+        // wider gaps)" — the gap that becomes a space, as a fraction of font
+        // size, so *lower* means more splitting.
+        let default_ratio = span_preset(SpanPresetNif::Default).space_threshold_em_ratio;
+        assert!(span_preset(SpanPresetNif::Aggressive).space_threshold_em_ratio < default_ratio);
+        assert!(span_preset(SpanPresetNif::Conservative).space_threshold_em_ratio > default_ratio);
+
+        // ":adaptive (derives thresholds from page gap statistics)"
+        let adaptive = span_preset(SpanPresetNif::Adaptive);
+        assert!(adaptive.use_adaptive_threshold);
+        assert!(adaptive.adaptive_config.is_some());
+    }
+}

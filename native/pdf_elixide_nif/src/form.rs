@@ -17,7 +17,9 @@ pub struct FieldNif {
     value: Option<FieldValueNif>,
 }
 
-#[derive(NifTaggedEnum, Debug)]
+// `PartialEq` is for the tests below, which compare the two decoding spellings
+// against each other; nothing in the NIF path needs it.
+#[derive(NifTaggedEnum, Debug, PartialEq)]
 pub enum FieldValueNif {
     Text(String),
     Boolean(bool),
@@ -83,5 +85,68 @@ pub fn editor_field_value_from_nif(value: Option<FieldValueNif>) -> FormFieldVal
         Some(FieldValueNif::Name(s)) => FormFieldValue::Choice(s),
         Some(FieldValueNif::Array(v)) => FormFieldValue::MultiChoice(v),
         None => FormFieldValue::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `FieldValue` variant, so the two tests below cannot quietly cover
+    /// four of five. Spelled as a function rather than a const because the
+    /// payloads are heap strings.
+    fn every_field_value() -> Vec<FieldValue> {
+        vec![
+            FieldValue::Text(String::from("typed")),
+            FieldValue::Boolean(true),
+            FieldValue::Name(String::from("Off")),
+            FieldValue::Array(vec![String::from("a"), String::from("b")]),
+            FieldValue::None,
+        ]
+    }
+
+    /// The binding decodes field values *twice* — once from the read-only
+    /// extractor's `FieldValue` (`document_field_value_to_nif`) and once from
+    /// the editor's `FormFieldValue` (`editor_field_value_to_nif`) — and the
+    /// two must agree, because `PdfElixide.Form` presents one shape whichever
+    /// handle it was given.
+    ///
+    /// They are not obviously the same mapping: the editor's spelling is
+    /// asymmetric, sending `Choice` to `:name` and `MultiChoice` to `:array`.
+    /// Upstream owns that correspondence in `From<FieldValue> for FormFieldValue`
+    /// (`pdf_oxide/src/editor/form_fields.rs`) and the binding calls it nowhere,
+    /// so composing through it is what pins both halves at once — and it catches
+    /// the failure a round-trip cannot, a *consistent* swap of `Choice` and
+    /// `MultiChoice` on both sides.
+    ///
+    /// Unreachable from `mix test`: no fixture carries a choice field with a
+    /// `/V`, so the `Name` and `Array` arms are produced nowhere in the Elixir
+    /// suite.
+    #[test]
+    fn both_decoding_spellings_agree_through_upstreams_own_conversion() {
+        for value in every_field_value() {
+            let from_editor = editor_field_value_to_nif(FormFieldValue::from(value.clone()));
+
+            assert_eq!(
+                document_field_value_to_nif(value.clone()),
+                from_editor,
+                "{value:?}"
+            );
+        }
+    }
+
+    /// `editor_field_value_from_nif` is the inverse used by `Form.set_value/3`,
+    /// so a value read off an editor field and written straight back must land
+    /// unchanged. `FieldValue::None` folds to `nil` on the way out and back to
+    /// `FormFieldValue::None` on the way in, which is the one asymmetric step.
+    #[test]
+    fn an_editor_value_survives_a_decode_and_encode_round_trip() {
+        for value in every_field_value() {
+            let editor_value = FormFieldValue::from(value.clone());
+            let round_tripped =
+                editor_field_value_from_nif(editor_field_value_to_nif(editor_value.clone()));
+
+            assert_eq!(round_tripped, editor_value, "{value:?}");
+        }
     }
 }

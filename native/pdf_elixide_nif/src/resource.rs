@@ -369,4 +369,74 @@ mod tests {
         assert!(escaped.is_err());
         assert!(lock.is_poisoned());
     }
+
+    /// Poisons a [`Closable`]'s lock the only way `std` allows: unwind *through*
+    /// a held write guard, as `an_unwind_through_the_guard_poisons` establishes.
+    ///
+    /// Reaches the private `value` field directly, because nothing in the public
+    /// surface can do this — which is the whole point of the two tests below.
+    /// The panic is contained here and its payload discarded; the message it
+    /// prints to stderr is expected.
+    fn poison<T>(closable: &Closable<T>) {
+        let escaped = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = closable.value.write().expect("fresh lock");
+            panic!("poisoning on purpose");
+        }));
+
+        assert!(escaped.is_err());
+        assert!(closable.value.is_poisoned(), "the lock was not poisoned");
+    }
+
+    /// [`Closable::close`] promises to be infallible, recovering a poisoned lock
+    /// rather than reporting one, on the grounds that releasing memory is safe
+    /// whatever a previous panic left behind. It is one of exactly two places in
+    /// `Closable` that recover instead of erroring.
+    ///
+    /// Nothing else can check that promise. `contain_panic` makes poisoning
+    /// unreachable through the crate's own surface — `lock` and `read` are
+    /// private, and both accessors catch inside the guard's scope — so this is
+    /// defence in depth, pinned the way `MAX_OUTLINE_DEPTH` is: not because the
+    /// path is reachable today, but because the recovery is invisible from
+    /// Elixir *and* from every other route, so its removal would be silent.
+    ///
+    /// Note what deliberately is not asserted alongside it: that `with_read` on
+    /// the same poisoned lock reports `:lock_poisoned`. That path builds an
+    /// atom, which would abort the test process rather than fail the test.
+    #[test]
+    fn close_recovers_a_poisoned_lock() {
+        let closable = Closable::new("Test", 0_u8);
+        poison(&closable);
+
+        closable.close();
+
+        assert!(closable.is_closed());
+    }
+
+    /// The other recovering accessor, checked on its own: reading whether a
+    /// handle is closed must survive a poisoned lock too, and must still answer
+    /// truthfully rather than defaulting to one verdict.
+    #[test]
+    fn is_closed_recovers_a_poisoned_lock() {
+        let open = Closable::new("Test", 0_u8);
+        poison(&open);
+        assert!(!open.is_closed(), "an open handle reported itself closed");
+
+        let closed = Closable::new("Test", 0_u8);
+        closed.close();
+        poison(&closed);
+        assert!(closed.is_closed(), "a closed handle reported itself open");
+    }
+
+    /// `close` is documented as idempotent, and the `*_close` NIFs return `:ok`
+    /// unconditionally on the strength of that. Closing twice must not panic on
+    /// the second `None`.
+    #[test]
+    fn close_is_idempotent() {
+        let closable = Closable::new("Test", 0_u8);
+
+        closable.close();
+        closable.close();
+
+        assert!(closable.is_closed());
+    }
 }

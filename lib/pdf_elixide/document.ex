@@ -1686,9 +1686,12 @@ defmodule PdfElixide.Document do
   `:span_merging`. `pdf_oxide`'s own bindings expose none of this.
 
     * `:preset` — the base configuration every other key overrides:
-      `:default`, `:aggressive` (merges across wider gaps), `:conservative`
-      (splits more readily), `:adaptive` (derives thresholds from page gap
-      statistics), or `:legacy`. Defaults to `:default`.
+      `:default`, `:aggressive` (splits more readily), `:conservative`
+      (merges across wider gaps), `:adaptive` (derives thresholds from page
+      gap statistics), or `:legacy`. Defaults to `:default`. The names read
+      as aggression about *inserting spaces*, which is upstream's sense:
+      `:aggressive` lowers the gap that becomes a space, so it produces more
+      word boundaries, not fewer.
     * `:space_threshold_em_ratio` — gap, as a fraction of font size, that
       becomes a space.
     * `:conservative_threshold_pt` — floor gap in points below which no

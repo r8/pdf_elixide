@@ -245,7 +245,64 @@ fn document_page_label(
 
 #[cfg(test)]
 mod tests {
-    use super::decode_pdf_text_string as decode;
+    use super::{decode_pdf_text_string as decode, read_metadata, PdfDocument};
+
+    fn fixture(name: &str) -> String {
+        format!(
+            "{}/../../test/fixtures/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        )
+    }
+
+    /// Upstream canary, inverted: this one asserts a *difference*, and it is the
+    /// only thing keeping [`read_metadata`]'s reason to exist honest.
+    ///
+    /// `read_metadata` reads all nine `/Info` fields itself rather than calling
+    /// `PdfDocument::document_producer` / `document_creator`, purely because
+    /// those two decode through a *private* upstream decoder that has no UTF-8
+    /// branch and no `/Name` fallback (`pdf_oxide/src/document.rs`,
+    /// `document_info_string`). Mixing the two would put a mojibaked
+    /// `/Producer` next to a correctly decoded `/Title` in one `%Metadata{}`.
+    ///
+    /// Nothing in the binding calls those accessors, so if upstream ever unifies
+    /// its two decoders the justification evaporates in silence. A failure here
+    /// is therefore *not* a bug — it means the local read may no longer be
+    /// earning its keep, and that is a decision to make deliberately.
+    ///
+    /// `metadata_encodings.pdf` provides both branches upstream lacks:
+    /// `/Creator` is raw UTF-8 with no BOM, `/Producer` carries PDF 2.0's
+    /// `EF BB BF`. The exact mojibake is not asserted — only that it differs —
+    /// so the canary reports the change without pinning upstream's spelling of
+    /// being wrong.
+    ///
+    /// Only the decoder half is checked here. The `/Name` fallback is the other
+    /// half of the same divergence, but no fixture gives `/Producer` or
+    /// `/Creator` a name value, and those are the only two fields reachable
+    /// through the upstream accessors — so there is nothing to compare against.
+    /// `document_test.exs` covers the fallback itself, over `/Trapped`.
+    #[test]
+    fn producer_and_creator_still_diverge_from_upstreams_own_accessors() {
+        let doc = PdfDocument::open(fixture("metadata_encodings.pdf")).expect("fixture opens");
+        let metadata = read_metadata(&doc);
+
+        // Ours decodes both correctly.
+        assert_eq!(metadata.creator.as_deref(), Some("Créateur"));
+        assert_eq!(metadata.producer.as_deref(), Some("pdf_elixide ✓"));
+
+        // Upstream's accessors do not, which is the whole reason for the local
+        // read. Both branches, so a partial fix upstream is still caught.
+        assert_ne!(
+            doc.document_creator().as_deref(),
+            metadata.creator.as_deref(),
+            "upstream now decodes BOM-less UTF-8 in /Creator"
+        );
+        assert_ne!(
+            doc.document_producer().as_deref(),
+            metadata.producer.as_deref(),
+            "upstream now strips the PDF 2.0 BOM from /Producer"
+        );
+    }
 
     #[test]
     fn decodes_ascii_unchanged() {

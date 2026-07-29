@@ -258,3 +258,132 @@ pub fn annotation_to_nif(annotation: Annotation, page: usize) -> AnnotationNif {
         appearance_state: annotation.appearance_state,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `/F` bit, in ISO 32000-1 §12.5.3 Table 165 order: the bit's
+    /// one-based table position, upstream's constant, and the `FlagsNif` field
+    /// [`flags_to_nif`] is supposed to put it in.
+    ///
+    /// Written as a table rather than as ten assertions so the tests below can
+    /// check *exhaustively* that a set bit lights up its own field and no other.
+    /// The accessor is what makes that possible; the const is what ties the row
+    /// to upstream.
+    /// One row of [`BITS`]: the spec's one-based bit position, upstream's
+    /// constant, the `FlagsNif` field name, and a reader for that field.
+    type Bit = (u32, u32, &'static str, fn(&FlagsNif) -> bool);
+
+    const BITS: [Bit; 10] = [
+        (1, AnnotationFlags::INVISIBLE, "invisible", |f| f.invisible),
+        (2, AnnotationFlags::HIDDEN, "hidden", |f| f.hidden),
+        (3, AnnotationFlags::PRINT, "print", |f| f.print),
+        (4, AnnotationFlags::NO_ZOOM, "no_zoom", |f| f.no_zoom),
+        (5, AnnotationFlags::NO_ROTATE, "no_rotate", |f| f.no_rotate),
+        (6, AnnotationFlags::NO_VIEW, "no_view", |f| f.no_view),
+        (7, AnnotationFlags::READ_ONLY, "read_only", |f| f.read_only),
+        (8, AnnotationFlags::LOCKED, "locked", |f| f.locked),
+        (9, AnnotationFlags::TOGGLE_NO_VIEW, "toggle_no_view", |f| {
+            f.toggle_no_view
+        }),
+        (
+            10,
+            AnnotationFlags::LOCKED_CONTENTS,
+            "locked_contents",
+            |f| f.locked_contents,
+        ),
+    ];
+
+    /// The mapping in [`flags_to_nif`] is ten independent `contains` calls
+    /// against ten hand-numbered `u32` constants, so naming the wrong one —
+    /// `no_zoom: flags.contains(NO_ROTATE)` — compiles, runs, and reports a
+    /// plausible boolean forever. Nothing else can catch that: `annotations.pdf`
+    /// sets `/F 4` and `document_test.exs` therefore reaches only `print` and
+    /// `hidden`, and a fixture per bit would be nine fixtures for one `match`.
+    ///
+    /// One-hot, so it pins the mapping rather than restating it: setting a
+    /// single bit must light up that bit's field *and leave the other nine
+    /// false*. A swapped pair fails twice over.
+    #[test]
+    fn each_flag_bit_sets_exactly_its_own_field() {
+        for (position, bit, name, _) in BITS {
+            let decoded = flags_to_nif(AnnotationFlags::new(bit));
+
+            for (other_position, _, other_name, accessor) in BITS {
+                assert_eq!(
+                    accessor(&decoded),
+                    position == other_position,
+                    "bit {position} (/{name}) set {other_name}"
+                );
+            }
+        }
+    }
+
+    /// Upstream canary. The constants are plain `pub const … : u32` shifts
+    /// (`pdf_oxide/src/annotation_types.rs`), not a `bitflags!` macro tied to
+    /// anything, so nothing upstream stops them being renumbered — and a
+    /// renumbering silently changes what every boolean above *means* while the
+    /// test above keeps passing, since it checks the constants against
+    /// themselves.
+    ///
+    /// This is the half that ties them to the spec: Table 165 numbers the flags
+    /// from 1, so the constant for position `n` must be `1 << (n - 1)`.
+    #[test]
+    fn the_flag_constants_still_match_the_spec_bit_positions() {
+        for (position, bit, name, _) in BITS {
+            assert_eq!(bit, 1 << (position - 1), "/{name}");
+        }
+    }
+
+    /// `raw` is the undecoded integer, and the docs tell callers to fall back to
+    /// it for a bit this struct does not name. It must therefore survive
+    /// verbatim — including bits above the ten defined ones, which upstream
+    /// keeps rather than masking off.
+    #[test]
+    fn raw_carries_the_undecoded_bits() {
+        let all_defined = all_defined_bits();
+        let with_reserved = all_defined | 1 << 31;
+
+        assert_eq!(flags_to_nif(AnnotationFlags::new(0)).raw, 0);
+        assert_eq!(
+            flags_to_nif(AnnotationFlags::new(all_defined)).raw,
+            i64::from(all_defined)
+        );
+        assert_eq!(
+            flags_to_nif(AnnotationFlags::new(with_reserved)).raw,
+            i64::from(with_reserved)
+        );
+    }
+
+    /// Bits 11 and up are reserved (Table 165 defines ten). One must set *no*
+    /// field while still reaching the caller through `raw` — the regression a
+    /// catch-all or an off-by-one in the last `contains` would introduce, and
+    /// the one case a fixture could never justify writing.
+    #[test]
+    fn a_reserved_bit_sets_no_field_but_survives_in_raw() {
+        let decoded = flags_to_nif(AnnotationFlags::new(1 << 10));
+
+        for (_, _, name, accessor) in BITS {
+            assert!(!accessor(&decoded), "reserved bit 11 set {name}");
+        }
+        assert_eq!(decoded.raw, 1024);
+    }
+
+    fn all_defined_bits() -> u32 {
+        BITS.iter().fold(0, |acc, (_, bit, _, _)| acc | bit)
+    }
+
+    /// The two saturating cases, for contrast with the one-hot test: nothing set
+    /// decodes to all `false`, and every defined bit set decodes to all `true`.
+    #[test]
+    fn decodes_the_empty_and_full_flag_sets() {
+        let empty = flags_to_nif(AnnotationFlags::new(0));
+        let full = flags_to_nif(AnnotationFlags::new(all_defined_bits()));
+
+        for (_, _, name, accessor) in BITS {
+            assert!(!accessor(&empty), "{name} set on empty flags");
+            assert!(accessor(&full), "{name} unset on full flags");
+        }
+    }
+}
