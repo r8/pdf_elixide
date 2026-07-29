@@ -62,8 +62,6 @@ defmodule PdfElixide.Document.Metadata do
         }
 
   @doc false
-  # Builds a `Metadata` from the raw map returned by the NIF. Fields already
-  # arrive in their final shape (a string or `nil`).
   @spec from_nif(map()) :: t()
   def from_nif(%{
         title: title,

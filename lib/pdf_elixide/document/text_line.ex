@@ -18,8 +18,6 @@ defmodule PdfElixide.Document.TextLine do
         }
 
   @doc false
-  # Builds a `TextLine` from the raw map returned by the NIF, converting the
-  # nested word maps into `PdfElixide.Document.Word` structs.
   @spec from_nif(map()) :: t()
   def from_nif(%{text: text, page: page, bbox: bbox, words: words}) do
     %__MODULE__{

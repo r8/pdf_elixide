@@ -51,9 +51,6 @@ defmodule PdfElixide.Document.Table.Row do
   end
 
   @doc false
-  # Builds a `Row` from the raw map returned by the NIF, renaming the `header`
-  # key to the `?`-suffixed struct field and converting the nested cell maps
-  # into `PdfElixide.Document.Table.Cell` structs.
   @spec from_nif(map()) :: t()
   def from_nif(%{header: header, cells: cells}) do
     %__MODULE__{

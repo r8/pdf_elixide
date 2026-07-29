@@ -32,17 +32,6 @@ defmodule PdfElixide.Native.Wrap do
 
   @doc """
   Unwraps a normalized result, raising the `%PdfElixide.Error{}` on failure.
-
-  This is the whole body of every bang variant in the public API: they call
-  their non-bang counterpart, which already ran `call/1`, and hand the result
-  here. Keeping it in one place is what stops sixty-odd identical `case` blocks
-  from drifting apart.
-
-  Deliberately two-clause. A handful of non-bang functions answer a bare `:ok`
-  rather than `{:ok, value}` — `PdfElixide.Editor.save/3` and its two siblings —
-  and their bang variants keep a local `case`. Adding an `:ok` clause here would
-  make this total over two unrelated return shapes, and invite its use where
-  `{:ok, :ok}` was meant.
   """
   @spec unwrap!({:ok, value} | {:error, Error.t()}) :: value when value: var
   def unwrap!({:ok, value}), do: value
@@ -50,12 +39,6 @@ defmodule PdfElixide.Native.Wrap do
 
   @doc """
   Runs a NIF call and unwraps it, raising the `%PdfElixide.Error{}` on failure.
-
-  `call/1` and `unwrap!/1` composed, for a caller with a thunk rather than a
-  result — the predicates, which return a bare boolean and so have nowhere to
-  report a failure of the handle. A bang variant should use `unwrap!/1` instead:
-  going through `call/1` again would mean naming the NIF a second time, in a
-  second place, when its non-bang counterpart exists to own that call.
   """
   @spec call!((-> term())) :: term()
   def call!(fun), do: fun |> call() |> unwrap!()
@@ -65,19 +48,6 @@ defmodule PdfElixide.Native.Wrap do
   # the `:badarg` a NIF raises when it cannot decode its arguments, which
   # normalizes to `ArgumentError` — so it propagates untouched, the way the
   # public functions' guard clauses do.
-  #
-  # `rescue e in ErlangError` cannot draw this line: it matches every raw Erlang
-  # error but binds the *normalized* exception, so `e.original` blew up with a
-  # `KeyError` on anything that normalized to a different struct.
-  #
-  # A bad value inside an options map is the second caller bug that reaches
-  # here. Rustler reports a `NifMap` field decode failure by raising a plain
-  # *string* rather than `:badarg`, so it needs its own clause — and the string
-  # is worth keeping, because it names the field that failed where `:badarg`
-  # could not. Matching the message prefix couples this to Rustler's wording,
-  # deliberately: should that wording ever change, the clause below stops
-  # matching and the error degrades to `%Error{reason: :other}` — the behavior
-  # this library shipped before, not a crash. `wrap_test.exs` pins both halves.
   defp handle_rescue(
          %ErlangError{original: "Could not decode field " <> _ = message},
          stacktrace

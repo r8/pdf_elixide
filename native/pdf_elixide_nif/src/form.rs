@@ -113,11 +113,9 @@ mod tests {
     ///
     /// They are not obviously the same mapping: the editor's spelling is
     /// asymmetric, sending `Choice` to `:name` and `MultiChoice` to `:array`.
-    /// Upstream owns that correspondence in `From<FieldValue> for FormFieldValue`
-    /// (`pdf_oxide/src/editor/form_fields.rs`) and the binding calls it nowhere,
-    /// so composing through it is what pins both halves at once — and it catches
-    /// the failure a round-trip cannot, a *consistent* swap of `Choice` and
-    /// `MultiChoice` on both sides.
+    /// Composing through upstream's own `From<FieldValue> for FormFieldValue`,
+    /// which the binding calls nowhere, pins both halves at once and catches
+    /// what a round-trip cannot — a *consistent* swap on both sides.
     ///
     /// Unreachable from `mix test`: no fixture carries a choice field with a
     /// `/V`, so the `Name` and `Array` arms are produced nowhere in the Elixir

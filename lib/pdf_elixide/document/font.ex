@@ -17,11 +17,9 @@ defmodule PdfElixide.Document.Font do
   For a non-embedded font (`:embedded?` is `false`, e.g. one of the standard 14)
   `data/1` returns `{:ok, nil}`.
 
-  A font handle may be passed to other processes, and `data/1` takes it shared,
-  so several processes can pull embedded font programs from one document at
-  once, in parallel — the bytes are already held behind the handle, with no
-  shared cache underneath. Only `close/1` is exclusive. Same model as the
-  [Concurrency](guides/concurrency.md) guide describes for a document.
+  `data/1` takes the handle's lock shared and `close/1` takes it exclusively, so
+  several processes can pull embedded font programs in parallel; see the
+  [Concurrency](guides/concurrency.md) guide.
   """
   alias PdfElixide.Document.Font
   alias PdfElixide.Error
@@ -65,10 +63,6 @@ defmodule PdfElixide.Document.Font do
         }
 
   @doc false
-  # Builds a `Font` from the raw map returned by the NIF. Every field already
-  # arrives in its final shape (encoding as a tagged term, the font itself as a
-  # resource handle under `resource`); the boolean fields are renamed to the
-  # trailing-`?` convention and `resource` to `ref`.
   @spec from_nif(map()) :: t()
   def from_nif(%{
         page: page,
@@ -124,10 +118,8 @@ defmodule PdfElixide.Document.Font do
   garbage-collects the handle; `close/1` releases it now. Calling it is optional
   and idempotent. Because a font can be shared between pages, the underlying
   bytes are freed once no other extracted handle still references the same font.
-
   It takes the handle's lock exclusively, so it waits for an in-flight `data/1`
-  on the same font. *Immediately* means as soon as the handle is idle, not
-  preemptively.
+  — *immediately* means as soon as the handle is idle, not preemptively.
 
   Afterwards `data/1` returns `{:error, %PdfElixide.Error{reason: :closed}}`
   (and `data!/1` raises it); the metadata fields on the struct keep working. A

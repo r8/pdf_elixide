@@ -66,14 +66,13 @@ impl From<&Encoding> for EncodingNif {
 /// **This is a choice, and upstream makes it three different ways**, which is
 /// why the rule is written out here rather than borrowed:
 ///
-/// - `predefined_cidfont::is_predefined` (`src/fonts/predefined_cidfont.rs`)
-///   requires the same exact shape, for the same stated reason — not
-///   truncating Asian-tooling names that legitimately contain `+`. That is the
-///   one this follows.
-/// - `FontDict::classify_std14` (`src/fonts/font_dict.rs`) strips at the first
-///   `+` unless the suffix is empty, with no shape check.
-/// - `PdfDocument::page_font_face_lookups` (`src/document.rs`) strips at the
-///   first `+` unconditionally.
+/// - `predefined_cidfont::is_predefined` requires the same exact shape, for the
+///   same stated reason — not truncating Asian-tooling names that legitimately
+///   contain `+`. That is the one this follows.
+/// - `FontDict::classify_std14` strips at the first `+` unless the suffix is
+///   empty, with no shape check.
+/// - `PdfDocument::page_font_face_lookups` strips at the first `+`
+///   unconditionally.
 ///
 /// The middle one is why `FontNif`'s `base_font` and its `bold` / `weight` can
 /// disagree about which name they describe: those come from `FontInfo::is_bold`
@@ -120,19 +119,16 @@ pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> F
 /// metadata.
 ///
 /// Infallible by construction, mirroring `PdfDocument::page_font_face_lookups`
-/// (`pdf_oxide/src/document.rs:22679`) — not just its Resources-resolving
-/// preamble but its whole per-page body, including the
-/// `if self.load_fonts_public(..).is_ok()` at `:22710`. There are four points
-/// where a page contributes no fonts instead of an error: an unresolvable page
-/// (`get_page`), a page object that is not a dictionary (`as_dict`), a dangling
-/// `/Resources` reference (`load_object`) — all three in `page_resources` — and
-/// a font that fails to load, below.
+/// — not just its Resources-resolving preamble but its whole per-page body,
+/// including the `if self.load_fonts_public(..).is_ok()`. Four points let a page
+/// contribute no fonts instead of an error: an unresolvable page, a page object
+/// that is not a dictionary, a dangling `/Resources` reference (all three in
+/// `page_resources`) and a font that fails to load, below.
 ///
 /// So an empty `Vec` means either "references no fonts" or "could not be read",
 /// and unlike the predicates in `document.rs` that distinction is *not* restored
-/// by a strict variant: this one matches an upstream loop's policy, which the
-/// binding follows rather than second-guesses. `Document.fonts/1,2` say so, and
-/// `upstream_drift_test.exs` pins it.
+/// by a strict variant: this one matches an upstream loop's policy rather than
+/// second-guessing it.
 pub fn extract_page_fonts(doc: &PdfDocument, page_index: usize) -> Vec<FontNif> {
     page_font_set(doc, page_index)
         .into_iter()
@@ -290,16 +286,12 @@ mod tests {
     }
 
     /// Upstream canary. [`page_font_set`] and [`page_resources`] transcribe
-    /// `PdfDocument::page_font_face_lookups` (`pdf_oxide/src/document.rs`) —
-    /// not only its Resources-resolving preamble but its whole per-page body,
-    /// including the `if self.load_fonts_public(..).is_ok()` that makes an
-    /// unloadable font contribute nothing instead of failing. `Document.fonts/1,2`
-    /// rest their "infallible by construction" contract on that, and **nothing
-    /// in the binding calls the upstream original**, so only this can tell you
-    /// when the two stop agreeing.
+    /// `PdfDocument::page_font_face_lookups`, and **nothing in the binding calls
+    /// the upstream original**, so only this can tell you when the two stop
+    /// agreeing.
     ///
-    /// Compares *resource-name key sets*, not values, and deliberately:
-    /// upstream's canonical name strips at the first `+` unconditionally where
+    /// Compares *resource-name key sets*, not values, deliberately: upstream's
+    /// canonical name strips at the first `+` unconditionally where
     /// [`split_subset_prefix`] demands the six-uppercase shape. Which fonts a
     /// page yields is the shared claim; what they are called is not.
     ///

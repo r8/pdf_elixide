@@ -6,15 +6,11 @@ defmodule PdfElixide.Document do
 
   A `%Document{}` is safe to pass to other processes, and its reads run
   *concurrently*: every function here takes the native handle's lock shared, so
-  N processes extracting from one document do not queue behind each other. There
-  is no need to keep a document inside the process that opened it, nor to open
-  the same file once per worker. `authenticate/2` and `close/1` are the two
-  exceptions, taking the lock exclusively.
-
-  The [Concurrency](guides/concurrency.md) guide has the rest — the shape to fan
-  work out in, what the two exclusive calls do to calls already in flight, why
-  throughput is not linear, and the one tagged-PDF hazard that makes fanning out
-  *by page* the shape to prefer.
+  N processes extracting from one document do not queue behind each other.
+  `authenticate/2` and `close/1` are the two exceptions, taking the lock
+  exclusively. The [Concurrency](guides/concurrency.md) guide has the rest,
+  including the tagged-PDF hazard that makes fanning out *by page* the shape to
+  prefer.
 
   ## Whole-document extraction and memory
 
@@ -22,53 +18,36 @@ defmodule PdfElixide.Document do
   `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `images/1`, `fonts/1`,
   `annotations/1`, `text/1`, `to_markdown/1` and `to_html/1`. Each walks all
   pages inside a **single** native call and returns one flat list, so its cost
-  scales with the whole document rather than with what the caller keeps. At the
-  moment the call returns, the results exist twice — once as the native vector
-  and once as the Elixir terms encoded from it — so peak usage is roughly double
-  the final list. `chars/1` is the extreme: one struct per glyph, each with its
-  own text and font-name binary. `spans/1` describes the same text in runs
-  rather than glyphs and is usually the cheaper way to ask.
+  scales with the whole document rather than with what the caller keeps. As the
+  call returns, the results exist twice — as the native vector and as the Elixir
+  terms encoded from it — so peak usage is roughly double the final list.
 
-  Three of them hold native memory *after* the call as well, because each
-  returned struct carries a handle:
+  Three of them hold native memory *after* the call as well, since each returned
+  struct carries a handle that BEAM memory accounting cannot see:
 
-    * `images/1` — every image's decoded pixels, or its original JPEG bytes,
-      one buffer per image. The struct does not carry the pixel data, but the
-      handle behind it does, from extraction onward; `PdfElixide.Document.Image.to_binary/2`
-      defers the *encode*, not the load.
-    * `fonts/1` — one handle per page per font, with no sharing across pages, so
-      a single font used throughout a long document yields as many handles as
-      there are pages.
+    * `images/1` — every image's decoded pixels, or its original JPEG bytes.
+    * `fonts/1` — one handle per page per font, with no sharing across pages.
     * `tables/1` — the full detected table, including the per-glyph metrics the
       struct itself omits.
 
-  A handle is invisible to the BEAM's memory accounting, so nothing pressures
-  the VM to collect it. On a large document, release them with
-  `PdfElixide.Document.Image.close/1`, `PdfElixide.Document.Font.close/1` or
-  `PdfElixide.Document.Table.close/1` as you finish with each.
+  On a large document, release them with `PdfElixide.Document.Image.close/1`,
+  `PdfElixide.Document.Font.close/1` or `PdfElixide.Document.Table.close/1` as
+  you finish with each.
 
   ### Working a page at a time
 
   `PdfElixide.Document` implements `Enumerable` over its pages, and
   `PdfElixide.Document.Page` offers every extractor, so bounding memory needs no
-  extra API — only one page's results are live at a time:
+  extra API — only one page's results are live at a time, and one page is the
+  floor:
 
-      # Constant memory: each page's chars become garbage when the function returns.
-      Enum.reduce(doc, 0, fn page, acc -> acc + length(Page.chars!(page)) end)
-
-      # Or as a lazy sequence.
       Stream.flat_map(doc, &Page.chars!/1)
 
-  One page is the floor: a page's own results are still built and encoded whole,
-  since there is no incremental encoder at the native boundary.
-
   Concatenating pages this way reproduces the whole-document arity exactly for
-  the list-returning extractors. The three that return one value do **not**
-  round-trip so simply, since
-  each joins pages itself: `text/1` separates them with a form feed and applies
-  `:on_page_error` (see the "`:on_page_error` and partly extractable documents"
-  section of `t:text_opts/0`), `to_markdown/1` joins with a `---` break, and
-  `to_html/1` wraps each page in a `<div class="page">`.
+  the list-returning extractors. The three that return one value do **not**,
+  since each joins pages itself: `text/1` separates them with a form feed and
+  applies `:on_page_error` (see `t:text_opts/0`), `to_markdown/1` joins with a
+  `---` break, and `to_html/1` wraps each page in a `<div class="page">`.
 
   ## Page boxes and the coordinate origin
 
@@ -78,44 +57,31 @@ defmodule PdfElixide.Document do
 
   The sheet those coordinates fall on is the page's `/MediaBox`, read with
   `PdfElixide.Document.Page.media_box/1` as a `PdfElixide.Geometry.Rect`. Its
-  origin is usually `{0.0, 0.0}`, but nothing requires that — a page trimmed out
-  of a larger imposition may start at, say, `{10.0, 20.0}`. **Content
-  coordinates are not rebased on it**: a glyph at the very left edge of such a
-  page reports an `x` near `10.0`, not near `0.0`. Subtract the origin yourself
-  when you want offsets from the page corner:
+  origin is usually `{0.0, 0.0}`, but nothing requires that, and **content
+  coordinates are not rebased on it**: a glyph at the very left edge of a page
+  whose box starts at `{10.0, 20.0}` reports an `x` near `10.0`. Subtract the
+  origin yourself when you want offsets from the page corner:
 
       box = PdfElixide.Document.Page.media_box!(page)
       {word.bbox.x - box.x, word.bbox.y - box.y}
 
   `PdfElixide.Document.Page.width/1` and `PdfElixide.Document.Page.height/1` are
-  that rect's `:width` and `:height`. All three are normalized — a file that
-  writes the box's two corners in the reverse order still yields non-negative
-  dimensions — and a page with no `/MediaBox` anywhere above it is an
+  that rect's `:width` and `:height`. All three are normalized to non-negative
+  dimensions, none is turned to match a rotated page (see below), and a page
+  with no `/MediaBox` anywhere above it is an
   `%PdfElixide.Error{reason: :invalid_pdf}` rather than an assumed page size.
-  None of the three is turned to match a rotated page; see below.
-
-  `pdf_oxide` exposes no `/CropBox`, `/BleedBox`, `/TrimBox` or `/ArtBox` on a
-  read-only document, so this library has no reader for them.
+  There is no reader for `/CropBox`, `/BleedBox`, `/TrimBox` or `/ArtBox`, which
+  `pdf_oxide` does not expose on a read-only document.
 
   ### Which ancestor an inherited box comes from
 
   `/MediaBox` and `/Rotate` are inheritable: a page declaring neither takes them
-  from an ancestor `/Pages` node. Where exactly one ancestor declares the entry —
-  overwhelmingly the common case — the answer is unambiguous. Where **two**
-  nested ancestors declare it, upstream can give either one:
-
-    * reached one page at a time, upstream's per-page tree walk keeps the
-      **outermost** ancestor's value, contrary to §7.7.3.4;
-    * once enough pages of a document have been read, upstream switches to a
-      bulk page-tree walk that resolves the same attribute the other way, to the
-      **nearest** ancestor.
-
-  So the same page of the same document can report a different box, and a
-  different rotation, depending on how many other pages were read first. This is
-  upstream behavior, pinned by `test/pdf_elixide/upstream_drift_test.exs`;
-  nothing in this binding can pick a winner without reimplementing the page-tree
-  walk. A document whose page tree declares each inheritable entry at one level
-  only — again, almost all of them — is not affected.
+  from an ancestor `/Pages` node, unambiguously where exactly one ancestor
+  declares the entry. Where **two** nested ancestors declare it, which wins is
+  not stable — upstream resolves the inheritable attributes differently
+  depending on how many pages have already been read, so the same page can
+  report a different box, and a different rotation, on a later call. Almost all
+  documents declare each entry at one level only and are unaffected.
 
   ## Rotated pages and extracted geometry
 
@@ -127,25 +93,17 @@ defmodule PdfElixide.Document do
     * `chars/1`, `spans/1`, `paths/1` and `images/1` stay in raw, unrotated user
       space, whatever the rotation.
     * `words/1`, `text_lines/1` and the cell boxes of `tables/1` are mapped into
-      the **displayed** frame, because upstream builds them on the span pipeline
+      the **displayed** frame, since upstream builds them on the span pipeline
       that reorders a rotated page for reading. The mapping is selective: a
       `180`-degree page maps everything, while a `90`- or `270`-degree page maps
-      only text whose own text matrix is rotated — a horizontal run on a
-      `/Rotate 90` page keeps raw coordinates, since upstream lays glyphs out
-      along the horizontal axis and could not express it otherwise.
+      only text whose own text matrix is rotated, leaving a horizontal run raw.
 
   So on a `180`-degree page, `spans/1` and `words/1` describing the very same
   line report mirrored boxes. Compare or lay out boxes from **one** extractor,
-  and use `chars/1` or `spans/1` when raw page space is what you want.
-
-  `PdfElixide.Document.Page.media_box/1`, and the
-  `PdfElixide.Document.Page.width/1` / `PdfElixide.Document.Page.height/1`
-  derived from it, are MediaBox measurements and are likewise never swapped, so
-  computing the displayed page size is the caller's job.
-
-  This is upstream `pdf_oxide` behavior rather than a choice this binding makes,
-  and it is pinned by `test/pdf_elixide/upstream_drift_test.exs`. A caller that
-  only wants text is unaffected — the distinction matters when bounding boxes do.
+  and use `chars/1` or `spans/1` when raw page space is what you want. Page
+  boxes are likewise never swapped, so computing the displayed page size is the
+  caller's job. A caller that only wants text is unaffected — the distinction
+  matters when bounding boxes do.
   """
 
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
@@ -181,9 +139,7 @@ defmodule PdfElixide.Document do
 
   `:version` and `:page_count` arrive with the handle, from the same native call
   that opens the document, and are served from the struct thereafter, since both
-  are immutable for a read-only document. A cached count cannot go stale: for an
-  encrypted document upstream either fails or returns the real `/Count`, and
-  authentication changes only whether the count is *readable*, never what it is.
+  are immutable for a read-only document.
 
   `:page_count` is `nil` when the count could not be determined at open — an
   encrypted document whose page tree needs a password, opened without one — in
@@ -206,10 +162,9 @@ defmodule PdfElixide.Document do
       attempt is made beyond `pdf_oxide`'s built-in empty-password try.
 
   The password is a *byte string*, not necessarily valid UTF-8: a password for
-  a PDF of encryption revision 4 or lower is PDFDocEncoded, so `"caf" <> <<0xE9>>`
-  is a legitimate password that no UTF-8 spelling can express. These bytes reach
-  the same upstream check `authenticate/2` uses, so the two accept and reject
-  exactly the same values.
+  a PDF of encryption revision 4 or lower is PDFDocEncoded, so
+  `"caf" <> <<0xE9>>` is a legitimate password that no UTF-8 spelling can
+  express. `authenticate/2` accepts and rejects exactly the same values.
 
   To *check* a password against an already-open document without treating a
   wrong one as an error, use `authenticate/2`, which returns `{:ok, false}`
@@ -282,8 +237,7 @@ defmodule PdfElixide.Document do
     from_binary(bytes, opts) |> Wrap.unwrap!()
   end
 
-  # The default below is pinned by `option_defaults_test.exs`, through
-  # `__option_defaults__(:open)` — changing it has to fail there first.
+  # Default pinned by `option_defaults_test.exs` via `__option_defaults__(:open)`.
   defp build_open_options(opts) do
     opts = Keyword.validate!(opts, @open_opts_keys)
     %{password: Keyword.get(opts, :password)}
@@ -304,11 +258,10 @@ defmodule PdfElixide.Document do
   @doc """
   Releases the document's native memory immediately.
 
-  A document holds its PDF data in memory on the Rust side, which is normally
-  freed only when the BEAM garbage-collects the handle — invisible to the VM's
-  memory accounting, so nothing pressures it to happen promptly. `close/1` frees
-  it now, which matters for long-lived processes that open many documents.
-  Calling it is optional and idempotent.
+  A document holds its PDF data in memory on the Rust side, normally freed only
+  when the BEAM garbage-collects the handle. `close/1` frees it now, which
+  matters for long-lived processes that open many documents. Calling it is
+  optional and idempotent.
 
   It takes the handle's lock *exclusively*, where reads take it shared, so it
   waits for every in-flight call on the same document — and an extraction can
@@ -320,10 +273,9 @@ defmodule PdfElixide.Document do
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
   it. `version/1`, `source_path/1` and `page_count/1` keep working, since they
   read the struct rather than the native handle — `page_count/1` only for a
-  document whose count was determined at open, which is every document except an
-  encrypted one opened without a password. Any `PdfElixide.Document.Image` or
-  `PdfElixide.Document.Font` handles already extracted from the document remain
-  valid — they own their data independently.
+  document whose count was determined at open. Any
+  `PdfElixide.Document.Image` or `PdfElixide.Document.Font` handles already
+  extracted from the document remain valid, owning their data independently.
 
       doc = Document.open!("sample.pdf")
       text = Document.text!(doc, 0)
@@ -349,8 +301,7 @@ defmodule PdfElixide.Document do
   The exception is a document whose page tree could not be read at open — an
   encrypted one opened without a password. Nothing is cached for it, so the
   count is read from the document on every call: an error until `authenticate/2`
-  succeeds, the real count afterwards, and `{:error, %PdfElixide.Error{reason: :closed}}`
-  once the document is closed.
+  succeeds, and the real count afterwards.
   """
   @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
   def page_count(%__MODULE__{page_count: count}) when is_integer(count), do: {:ok, count}
@@ -386,9 +337,9 @@ defmodule PdfElixide.Document do
   reporting a structure tree that cannot be read.
 
   The strict counterpart of `has_structure_tree?/1`, which cannot distinguish
-  `false` from a failure. `pdf_oxide` keeps the three states apart — tagged
+  `false` from a failure. This keeps the three states apart: tagged
   (`{:ok, true}`), untagged (`{:ok, false}`) and unparseable
-  (`{:error, %PdfElixide.Error{}}`) — and this is where that third one survives.
+  (`{:error, %PdfElixide.Error{}}`).
   """
   @spec has_structure_tree(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_structure_tree(%__MODULE__{ref: ref}) do
@@ -411,11 +362,9 @@ defmodule PdfElixide.Document do
   Returns whether the PDF document contains XFA (XML Forms Architecture) form
   data, reporting a catalog that cannot be read.
 
-  The strict counterpart of `has_xfa?/1`. Note that only a *broken* document
-  reaches the error: `pdf_oxide` already answers `{:ok, false}` for every
-  structural absence — a catalog that is not a dictionary, a missing
-  `/AcroForm`, a missing `/XFA` — so an error here means the catalog itself or
-  the `/AcroForm` reference could not be resolved.
+  The strict counterpart of `has_xfa?/1`. Only a *broken* document reaches the
+  error: every structural absence — a catalog that is not a dictionary, a
+  missing `/AcroForm`, a missing `/XFA` — already answers `{:ok, false}`.
   """
   @spec has_xfa(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_xfa(%__MODULE__{ref: ref}) do
@@ -426,8 +375,7 @@ defmodule PdfElixide.Document do
   Returns whether the PDF document is encrypted.
 
   A closed document or a native panic raises — see the "Errors versus
-  exceptions" section of `PdfElixide.Error`. Nothing else can fail here:
-  `pdf_oxide`'s encryption check is infallible.
+  exceptions" section of `PdfElixide.Error`. Nothing else can fail here.
   """
   @spec encrypted?(t()) :: boolean()
   def encrypted?(%__MODULE__{ref: ref}) do
@@ -487,11 +435,10 @@ defmodule PdfElixide.Document do
   Returns `{:ok, true}` if authentication succeeded (or the PDF is not encrypted),
   `{:ok, false}` if the password was wrong, or `{:error, reason}` on a PDF/crypto error.
 
-  Unlike `open/2`'s `:password` option — where a wrong password is an
+  This is a password *check*, so a wrong password is a normal `{:ok, false}`
+  result — unlike `open/2`'s `:password` option, where it is an
   `{:error, %PdfElixide.Error{reason: :wrong_password}}` because the document
-  cannot be produced — this is a password *check*, so a wrong password is a
-  normal `{:ok, false}` result and `{:error, _}` is reserved for PDF/crypto
-  errors.
+  cannot be produced.
 
   The password is a byte string and is not required to be valid UTF-8 — see
   `t:open_opts/0`, whose `:password` option takes the same values.
@@ -619,16 +566,9 @@ defmodule PdfElixide.Document do
     * `{:min_overlap, ratio}` — at least `ratio` of the object's area must
       lie within the region.
 
-  ## `:min_overlap` details
-
   `ratio` must be between `0.0` and `1.0`; anything outside that range raises
-  `ArgumentError`, like any other bad option value. The bound is checked here
-  rather than upstream, which validates it nowhere — no other `pdf_oxide`
-  binding can even select this mode, so an out-of-range value would otherwise
-  fail silently and wrongly (a negative one matches every object, and one
-  above `1.0` matches none).
-
-  Two behaviors worth knowing before choosing a value:
+  `ArgumentError`, like any other bad option value. Two behaviors are worth
+  knowing before choosing one:
 
     * The fraction is of the **object's own** area, not the region's. A large
       element clipped by a small region scores low however much of the region
@@ -649,9 +589,7 @@ defmodule PdfElixide.Document do
       `pdf_oxide`'s own `extract_text`.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
-      Unlike in `t:markdown_opts/0`, this one is live: upstream applies it
-      on the plain-text assembly path, which is exactly the path this
-      function uses.
+      Unlike in `t:markdown_opts/0`, it is live here.
     * `:table_detection` — a keyword list tuning the spatial table
       detector; see `t:table_detection_opts/0`. Only consulted when
       `:extract_tables` is `true`, and its `:text_fallback` key is ignored
@@ -677,52 +615,34 @@ defmodule PdfElixide.Document do
 
   ## `:on_page_error` and partly extractable documents
 
-  Read **only on the whole-document arity**. `text/3` and
+  Read **only on the whole-document arity**; `text/3` and
   `PdfElixide.Document.Page.text/2` extract one page and always return its
-  error, so the option is accepted and ignored there.
+  error. Under the `:skip` default a failed page contributes an empty string,
+  its page separator is emitted either way, and the call still returns
+  `{:ok, text}` with content silently missing. `:halt` instead fails the call
+  with `{:error, %PdfElixide.Error{}}`, the failing page's zero-based index
+  prefixed to the message.
 
-  `:skip` matches `pdf_oxide`'s `extract_all_text`, which is why it is the
-  default: a failed page contributes an empty string, the page separator is
-  emitted for it either way, and the call still returns `{:ok, text}` with
-  content silently missing. That is the wrong default for an indexing,
-  archival or compliance pipeline, where a document that lost a page must not
-  look like one that never had it — `:halt` gives those callers
-  `{:error, %PdfElixide.Error{}}` instead, with the failing page's zero-based
-  index prefixed to the message.
-
-  Note that `:halt` is not a general corruption detector: upstream degrades
-  almost every damaged page to empty text rather than an error — an
-  undecodable content stream, missing fonts, a scan with no text layer and an
-  undecryptable document all extract as `""`. What remains, and all
-  `:halt` can catch, is a page whose page-tree entry cannot be resolved at
-  all. Most *other* whole-document extractors (`chars/1`, `words/1`,
-  `text_lines/1`, `spans/1`, `paths/1`, `images/1`, `annotations/1`,
-  `tables/1`) fail the call on such a page unconditionally, having no upstream
-  counterpart whose policy they must match.
-
-  `fonts/1` is the exception, and it needs no option: it *does* have an
-  upstream counterpart — `PdfDocument::page_font_face_lookups` — and follows
-  its policy, so an unresolvable page contributes no fonts and the document
-  still succeeds. `fonts/1` and `fonts/2` document what that makes an empty
-  list mean.
+  `:halt` is not a general corruption detector, though: almost every damaged
+  page degrades to empty text rather than an error — an undecodable content
+  stream, missing fonts, a scan with no text layer and an undecryptable
+  document all extract as `""`. All it can catch is a page whose page-tree entry
+  does not resolve at all, which the other whole-document extractors fail on
+  unconditionally, except `fonts/1`, which skips it.
 
   ## Layer and ink filtering drops the other options
 
-  `pdf_oxide` serves layer and ink filtering only through
-  `extract_text_filtered` / `extract_text_filtered_in_rect`, which build
-  their own conversion options internally and offer no way to pass ours.
-  So when `:exclude_layers` or `:exclude_inks` is non-empty, **only
-  `:region` and `:region_mode` still apply** — `:extract_tables`,
+  Layer and ink filtering is served by a call that builds its own conversion
+  options internally, so when `:exclude_layers` or `:exclude_inks` is non-empty,
+  **only `:region` and `:region_mode` still apply** — `:extract_tables`,
   `:expand_ligatures`, `:table_detection`, `:exclude_regions` and
   `:exclude_regions_mode` fall back to their upstream defaults
-  (`:extract_tables` to `true`, the rest to off). The Python bindings have
-  the same limitation and do not document it.
+  (`:extract_tables` to `true`, the rest to off).
 
-  Options `to_markdown/2` accepts but this function does not —
-  `:reading_order`, `:include_form_fields`, `:strip_running_headers_footers`
-  — are omitted because upstream's text assembler never reads them. Passing
-  one raises `ArgumentError`, as any other undeclared key does; see the
-  "Errors versus exceptions" section of `PdfElixide.Error`.
+  `:reading_order`, `:include_form_fields` and
+  `:strip_running_headers_footers` are valid for `to_markdown/2` but not here,
+  since the text assembler never reads them; passing one raises
+  `ArgumentError`, as any other undeclared key does.
   """
   @type text_opts :: [
           extract_tables: boolean(),
@@ -764,17 +684,13 @@ defmodule PdfElixide.Document do
       Document.text(doc, 0, region: word.bbox)
 
   A page that fails to extract contributes an empty string to the
-  whole-document result rather than failing the call, matching `pdf_oxide`.
-  Its separator is emitted regardless, so the result always splits into
-  exactly `page_count/1` parts and a skipped page reads as a blank one. Pass
-  `on_page_error: :halt` to fail the call instead; `t:text_opts/0` describes
-  when a page can fail at all and why the other extractors do not offer the
-  choice.
+  whole-document result rather than failing the call. Its separator is emitted
+  regardless, so the result always splits into exactly `page_count/1` parts and
+  a skipped page reads as a blank one. Pass `on_page_error: :halt` to fail the
+  call instead.
 
   The whole-document form builds every page's text in memory at once — see the
-  "Whole-document extraction and memory" section of `PdfElixide.Document`,
-  which also explains why extracting page by page does not reproduce this
-  function's page separators.
+  "Whole-document extraction and memory" section of `PdfElixide.Document`.
 
   See `t:text_opts/0` for the available options.
   """
@@ -828,8 +744,7 @@ defmodule PdfElixide.Document do
     text(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:text)` — changing one has to fail there first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:text)`.
   defp build_text_options(opts) do
     opts = Keyword.validate!(opts, @text_opts_keys)
 
@@ -862,30 +777,28 @@ defmodule PdfElixide.Document do
       option is `nil`, no image is emitted at all. Only applies when
       `:include_images` is `true`. Defaults to `true`.
     * `:image_output_dir` — directory to write extracted images to, used
-      only when `:include_images` is `true` and `:embed_images` is
-      `false`. It is created if missing, and one that cannot be created
-      is an `:io` error. The writes themselves are best-effort: upstream
-      drops an image that fails to encode or write, so a successful call
-      does not guarantee every image reached disk. It must be a valid-UTF-8
-      binary like every other path — see the "File paths" section of
-      `PdfElixide`. Defaults to `nil`.
+      only when `:include_images` is `true` and `:embed_images` is `false`.
+      It is created if missing, and one that cannot be created is an `:io`
+      error; the writes themselves are best-effort, since an image that
+      fails to encode or write is dropped. It must be a valid-UTF-8 binary
+      like every other path — see the "File paths" section of `PdfElixide`.
+      Defaults to `nil`.
 
       **Give every concurrent conversion its own directory.** Filenames are
-      upstream's and fixed — `pageN_M.png`, one-based page then one-based
-      position in that page's *kept* image list — so two conversions writing
-      to one directory overwrite each other's files, non-atomically. That
-      includes two conversions of the same document: `:max_image_pixels`
-      changes which images are kept and so renumbers the rest, making one
-      name mean different pictures in different calls.
+      fixed — `pageN_M.png`, one-based page then one-based position in that
+      page's *kept* image list — so two conversions writing to one directory
+      overwrite each other's files, non-atomically. That includes two
+      conversions of the same document, since `:max_image_pixels` changes
+      which images are kept and so renumbers the rest.
     * `:include_form_fields` — inline AcroForm field values at their
       positions on the page. Defaults to `true`.
     * `:strip_running_headers_footers` — drop text lines that repeat in
       the top/bottom band of a majority of pages. Defaults to `false`.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Accepted for forward
-      compatibility, but currently has no effect on Markdown output:
-      upstream applies it only on its plain-text assembly path, which the
-      Markdown converter does not use. Defaults to `false`.
+      compatibility, but currently has **no effect** on Markdown output;
+      upstream applies it only on the plain-text path used by `text/2`.
+      Defaults to `false`.
     * `:annotate_skipped_pages` — emit a block quote naming any page that
       is a scan with no usable text layer, rather than rendering it blank.
       Defaults to `true`.
@@ -901,7 +814,7 @@ defmodule PdfElixide.Document do
       content-bearing text; `:aggressive` also wraps whitespace-only
       spans. Defaults to `:conservative`.
 
-  Defaults mirror `pdf_oxide`'s `ConversionOptions::default()`, so calling
+  Defaults mirror `pdf_oxide`'s own conversion defaults, so calling
   `to_markdown/1` is equivalent to `to_markdown/2` with no options.
 
   An unknown key, or a declared key given a value of the wrong type, raises
@@ -1008,9 +921,7 @@ defmodule PdfElixide.Document do
     to_markdown(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:markdown)` — changing one has to fail there
-  # first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:markdown)`.
   defp build_markdown_options(opts) do
     opts = Keyword.validate!(opts, @markdown_opts_keys)
 
@@ -1055,32 +966,28 @@ defmodule PdfElixide.Document do
   Options accepted by the `to_html` and `to_html!` functions.
 
   Only the options that upstream actually reads on its HTML path are
-  exposed, so every one of them changes the output. In particular
-  `:bold_markers`, `:annotate_skipped_pages`,
-  `:strip_running_headers_footers` and `:expand_ligatures` — all valid for
-  `to_markdown/2` — are not part of this list, because `pdf_oxide` never
-  consults them while converting to HTML. Passing one raises `ArgumentError`,
-  as any other undeclared key does, and so does a *declared* key given a value
-  of the wrong type; the message names the offending key. See the "Errors
-  versus exceptions" section of `PdfElixide.Error`.
+  exposed, so every one of them changes the output. `:bold_markers`,
+  `:annotate_skipped_pages`, `:strip_running_headers_footers` and
+  `:expand_ligatures` — all valid for `to_markdown/2` — are therefore absent
+  here, and passing one raises `ArgumentError`, as does a declared key given a
+  value of the wrong type. See the "Errors versus exceptions" section of
+  `PdfElixide.Error`.
 
     * `:preserve_layout` — emit one absolutely positioned `<div>` per text
       span, carrying that span's coordinates and font size in inline CSS
       (`pt` units), in place of the semantic flow of `<p>`/`<h1>`/`<ul>`
-      elements. Colour is written only for non-black text. Note that this
-      mode emits *only* those positioned spans: headings, lists and tables
-      are not produced, so `:detect_headings` and `:extract_tables` have no
-      effect under it. Defaults to `false`.
+      elements. Colour is written only for non-black text. This mode emits
+      *only* those positioned spans: headings, lists and tables are not
+      produced, so `:detect_headings` and `:extract_tables` have no effect
+      under it. Defaults to `false`.
 
-      The result is **not** directly renderable, and reproducing the page
-      needs two corrections from you. Upstream writes the PDF's own
-      user-space coordinates verbatim, so the `top` value is measured from
-      the *bottom* of the page while CSS `top` measures from the top: flip
-      it yourself with `top = height - y`, taking the page height from
-      `PdfElixide.Document.Page.height/1`. And the per-page wrapper
+      The result is **not** directly renderable and needs two corrections from
+      you. Upstream writes the PDF's own user-space coordinates verbatim, so
+      `top` is measured from the *bottom* of the page while CSS `top` measures
+      from the top: flip it with `top = height - y`, taking the page height
+      from `PdfElixide.Document.Page.height/1`. And the per-page wrapper
       `to_html/1` emits carries no styling, so it is not a positioned
-      containing block and gives the spans no page-sized box to resolve
-      against — add `position: relative` and an explicit size to each
+      containing block — add `position: relative` and an explicit size to each
       wrapper, or every page will pile up in the same place.
     * `:detect_headings` — cluster font sizes to emit `<h1>`–`<h6>`
       elements instead of plain `<p>` paragraphs. Defaults to `true`.
@@ -1097,29 +1004,15 @@ defmodule PdfElixide.Document do
       option is `nil`, no image is emitted at all. Only applies when
       `:include_images` is `true`. Defaults to `true`.
     * `:image_output_dir` — directory to write extracted images to, used
-      only when `:include_images` is `true` and `:embed_images` is
-      `false`. It is created if missing, and one that cannot be created
-      is an `:io` error. The writes themselves are best-effort: upstream
-      drops an image that fails to encode or write, so a successful call
-      does not guarantee every image reached disk. It must be a valid-UTF-8
-      binary like every other path — see the "File paths" section of
-      `PdfElixide`. Defaults to `nil`.
+      only when `:include_images` is `true` and `:embed_images` is `false`.
+      Behaves exactly as it does for Markdown, including the
+      filename-collision caveat — see `t:markdown_opts/0`. Defaults to `nil`.
 
-      **Give every concurrent conversion its own directory.** Filenames are
-      upstream's and fixed — `pageN_M.png`, one-based page then one-based
-      position in that page's *kept* image list — so two conversions writing
-      to one directory overwrite each other's files, non-atomically. That
-      includes two conversions of the same document: `:max_image_pixels`
-      changes which images are kept and so renumbers the rest, making one
-      name mean different pictures in different calls.
-
-      Upstream interpolates the resulting path into the `src` attribute
-      **without HTML escaping**, so a directory whose name contains `"` or
-      `&` produces malformed markup. Never build this path from untrusted
-      input: a crafted directory name can close the attribute and inject
-      others. It is the only unescaped input on this path — every string
-      taken from the PDF itself is escaped, see the "Escaping" section of
-      `to_html/2`.
+      The path is interpolated into the `src` attribute **without HTML
+      escaping**, so a directory whose name contains `"` or `&` produces
+      malformed markup and a crafted one can inject attributes. Never build
+      it from untrusted input. It is the only unescaped input here — see the
+      "Escaping" section of `to_html/2`.
     * `:include_form_fields` — inline AcroForm field values at their
       positions on the page. Defaults to `true`.
     * `:max_image_pixels` — skip images whose width times height exceeds
@@ -1131,7 +1024,7 @@ defmodule PdfElixide.Document do
       back to an XY-cut), `:column_aware`, or `:top_to_bottom`. Defaults
       to `:structure_tree`.
 
-  Defaults mirror `pdf_oxide`'s `ConversionOptions::default()`, so calling
+  Defaults mirror `pdf_oxide`'s own conversion defaults, so calling
   `to_html/1` is equivalent to `to_html/2` with no options.
   """
   @type html_opts :: [
@@ -1183,22 +1076,20 @@ defmodule PdfElixide.Document do
 
   ## Escaping
 
-  Text taken from the PDF is escaped by `pdf_oxide` before it reaches the
-  fragment — `&`, `<`, `>` and `"` become entities in span text, headings
-  and table cells alike, in `:preserve_layout` mode as well — so a crafted
-  document cannot inject markup. `'` is left as-is, which is safe only
-  because every attribute the converter emits is double-quoted: don't
-  re-quote the fragment with single quotes.
+  Text taken from the PDF is escaped before it reaches the fragment — `&`, `<`,
+  `>` and `"` become entities in span text, headings and table cells alike, in
+  `:preserve_layout` mode as well — so a crafted document cannot inject markup.
+  `'` is left as-is, which is safe only because every attribute the converter
+  emits is double-quoted: **don't re-quote the fragment with single quotes**.
 
-  A `/Link` annotation's URI is escaped too, and an anchor is emitted only
-  for the `http`, `https`, `mailto`, `tel`, `ftp` and `ftps` schemes —
-  a `javascript:` or `data:` target is dropped, keeping the link text and
-  losing the link. Anchors carry `rel="noopener noreferrer"`.
+  A `/Link` annotation's URI is escaped too, and an anchor is emitted only for
+  the `http`, `https`, `mailto`, `tel`, `ftp` and `ftps` schemes; any other
+  target keeps its link text and loses the link. Anchors carry
+  `rel="noopener noreferrer"`.
 
-  The one input that is **not** escaped is `:image_output_dir`, which
-  upstream interpolates into `src` verbatim; see `t:html_opts/0`. So the
-  fragment is safe to render as raw HTML as long as that path is yours and
-  not an untrusted one.
+  The one input that is **not** escaped is `:image_output_dir`; see
+  `t:html_opts/0`. So the fragment is safe to render as raw HTML as long as that
+  path is yours and not an untrusted one.
 
   See `t:html_opts/0` for the available options.
   """
@@ -1255,8 +1146,7 @@ defmodule PdfElixide.Document do
     to_html(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:html)` — changing one has to fail there first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:html)`.
   defp build_html_options(opts) do
     opts = Keyword.validate!(opts, @html_opts_keys)
 
@@ -1309,9 +1199,8 @@ defmodule PdfElixide.Document do
 
     * `:include_artifacts` — keep spans tagged `/Artifact` (running
       headers and footers, page numbers, watermarks; ISO 32000-1
-      §14.8.2.2.1). Defaults to `true`, which is the current behavior and
-      what the Python bindings default to; `false` selects upstream's
-      spec-correct variant.
+      §14.8.2.2.1). Defaults to `true`; `false` selects the spec-correct
+      variant.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the words
       inside it. Defaults to `nil`.
     * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
@@ -1324,18 +1213,14 @@ defmodule PdfElixide.Document do
 
   ## `:word_gap_threshold` and `:profile` are deprecated upstream
 
-  `pdf_oxide` plans to move both to a separate advanced API (its Python
-  bindings already emit a `DeprecationWarning` for them), and `:profile`
-  in particular is documented as pending removal. `:profile` also does
-  more than its name suggests: passing *any* profile switches span
-  extraction to a different, legacy ordering path (XY-cut plus a row-aware
-  sort), so it can change word **order** and not merely word boundaries —
-  even for `:conservative`, which is nominally the default profile. Prefer
+  Both are pending removal in `pdf_oxide`, and `:profile` does more than its
+  name suggests: passing *any* profile switches span extraction to a legacy
+  ordering path, so it can change word **order** and not merely word
+  boundaries — even for `:conservative`, nominally the default profile. Prefer
   leaving both at `nil`.
 
-  Unlike the Python bindings, `:region` here composes with everything else:
-  it is applied after extraction, so it does not discard the thresholds or
-  the profile.
+  `:region` composes with everything else here: it is applied after
+  extraction, so it does not discard the thresholds or the profile.
   """
   @type words_opts :: [
           include_artifacts: boolean(),
@@ -1422,9 +1307,7 @@ defmodule PdfElixide.Document do
     words(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:words)` — changing one has to fail there
-  # first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:words)`.
   defp build_words_options(opts) do
     opts = Keyword.validate!(opts, @words_opts_keys)
 
@@ -1535,9 +1418,7 @@ defmodule PdfElixide.Document do
     text_lines(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:text_lines)` — changing one has to fail there
-  # first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:text_lines)`.
   defp build_text_lines_options(opts) do
     opts = Keyword.validate!(opts, @text_lines_opts_keys)
 
@@ -1589,7 +1470,7 @@ defmodule PdfElixide.Document do
   carrying its own text and font-name binary — so the whole-document form is
   the one most worth avoiding on a large document. See the "Whole-document
   extraction and memory" section of `PdfElixide.Document`, and consider
-  `spans/1`, which describes the same text in runs rather than glyphs.
+  `spans/1`, which describes the same text in runs.
 
   See `t:chars_opts/0` for the available options.
   """
@@ -1649,9 +1530,7 @@ defmodule PdfElixide.Document do
     chars(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:chars)` — changing one has to fail there
-  # first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:chars)`.
   defp build_chars_options(opts) do
     opts = Keyword.validate!(opts, @chars_opts_keys)
 
@@ -1665,14 +1544,13 @@ defmodule PdfElixide.Document do
 
   @typedoc """
   Options tuning how glyph runs are merged into spans, accepted as
-  `:span_merging`. `pdf_oxide`'s own bindings expose none of this.
+  `:span_merging`.
 
     * `:preset` — the base configuration every other key overrides:
       `:default`, `:aggressive` (splits more readily), `:conservative`
       (merges across wider gaps), `:adaptive` (derives thresholds from page
-      gap statistics), or `:legacy`. Defaults to `:default`. The names read
-      as aggression about *inserting spaces*, which is upstream's sense:
-      `:aggressive` lowers the gap that becomes a space, so it produces more
+      gap statistics), or `:legacy`. Defaults to `:default`. The names mean
+      aggression about *inserting spaces*, so `:aggressive` produces more
       word boundaries, not fewer.
     * `:space_threshold_em_ratio` — gap, as a fraction of font size, that
       becomes a space.
@@ -1756,9 +1634,8 @@ defmodule PdfElixide.Document do
     * `:reading_order` — how spans are ordered: `:top_to_bottom` (simple
       geometric sorting), `:column_aware` (XY-cut column detection), or
       `:structure` (follow a tagged PDF's structure tree). Defaults to
-      `:top_to_bottom`. This is `pdf_oxide`'s span-level reading order and
-      names its values differently from the `:reading_order` of
-      `t:markdown_opts/0`, which is a separate upstream type.
+      `:top_to_bottom`. Note these values differ from the `:reading_order` of
+      `t:markdown_opts/0`, which is a separate setting.
     * `:span_merging` — a `t:span_merging_opts/0` keyword list, or `nil`
       for upstream's default merging. Defaults to `nil`.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the spans
@@ -1772,10 +1649,10 @@ defmodule PdfElixide.Document do
 
   ## `:span_merging` drops the other options
 
-  Upstream serves a merging configuration through a call that accepts
-  neither a reading order nor layer/ink filters. So when `:span_merging` is
-  set, `:reading_order`, `:exclude_layers` and `:exclude_inks` are ignored.
-  `:region` still applies — it is a post-filter, not an upstream argument.
+  A merging configuration is served by a call that accepts neither a reading
+  order nor layer/ink filters, so when `:span_merging` is set,
+  `:reading_order`, `:exclude_layers` and `:exclude_inks` are ignored.
+  `:region` still applies, being a post-filter.
   """
   @type spans_opts :: [
           reading_order: :top_to_bottom | :column_aware | :structure,
@@ -1809,9 +1686,9 @@ defmodule PdfElixide.Document do
       Document.spans(doc, 0, span_merging: [preset: :aggressive])
 
   A span covers a run of text rather than one glyph, so this is the cheaper way
-  to ask for what `chars/1` returns when per-glyph detail is not needed. The
-  whole-document form still builds every page's spans in memory at once — see
-  the "Whole-document extraction and memory" section of `PdfElixide.Document`.
+  to ask for what `chars/1` returns. The whole-document form still builds every
+  page's spans in memory at once — see the "Whole-document extraction and
+  memory" section of `PdfElixide.Document`.
 
   See `t:spans_opts/0` for the available options.
   """
@@ -1871,9 +1748,7 @@ defmodule PdfElixide.Document do
     spans(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:spans)` — changing one has to fail there
-  # first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:spans)`.
   defp build_spans_options(opts) do
     opts = Keyword.validate!(opts, @spans_opts_keys)
 
@@ -1897,10 +1772,9 @@ defmodule PdfElixide.Document do
   # option was wrong.
   defp build_span_merging_option(nil), do: nil
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:span_merging)`, which passes `[]` to reach
-  # this clause rather than the `nil` one — changing one has to fail there
-  # first.
+  # Defaults pinned by `option_defaults_test.exs` via
+  # `__option_defaults__(:span_merging)`, which passes `[]` to reach this clause
+  # rather than the `nil` one.
   defp build_span_merging_option(opts) when is_list(opts) do
     opts = Keyword.validate!(opts, @span_merging_opts_keys)
 
@@ -1924,10 +1798,9 @@ defmodule PdfElixide.Document do
 
   defp build_adaptive_threshold_option(nil), do: nil
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:adaptive_threshold)`, which passes `[]` to
-  # reach this clause rather than the `nil` one — changing one has to fail
-  # there first.
+  # Defaults pinned by `option_defaults_test.exs` via
+  # `__option_defaults__(:adaptive_threshold)`, which passes `[]` to reach this
+  # clause rather than the `nil` one.
   defp build_adaptive_threshold_option(opts) when is_list(opts) do
     opts = Keyword.validate!(opts, @adaptive_threshold_opts_keys)
 
@@ -1970,8 +1843,7 @@ defmodule PdfElixide.Document do
     * `:enabled` — set to `false` to disable detection entirely.
 
   Every key except `:preset` defaults to `nil`, meaning "keep the preset's
-  value". The Python bindings' `table_settings` dict reaches only five of
-  these.
+  value".
   """
   @type table_detection_opts :: [
           preset: :default | :strict | :relaxed,
@@ -2016,9 +1888,9 @@ defmodule PdfElixide.Document do
   Unlike the `:table_detection` option of the `text` functions, the detection
   keys are given *flat* here rather than nested under one key.
 
-  Note that `:region` here keeps the detection options you passed, whereas
-  `pdf_oxide`'s own region call silently substitutes its `:relaxed` preset.
-  Pass `preset: :relaxed` to ask for that explicitly.
+  `:region` keeps the detection options you passed, where `pdf_oxide`'s own
+  region call substitutes its `:relaxed` preset. Pass `preset: :relaxed` to ask
+  for that explicitly.
   """
   @type tables_opts :: [
           region: Rect.t() | nil,
@@ -2054,12 +1926,9 @@ defmodule PdfElixide.Document do
   `:real_grid?` flag and how to filter out likely false positives, and
   `t:tables_opts/0` for the available options.
 
-  Every returned table keeps the detected table alive on the Rust side for
-  `PdfElixide.Document.Table.to_markdown/2` and friends, so the whole-document
-  form holds all of them at once. Prefer the per-page arity, or
-  `PdfElixide.Document.Table.close/1` as you go, on a table-dense document —
-  see the "Whole-document extraction and memory" section of
-  `PdfElixide.Document`.
+  Every returned table stays resident behind its handle until
+  `PdfElixide.Document.Table.close/1` or GC — see the "Whole-document
+  extraction and memory" section of `PdfElixide.Document`.
   """
   @spec tables(t(), tables_opts() | non_neg_integer()) :: {:ok, [Table.t()]} | {:error, Error.t()}
   def tables(doc, page_index_or_opts \\ [])
@@ -2118,9 +1987,7 @@ defmodule PdfElixide.Document do
     tables(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:tables)` — changing one has to fail there
-  # first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:tables)`.
   defp build_tables_options(opts) do
     opts = Keyword.validate!(opts, @tables_opts_keys)
 
@@ -2142,9 +2009,9 @@ defmodule PdfElixide.Document do
   # alongside the detection keys, while the `:table_detection` option of the
   # `text` functions does not, so each caller checks its own key list.
   #
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:table_detection)`, which passes `[]` so the
-  # map form is built at all — changing one has to fail there first.
+  # Defaults pinned by `option_defaults_test.exs` via
+  # `__option_defaults__(:table_detection)`, which passes `[]` so the map form is
+  # built at all.
   defp build_table_detection(opts) do
     %{
       preset: Keyword.get(opts, :preset, :default),
@@ -2258,11 +2125,9 @@ defmodule PdfElixide.Document do
   only whole-document extractor that tolerates such a page, and the only one
   that does so with no option to say otherwise.
 
-  Each returned font keeps a native handle, and fonts are not shared across
-  pages, so a single font used throughout a long document yields one handle per
-  page — all of them live at once here. Prefer `fonts/2`, or
-  `PdfElixide.Document.Font.close/1` as you go; see the "Whole-document
-  extraction and memory" section of `PdfElixide.Document`.
+  Each returned font holds the embedded font program behind its handle until
+  `PdfElixide.Document.Font.close/1` or GC, one handle per page per font — see
+  the "Whole-document extraction and memory" section of `PdfElixide.Document`.
   """
   @spec fonts(t()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{ref: ref}) do
@@ -2289,9 +2154,7 @@ defmodule PdfElixide.Document do
   **An empty list also covers a page that could not be read** — one whose
   page-tree entry, `/Resources` reference or fonts do not resolve yields no
   fonts rather than an error. Only an out-of-range index and a failed handle are
-  errors. Unlike `has_structure_tree?/1`, there is no strict variant to fall back
-  on; a caller who must know whether the *page* is readable at all can ask
-  `text/3`, which does propagate.
+  errors, and there is no strict variant that reports the difference.
   """
   @spec fonts(t(), non_neg_integer()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{ref: ref}, page_index)
@@ -2319,10 +2182,9 @@ defmodule PdfElixide.Document do
   document has no outline.
 
   **Nesting deeper than 256 levels is rejected** with
-  `%PdfElixide.Error{reason: :unsupported}` rather than truncated, so a malformed
-  or hostile bookmark tree cannot overflow the native stack while the NIF walks
-  it — an overflow in Rust aborts the OS process rather than raising, so it would
-  take the whole VM down. No real table of contents comes close to the limit.
+  `%PdfElixide.Error{reason: :unsupported}` rather than truncated, so a
+  malformed or hostile bookmark tree cannot overflow the native stack. No real
+  table of contents comes close to the limit.
   """
   @spec outline(t()) :: {:ok, [OutlineItem.t()]} | {:error, Error.t()}
   def outline(%__MODULE__{ref: ref}) do
@@ -2399,11 +2261,10 @@ defmodule PdfElixide.Document do
   the struct — encode it on demand with `PdfElixide.Document.Image.to_binary/2`
   or `PdfElixide.Document.Image.save/3`.
 
-  What is deferred there is the *encode*, not the load: each struct's handle
-  holds that image's decoded pixels — or its original JPEG bytes — from
-  extraction onward, so this arity keeps every image in the document resident at
-  once. Prefer `images/2`, or `PdfElixide.Document.Image.close/1` as you go; see
-  the "Whole-document extraction and memory" section of `PdfElixide.Document`.
+  What is deferred there is the *encode*, not the load: every image's decoded
+  pixels — or its original JPEG bytes — stay resident behind its handle until
+  `PdfElixide.Document.Image.close/1` or GC. See the "Whole-document extraction
+  and memory" section of `PdfElixide.Document`.
   """
   @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{ref: ref}) do
@@ -2451,10 +2312,9 @@ defmodule PdfElixide.Document do
   Returns a `PdfElixide.Document.Page` handle for every page in the document.
 
   The list is built eagerly, but each handle is just the document and a
-  zero-based index and holds no native resource, so building one costs nothing —
-  see `PdfElixide.Document.Page`. To walk a large document without materializing
-  every handle, enumerate the document itself: it implements `Enumerable` over
-  its pages.
+  zero-based index and holds no native resource, so building one costs nothing.
+  To walk a large document without materializing every handle, enumerate the
+  document itself: it implements `Enumerable` over its pages.
 
   Reads the page count cached on the struct, so it raises only for a document
   whose count could not be determined at open — see `page_count/1`.

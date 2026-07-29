@@ -51,7 +51,6 @@ defmodule PdfElixide.Document.Permissions do
         }
 
   @doc false
-  # Builds a `Permissions` from the raw map returned by the NIF.
   @spec from_nif(map()) :: t()
   def from_nif(%{
         print_low_res: print_low_res,

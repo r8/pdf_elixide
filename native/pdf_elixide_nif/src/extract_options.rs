@@ -54,28 +54,23 @@ impl From<RectFilterModeNif> for RectFilterMode {
 /// Rejects a `{:min_overlap, ratio}` whose ratio falls outside `0.0..=1.0`.
 ///
 /// Upstream evaluates the mode as `overlap_with_rect(rect) >= ratio`, where the
-/// overlap is `intersection_area / object_area` and so is bounded to
-/// `[0.0, 1.0]`. An out-of-range ratio therefore fails silently rather than
-/// loudly: a negative one matches *every* object — including objects nowhere
-/// near the region, which through `exclude_regions` drops the whole page — and
-/// one above 1.0 matches nothing, turning an exclusion into a no-op. Upstream
-/// validates the ratio in no binding, and `MinOverlap` is unreachable from
-/// every other binding it ships (all of them hardcode `Intersects`), so there
-/// is no upstream check to inherit and no upstream test covering it.
+/// overlap is bounded to `[0.0, 1.0]`, so an out-of-range ratio fails *silently*
+/// rather than loudly: a negative one matches every object — which through
+/// `exclude_regions` empties the page — and one above 1.0 matches none, turning
+/// an exclusion into a no-op. There is no upstream check to inherit and no
+/// upstream test covering it: `MinOverlap` is unreachable from every binding
+/// upstream ships, all of which hardcode `Intersects`.
 ///
 /// The single range test also rejects NaN and both infinities, every IEEE
 /// comparison against NaN being false. Erlang floats can be neither, so that
 /// is belt-and-braces.
 ///
-/// **Unreachable from Elixir, and kept anyway.** `Document.validate_region_mode!/2`
-/// now applies the identical bound before building the options map, so a bad
-/// ratio raises `ArgumentError` there rather than arriving here — the binding
-/// reports every caller mistake as an exception, and a `tagged_err` cannot be
-/// told apart from a genuine `:other` PDF failure by the time it reaches
-/// `Native.Wrap.call/1`. This stays as defence in depth for any future caller
-/// that reaches the NIF by another route, the same posture as
-/// `MAX_OUTLINE_DEPTH` in `outline.rs`. Keep the message in step with the
-/// Elixir one if either changes.
+/// **Unreachable from Elixir, and kept anyway.**
+/// `Document.validate_region_mode!/2` applies the identical bound before
+/// building the options map, so a bad ratio raises `ArgumentError` there. This
+/// stays as defence in depth for any future caller reaching the NIF by another
+/// route, the same posture as `MAX_OUTLINE_DEPTH` in `outline.rs`. Keep the
+/// message in step with the Elixir one if either changes.
 fn validate_mode(field: &str, mode: &RectFilterModeNif) -> NifResult<()> {
     if let RectFilterModeNif::MinOverlap(ratio) = mode {
         if !(0.0..=1.0).contains(ratio) {

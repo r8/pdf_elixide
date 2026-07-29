@@ -262,23 +262,16 @@ type OpenedDocument = (ResourceArc<DocumentResource>, (u8, u8), Option<usize>);
 /// **A page count that cannot be read is `None`, not an open failure.** For an
 /// encrypted document whose page tree needs a password, upstream reports
 /// `EncryptedPdf` until `document_authenticate` runs, and refusing to open such
-/// a document would be stricter than upstream's own `page_indices()`, which
-/// deliberately keeps a metadata-broken document usable — every per-page call
-/// surfaces the real error anyway. Elixir's `page_count/1` falls back to
-/// `document_page_count` for exactly that document, so it answers correctly
-/// once authentication has run — the escape hatch that makes swallowing safe
-/// here, and the reason this is the *only* remaining swallow in the NIF. The
-/// predicates below used to spell it the same way and had no such hatch, so
-/// their tolerance now lives in Elixir (`Document.tolerant_predicate!/1`),
-/// where a caller can ask for the error instead.
+/// a document would be stricter than upstream's own `page_indices()`. Elixir's
+/// `page_count/1` falls back to `document_page_count` for exactly that document,
+/// which is the escape hatch making this the *only* remaining swallow in the
+/// NIF — the contract `PdfElixide.Document.page_count/1` documents.
 ///
 /// Both reads go through `with_read` rather than reading the `PdfDocument`
 /// before it is moved into the `Closable`, so a panic in upstream's page-tree
-/// walk stays contained as it is on every other call: a panic reading the
-/// version fails the open, a panic reading the count only leaves it `None`.
-/// That is why they are two calls and not one closure. The lock is
-/// uncontended — the handle has not reached the BEAM yet — and a failed read
-/// drops the local `ResourceArc`, freeing the document rather than leaking it.
+/// walk stays contained: a panic reading the version fails the open, a panic
+/// reading the count only leaves it `None`. That is why they are two calls and
+/// not one closure.
 ///
 /// Callers must read *after* applying the open options: authentication is what
 /// makes an encrypted document's page tree readable, so reading first would
@@ -375,18 +368,14 @@ fn document_has_structure_tree(resource: ResourceArc<DocumentResource>) -> NifRe
 /// Upstream's `XfaExtractor::has_xfa` (`src/xfa/extractor.rs`), transcribed
 /// against `&PdfDocument`.
 ///
-/// Its `&mut PdfDocument` is vestigial: the body calls only `catalog()` and a
-/// private `resolve_object` that is one `load_object` call, both `&self`. But a
-/// `&mut` in the signature would force this NIF back onto `Closable::with_lock`
-/// and make a cheap predicate serialize every concurrent read on the handle —
-/// the whole point of reading shared. Twelve transcribed lines are cheaper than
-/// that, and `has_xfa_matches_upstream` below is the canary that they still
-/// agree.
+/// Its `&mut PdfDocument` is vestigial — the body calls only `&self` methods —
+/// but keeping it would force this NIF onto `Closable::with_lock` and make a
+/// cheap predicate serialize every concurrent read on the handle.
+/// `has_xfa_matches_upstream` below is the canary that the copy still agrees.
 ///
 /// Deliberately *not* upstream's own `pdf_document_has_xfa` (`src/ffi.rs`),
 /// which reimplements the same check inequivalently: it never resolves an
-/// indirect `/AcroForm` reference, and collapses every error to `false`, which
-/// would silently reverse the strictness `document_has_xfa` documents below.
+/// indirect `/AcroForm` reference, and collapses every error to `false`.
 fn has_xfa(doc: &PdfDocument) -> Result<bool> {
     let catalog = doc.catalog()?;
     let Some(catalog_dict) = catalog.as_dict() else {
@@ -1158,24 +1147,22 @@ fn document_all_tables(
 
 /// Returns the page's `/MediaBox` as a normalised rect.
 ///
-/// Upstream's `get_page_media_box` hands back the four raw array elements —
-/// `(llx, lly, urx, ury)`, absolute corners in the order the file wrote them —
-/// so a malformed box may arrive reversed. `rect_from_corners` normalises it,
-/// because `PdfElixide.Geometry.Rect` promises a bottom-left origin and
-/// non-negative dimensions, and because `Page.width/1` and `Page.height/1` are
-/// these fields: nothing else computes a page size, so nothing else can
-/// disagree about one. `f32` widens to `f64` exactly, so the width and height
-/// this yields are bit-identical to subtracting the corners in `f32`.
+/// Upstream hands back the four raw array elements — absolute corners in file
+/// order — so a malformed box may arrive reversed. `rect_from_corners`
+/// normalises it, because `PdfElixide.Geometry.Rect` promises a bottom-left
+/// origin and non-negative dimensions, and because `Page.width/1` and
+/// `Page.height/1` are these fields: nothing else computes a page size, so
+/// nothing else can disagree about one.
 ///
+/// An absent `/MediaBox`, a non-array entry and an array shorter than four are
+/// each an `InvalidPdf` — propagated, never replaced with a default page size.
 /// Upstream reads the entry off the dictionary [`get_page`] returns, which
 /// carries the inherited attributes, so a `/MediaBox` on an ancestor `/Pages`
 /// node is honoured — though *which* ancestor wins depends on how the page was
 /// reached; the "Page boxes and the coordinate origin" section of the
-/// `PdfElixide.Document` moduledoc has it.
-/// An indirect reference is resolved both for the array and for each element.
-/// An absent `/MediaBox`, a non-array entry and an array shorter than four are
-/// each an `InvalidPdf` — propagated, never replaced with a default page size.
-/// A non-numeric element is upstream's one silent case: it coerces to 0.0.
+/// `PdfElixide.Document` moduledoc has it. An indirect reference is resolved
+/// both for the array and for each element. A non-numeric element is upstream's
+/// one silent case: it coerces to 0.0.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_get_page_media_box(
     resource: ResourceArc<DocumentResource>,
@@ -1216,24 +1203,12 @@ fn document_get_page_rotation(
 
 /// Returns whether the page carries a text layer, or is image-only / empty.
 ///
-/// A *static probe*, not an extraction — upstream's `has_text_layer`
-/// (`pdf_oxide` `src/document.rs`) loads no fonts and maps no glyphs. It runs
-/// two stages, and both are approximations in the same direction:
-///
-/// 1. `page_cannot_have_text` inspects the resource dictionary. No
-///    `/Resources` at all answers `false` outright; a non-empty `/Font`, or any
-///    `/XObject` entry that a 1 KB peek says is a Form XObject, moves on to
-///    stage 2. `/Resources` that cannot be resolved, or that is not a
-///    dictionary, also moves on — conservative, so extraction still gets tried.
-/// 2. `may_contain_text` scans the decoded content stream for a
-///    delimiter-bounded `BT` or `Do`. It does not tokenise, so this is a *may*.
-///
-/// Hence `false` is the reliable direction and `true` is not a promise that
-/// `extract_text` returns anything: a page whose only `/XObject` is an image
-/// short-circuits at stage 1 and answers `false` *even though its stream
-/// contains `Do`*, while a page with a text-free Form XObject answers `true`,
-/// and so does one whose content stream fails to decode (upstream's
-/// `Err(_) => Ok(true)`). Invisible text (`Tr 3`) is not considered at all.
+/// A *static probe*, not an extraction: upstream's `has_text_layer` loads no
+/// fonts and maps no glyphs. It checks the resource dictionary, then scans the
+/// decoded content stream for a delimiter-bounded `BT` or `Do`; both stages
+/// approximate towards `true`, so `false` is the reliable direction and `true`
+/// is not a promise that `extract_text` returns anything. The four consequences
+/// a caller sees are on `PdfElixide.Document.Page.has_text_layer/1`.
 ///
 /// `ensure_page_in_range` is load-bearing for the same reason it is on
 /// `document_page_label`: upstream does not bounds-check, so a bad index would
@@ -1310,18 +1285,11 @@ mod tests {
     /// bug in this crate. See `test/pdf_elixide/upstream_drift_test.exs`.
     ///
     /// `extract_all_text_pages` reimplements upstream's `extract_all_text`
-    /// rather than calling it, because upstream offers no way to pass a
-    /// `ConversionOptions` to the whole-document form and no way to see which
-    /// page failed. Everything `PdfElixide.Document.text/1` documents —
-    /// separator before the fallible call, failed page contributing an empty
-    /// slot, the document still succeeding — is therefore a claim about a copy.
-    /// This asserts the copy still matches the original, which no Elixir test
-    /// can do: nothing in the binding reaches `extract_all_text` itself.
-    ///
-    /// If upstream switches to failing the document (as its own
-    /// `to_plain_text_all` already does), or moves the separator after the
-    /// extraction, this fails — and then `:on_page_error`'s default, not the
-    /// assertion, is what has to be reconsidered.
+    /// rather than calling it, so everything `PdfElixide.Document.text/1`
+    /// documents is a claim about a copy. This asserts the copy still matches
+    /// the original, which no Elixir test can do: nothing in the binding
+    /// reaches `extract_all_text` itself. If it fails, `:on_page_error`'s
+    /// default is what has to be reconsidered, not the assertion.
     #[test]
     fn whole_document_text_still_matches_upstream_extract_all_text() {
         let doc = PdfDocument::open(fixture("broken_page.pdf")).expect("fixture opens");

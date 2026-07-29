@@ -24,13 +24,12 @@ defmodule PdfElixide.Error do
     * `:not_found` — a referenced object was not found.
     * `:out_of_range` — the page index is outside the document.
     * `:io` — an underlying IO error.
-    * `:panic` — the native library or upstream `pdf_oxide` panicked on this
-      input, i.e. hit a bug rather than a condition it reports. The handle stays
-      usable, but a panic partway through an operation can leave it holding
-      partially updated state, so `close/1` it and reopen if the error recurs.
-    * `:lock_poisoned` — the internal resource lock was poisoned. Should no
-      longer occur: a native panic is contained before it can poison a lock and
-      is reported as `:panic` instead.
+    * `:panic` — the native library panicked on this input, i.e. hit a bug
+      rather than a condition it reports. The handle stays usable, but a panic
+      partway through an operation can leave it holding partially updated
+      state, so `close/1` it and reopen if the error recurs.
+    * `:lock_poisoned` — the internal resource lock was poisoned. Should not
+      occur; a native panic is contained and reported as `:panic` instead.
     * `:closed` — the handle was released with `close/1`.
     * `:other` — any error not covered above; `message` is preserved verbatim.
 
@@ -45,45 +44,29 @@ defmodule PdfElixide.Error do
 
     * `FunctionClauseError` when a guard rejects it — a negative page index, an
       options argument that is not a keyword list.
-    * `ArgumentError` for everything else, including every way an option can be
-      wrong: an unknown key (`detect_heading:` for `:detect_headings`), a key
-      given twice, a declared key given a value the native layer cannot decode,
-      and a declared key whose value is out of range (`{:min_overlap, 2.0}`). A
-      value the native layer cannot decode outside an options map — a form
-      field value that is not a tagged tuple, a file path that is not valid
-      UTF-8 — raises the same way. For paths, see the "File paths" section of
-      `PdfElixide`: a bad one is a caller bug reported here, never an `:io`
-      error.
+    * `ArgumentError` for everything else, and the message names the offending
+      key. That covers every way an option can be wrong — an unknown key
+      (`detect_heading:` for `:detect_headings`), a key given twice, a value the
+      native layer cannot decode, a value out of range (`{:min_overlap, 2.0}`) —
+      and undecodable values outside an options map, such as a form field value
+      that is not a tagged tuple or a path that is not valid UTF-8 (see the
+      "File paths" section of `PdfElixide`; a bad path is never an `:io` error).
 
-  The message always names the offending key, so a typo is reported rather than
-  silently ignored and a wrong value is reported rather than silently applied.
   Build option lists with `Keyword.merge/2` rather than `++`, since a duplicated
-  key is rejected instead of resolved to the first occurrence.
+  key is rejected instead of resolved to the first occurrence. So nothing about
+  the *caller* arrives as a `%PdfElixide.Error{}`; if you get one, the arguments
+  were accepted and the document, the filesystem or the handle is what failed.
 
-  Nothing about the *caller* therefore arrives as a `%PdfElixide.Error{}`; if
-  you get one, the arguments were accepted and the document, the filesystem or
-  the handle is what failed.
-
-  Predicates ending in `?` are the mirror image. They return a bare boolean, so
-  a failure has nowhere to be reported and this struct is raised instead — from
-  a function with no `!` in its name. What each one raises *for* follows from
-  how much tolerance is worth applying:
-
-    * `PdfElixide.Document.has_structure_tree?/1` and
-      `PdfElixide.Document.has_xfa?/1` answer `false` for a document whose
-      feature cannot be read, so only a failure of the *handle* raises. Their
-      strict counterparts `PdfElixide.Document.has_structure_tree/1` and
-      `PdfElixide.Document.has_xfa/1` return the error instead.
-    * `PdfElixide.Document.Page.has_text_layer?/1` raises for *everything*,
-      including an out-of-range index and a page that fails to resolve.
-      `pdf_oxide` applies its own tolerance inside the probe — unreadable
-      resources and content streams answer `true` rather than failing — so what
-      survives to Elixir is genuinely exceptional, and degrading it to `false`
-      would invert the answer callers act on.
-    * `PdfElixide.Document.encrypted?/1` asks something upstream cannot fail, so
-      only the handle can raise.
-
-  `closed?/1` never raises on any handle.
+  Predicates ending in `?` are the mirror image: they return a bare boolean, so
+  a failure has nowhere to be reported and this struct is raised instead, from a
+  function with no `!` in its name. `PdfElixide.Document.has_structure_tree?/1`
+  and `PdfElixide.Document.has_xfa?/1` answer `false` for a feature that cannot
+  be read, so only a failure of the *handle* raises — their strict counterparts
+  `PdfElixide.Document.has_structure_tree/1` and `PdfElixide.Document.has_xfa/1`
+  return the error instead. `PdfElixide.Document.Page.has_text_layer?/1` raises
+  for *everything*, since answering `false` would invert the meaning callers act
+  on. `PdfElixide.Document.encrypted?/1` asks something that cannot fail, so
+  only the handle can raise, and `closed?/1` never raises at all.
   """
 
   @type reason ::

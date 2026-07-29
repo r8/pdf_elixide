@@ -19,6 +19,10 @@ defmodule PdfElixide.Document.Page do
   bound memory on a large document, since only one page's results are live at
   once — see the "Whole-document extraction and memory" section of
   `PdfElixide.Document`.
+
+  A page whose `:index` is not a page of the document — only reachable from a
+  hand-built or stale `%Page{}` — yields
+  `%PdfElixide.Error{reason: :out_of_range}` from every function here.
   """
 
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
@@ -62,15 +66,12 @@ defmodule PdfElixide.Document.Page do
   wide.
 
   The origin need not be `{0.0, 0.0}`, and when it is not, nothing this library
-  returns is rebased on it — an extracted `bbox` is in the same user space as
-  the media box, so a glyph at the left edge of a page whose box starts at
-  `10.0` reports an `x` near `10.0`, not near `0.0`. See the "Page boxes and the
-  coordinate origin" section of `PdfElixide.Document`.
-
-  `/MediaBox` is inheritable (ISO 32000-1 §7.7.3.4): a page without one takes
-  the box from an ancestor `/Pages` node. When *two* ancestors declare one,
-  which of them wins is not stable — see the same section. An indirect reference
-  is resolved, both for the array itself and for any element of it.
+  returns is rebased on it — a glyph at the left edge of a page whose box starts
+  at `10.0` reports an `x` near `10.0`. `/MediaBox` is also inheritable
+  (ISO 32000-1 §7.7.3.4): a page without one takes the box from an ancestor
+  `/Pages` node, and where two ancestors declare one, which of them wins is not
+  stable. Both are covered by the "Page boxes and the coordinate origin" section
+  of `PdfElixide.Document`.
 
   A page with no `/MediaBox` anywhere above it, or whose entry is not an array,
   or is an array of fewer than four elements, is malformed and yields
@@ -78,9 +79,6 @@ defmodule PdfElixide.Document.Page do
   substituted. One malformation is *not* reported: an element that is not a
   number reads as `0.0`, so such a page reports a smaller box rather than
   failing.
-
-  A page whose `:index` is not a page of the document — only reachable from a
-  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
   """
   @spec media_box(t()) :: {:ok, Rect.t()} | {:error, Error.t()}
   def media_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -150,25 +148,21 @@ defmodule PdfElixide.Document.Page do
 
   A page's own `/Rotate` wins, but the entry is inheritable (ISO 32000-1
   §7.7.3.4): a page without one takes the value from an ancestor `/Pages` node,
-  and `0` when no ancestor has one either. When *two* ancestors declare one,
+  and `0` when no ancestor has one either. Where two ancestors declare one,
   which of them wins is not stable — see the "Page boxes and the coordinate
   origin" section of `PdfElixide.Document`, which covers `/Rotate` as well.
 
-  Two normalizations come from `pdf_oxide` and are worth knowing:
+  Two normalizations are worth knowing:
 
     * a value outside `0..359` wraps, so `-90` reads as `270`;
     * a value that is **not a multiple of 90** is invalid per §7.7.3.3 and reads
       as `0` — it is *not* rounded down, so `45` is `0`, not `90`.
 
-  `media_box/1`, and the `width/1` and `height/1` derived from it, are MediaBox
-  measurements in unrotated user space and are never swapped to match: a
-  `90`-degree page of a 612 × 792 MediaBox displays 792 points wide and 612
-  tall. Rotation also decides which frame an extracted
-  `bbox` is expressed in — see the "Rotated pages and extracted geometry" section
-  of `PdfElixide.Document`.
-
-  A page whose `:index` is not a page of the document — only reachable from a
-  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
+  `media_box/1`, and the `width/1` and `height/1` derived from it, are never
+  swapped to match: a `90`-degree page of a 612 × 792 MediaBox displays 792
+  points wide and 612 tall. Rotation also decides which frame an extracted
+  `bbox` is expressed in — see "Rotated pages and extracted geometry" in
+  `PdfElixide.Document`.
   """
   @spec rotation(t()) :: {:ok, rotation()} | {:error, Error.t()}
   def rotation(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -192,28 +186,21 @@ defmodule PdfElixide.Document.Page do
   A `false` here says the page has nothing to extract, so a caller can route it
   to OCR instead of treating the empty result as content.
 
-  It is a **static probe, not an extraction** — no text is assembled, no fonts
-  are loaded. `pdf_oxide` looks at the page's resource dictionary, and then scans
-  the content stream's bytes for a text-showing (`BT`) or XObject-invoking (`Do`)
-  operator. Both stages approximate in the same direction, so the two answers are
+  It is a **static probe, not an extraction** — no text is assembled and no
+  fonts are loaded — and it approximates towards `true`, so the two answers are
   not equally strong:
 
-    * **`false` is reliable.** It is reached only when the page declares no
-      fonts and no form XObjects, or when its content stream contains neither
-      operator.
+    * **`false` is reliable.** The page declares no fonts and no form XObjects,
+      or its content stream shows no text and invokes no XObject.
     * **`true` is not a promise that `text/1` returns anything.** A page whose
       only XObject holds no text still answers `true`, and so does a page whose
       content stream cannot be decoded — deliberately, so that extraction is
-      still attempted rather than skipped on a guess.
+      attempted rather than skipped on a guess.
 
-  One asymmetry is worth knowing, because it looks like a bug: a page with no
-  fonts whose sole XObject is an *image* answers `false` even though its content
-  stream does contain `Do`. The resource check settles it before the byte scan
-  runs — which is what makes the image-only case answerable cheaply. Text drawn
-  in invisible render mode (`Tr 3`) is not considered either way.
-
-  A page whose `:index` is not a page of the document — only reachable from a
-  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
+  One asymmetry looks like a bug but is not: a page with no fonts whose sole
+  XObject is an *image* answers `false`, which is what makes the image-only case
+  answerable cheaply. Text drawn in invisible render mode (`Tr 3`) is not
+  considered either way.
   """
   @spec has_text_layer(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_text_layer(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -225,13 +212,8 @@ defmodule PdfElixide.Document.Page do
 
   Unlike `PdfElixide.Document.has_structure_tree?/1` and
   `PdfElixide.Document.has_xfa?/1`, this degrades nothing: *every* error raises,
-  not just a failure of the handle. `pdf_oxide` has already applied its own
-  tolerance inside the probe — unreadable resources and undecodable content
-  streams answer `true` rather than failing — so what still reaches here is a
-  page that does not resolve, an index outside the document, or a dead handle.
-  Answering `false` for any of those would invert the meaning callers act on,
-  reporting "nothing to extract, send it to OCR" for a page that was merely
-  unreadable.
+  not just a failure of the handle — see the predicates list in
+  `PdfElixide.Error`.
 
   Sweep a document with it:
 
@@ -248,9 +230,6 @@ defmodule PdfElixide.Document.Page do
   This is the human-facing page number the PDF may define, independent of the
   zero-based physical index. Pages outside any declared label range fall back to
   their decimal page number.
-
-  A page whose `:index` is not a page of the document — only reachable from a
-  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
 
   Every call re-reads the document's label ranges, so use
   `PdfElixide.Document.page_labels/1` to label a whole document.

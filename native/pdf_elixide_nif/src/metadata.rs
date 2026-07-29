@@ -272,15 +272,11 @@ mod tests {
     ///
     /// `metadata_encodings.pdf` provides both branches upstream lacks:
     /// `/Creator` is raw UTF-8 with no BOM, `/Producer` carries PDF 2.0's
-    /// `EF BB BF`. The exact mojibake is not asserted — only that it differs —
-    /// so the canary reports the change without pinning upstream's spelling of
-    /// being wrong.
+    /// `EF BB BF`. The exact mojibake is not asserted, only that it differs.
     ///
-    /// Only the decoder half is checked here. The `/Name` fallback is the other
-    /// half of the same divergence, but no fixture gives `/Producer` or
-    /// `/Creator` a name value, and those are the only two fields reachable
-    /// through the upstream accessors — so there is nothing to compare against.
-    /// `document_test.exs` covers the fallback itself, over `/Trapped`.
+    /// Only the decoder half is checked. The `/Name` fallback is the other half
+    /// of the same divergence, but no fixture gives `/Producer` or `/Creator` a
+    /// name value — the only two fields the upstream accessors reach.
     #[test]
     fn producer_and_creator_still_diverge_from_upstreams_own_accessors() {
         let doc = PdfDocument::open(fixture("metadata_encodings.pdf")).expect("fixture opens");

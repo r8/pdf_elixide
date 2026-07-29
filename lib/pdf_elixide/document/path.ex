@@ -58,9 +58,6 @@ defmodule PdfElixide.Document.Path do
         }
 
   @doc false
-  # Builds a `Path` from the raw map returned by the NIF. Every field already
-  # arrives in its final shape (bbox and colors as structs, operations as tagged
-  # tuples, cap/join as atoms), so this is a straight pass-through.
   @spec from_nif(map()) :: t()
   def from_nif(%{
         page: page,

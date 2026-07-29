@@ -21,9 +21,6 @@ defmodule PdfElixide.Document.Table.Cell do
         }
 
   @doc false
-  # Builds a `Cell` from the raw map returned by the NIF, renaming the `header`
-  # key to the `?`-suffixed struct field and converting the nested span maps
-  # into `PdfElixide.Document.Span` structs.
   @spec from_nif(map()) :: t()
   def from_nif(%{
         text: text,

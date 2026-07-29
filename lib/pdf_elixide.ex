@@ -24,10 +24,7 @@ defmodule PdfElixide do
   Every handle this library returns may be passed to other processes. A
   document, image, font or table reads through a *shared* lock, so one handle
   serves concurrent reads; an editor mutates, so its calls take the handle
-  exclusively and serialize. The full account — what
-  `PdfElixide.Document.authenticate/2` and `PdfElixide.Document.close/1` do to
-  calls already in flight, why throughput is not linear, and the one tagged-PDF
-  hazard that makes fanning out *by page* the shape to prefer — is the
+  exclusively and serialize. The full account is the
   [Concurrency](guides/concurrency.md) guide.
 
   ## File paths
@@ -35,10 +32,9 @@ defmodule PdfElixide do
   Every path this library accepts — `PdfElixide.Document.open/2`,
   `PdfElixide.Editor.open/1`, `PdfElixide.Editor.save/3`,
   `PdfElixide.Document.Image.save/3`, and the `:image_output_dir` conversion
-  option — is a binary that **must be valid UTF-8**. The native layer decodes it
-  as a Rust `String`, so a path carrying any other byte raises `ArgumentError`
-  before the filesystem is touched; it is never an `:io` error. See the
-  "Errors versus exceptions" section of `PdfElixide.Error`.
+  option — is a binary that **must be valid UTF-8**. A path carrying any other
+  byte raises `ArgumentError` before the filesystem is touched; it is never an
+  `:io` error. See the "Errors versus exceptions" section of `PdfElixide.Error`.
 
   That is worth knowing on Linux, where the BEAM's default filename encoding
   treats names as raw bytes: a path handed back by `File.ls/1` or
@@ -48,12 +44,8 @@ defmodule PdfElixide do
   `PdfElixide.Editor.from_binary/1`, which take opaque bytes. macOS and Windows
   run the VM with UTF-8 filename encoding, so the question does not arise there.
 
-  Byte paths are deliberately not supported. Contrast a *password*, which
-  genuinely is a byte string and is decoded as one; see
-  `t:PdfElixide.Document.open_opts/0`.
-
-  Only the binary form of `Path.t()` is accepted. `Path.t()` is `IO.chardata()`,
-  so these specs are broader than the guards beneath them: a charlist raises
-  `FunctionClauseError`.
+  Only the binary form of `Path.t()` is accepted; a charlist raises
+  `FunctionClauseError`. Contrast a *password*, which genuinely is a byte string
+  and is decoded as one — see `t:PdfElixide.Document.open_opts/0`.
   """
 end

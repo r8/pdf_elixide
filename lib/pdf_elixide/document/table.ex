@@ -6,19 +6,17 @@ defmodule PdfElixide.Document.Table do
   ## Detection is a guess
 
   Tables are *detected* by a spatial algorithm rather than read from explicit
-  markup, so a detection is a best guess. The `:real_grid?` flag reports
-  whether the detection looks like a genuine data grid (at least two rows and
-  columns, consistently populated) as opposed to a form layout or a
-  label-colon-value list; filter on it when false positives matter:
+  markup, so a detection is a best guess. The `:real_grid?` flag reports whether
+  it looks like a genuine data grid (at least two rows and columns, consistently
+  populated) as opposed to a form layout or a label-colon-value list; filter on
+  it when false positives matter:
 
       Enum.filter(tables, & &1.real_grid?)
 
-  The detector itself is tunable — the strategies, tolerances and size floors
-  it uses are `t:PdfElixide.Document.table_detection_opts/0`, passed to
-  `PdfElixide.Document.tables/3`. Reach for those when a page yields no table,
-  or too many.
-
-  `:bbox` is `nil` when the detector could not determine the table's extent.
+  The detector is tunable through
+  `t:PdfElixide.Document.table_detection_opts/0`, passed to
+  `PdfElixide.Document.tables/3` — reach for those when a page yields no table,
+  or too many. `:bbox` is `nil` when the extent could not be determined.
 
   ## Reading cells
 
@@ -28,52 +26,39 @@ defmodule PdfElixide.Document.Table do
       Table.cell_text(table, 0, 0)
       #=> "Age"
 
-      Table.cell(table, 0, 0)
-      #=> #PdfElixide.Document.Table.Cell<"Age">
-
   Both indices are positions — the row within `:rows`, the column within that
-  row's `:cells` — so they reach exactly what `Enum.at/2` would. Note that the
-  detector drops the cells a merge covers without leaving a placeholder, so a row
-  containing a cell whose `:colspan` or `:rowspan` is greater than one stores
-  fewer cells than `:col_count`, and the positions after the merge no longer line
-  up with the visual column.
+  row's `:cells` — so they reach exactly what `Enum.at/2` would. The detector
+  drops the cells a merge covers without leaving a placeholder, so a row
+  containing a `:colspan` or `:rowspan` greater than one stores fewer cells than
+  `:col_count`, and positions after the merge no longer line up with the visual
+  column.
 
-  ## Enumerating
-
-  A table is enumerable over its rows, and each row over its cells, so the whole
-  grid of text is one nested `Enum.map/2`:
+  A table is also enumerable over its rows, and each row over its cells, so the
+  whole grid of text is one nested `Enum.map/2`:
 
       Enum.map(table, fn row -> Enum.map(row, & &1.text) end)
       #=> [["Age", "0.042", "0.011", "0.001"], ...]
 
-  ## Rendering
+  ## Rendering and the native handle
 
-  A single table renders on its own with `to_markdown/2`, `to_html/1`, or
+  A single table renders on its own with `to_markdown/2`, `to_html/1` or
   `to_text/1` — the same output `PdfElixide.Document.to_markdown/2` and
   `to_html/2` produce for that table within its page:
 
       Table.to_markdown(table)
       #=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\\n|---|---|---|---|\\n..."}
 
-  ## The native handle
+  All three go through `:ref`, a handle to the detected table held on the Rust
+  side, so they work only on a table that came from extraction — not on a
+  hand-built struct — and stop working once `close/1` releases it. A `%Table{}`
+  therefore holds the same table twice: the decoded `:rows` you read here, and
+  behind `:ref` the version carrying the glyph metrics the renderers need. Both
+  live until `close/1` or garbage collection, so on a table-dense page — and
+  more so with `PdfElixide.Document.tables/1` — close the tables you are done
+  rendering.
 
-  Rendering goes through `:ref`, a handle to the detected table held on the Rust
-  side, so it works only on a table that came from extraction — not on a
-  hand-built struct — and stops working once `close/1` releases it.
-
-  That handle means a `%Table{}` holds the same table twice: the decoded `:rows`
-  you read here, and behind `:ref` the detected table as `pdf_oxide` built it,
-  kept because only it carries the glyph metrics the renderers need. Both live
-  until `close/1` or garbage collection, so on a table-dense page — and more so
-  with `PdfElixide.Document.tables/1`, which returns every page's tables at once —
-  close the tables you are done rendering.
-
-  The handle is shareable, and rendering through it runs concurrently:
-  `to_markdown/2`, `to_html/1` and `to_text/1` all take it shared, over a table
-  the handle already owns, so rendering one table from several processes runs in
-  parallel. `close/1` is exclusive and waits for a render already in flight.
-  Same model as the [Concurrency](guides/concurrency.md) guide describes for a
-  document.
+  The three renderers take the handle's lock shared and `close/1` takes it
+  exclusively; see the [Concurrency](guides/concurrency.md) guide.
   """
   alias PdfElixide.Document.Table.Cell
   alias PdfElixide.Document.Table.Row
@@ -101,8 +86,8 @@ defmodule PdfElixide.Document.Table do
 
   * `:bold_markers` — how `**bold**` markers are placed around spans whose font
     is bold: `:conservative` (the default) skips whitespace-only spans,
-    `:aggressive` wraps them too. This is the only conversion option upstream's
-    table renderer reads, which is why `to_html/1` takes none.
+    `:aggressive` wraps them too. It is the only option the table renderer
+    reads, which is why `to_html/1` takes none.
 
   An unknown key, or a `:bold_markers` value other than those two, raises
   `ArgumentError` naming the offending key; see the "Errors versus exceptions"
@@ -172,11 +157,10 @@ defmodule PdfElixide.Document.Table do
       Table.to_markdown(table)
       #=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\\n|---|---|---|---|\\n..."}
 
-  Two upstream quirks are worth knowing. Markdown requires a header row, so the
-  first row is rendered as one even when `:has_header?` is false. And while
-  `:colspan` widens a cell into extra pipe-delimited columns, `:rowspan` is
-  ignored entirely — a row whose cells were absorbed by a merge above it is
-  simply padded with empty cells on the right.
+  Markdown requires a header row, so the first row is rendered as one even when
+  `:has_header?` is false. And while `:colspan` widens a cell into extra
+  pipe-delimited columns, `:rowspan` is ignored entirely — a row whose cells
+  were absorbed by a merge above it is padded with empty cells on the right.
 
   An empty table renders as `""`. See `t:markdown_opts/0` for the options.
   """
@@ -195,8 +179,7 @@ defmodule PdfElixide.Document.Table do
     to_markdown(table, opts) |> Wrap.unwrap!()
   end
 
-  # The default below is pinned by `option_defaults_test.exs`, through
-  # `__option_defaults__(:markdown)` — changing it has to fail there first.
+  # Default pinned by `option_defaults_test.exs` via `__option_defaults__(:markdown)`.
   defp build_markdown_options(opts) do
     opts = Keyword.validate!(opts, @markdown_opts_keys)
     %{bold_markers: Keyword.get(opts, :bold_markers, :conservative)}
@@ -264,17 +247,15 @@ defmodule PdfElixide.Document.Table do
 
   The table is normally freed when the BEAM garbage-collects the handle;
   `close/1` frees it now, which is worth doing when walking many tables and
-  keeping only their text — what it frees is upstream's own copy of the table,
-  glyph metrics and all, which is the larger of the two representations a
-  `%Table{}` holds. The struct's own fields — rows, cells, spans — are
-  plain data and stay readable afterwards; only `to_markdown/2`, `to_html/1`, and
-  `to_text/1` stop working, returning `{:error, %PdfElixide.Error{reason:
-  :closed}}` (bang variants raise it).
+  keeping only their text — it frees upstream's own copy, glyph metrics and all,
+  the larger of the two representations a `%Table{}` holds. The struct's own
+  fields — rows, cells, spans — are plain data and stay readable afterwards;
+  only `to_markdown/2`, `to_html/1` and `to_text/1` stop working, returning
+  `{:error, %PdfElixide.Error{reason: :closed}}` (bang variants raise it).
 
-  Infallible and idempotent, so there is no `close!/1`. It does take the handle's
-  lock exclusively, so it waits for an in-flight render on the same table rather
-  than interrupting it — it frees the table as soon as the handle is idle, not
-  preemptively.
+  Infallible and idempotent, so there is no `close!/1`. It takes the handle's
+  lock exclusively, so it waits for an in-flight render rather than interrupting
+  it — freeing the table as soon as the handle is idle, not preemptively.
   """
   @spec close(t()) :: :ok
   def close(%__MODULE__{ref: ref}), do: Native.table_close(ref)
@@ -286,10 +267,6 @@ defmodule PdfElixide.Document.Table do
   def closed?(%__MODULE__{ref: ref}), do: Native.table_closed(ref)
 
   @doc false
-  # Builds a `Table` from the raw map returned by the NIF, renaming the
-  # `has_header`/`real_grid` keys to the `?`-suffixed struct fields and the
-  # `resource` handle to `:ref`, and converting the nested row maps into
-  # `PdfElixide.Document.Table.Row` structs.
   @spec from_nif(map()) :: t()
   def from_nif(%{
         page: page,

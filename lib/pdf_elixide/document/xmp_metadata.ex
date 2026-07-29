@@ -74,8 +74,6 @@ defmodule PdfElixide.Document.XmpMetadata do
         }
 
   @doc false
-  # Builds an `XmpMetadata` from the raw map returned by the NIF. Fields already
-  # arrive in their final shape (strings, lists, a map, and `nil`s).
   @spec from_nif(map()) :: t()
   def from_nif(%{
         title: title,

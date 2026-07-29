@@ -20,31 +20,16 @@ use crate::error::{closed_err, lock_err, panic_err};
 /// **Access is shared by default.** [`Closable::with_read`] serves documents,
 /// images, fonts and tables, so one `%Document{}` handle passed to several BEAM
 /// processes extracts concurrently instead of queueing. That is sound because
-/// upstream asserts `PdfDocument: Send + Sync` at compile time
-/// (`pdf_oxide/src/document.rs`), exposes no `&mut self` method on it at all,
-/// and keeps every one of its caches behind a `Mutex` or an atomic — its
-/// `load_lock` comment names a binding sharing one native handle across threads
-/// as the case it was written for. Temper expectations accordingly: that same
-/// lock serializes *cold* object loads, so concurrent readers contend inside
-/// upstream and only warm cache hits run fully parallel.
+/// upstream asserts `PdfDocument: Send + Sync`, exposes no `&mut self` method on
+/// it, and keeps every cache behind a `Mutex` or an atomic — though that same
+/// `load_lock` serializes *cold* object loads, so only warm cache hits run fully
+/// parallel. One field is not a cache: `mc_actualtext_mcids` is per-invocation
+/// extraction scratch keyed by page index, so two extractions of one page can
+/// cross-contaminate. Unrepairable here (the field is `pub(crate)`) and not
+/// caused by concurrency — two sequential calls do it too — so it is documented
+/// for callers in `guides/concurrency.md`.
 ///
-/// The caveat is that "every cache is locked" is not the same claim as "the type
-/// is thread-safe", and one field upstream is not a cache:
-/// `mc_actualtext_mcids` (`pdf_oxide/src/document.rs`) is per-invocation
-/// extraction scratch — which MCIDs had an in-stream `/ActualText`, so the
-/// struct-tree applier can honour §14.9.4 precedence — stored per *page index*
-/// on the document, written at the tail of `extract_spans_impl` and read back in
-/// a separate acquisition later in the same call. Two extractions of one page
-/// can therefore cross-contaminate and one of them silently returns the wrong
-/// replacement text. It is memory-safe and logically racy, and this binding
-/// cannot repair it: the field is `pub(crate)` with no way to make it
-/// invocation-local, and serializing every span-producing NIF to hide it would
-/// cost exactly the concurrency `with_read` exists for. It is not concurrency
-/// that introduces it either — two sequential calls do it too — so it is
-/// documented instead: see the "Sharing a document across processes" section of
-/// `PdfElixide.Document`, pinned by `test/pdf_elixide/upstream_drift_test.exs`.
-///
-/// [`Closable::with_lock`] is exclusive, and is now for exactly two things: the
+/// [`Closable::with_lock`] is exclusive, and is for exactly two things: the
 /// editor, whose `DocumentEditor` methods take `&mut self`, and
 /// `document_authenticate`, whose object-cache invalidation must not be
 /// straddled by a reader. Both run the caller's work in a closure so the guard
@@ -148,29 +133,22 @@ impl<T> Closable<T> {
 /// Runs `f`, turning a panic into a `:panic` error instead of letting it unwind
 /// out of the NIF.
 ///
-/// This exists to protect the lock, not just the error message. `pdf_oxide` has
-/// thousands of `unwrap`/`expect` call sites, so a malformed PDF can panic deep
-/// inside an extraction that runs while a guard is alive. `std` records
-/// poisoning only when a panic is in flight as the guard drops
-/// (`std/src/sync/poison.rs`, `Flag::done`), so catching the unwind *inside* the
-/// guard's scope — which is why the callers above bind the guard first — lets the
-/// guard drop cleanly and leaves the lock usable. Without it, one panic would
-/// make every later call on that handle report `:lock_poisoned` forever, with
-/// only `close` still working.
+/// This exists to protect the lock, not just the error message. `std` records
+/// poisoning only when a panic is in flight as the guard drops, so catching the
+/// unwind *inside* the guard's scope — which is why the callers above bind the
+/// guard first — lets the guard drop cleanly and leaves the lock usable.
+/// Without it, one panic anywhere in `pdf_oxide` would make every later call on
+/// that handle report `:lock_poisoned` forever, with only `close` still working.
 ///
 /// `AssertUnwindSafe` is the deliberate trade-off: the value stays alive, so a
-/// panic partway through a mutation can leave upstream state partially updated.
-/// Under [`Closable::with_read`] the assertion is wider than that, and worth
-/// spelling out — the panic can unwind while *other threads hold shared guards
-/// on the same value* and are driving upstream's interior mutability, so what is
-/// being asserted is that a half-updated value is acceptable to concurrent
-/// callers, not merely to the next one. What makes that palatable is what the
-/// interior mutability is: `Mutex`-guarded caches (objects, fonts, pages, the
-/// encryption handler) whose worst case is a stale or missing entry, reached
-/// through upstream's own `lock_or_recover`, so a poisoned inner mutex is
-/// recovered rather than propagated. Still better than a permanently bricked
-/// handle, and the `:panic` error tells the caller to close and reopen if it
-/// recurs.
+/// panic partway through a mutation can leave upstream state partially updated,
+/// and under [`Closable::with_read`] that half-updated value is visible to
+/// concurrent readers too. What makes it acceptable is what the interior
+/// mutability is — `Mutex`-guarded caches whose worst case is a stale or missing
+/// entry, reached through upstream's own `lock_or_recover`, so a poisoned inner
+/// mutex is recovered rather than propagated. Still better than a permanently
+/// bricked handle, and the `:panic` error tells the caller to close and reopen
+/// if it recurs.
 fn contain_panic<R>(f: impl FnOnce() -> NifResult<R>) -> NifResult<R> {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|payload| Err(panic_err(&*payload)))
 }
@@ -224,13 +202,11 @@ mod tests {
     /// `with_read` exclusive the second thread would block on acquisition and
     /// the first would time out: it degrades to a failure, never to a hang.
     ///
-    /// Only success paths run here, which is what makes this testable at all:
-    /// the error paths build atoms and need a live BEAM (see the note below),
-    /// `Ok` does not. For the same reason nothing inside a guard may `panic` —
-    /// `contain_panic` would catch it and reach for an atom to describe it,
-    /// aborting the test process instead of failing the test — so every
-    /// assertion is made after the closure returns, and the sends are allowed to
-    /// fail silently into the timeout the peer is already waiting on.
+    /// Only success paths run here, which is what makes this testable without a
+    /// BEAM: the error paths build atoms, `Ok` does not. For the same reason
+    /// nothing inside a guard may `panic` — `contain_panic` would catch it and
+    /// reach for an atom, aborting the test process instead of failing the test
+    /// — so every assertion is made after the closure returns.
     #[test]
     fn two_with_read_calls_overlap() {
         let closable = &Closable::new("Test", 0_u8);
@@ -392,16 +368,12 @@ mod tests {
     /// whatever a previous panic left behind. It is one of exactly two places in
     /// `Closable` that recover instead of erroring.
     ///
-    /// Nothing else can check that promise. `contain_panic` makes poisoning
-    /// unreachable through the crate's own surface — `lock` and `read` are
-    /// private, and both accessors catch inside the guard's scope — so this is
-    /// defence in depth, pinned the way `MAX_OUTLINE_DEPTH` is: not because the
-    /// path is reachable today, but because the recovery is invisible from
-    /// Elixir *and* from every other route, so its removal would be silent.
-    ///
-    /// Note what deliberately is not asserted alongside it: that `with_read` on
-    /// the same poisoned lock reports `:lock_poisoned`. That path builds an
-    /// atom, which would abort the test process rather than fail the test.
+    /// `contain_panic` makes poisoning unreachable through the crate's own
+    /// surface, so this is defence in depth, pinned the way `MAX_OUTLINE_DEPTH`
+    /// is: the recovery is invisible from every route, so its removal would be
+    /// silent. Deliberately not asserted alongside it: that `with_read` on the
+    /// same poisoned lock reports `:lock_poisoned` — that path builds an atom,
+    /// which would abort the test process rather than fail the test.
     #[test]
     fn close_recovers_a_poisoned_lock() {
         let closable = Closable::new("Test", 0_u8);

@@ -34,9 +34,6 @@ defmodule PdfElixide.Document.OutlineItem do
         }
 
   @doc false
-  # Builds an `OutlineItem` from the raw map returned by the NIF. `:title` and
-  # `:dest` already arrive in their final shapes (a string and a tagged tuple or
-  # `nil`); only the nested child maps need to be converted recursively.
   @spec from_nif(map()) :: t()
   def from_nif(%{title: title, dest: dest, children: children}) do
     %__MODULE__{

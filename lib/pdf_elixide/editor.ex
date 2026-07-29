@@ -14,12 +14,10 @@ defmodule PdfElixide.Editor do
   the editor — you can keep editing and write again. `close/1` **discards
   unsaved edits**, so write before you close.
 
-  The editor mutates, and the underlying `DocumentEditor` exposes even its
-  readers as mutations, so *every* call on an editor takes the handle's lock
-  exclusively — including `PdfElixide.Form.fields/1`, which only reads. Where a
-  document's reads take that lock shared and run concurrently, concurrent use of
-  a single editor serializes; give each process its own editor if you need them
-  to work at once. See the [Concurrency](guides/concurrency.md) guide.
+  *Every* call on an editor takes the handle's lock exclusively — including
+  `PdfElixide.Form.fields/1`, which only reads — so concurrent use of a single
+  editor serializes. Give each process its own editor if you need them to work
+  at once; see the [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Error
@@ -94,11 +92,9 @@ defmodule PdfElixide.Editor do
   An editor holds the source document plus its pending edits in memory on the
   Rust side, normally freed only when the BEAM garbage-collects the handle.
   `close/1` frees it now, which matters for long-lived processes that open many
-  documents. Calling it is optional and idempotent.
-
-  It takes the same lock every other call on the handle takes, so it waits for an
-  in-flight call on the same editor — a save can hold that lock for seconds.
-  *Immediately* means as soon as the handle is idle, not preemptively.
+  documents. Calling it is optional and idempotent. It waits for an in-flight
+  call on the same editor — a save can hold the handle's lock for seconds — so
+  *immediately* means as soon as the handle is idle, not preemptively.
 
   **Unsaved edits are discarded** — call `save/3` or `to_binary/2` first.
   Afterwards, functions that read or mutate the editor return
@@ -132,8 +128,8 @@ defmodule PdfElixide.Editor do
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`.
 
-  Defaults mirror `pdf_oxide`'s `SaveOptions::full_rewrite()`, so
-  calling `save/2` is equivalent to `save/3` with no options.
+  Defaults mirror `pdf_oxide`'s own full-rewrite defaults, so calling `save/2`
+  is equivalent to `save/3` with no options.
 
   An unknown key, or a declared key given a value that is not a boolean,
   raises `ArgumentError` naming the offending key; see the "Errors versus
@@ -213,8 +209,7 @@ defmodule PdfElixide.Editor do
     to_binary(editor, opts) |> Wrap.unwrap!()
   end
 
-  # Every default below is pinned key-by-key by `option_defaults_test.exs`,
-  # through `__option_defaults__(:save)` — changing one has to fail there first.
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:save)`.
   defp build_save_options(opts) do
     opts = Keyword.validate!(opts, @save_opts_keys)
 

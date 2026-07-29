@@ -25,13 +25,9 @@ defmodule PdfElixide.Document.Image do
   `:height`, and `:color_space`, or reach for `to_binary/2` when you want an
   encoded image).
 
-  The handle may be passed to other processes, and its reads run concurrently:
-  `data/1`, `to_binary/2` and `save/3` all take it shared, so encoding one image
-  from several processes does not queue. Unlike a document there is no shared
-  cache underneath — the image is already materialized behind the handle — so
-  those reads really do run in parallel rather than contending. `close/1` is the
-  exclusive one; see its own docs. Same model as the
-  [Concurrency](guides/concurrency.md) guide describes for a document.
+  `data/1`, `to_binary/2` and `save/3` take the handle's lock shared and
+  `close/1` takes it exclusively, so encoding one image from several processes
+  runs in parallel; see the [Concurrency](guides/concurrency.md) guide.
   """
   alias PdfElixide.Document.Image
   alias PdfElixide.Error
@@ -103,9 +99,6 @@ defmodule PdfElixide.Document.Image do
         }
 
   @doc false
-  # Builds an `Image` from the raw map returned by the NIF. Every field already
-  # arrives in its final shape (bbox as a struct, color space and format as
-  # atoms, the image itself as a resource handle under `resource`).
   @spec from_nif(map()) :: t()
   def from_nif(%{
         page: page,
@@ -219,11 +212,10 @@ defmodule PdfElixide.Document.Image do
 
   The bytes behind `:ref` are normally freed when the BEAM garbage-collects the
   handle; `close/1` frees them now, which is worth doing when walking many large
-  images. Calling it is optional and idempotent.
-
-  It takes the handle's lock exclusively, so it waits for an in-flight `data/1`,
-  `to_binary/2` or `save/3` on the same image — re-encoding a large raster is not
-  instant. *Immediately* means as soon as the handle is idle, not preemptively.
+  images. Calling it is optional and idempotent. It takes the handle's lock
+  exclusively, so it waits for an in-flight `data/1`, `to_binary/2` or `save/3`
+  on the same image — *immediately* means as soon as the handle is idle, not
+  preemptively.
 
   Afterwards `data/1`, `to_binary/2`, and `save/3` return
   `{:error, %PdfElixide.Error{reason: :closed}}` (bang variants raise it); the

@@ -25,12 +25,11 @@ defmodule PdfElixide.Form do
   no way to add one. A name that is not in the form is
   `{:error, %PdfElixide.Error{}}`.
 
-  Which lock `fields/1` takes follows its source. On a `PdfElixide.Document` it
-  is an ordinary shared read, so several processes can list one document's
-  fields at once. On a `PdfElixide.Editor` it takes the editor's lock
-  *exclusively*, exactly as `set_value/3` and every other editor call does — so
-  concurrent form work on one editor serializes, whether it writes or only
-  reads. See the [Concurrency](guides/concurrency.md) guide.
+  Which lock `fields/1` takes follows its source: a shared read on a
+  `PdfElixide.Document`, and the editor's exclusive lock on a
+  `PdfElixide.Editor`, exactly as `set_value/3` takes. So concurrent form work
+  on one editor serializes even when it only reads; see the
+  [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Document

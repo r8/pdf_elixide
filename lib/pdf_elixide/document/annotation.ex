@@ -150,10 +150,6 @@ defmodule PdfElixide.Document.Annotation do
         }
 
   @doc false
-  # Builds an `Annotation` from the raw map returned by the NIF. Every field
-  # already arrives in its final shape (subtype as an atom, `rect`/`flags`/`color`
-  # as structs, destination/action/field_type as tagged terms); only
-  # `annotation_type` is renamed to the `:type` field.
   @spec from_nif(map()) :: t()
   def from_nif(%{
         page: page,

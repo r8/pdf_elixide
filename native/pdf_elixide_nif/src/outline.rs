@@ -11,24 +11,19 @@ use crate::{atoms, error::tagged_err};
 /// panic — it aborts the OS process, taking the whole BEAM with it, so
 /// `contain_panic` cannot degrade it the way it does an upstream `unwrap`.
 ///
-/// 256 is far past any real table of contents while staying comfortably inside
-/// the dirty scheduler's stack; upstream caps its own name-tree walk at 32
-/// (`pdf_oxide` `src/outline.rs`, `NAME_TREE_MAX_DEPTH`, citing its
-/// untrusted-input limits policy), its page-tree walk at 50 and object
-/// resolution at 100. Recursing this far is safe *a fortiori*: upstream's much
-/// heavier `parse_outline_item` already recursed to the same depth on this same
-/// thread to build the tree we are handed.
+/// 256 is far past any real table of contents while staying inside the dirty
+/// scheduler's stack, and recursing this far is safe *a fortiori*: upstream's
+/// much heavier `parse_outline_item` already recursed to the same depth on this
+/// same thread to build the tree we are handed.
 ///
 /// **This is defence in depth, not a complete fix.** `PdfDocument::get_outline`
-/// returns a fully owned tree, built eagerly by `parse_outline_item`
-/// (`src/outline.rs:112`, recursing at :143), which has no depth parameter, no
-/// visited set and no cap of its own — nor does the `/Next` sibling walk, where
-/// a cycle loops until it exhausts memory. A document deep enough to matter
-/// therefore dies *there*, before this code runs. `load_object`'s
-/// `MAX_RECURSION_DEPTH` and `RESOLVING_STACK` (`src/document.rs:2249-2273`) do
-/// not help, being scoped to a single resolution. The cap is what keeps this
-/// crate from being the remaining hole, and becomes the effective guard once
-/// upstream closes theirs.
+/// returns a fully owned tree, built eagerly by `parse_outline_item`, which has
+/// no depth parameter, no visited set and no cap of its own — nor does its
+/// `/Next` sibling walk, where a cycle loops until it exhausts memory. A
+/// document deep enough to matter therefore dies *there*, before this code runs.
+/// `load_object`'s own `MAX_RECURSION_DEPTH` does not help, being scoped to a
+/// single resolution. The cap is what keeps this crate from being the remaining
+/// hole, and becomes the effective guard once upstream closes theirs.
 const MAX_OUTLINE_DEPTH: usize = 256;
 
 #[derive(NifMap, Debug)]
