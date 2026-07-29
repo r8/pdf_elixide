@@ -22,6 +22,8 @@ defmodule PdfElixide.Document.PageTest do
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
+  @text_layer_pdf Path.join(@fixtures, "text_layer.pdf")
+  @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -234,6 +236,116 @@ defmodule PdfElixide.Document.PageTest do
       doc = Document.open!(@valid_pdf)
 
       assert_raise Error, fn -> Page.rotation!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "has_text_layer/1" do
+    # One test per branch of upstream's two-stage probe. `text_layer.pdf` is the
+    # only fixture that can answer `false` at all: every other one declares a
+    # font, either on the page or on an ancestor /Pages node.
+    test "answers true for a page with fonts and a text object" do
+      doc = Document.open!(@text_layer_pdf)
+      assert {:ok, true} = Page.has_text_layer(Document.page!(doc, 0))
+    end
+
+    test "answers false for an image-only page, though its stream contains Do" do
+      # The sharpest case, and the one OCR routing turns on. Page 1 draws its
+      # image with `/Im1 Do`, so the content-stream byte scan would say "may
+      # contain text" — but the resource check settles it first: no /Font, and
+      # the sole XObject is an image rather than a form.
+      doc = Document.open!(@text_layer_pdf)
+      assert {:ok, false} = Page.has_text_layer(Document.page!(doc, 1))
+    end
+
+    test "answers false for a page declaring fonts it never uses" do
+      # Page 2 passes the resource check on the strength of its /Font entry and
+      # is then rejected by the content scan: the stream fills a rectangle and
+      # contains neither BT nor Do. Nothing but this page reaches that stage.
+      doc = Document.open!(@text_layer_pdf)
+      assert {:ok, false} = Page.has_text_layer(Document.page!(doc, 2))
+    end
+
+    test "answers true for a page whose text lives in a form XObject" do
+      # Page 3 has no /Font of its own; the form XObject arm of the resource
+      # check is what keeps it alive, and `Do` is what carries the content scan.
+      doc = Document.open!(@text_layer_pdf)
+      assert {:ok, true} = Page.has_text_layer(Document.page!(doc, 3))
+    end
+
+    test "answers false for a page with no /Resources at all" do
+      doc = Document.open!(@text_layer_pdf)
+      assert {:ok, false} = Page.has_text_layer(Document.page!(doc, 4))
+    end
+
+    test "agrees with what text/1 can actually extract" do
+      # The whole point of the predicate: `text/1` returns "" for a page with no
+      # text layer *and* for a blank one, so an empty string is not a signal.
+      doc = Document.open!(@text_layer_pdf)
+
+      layers = Enum.map(doc, &Page.has_text_layer?/1)
+      extracted = Enum.map(doc, fn page -> page |> Page.text!() |> String.trim() != "" end)
+
+      assert layers == [true, false, false, true, false]
+      assert layers == extracted
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Page.has_text_layer(%Page{doc: doc, index: 99})
+    end
+
+    test "returns {:error, reason} for a page that does not resolve" do
+      # `broken_page.pdf`'s /Count claims three pages where the tree holds two,
+      # so index 2 clears the bounds check and then fails to resolve. The only
+      # way to reach this error branch through the *document* rather than the
+      # handle — upstream swallows every other failure inside the probe.
+      doc = Document.open!(@broken_page_pdf)
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Page.has_text_layer(%Page{doc: doc, index: 2})
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@text_layer_pdf)
+      page = Document.page!(doc, 0)
+      Document.close(doc)
+      assert {:error, %Error{reason: :closed}} = Page.has_text_layer(page)
+    end
+  end
+
+  describe "has_text_layer?/1" do
+    test "returns the boolean directly" do
+      doc = Document.open!(@text_layer_pdf)
+      assert Enum.map(doc, &Page.has_text_layer?/1) == [true, false, false, true, false]
+    end
+
+    # Unlike `Document.has_structure_tree?/1` and `Document.has_xfa?/1`, this
+    # predicate degrades nothing — every error raises, not just a failure of the
+    # handle. Each of the three reachable shapes is asserted separately, because
+    # that difference is the whole of its contract.
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+
+      error = assert_raise Error, fn -> Page.has_text_layer?(%Page{doc: doc, index: 99}) end
+      assert error.reason == :out_of_range
+    end
+
+    test "raises for a page that does not resolve" do
+      doc = Document.open!(@broken_page_pdf)
+
+      error = assert_raise Error, fn -> Page.has_text_layer?(%Page{doc: doc, index: 2}) end
+      assert error.reason == :invalid_pdf
+    end
+
+    test "raises for a closed document" do
+      doc = Document.open!(@text_layer_pdf)
+      page = Document.page!(doc, 0)
+      Document.close(doc)
+
+      error = assert_raise Error, fn -> Page.has_text_layer?(page) end
+      assert error.reason == :closed
     end
   end
 

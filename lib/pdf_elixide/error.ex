@@ -66,12 +66,23 @@ defmodule PdfElixide.Error do
 
   Predicates ending in `?` are the mirror image. They return a bare boolean, so
   a failure has nowhere to be reported and this struct is raised instead — from
-  a function with no `!` in its name. Only a failure of the *handle* reaches
-  there: `PdfElixide.Document.has_structure_tree?/1` and
-  `PdfElixide.Document.has_xfa?/1` answer `false` for a document whose feature
-  cannot be read (their strict counterparts `PdfElixide.Document.has_structure_tree/1`
-  and `PdfElixide.Document.has_xfa/1` return the error instead), while
-  `PdfElixide.Document.encrypted?/1` asks something upstream cannot fail.
+  a function with no `!` in its name. What each one raises *for* follows from
+  how much tolerance is worth applying:
+
+    * `PdfElixide.Document.has_structure_tree?/1` and
+      `PdfElixide.Document.has_xfa?/1` answer `false` for a document whose
+      feature cannot be read, so only a failure of the *handle* raises. Their
+      strict counterparts `PdfElixide.Document.has_structure_tree/1` and
+      `PdfElixide.Document.has_xfa/1` return the error instead.
+    * `PdfElixide.Document.Page.has_text_layer?/1` raises for *everything*,
+      including an out-of-range index and a page that fails to resolve.
+      `pdf_oxide` applies its own tolerance inside the probe — unreadable
+      resources and content streams answer `true` rather than failing — so what
+      survives to Elixir is genuinely exceptional, and degrading it to `false`
+      would invert the answer callers act on.
+    * `PdfElixide.Document.encrypted?/1` asks something upstream cannot fail, so
+      only the handle can raise.
+
   `closed?/1` never raises on any handle.
   """
 

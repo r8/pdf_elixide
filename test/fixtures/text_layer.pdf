@@ -1,0 +1,84 @@
+%PDF-1.4
+%âãÏÓ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 8 0 R 10 0 R 13 0 R] /Count 5 /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 14 0 R >> >> >>
+endobj
+4 0 obj
+<<  /Length 47 >>
+stream
+BT /F1 24 Tf 72 720 Td (Has a text layer) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Resources << /XObject << /Im1 7 0 R >> >> >>
+endobj
+6 0 obj
+<<  /Length 33 >>
+stream
+q 200 0 0 200 72 500 cm /Im1 Do Q
+endstream
+endobj
+7 0 obj
+<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>
+stream
+ÿÿÿ
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 9 0 R /Resources << /Font << /F1 14 0 R >> >> >>
+endobj
+9 0 obj
+<<  /Length 28 >>
+stream
+0 0 1 rg 72 500 200 100 re f
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 11 0 R /Resources << /XObject << /Fx 12 0 R >> >> >>
+endobj
+11 0 obj
+<<  /Length 28 >>
+stream
+q 1 0 0 1 72 500 cm /Fx Do Q
+endstream
+endobj
+12 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 300 50] /Resources << /Font << /F1 14 0 R >> >> /Length 55 >>
+stream
+BT /F1 18 Tf 0 10 Td (Text inside a form XObject) Tj ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R >>
+endobj
+14 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 15
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000171 00000 n 
+0000000274 00000 n 
+0000000372 00000 n 
+0000000478 00000 n 
+0000000562 00000 n 
+0000000707 00000 n 
+0000000810 00000 n 
+0000000889 00000 n 
+0000000997 00000 n 
+0000001077 00000 n 
+0000001272 00000 n 
+0000001320 00000 n 
+trailer
+<< /Size 15 /Root 1 0 R >>
+startxref
+1418
+%%EOF

@@ -1214,6 +1214,43 @@ fn document_get_page_rotation(
     })
 }
 
+/// Returns whether the page carries a text layer, or is image-only / empty.
+///
+/// A *static probe*, not an extraction — upstream's `has_text_layer`
+/// (`pdf_oxide` `src/document.rs`) loads no fonts and maps no glyphs. It runs
+/// two stages, and both are approximations in the same direction:
+///
+/// 1. `page_cannot_have_text` inspects the resource dictionary. No
+///    `/Resources` at all answers `false` outright; a non-empty `/Font`, or any
+///    `/XObject` entry that a 1 KB peek says is a Form XObject, moves on to
+///    stage 2. `/Resources` that cannot be resolved, or that is not a
+///    dictionary, also moves on — conservative, so extraction still gets tried.
+/// 2. `may_contain_text` scans the decoded content stream for a
+///    delimiter-bounded `BT` or `Do`. It does not tokenise, so this is a *may*.
+///
+/// Hence `false` is the reliable direction and `true` is not a promise that
+/// `extract_text` returns anything: a page whose only `/XObject` is an image
+/// short-circuits at stage 1 and answers `false` *even though its stream
+/// contains `Do`*, while a page with a text-free Form XObject answers `true`,
+/// and so does one whose content stream fails to decode (upstream's
+/// `Err(_) => Ok(true)`). Invisible text (`Tr 3`) is not considered at all.
+///
+/// `ensure_page_in_range` is load-bearing for the same reason it is on
+/// `document_page_label`: upstream does not bounds-check, so a bad index would
+/// surface as whatever `get_page` fails with — a generic `InvalidPdf` or
+/// `ObjectNotFound` — rather than a matchable `:out_of_range`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_has_text_layer(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<bool> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        doc.has_text_layer(page_index).map_err(to_nif_err)
+    })
+}
+
 /// Extracts form fields from the PDF document.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {

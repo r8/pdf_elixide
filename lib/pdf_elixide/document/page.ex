@@ -196,6 +196,68 @@ defmodule PdfElixide.Document.Page do
   end
 
   @doc """
+  Returns whether the page carries a text layer, as opposed to being image-only
+  or blank.
+
+  This is the signal `text/1` cannot give: an empty string means "no text was
+  extracted", which a scanned page and a genuinely blank page produce alike.
+  A `false` here says the page has nothing to extract, so a caller can route it
+  to OCR instead of treating the empty result as content.
+
+  It is a **static probe, not an extraction** — no text is assembled, no fonts
+  are loaded. `pdf_oxide` looks at the page's resource dictionary, and then scans
+  the content stream's bytes for a text-showing (`BT`) or XObject-invoking (`Do`)
+  operator. Both stages approximate in the same direction, so the two answers are
+  not equally strong:
+
+    * **`false` is reliable.** It is reached only when the page declares no
+      fonts and no form XObjects, or when its content stream contains neither
+      operator.
+    * **`true` is not a promise that `text/1` returns anything.** A page whose
+      only XObject holds no text still answers `true`, and so does a page whose
+      content stream cannot be decoded — deliberately, so that extraction is
+      still attempted rather than skipped on a guess.
+
+  One asymmetry is worth knowing, because it looks like a bug: a page with no
+  fonts whose sole XObject is an *image* answers `false` even though its content
+  stream does contain `Do`. The resource check settles it before the byte scan
+  runs — which is what makes the image-only case answerable cheaply. Text drawn
+  in invisible render mode (`Tr 3`) is not considered either way.
+
+  A page whose `:index` is not a page of the document — only reachable from a
+  hand-built or stale `%Page{}` — yields `%PdfElixide.Error{reason: :out_of_range}`.
+  """
+  @spec has_text_layer(t()) :: {:ok, boolean()} | {:error, Error.t()}
+  def has_text_layer(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
+    Wrap.call(fn -> Native.document_has_text_layer(ref, index) end)
+  end
+
+  @doc """
+  Same as `has_text_layer/1` but returns the bare boolean, raising on failure.
+
+  Unlike `PdfElixide.Document.has_structure_tree?/1` and
+  `PdfElixide.Document.has_xfa?/1`, this degrades nothing: *every* error raises,
+  not just a failure of the handle. `pdf_oxide` has already applied its own
+  tolerance inside the probe — unreadable resources and undecodable content
+  streams answer `true` rather than failing — so what still reaches here is a
+  page that does not resolve, an index outside the document, or a dead handle.
+  Answering `false` for any of those would invert the meaning callers act on,
+  reporting "nothing to extract, send it to OCR" for a page that was merely
+  unreadable.
+
+  Sweep a document with it:
+
+      Enum.reject(doc, &PdfElixide.Document.Page.has_text_layer?/1)
+  """
+  @spec has_text_layer?(t()) :: boolean()
+  def has_text_layer?(page) do
+    case has_text_layer(page) do
+      {:ok, value} -> value
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
   Returns the page's logical page label (e.g. `"i"`, `"1"`, `"A-1"`).
 
   This is the human-facing page number the PDF may define, independent of the

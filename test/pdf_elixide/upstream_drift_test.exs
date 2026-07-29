@@ -334,6 +334,42 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
+  describe "has_text_layer on a document that cannot be decrypted" do
+    test "answers true where text/1 answers empty" do
+      # Upstream's `has_text_layer` (`src/document.rs`) has no
+      # `is_encrypted_unreadable()` guard, unlike `extract_spans` and
+      # `assemble_text_via_reading_order`, which both bail early and return
+      # nothing. Instead the page dictionary resolves, the resource check passes
+      # on its /Font entry, and the content stream then fails to decrypt — which
+      # lands on the deliberate `Err(_) => Ok(true)` arm, "be conservative, let
+      # extraction try".
+      #
+      # So an unauthenticated encrypted page reports a text layer it cannot
+      # produce a single character of. That is upstream's posture, not this
+      # binding's: `Page.has_text_layer/1`'s docs say `true` is not a promise
+      # `text/1` returns anything, and this is the sharpest case of it.
+      #
+      # If this flips to an error, or to `{:ok, false}`, upstream has added the
+      # guard — re-read that paragraph rather than relaxing the assertion, and
+      # note the reason atom would then be `:encrypted`.
+      doc = open(@encrypted_pdf)
+
+      assert {:ok, true} = Page.has_text_layer(Document.page!(doc, 0))
+      assert {:ok, ""} = Document.text(doc, 0)
+    end
+
+    test "answers true once authenticated too, for the ordinary reason" do
+      # The control: with the password applied the same page reaches the byte
+      # scan and finds real text, so the `true` above cannot be read as
+      # "authentication makes no difference".
+      doc = Document.open!(@encrypted_pdf, password: "secret")
+
+      assert {:ok, true} = Page.has_text_layer(Document.page!(doc, 0))
+      assert {:ok, text} = Document.text(doc, 0)
+      assert String.trim(text) != ""
+    end
+  end
+
   describe "HTML output escaping" do
     # `to_html/2`'s docs promise that text taken from the PDF cannot inject
     # markup, and that `:image_output_dir` is the only unescaped input. That
