@@ -5,6 +5,23 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.11.0](https://github.com/r8/pdf_elixide/compare/v0.10.0...v0.11.0) (2026-07-30)
+
+
+
+
+### Features:
+
+* add rects and lines extractors by [@r8](https://github.com/r8)
+
+* add layers and inks extractors by [@r8](https://github.com/r8)
+
+* add page text layer detection by [@r8](https://github.com/r8)
+
+* add page media box extraction by [@r8](https://github.com/r8)
+
+* add page rotation extraction by [@r8](https://github.com/r8)
+
 ## [v0.10.0](https://github.com/r8/pdf_elixide/compare/v0.9.0...v0.10.0) (2026-07-28)
 
 
