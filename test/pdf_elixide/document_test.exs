@@ -60,6 +60,9 @@ defmodule PdfElixide.DocumentTest do
   # Declares its /OCProperties and /OCGs inline and invokes no XObject at all —
   # the control for both branches @layers_and_inks_pdf takes the other way.
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
+  # One page per branch family of upstream's rectangle and straight-line
+  # classification — the only fixture drawing a rectangle at all.
+  @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
   @unreachable_page 2
   @password "secret"
   @latin1_password "caf" <> <<0xE9>>
@@ -1376,6 +1379,180 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@table_pdf)
       [path | _] = Document.paths!(doc, 0)
       assert inspect(path) == "#PdfElixide.Document.Path<p0 2 ops>"
+    end
+  end
+
+  describe "rects/1" do
+    test "returns {:ok, rects} for every page as a flat list of structs" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert {:ok, rects} = Document.rects(doc)
+      assert rects != []
+      assert Enum.all?(rects, &match?(%Document.Path{}, &1))
+    end
+
+    test "length equals the sum of the per-page rect counts" do
+      doc = Document.open!(@vector_shapes_pdf)
+      {:ok, all} = Document.rects(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.rects(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each rect carries its zero-based page index" do
+      doc = Document.open!(@vector_shapes_pdf)
+      {:ok, rects} = Document.rects(doc)
+      assert Enum.map(rects, & &1.page) == [0, 0, 0, 3, 3]
+    end
+  end
+
+  describe "rects!/1" do
+    test "returns the flat rect list of the whole document" do
+      doc = Document.open!(@vector_shapes_pdf)
+      rects = Document.rects!(doc)
+      assert Enum.all?(rects, &match?(%Document.Path{}, &1))
+    end
+  end
+
+  describe "rects/2" do
+    test "returns {:ok, rects} carrying operations, bbox, colors and stroke style" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert {:ok, [%Document.Path{} = rect | _] = rects} = Document.rects(doc, 0)
+
+      assert length(rects) == 3
+      assert rect.page == 0
+      assert %Rect{x: 50.0, y: 700.0, width: 100.0, height: 40.0} = rect.bbox
+      assert rect.operations == [{:rectangle, 50.0, 700.0, 100.0, 40.0}]
+      assert %Color.RGB{} = rect.fill_color
+      assert is_float(rect.stroke_width)
+      assert rect.line_cap in [:butt, :round, :square]
+      assert rect.line_join in [:miter, :round, :bevel]
+    end
+
+    test "returns {:ok, []} for a page whose paths are all lines" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert {:ok, []} = Document.rects(doc, 1)
+    end
+
+    test "returns {:ok, []} for a page with no vector graphics" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.rects(doc, 0)
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.rects(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.rects(doc, -1) end
+    end
+  end
+
+  describe "rects!/2" do
+    test "returns the rects for a valid page" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert [%Document.Path{} | _] = Document.rects!(doc, 0)
+    end
+
+    test "raises Error for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.rects!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.rects!(doc, :first) end
+    end
+  end
+
+  describe "lines/1" do
+    test "returns {:ok, lines} for every page as a flat list of structs" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, lines} = Document.lines(doc)
+      assert lines != []
+      assert Enum.all?(lines, &match?(%Document.Path{}, &1))
+    end
+
+    test "length equals the sum of the per-page line counts" do
+      doc = Document.open!(@vector_shapes_pdf)
+      {:ok, all} = Document.lines(doc)
+
+      per_page_total =
+        0..(Document.page_count!(doc) - 1)//1
+        |> Enum.map(fn i -> length(elem(Document.lines(doc, i), 1)) end)
+        |> Enum.sum()
+
+      assert length(all) == per_page_total
+    end
+
+    test "each line carries its zero-based page index" do
+      doc = Document.open!(@vector_shapes_pdf)
+      {:ok, lines} = Document.lines(doc)
+      assert Enum.map(lines, & &1.page) == [1, 1]
+    end
+  end
+
+  describe "lines!/1" do
+    test "returns the flat line list of the whole document" do
+      doc = Document.open!(@table_pdf)
+      lines = Document.lines!(doc)
+      assert Enum.all?(lines, &match?(%Document.Path{}, &1))
+    end
+  end
+
+  describe "lines/2" do
+    test "returns {:ok, lines} carrying operations, bbox and stroke style" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, [%Document.Path{} = line | _] = lines} = Document.lines(doc, 0)
+
+      assert length(lines) == 3
+      assert line.page == 0
+      assert %Rect{} = line.bbox
+      assert [{:move_to, _, _}, {:line_to, _, _}] = line.operations
+      assert %Color.RGB{} = line.stroke_color
+      assert is_float(line.stroke_width)
+    end
+
+    test "returns {:ok, []} for a page whose paths are all rectangles" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert {:ok, []} = Document.lines(doc, 0)
+    end
+
+    test "returns {:ok, []} for a page with no vector graphics" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.lines(doc, 0)
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.lines(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.lines(doc, -1) end
+    end
+  end
+
+  describe "lines!/2" do
+    test "returns the lines for a valid page" do
+      doc = Document.open!(@table_pdf)
+      assert [%Document.Path{} | _] = Document.lines!(doc, 0)
+    end
+
+    test "raises Error for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.lines!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.lines!(doc, :first) end
     end
   end
 

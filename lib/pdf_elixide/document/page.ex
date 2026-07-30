@@ -419,6 +419,47 @@ defmodule PdfElixide.Document.Page do
   end
 
   @doc """
+  Extracts the rectangles of the page.
+
+  The paths of `paths/1` narrowed to those classified as rectangles. Returns
+  `{:ok, []}` when the page draws none. See the "Rectangles and straight lines"
+  section of `PdfElixide.Document.Path` for which shapes qualify.
+  """
+  @spec rects(t()) :: {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
+  def rects(%__MODULE__{doc: doc, index: index}) do
+    Document.rects(doc, index)
+  end
+
+  @doc """
+  Same as `rects/1` but raises an error if it fails.
+  """
+  @spec rects!(t()) :: [PdfElixide.Document.Path.t()]
+  def rects!(page) do
+    rects(page) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Extracts the straight lines of the page.
+
+  The paths of `paths/1` narrowed to those classified as single straight
+  segments. Returns `{:ok, []}` when the page draws none. See the "Rectangles
+  and straight lines" section of `PdfElixide.Document.Path` for which shapes
+  qualify.
+  """
+  @spec lines(t()) :: {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
+  def lines(%__MODULE__{doc: doc, index: index}) do
+    Document.lines(doc, index)
+  end
+
+  @doc """
+  Same as `lines/1` but raises an error if it fails.
+  """
+  @spec lines!(t()) :: [PdfElixide.Document.Path.t()]
+  def lines!(page) do
+    lines(page) |> Wrap.unwrap!()
+  end
+
+  @doc """
   Extracts the raster images of the page — photos, logos, and scanned pictures.
 
   Returns `{:ok, []}` when the page has no images.

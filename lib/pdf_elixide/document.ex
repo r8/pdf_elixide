@@ -15,8 +15,9 @@ defmodule PdfElixide.Document do
   ## Whole-document extraction and memory
 
   Every extractor here has a whole-document arity — `chars/1`, `words/1`,
-  `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `images/1`, `fonts/1`,
-  `annotations/1`, `text/1`, `to_markdown/1` and `to_html/1`. Each walks all
+  `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `rects/1`, `lines/1`,
+  `images/1`, `fonts/1`, `annotations/1`, `text/1`, `to_markdown/1` and
+  `to_html/1`. Each walks all
   pages inside a **single** native call and returns one flat list, so its cost
   scales with the whole document rather than with what the caller keeps. As the
   call returns, the results exist twice — as the native vector and as the Elixir
@@ -90,7 +91,8 @@ defmodule PdfElixide.Document do
   coordinate handed back is turned with it, and on a rotated page **the
   extractors do not all report in the same frame**:
 
-    * `chars/1`, `spans/1`, `paths/1` and `images/1` stay in raw, unrotated user
+    * `chars/1`, `spans/1`, `paths/1` — with `rects/1` and `lines/1`, which are
+      the same values narrowed — and `images/1` stay in raw, unrotated user
       space, whatever the rotation.
     * `words/1`, `text_lines/1` and the cell boxes of `tables/1` are mapped into
       the **displayed** frame, since upstream builds them on the span pipeline
@@ -2201,6 +2203,115 @@ defmodule PdfElixide.Document do
   def paths!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
     paths(doc, page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Extracts the rectangles of the whole document.
+
+  Returns every page's rectangles concatenated into a single flat list, in page
+  order, as `PdfElixide.Document.Path` structs — the values `paths/1` returns,
+  narrowed to those classified as rectangles (see the "Rectangles and straight
+  lines" section of `PdfElixide.Document.Path` for which shapes those are).
+
+  This builds every page's rectangles in memory at once — see the
+  "Whole-document extraction and memory" section of `PdfElixide.Document` for
+  when to prefer `rects/2`.
+  """
+  @spec rects(t()) :: {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
+  def rects(%__MODULE__{ref: ref}) do
+    with {:ok, rects} <- Wrap.call(fn -> Native.document_all_rects(ref) end) do
+      {:ok, Enum.map(rects, &PdfElixide.Document.Path.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the rectangles of the whole document, raising an error if it fails.
+  """
+  @spec rects!(t()) :: [PdfElixide.Document.Path.t()]
+  def rects!(%__MODULE__{} = doc) do
+    rects(doc) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Extracts the rectangles of the page at the given zero-based index.
+
+  Returns `{:ok, []}` when the page draws no shape classified as a rectangle.
+  See the "Rectangles and straight lines" section of
+  `PdfElixide.Document.Path` for which shapes qualify.
+  """
+  @spec rects(t(), non_neg_integer()) ::
+          {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
+  def rects(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, rects} <- Wrap.call(fn -> Native.document_rects(ref, page_index) end) do
+      {:ok, Enum.map(rects, &PdfElixide.Document.Path.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the rectangles of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec rects!(t(), non_neg_integer()) :: [PdfElixide.Document.Path.t()]
+  def rects!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    rects(doc, page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Extracts the straight lines of the whole document.
+
+  Returns every page's lines concatenated into a single flat list, in page
+  order, as `PdfElixide.Document.Path` structs — the values `paths/1` returns,
+  narrowed to those classified as single straight segments (see the "Rectangles
+  and straight lines" section of `PdfElixide.Document.Path` for which shapes
+  those are). These are vector graphics; `text_lines/1` is the unrelated text
+  extractor.
+
+  This builds every page's lines in memory at once — see the "Whole-document
+  extraction and memory" section of `PdfElixide.Document` for when to prefer
+  `lines/2`.
+  """
+  @spec lines(t()) :: {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
+  def lines(%__MODULE__{ref: ref}) do
+    with {:ok, lines} <- Wrap.call(fn -> Native.document_all_lines(ref) end) do
+      {:ok, Enum.map(lines, &PdfElixide.Document.Path.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the straight lines of the whole document, raising an error if it
+  fails.
+  """
+  @spec lines!(t()) :: [PdfElixide.Document.Path.t()]
+  def lines!(%__MODULE__{} = doc) do
+    lines(doc) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Extracts the straight lines of the page at the given zero-based index.
+
+  Returns `{:ok, []}` when the page draws no shape classified as a single
+  straight segment. See the "Rectangles and straight lines" section of
+  `PdfElixide.Document.Path` for which shapes qualify.
+  """
+  @spec lines(t(), non_neg_integer()) ::
+          {:ok, [PdfElixide.Document.Path.t()]} | {:error, Error.t()}
+  def lines(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, lines} <- Wrap.call(fn -> Native.document_lines(ref, page_index) end) do
+      {:ok, Enum.map(lines, &PdfElixide.Document.Path.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Extracts the straight lines of the page at the given zero-based index, raising
+  an error if it fails.
+  """
+  @spec lines!(t(), non_neg_integer()) :: [PdfElixide.Document.Path.t()]
+  def lines!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    lines(doc, page_index) |> Wrap.unwrap!()
   end
 
   @doc """

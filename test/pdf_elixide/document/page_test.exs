@@ -27,6 +27,9 @@ defmodule PdfElixide.Document.PageTest do
   # Page 0 declares one ink itself and reaches two more through a nested chain
   # of Form XObjects, so it is the only fixture where :deep changes the answer.
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
+  # Page 0 draws only rectangles and page 1 only straight lines, so each of the
+  # two classifiers has a page that is entirely its own.
+  @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -579,6 +582,68 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@table_pdf)
       assert_raise Error, fn -> Page.paths!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "rects/1" do
+    test "delegates to Document.rects/2 for the page" do
+      doc = Document.open!(@vector_shapes_pdf)
+      page = Document.page!(doc, 0)
+      assert Page.rects(page) == Document.rects(doc, 0)
+      assert {:ok, [%Document.Path{page: 0} | _]} = Page.rects(page)
+    end
+
+    test "returns {:ok, []} for a page drawing only straight lines" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert {:ok, []} = Page.rects(Document.page!(doc, 1))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert {:error, _reason} = Page.rects(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "rects!/1" do
+    test "returns the rects directly" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert [%Document.Path{page: 0} | _] = Page.rects!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert_raise Error, fn -> Page.rects!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "lines/1" do
+    test "delegates to Document.lines/2 for the page" do
+      doc = Document.open!(@table_pdf)
+      page = Document.page!(doc, 0)
+      assert Page.lines(page) == Document.lines(doc, 0)
+      assert {:ok, [%Document.Path{page: 0} | _]} = Page.lines(page)
+    end
+
+    test "returns {:ok, []} for a page drawing only rectangles" do
+      doc = Document.open!(@vector_shapes_pdf)
+      assert {:ok, []} = Page.lines(Document.page!(doc, 0))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@table_pdf)
+      assert {:error, _reason} = Page.lines(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "lines!/1" do
+    test "returns the lines directly" do
+      doc = Document.open!(@table_pdf)
+      assert [%Document.Path{page: 0} | _] = Page.lines!(Document.page!(doc, 0))
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@table_pdf)
+      assert_raise Error, fn -> Page.lines!(%Page{doc: doc, index: 99}) end
     end
   end
 

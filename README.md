@@ -25,7 +25,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
 - Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
 - Detect tables, read their rows and cells, and render one as Markdown, HTML, or plain text
-- Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style
+- Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style, or just the rectangles or straight lines among them
 - Read the document outline (bookmarks / table of contents) as a nested tree
 - Extract raster images (photos, logos, scans) with their on-page geometry, encoding them to PNG or JPEG on demand
 - Extract the fonts a page uses (type, encoding, weight) and pull out embedded font programs
@@ -655,6 +655,26 @@ Colors are always resolved to DeviceRGB during extraction, which is why these
 are typed `%PdfElixide.Color.RGB{}` specifically rather than the wider
 `PdfElixide.Color` union. A path can be both stroked and filled, so
 `:stroke_color` and `:fill_color` are independent.
+
+#### Just the rectangles, or just the lines
+
+`rects/1,2` and `lines/1,2` return the same structs narrowed to the paths that
+draw a rectangle or a single straight segment — table rulings, underlines, cell
+borders — without your having to classify `operations` yourself:
+
+```elixir
+{:ok, rules} = PdfElixide.Document.lines(doc, 0)
+{:ok, boxes} = PdfElixide.Document.rects(doc, 0)
+
+# Both are also reachable from a page handle.
+{:ok, rules} = doc |> PdfElixide.Document.page!(0) |> PdfElixide.Document.Page.lines()
+```
+
+The classification reads the drawing commands rather than the geometry, and it
+accepts a few shapes you might not expect while rejecting one you would — read
+the "Rectangles and straight lines" section of `PdfElixide.Document.Path` before
+relying on it. Note `lines/2` is vector graphics; `text_lines/2` above is the
+unrelated text extractor.
 
 ### Extracting images
 

@@ -45,6 +45,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
   @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
+  @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
 
   @columns 0
   @artifacts 1
@@ -58,6 +59,14 @@ defmodule PdfElixide.UpstreamDriftTest do
   # pattern and an annotation appearance stream on another.
   @device_n 1
   @patterns 2
+
+  # In @vector_shapes_pdf: one page per branch family of upstream's rectangle
+  # and straight-line classification.
+  @accepted_rects 0
+  @accepted_lines 1
+  @near_misses 2
+  @surprises 3
+  @fill_stroke 4
 
   # In @rotation_pdf, by /Rotate: 90 on the leaf, 180 inherited from an
   # intermediate /Pages node, -90 (reads as 270), 45 (invalid, reads as 0).
@@ -639,6 +648,98 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert inks == ["SpotA", "SpotB"]
       refute "All" in inks
       refute "None" in inks
+    end
+  end
+
+  describe "how upstream classifies a rectangle and a straight line" do
+    # `rects/2` and `lines/2` are `paths/2` filtered by upstream's
+    # `PathContent::is_rectangle` / `is_straight_line`, which test the *drawing
+    # commands* rather than the geometry. The "Rectangles and straight lines"
+    # section of `PdfElixide.Document.Path` promises callers exactly what that
+    # accepts, including four results that read as wrong, so every one of them
+    # is pinned here rather than in document_test.exs: they are upstream's
+    # rules, not this library's, and a failure means the docblock now lies.
+    #
+    # Each page of @vector_shapes_pdf carries one branch family and nothing
+    # else, so a count is a complete statement about that page.
+    test "the accepting shapes are the re operator and a three-segment polyline" do
+      doc = open(@vector_shapes_pdf)
+      rects = Document.rects!(doc, @accepted_rects)
+
+      assert Enum.map(rects, & &1.operations) == [
+               [{:rectangle, 50.0, 700.0, 100.0, 40.0}],
+               [
+                 {:move_to, 50.0, 600.0},
+                 {:line_to, 150.0, 600.0},
+                 {:line_to, 150.0, 640.0},
+                 {:line_to, 50.0, 640.0},
+                 :close_path
+               ],
+               [
+                 {:move_to, 50.0, 500.0},
+                 {:line_to, 150.0, 500.0},
+                 {:line_to, 150.0, 540.0},
+                 {:line_to, 50.0, 540.0}
+               ]
+             ]
+    end
+
+    test "a line closed with the s operator is still a straight line" do
+      doc = open(@vector_shapes_pdf)
+
+      assert Enum.map(Document.lines!(doc, @accepted_lines), & &1.operations) == [
+               [{:move_to, 100.0, 700.0}, {:line_to, 300.0, 700.0}],
+               [{:move_to, 100.0, 650.0}, {:line_to, 300.0, 650.0}, :close_path]
+             ]
+    end
+
+    test "a rectangle drawn back to its starting corner is classified as neither" do
+      doc = open(@vector_shapes_pdf)
+
+      # Both paths are extracted; neither is classified. If upstream starts
+      # accepting the six-operation form, drop that bullet from the docs.
+      assert length(Document.paths!(doc, @near_misses)) == 2
+      assert Document.rects!(doc, @near_misses) == []
+      assert Document.lines!(doc, @near_misses) == []
+    end
+
+    test "four collinear points and a zero-area box are both rectangles" do
+      doc = open(@vector_shapes_pdf)
+      rects = Document.rects!(doc, @surprises)
+
+      assert Enum.map(rects, &{&1.bbox.width, &1.bbox.height}) == [{0.0, 0.0}, {300.0, 0.0}]
+    end
+
+    test "a fill-and-stroke path is dropped and takes the next path with it" do
+      doc = open(@vector_shapes_pdf)
+
+      # `B` is never painted into a path of its own, and its operations are
+      # prepended to the next one — so the stroked line that follows is
+      # three operations long and classifies as nothing.
+      assert [path] = Document.paths!(doc, @fill_stroke)
+
+      assert path.operations == [
+               {:rectangle, 50.0, 100.0, 60.0, 60.0},
+               {:move_to, 200.0, 100.0},
+               {:line_to, 400.0, 100.0}
+             ]
+
+      assert Document.rects!(doc, @fill_stroke) == []
+      assert Document.lines!(doc, @fill_stroke) == []
+    end
+
+    test "the two sets are disjoint subsets of paths" do
+      for fixture <- [@vector_shapes_pdf, @table_pdf] do
+        doc = open(fixture)
+        paths = Document.paths!(doc)
+        rects = Document.rects!(doc)
+        lines = Document.lines!(doc)
+
+        assert rects -- paths == []
+        assert lines -- paths == []
+        assert rects -- lines == rects
+        assert length(rects) + length(lines) <= length(paths)
+      end
     end
   end
 end

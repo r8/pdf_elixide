@@ -17,6 +17,38 @@ defmodule PdfElixide.Document.Path do
   each a `PdfElixide.Color.RGB` or `nil`. Upstream resolves every colorspace to
   DeviceRGB during extraction, so these are always RGB — never the other
   `PdfElixide.Color` structs.
+
+  ## Rectangles and straight lines
+
+  `PdfElixide.Document.rects/2` and `PdfElixide.Document.lines/2` return these
+  same structs, narrowed by a test of `:operations` alone — of the drawing
+  commands, not of the geometry they describe:
+
+    * a **rectangle** is a lone `{:rectangle, …}`, or a `{:move_to, …}` followed
+      by exactly three `{:line_to, …}`, optionally then `:close_path`;
+    * a **straight line** is a `{:move_to, …}` followed by exactly one
+      `{:line_to, …}`, optionally then `:close_path`.
+
+  (Those are vector graphics; `PdfElixide.Document.text_lines/2` is the
+  unrelated text extractor.) The two sets are therefore disjoint subsets of
+  `paths/2`, with four consequences:
+
+    * **A rectangle drawn back to its starting corner is classified as
+      neither** — one `{:line_to, …}` too many. Boxes drawn with the `re`
+      operator, the usual case, are unaffected.
+    * **Four points on one straight line are classified as a rectangle**, and
+      arrive with a zero-height or zero-width `:bbox`.
+    * **Degenerate shapes are kept**, so filter on `:bbox` if you need shapes
+      with extent.
+    * **A curve disqualifies a path entirely.** A rounded rectangle is neither.
+
+  Each call runs a full extraction of the page, so asking one page for both its
+  rectangles and its lines costs twice what asking for either does.
+
+  One shape reaches none of the three: a path painted with `B`, `B*` or `b*`
+  (fill and stroke together) is not extracted at all, and its commands are
+  prepended to the *next* path — changing that path's operation count, so a
+  rectangle or line drawn right after one goes missing too.
   """
   alias PdfElixide.Color.RGB
   alias PdfElixide.Geometry.Rect

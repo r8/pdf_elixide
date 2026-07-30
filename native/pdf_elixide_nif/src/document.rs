@@ -971,6 +971,78 @@ fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
     })
 }
 
+/// Extracts the paths upstream classifies as rectangles from a single page
+/// (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_rects(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<PathNif>> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        let rects = doc.extract_rects(page_index).map_err(to_nif_err)?;
+        Ok(rects
+            .into_iter()
+            .map(|path| path_to_nif(path, page_index))
+            .collect())
+    })
+}
+
+/// Extracts rectangles from all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_rects(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
+    resource.doc.with_read(|doc| {
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut rects = Vec::new();
+        for page_index in 0..count {
+            let page_rects = doc.extract_rects(page_index).map_err(to_nif_err)?;
+            rects.extend(
+                page_rects
+                    .into_iter()
+                    .map(|path| path_to_nif(path, page_index)),
+            );
+        }
+        Ok(rects)
+    })
+}
+
+/// Extracts the paths upstream classifies as single straight line segments from
+/// a single page (zero-indexed).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_lines(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Vec<PathNif>> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        let lines = doc.extract_lines(page_index).map_err(to_nif_err)?;
+        Ok(lines
+            .into_iter()
+            .map(|path| path_to_nif(path, page_index))
+            .collect())
+    })
+}
+
+/// Extracts straight lines from all pages, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_lines(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
+    resource.doc.with_read(|doc| {
+        let count = doc.page_count().map_err(to_nif_err)?;
+        let mut lines = Vec::new();
+        for page_index in 0..count {
+            let page_lines = doc.extract_lines(page_index).map_err(to_nif_err)?;
+            lines.extend(
+                page_lines
+                    .into_iter()
+                    .map(|path| path_to_nif(path, page_index)),
+            );
+        }
+        Ok(lines)
+    })
+}
+
 /// Reads the document outline (bookmarks / table of contents) as a tree of
 /// `OutlineItemNif`. Returns an empty list when the document has no outline, and
 /// `:unsupported` for one nested past `outline::MAX_OUTLINE_DEPTH`.
