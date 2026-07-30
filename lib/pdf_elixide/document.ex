@@ -555,6 +555,95 @@ defmodule PdfElixide.Document do
     page_labels(doc) |> Wrap.unwrap!()
   end
 
+  @doc """
+  Lists the names of the optional-content groups (OCG layers) the document
+  declares — the values `:exclude_layers` accepts, see `t:text_opts/0`. Pass one
+  back **unchanged** rather than retyping it; the filter matches the exact string.
+
+  They arrive in `/OCGs` order, **neither sorted nor deduplicated**, so a display
+  name two groups share appears twice. A group that cannot be read or declares no
+  name is skipped, and a document with no optional content yields `{:ok, []}`.
+
+  The list is not exhaustive of what `:exclude_layers` acts on: filtering matches
+  whatever group a page's content references, declared here or not.
+  """
+  @spec layers(t()) :: {:ok, [String.t()]} | {:error, Error.t()}
+  def layers(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.document_layers(ref) end)
+  end
+
+  @doc """
+  Lists the document's optional-content group names, raising an error if it fails.
+  """
+  @spec layers!(t()) :: [String.t()]
+  def layers!(%__MODULE__{} = doc) do
+    layers(doc) |> Wrap.unwrap!()
+  end
+
+  @typedoc """
+  Options for `inks/3`.
+
+    * `:deep` — also walk into the Form XObjects the page's content stream
+      invokes, returning every ink reachable from the page rather than only
+      those it declares itself. Defaults to `false`.
+
+  The default reads the page's own `/Resources` and nothing else, so it can
+  **miss inks the page actually paints with** — a colorant declared inside a
+  Form XObject's own resources is absent from the list even though the
+  extraction filters still honor it. `deep: true` returns the complete set.
+
+  What it costs is failure modes: `deep: true` parses the page's content stream
+  and every form's, so it reports an error where the default would have
+  succeeded — an undecryptable or malformed stream, or an XObject tree nested
+  deeper than the parser follows. Prefer the default when the page's own
+  declarations are enough, and `deep: true` when building a picker a user will
+  choose from.
+  """
+  @type inks_opts :: [deep: boolean()]
+
+  @inks_opts_keys [:deep]
+
+  @doc """
+  Lists the Separation and DeviceN ink names the page at the given zero-based
+  index declares — the values `:exclude_inks` accepts, see `t:text_opts/0`.
+  Sorted and deduplicated.
+
+  Only the page's own `/Resources` is read unless `t:inks_opts/0`'s `:deep` is
+  set, which is where that trade-off is explained.
+
+  Some names never appear: `All` and `None`, DeviceN colorants the colour space
+  declares to be process components, and colorants declared only inside a pattern
+  object's own resources or an annotation's appearance stream.
+
+  Returns `{:ok, []}` for a page that declares no colour spaces. There is no
+  whole-document arity — take the union yourself:
+
+      doc |> Enum.flat_map(&PdfElixide.Document.Page.inks!(&1, deep: true)) |> Enum.uniq()
+
+  """
+  @spec inks(t(), non_neg_integer(), inks_opts()) ::
+          {:ok, [String.t()]} | {:error, Error.t()}
+  def inks(%__MODULE__{ref: ref}, page_index, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 do
+    options = build_inks_options(opts)
+    Wrap.call(fn -> Native.document_page_inks(ref, page_index, options) end)
+  end
+
+  @doc """
+  Lists the page's ink names, raising an error if it fails.
+  """
+  @spec inks!(t(), non_neg_integer(), inks_opts()) :: [String.t()]
+  def inks!(doc, page_index, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 do
+    inks(doc, page_index, opts) |> Wrap.unwrap!()
+  end
+
+  # Default pinned by `option_defaults_test.exs` via `__option_defaults__(:inks)`.
+  defp build_inks_options(opts) do
+    opts = Keyword.validate!(opts, @inks_opts_keys)
+    %{deep: Keyword.get(opts, :deep, false)}
+  end
+
   @typedoc """
   How a `:region` (or `:exclude_regions`) decides whether an object is inside
   it.
@@ -606,9 +695,9 @@ defmodule PdfElixide.Document do
     * `:exclude_regions_mode` — how `:exclude_regions` match. Defaults to
       `:intersects`.
     * `:exclude_layers` — names of optional-content (OCG) layers to
-      suppress. Defaults to `[]`.
-    * `:exclude_inks` — names of Separation/DeviceN inks to suppress.
-      Defaults to `[]`.
+      suppress, as listed by `layers/1`. Defaults to `[]`.
+    * `:exclude_inks` — names of Separation/DeviceN inks to suppress, as
+      listed by `inks/3`. Defaults to `[]`.
     * `:on_page_error` — what a page that fails to extract does to the
       whole-document result: `:skip` it (the default) or `:halt`, failing the
       call with the first page's error. See below.
@@ -1440,9 +1529,9 @@ defmodule PdfElixide.Document do
     * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
       Defaults to `:intersects`.
     * `:exclude_layers` — names of optional-content (OCG) layers to
-      suppress. Defaults to `[]`.
-    * `:exclude_inks` — names of Separation/DeviceN inks to suppress.
-      Defaults to `[]`.
+      suppress, as listed by `layers/1`. Defaults to `[]`.
+    * `:exclude_inks` — names of Separation/DeviceN inks to suppress, as
+      listed by `inks/3`. Defaults to `[]`.
   """
   @type chars_opts :: [
           region: Rect.t() | nil,
@@ -1643,9 +1732,9 @@ defmodule PdfElixide.Document do
     * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
       Defaults to `:intersects`.
     * `:exclude_layers` — names of optional-content (OCG) layers to
-      suppress. Defaults to `[]`.
-    * `:exclude_inks` — names of Separation/DeviceN inks to suppress.
-      Defaults to `[]`.
+      suppress, as listed by `layers/1`. Defaults to `[]`.
+    * `:exclude_inks` — names of Separation/DeviceN inks to suppress, as
+      listed by `inks/3`. Defaults to `[]`.
 
   ## `:span_merging` drops the other options
 
@@ -2050,6 +2139,7 @@ defmodule PdfElixide.Document do
   # whose default is not `nil`.
   @spec __option_defaults__(atom()) :: map()
   def __option_defaults__(:open), do: build_open_options([])
+  def __option_defaults__(:inks), do: build_inks_options([])
   def __option_defaults__(:text), do: build_text_options([])
   def __option_defaults__(:markdown), do: build_markdown_options([])
   def __option_defaults__(:html), do: build_html_options([])

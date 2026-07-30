@@ -24,6 +24,9 @@ defmodule PdfElixide.Document.PageTest do
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
   @text_layer_pdf Path.join(@fixtures, "text_layer.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
+  # Page 0 declares one ink itself and reaches two more through a nested chain
+  # of Form XObjects, so it is the only fixture where :deep changes the answer.
+  @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
 
   describe "inspect/1" do
     test "renders the page index" do
@@ -648,6 +651,43 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@fonts_pdf)
       assert_raise Error, fn -> Page.fonts!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "inks/2" do
+    test "delegates to Document.inks/3 for the page, at both :deep settings" do
+      doc = Document.open!(@layers_and_inks_pdf)
+      page = Document.page!(doc, 0)
+
+      assert Page.inks(page) == Document.inks(doc, 0)
+      assert Page.inks(page, deep: true) == Document.inks(doc, 0, deep: true)
+      assert {:ok, ["PageInk"]} = Page.inks(page)
+      assert {:ok, ["FormInk", "NestedInk", "PageInk"]} = Page.inks(page, deep: true)
+    end
+
+    test "returns {:ok, []} for a page that declares no colour spaces" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Page.inks(Document.page!(doc, 0))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.inks(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "inks!/2" do
+    test "returns the inks directly" do
+      doc = Document.open!(@layers_and_inks_pdf)
+      page = Document.page!(doc, 0)
+
+      assert Page.inks!(page) == ["PageInk"]
+      assert Page.inks!(page, deep: true) == ["FormInk", "NestedInk", "PageInk"]
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.inks!(%Page{doc: doc, index: 99}) end
     end
   end
 

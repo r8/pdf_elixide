@@ -457,6 +457,26 @@ defmodule PdfElixide.Document.Page do
   end
 
   @doc """
+  Lists the Separation and DeviceN ink names the page declares.
+
+  These are the values `:exclude_inks` accepts. By default only the page's own
+  `/Resources` is read; `PdfElixide.Document.inks/3` explains what that misses,
+  what `:deep` costs, and which colorants never appear.
+  """
+  @spec inks(t(), Document.inks_opts()) :: {:ok, [String.t()]} | {:error, Error.t()}
+  def inks(%__MODULE__{doc: doc, index: index}, opts \\ []) do
+    Document.inks(doc, index, opts)
+  end
+
+  @doc """
+  Same as `inks/2` but raises an error if it fails.
+  """
+  @spec inks!(t(), Document.inks_opts()) :: [String.t()]
+  def inks!(page, opts \\ []) do
+    inks(page, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
   Reads the annotations on the page.
 
   Returns `{:ok, []}` when the page has no annotations.

@@ -54,6 +54,12 @@ defmodule PdfElixide.DocumentTest do
   # no page object to resolve and is the only fixture whose text extraction
   # fails for one page and succeeds for the others.
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
+  # One OCG per /Name encoding, and pages whose Form XObjects declare inks they
+  # do not — the only fixture where layer decoding and :deep are observable.
+  @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
+  # Declares its /OCProperties and /OCGs inline and invokes no XObject at all —
+  # the control for both branches @layers_and_inks_pdf takes the other way.
+  @extraction_pdf Path.join(@fixtures, "extraction.pdf")
   @unreachable_page 2
   @password "secret"
   @latin1_password "caf" <> <<0xE9>>
@@ -2896,6 +2902,120 @@ defmodule PdfElixide.DocumentTest do
     test "returns the list directly" do
       doc = Document.open!(@metadata_pdf)
       assert Document.page_labels!(doc) == ["i", "ii", "1"]
+    end
+  end
+
+  describe "layers/1" do
+    test "returns every declared name, in order, undeduplicated" do
+      doc = Document.open!(@layers_and_inks_pdf)
+
+      # Asserted as a literal so all of it fails loudly: the /OCGs order is
+      # deliberately not alphabetical, "Ascii String" is declared twice, the
+      # UTF-16BE and PDFDocEncoded names are the two upstream's own accessor
+      # drops, the U+FEFF on "Cache" is a PDF 2.0 BOM left deliberately
+      # unstripped so the name still matches the filter, and the entry with no
+      # /Name and the one that cannot be resolved are both skipped.
+      assert {:ok, names} = Document.layers(doc)
+
+      assert names == [
+               "Calque réservé",
+               "NameToken",
+               "Ascii String",
+               "Ü-Layer",
+               "﻿Cache",
+               "Ascii String"
+             ]
+    end
+
+    test "reads an /OCProperties and /OCGs given directly rather than by reference" do
+      doc = Document.open!(@extraction_pdf)
+      assert {:ok, ["Watermark"]} = Document.layers(doc)
+    end
+
+    test "returns an empty list for a document with no optional content" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.layers(doc)
+    end
+
+    test "every name it returns is one :exclude_layers acts on" do
+      doc = Document.open!(@layers_and_inks_pdf)
+
+      assert Document.text!(doc, 0) =~ "Layered line"
+      refute Document.text!(doc, 0, exclude_layers: Document.layers!(doc)) =~ "Layered line"
+    end
+  end
+
+  describe "layers!/1" do
+    test "returns the list directly" do
+      doc = Document.open!(@extraction_pdf)
+      assert Document.layers!(doc) == ["Watermark"]
+    end
+  end
+
+  describe "inks/2,3" do
+    test "returns the inks the page itself declares" do
+      doc = Document.open!(@layers_and_inks_pdf)
+      assert {:ok, ["PageInk"]} = Document.inks(doc, 0)
+    end
+
+    test "deep: true adds the inks of the Form XObjects the page invokes" do
+      doc = Document.open!(@layers_and_inks_pdf)
+
+      # NestedInk is declared two forms down, so this also pins that the walk
+      # recurses rather than reading only the page's direct `Do`s.
+      assert {:ok, shallow} = Document.inks(doc, 0)
+      assert {:ok, deep} = Document.inks(doc, 0, deep: true)
+      assert deep == ["FormInk", "NestedInk", "PageInk"]
+      assert shallow -- deep == []
+    end
+
+    test "unpacks a DeviceN and drops /All, /None and declared process colorants" do
+      doc = Document.open!(@layers_and_inks_pdf)
+
+      # The /ColorSpace dictionary itself is indirect here, and /Cyan is named
+      # by the DeviceN attributes as a process component.
+      assert {:ok, ["SpotA", "SpotB"]} = Document.inks(doc, 1)
+    end
+
+    test "deep: true adds nothing to a page that invokes no XObject" do
+      doc = Document.open!(@layers_and_inks_pdf)
+      assert Document.inks!(doc, 1, deep: true) == Document.inks!(doc, 1)
+
+      extraction = Document.open!(@extraction_pdf)
+      assert Document.inks!(extraction, 2) == ["SpotRed"]
+      assert Document.inks!(extraction, 2, deep: true) == ["SpotRed"]
+    end
+
+    test "returns an empty list for a page with no colour spaces" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.inks(doc, 0)
+      assert {:ok, []} = Document.inks(doc, 0, deep: true)
+    end
+
+    test "returns :out_of_range for a page past the end" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:error, %Error{reason: :out_of_range}} = Document.inks(doc, 99)
+      assert {:error, %Error{reason: :out_of_range}} = Document.inks(doc, 99, deep: true)
+    end
+
+    test "raises for a negative index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.inks(doc, -1) end
+    end
+  end
+
+  describe "inks!/2,3" do
+    test "returns the list directly" do
+      doc = Document.open!(@layers_and_inks_pdf)
+
+      assert Document.inks!(doc, 0) == ["PageInk"]
+      assert Document.inks!(doc, 0, deep: true) == ["FormInk", "NestedInk", "PageInk"]
+    end
+
+    test "raises for a page past the end" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.inks!(doc, 99) end
     end
   end
 

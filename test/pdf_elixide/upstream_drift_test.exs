@@ -44,6 +44,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
   @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
+  @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
 
   @columns 0
   @artifacts 1
@@ -52,6 +53,11 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   # In @broken_page_pdf: /Count says three pages, two page objects exist.
   @unreachable 2
+
+  # In @layers_and_inks_pdf: DeviceN plus /All and /None on one page, a tiling
+  # pattern and an annotation appearance stream on another.
+  @device_n 1
+  @patterns 2
 
   # In @rotation_pdf, by /Rotate: 90 on the leaf, 180 inherited from an
   # intermediate /Pages node, -90 (reads as 270), 45 (invalid, reads as 0).
@@ -598,6 +604,41 @@ defmodule PdfElixide.UpstreamDriftTest do
       page = Document.page!(doc, 0)
       assert %{width: 300.0, height: 500.0} = Page.media_box!(page)
       assert Page.rotation!(page) == 180
+    end
+  end
+
+  describe "inks the deep walk deliberately skips" do
+    # `inks/3`'s docs promise three boundaries that are upstream policy, not
+    # ours: a /Pattern *colour space*'s underlying space is read, while a
+    # colorant declared only inside a tiling pattern object's own resources or
+    # only inside an annotation appearance stream is not. Page 2 of
+    # @layers_and_inks_pdf declares one of each and nothing else, so the
+    # positive control sits beside the two absences — without it, upstream
+    # starting to walk pattern resources would look the same as upstream
+    # ceasing to walk the underlying space.
+    #
+    # A failure means the "Optional content" limits in the docs now
+    # under-promise. Widen the `inks/3` docblock rather than this assertion.
+    test "a /Pattern colour space's underlying Separation is surfaced" do
+      doc = open(@layers_and_inks_pdf)
+      assert Document.inks!(doc, @patterns, deep: true) == ["UnderlyingInk"]
+    end
+
+    test "a pattern object's and an annotation appearance's own inks are not" do
+      doc = open(@layers_and_inks_pdf)
+      deep = Document.inks!(doc, @patterns, deep: true)
+
+      refute "PatternInk" in deep
+      refute "AnnotInk" in deep
+    end
+
+    test "/All and /None are never listed as colorants" do
+      doc = open(@layers_and_inks_pdf)
+      inks = Document.inks!(doc, @device_n)
+
+      assert inks == ["SpotA", "SpotB"]
+      refute "All" in inks
+      refute "None" in inks
     end
   end
 end

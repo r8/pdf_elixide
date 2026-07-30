@@ -20,6 +20,7 @@ mod form;
 mod geometry;
 mod images;
 mod metadata;
+mod optional_content;
 mod outline;
 mod paths;
 mod resource;

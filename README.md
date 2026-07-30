@@ -38,6 +38,8 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Tune every text extractor: restrict to a region, drop optional-content layers,
   spot inks or `/Artifact` headers, and configure the table detector and the
   span merger
+- List a document's optional-content (OCG) layer names and a page's
+  Separation/DeviceN ink names — the vocabulary those filters accept
 - Share one open document across processes: reads take the native handle's lock
   shared, so a worker pool extracts from a single document concurrently
 
@@ -323,6 +325,11 @@ means "this page", and both can be followed by options.
 {:ok, words} = PdfElixide.Document.words(doc, 0, include_artifacts: false)
 {:ok, text} = PdfElixide.Document.text(doc, 0, exclude_layers: ["Watermark"])
 {:ok, text} = PdfElixide.Document.text(doc, 0, exclude_inks: ["PANTONE 185 C"])
+
+# ...and ask the document which names those two filters will act on.
+{:ok, ["Watermark"]} = PdfElixide.Document.layers(doc)
+{:ok, inks} = PdfElixide.Document.inks(doc, 0)             # this page's own resources
+{:ok, inks} = PdfElixide.Document.inks(doc, 0, deep: true) # plus its Form XObjects
 
 # Tune the spatial table detector when a page yields no table, or too many.
 {:ok, tables} =

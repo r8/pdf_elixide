@@ -224,6 +224,11 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!(@tables_opts, &Document.tables(doc, 0, &1))
     end
 
+    test "inks/3" do
+      doc = doc()
+      accepts_each!([deep: true], &Document.inks(doc, 0, &1))
+    end
+
     test ":span_merging and its nested :adaptive" do
       doc = doc()
       accepts_each!(@span_merging_opts, &Document.spans(doc, 0, span_merging: &1))
@@ -279,6 +284,7 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.chars(doc, 0, opts) end,
         fn opts -> Document.spans(doc, 0, opts) end,
         fn opts -> Document.tables(doc, 0, opts) end,
+        fn opts -> Document.inks(doc, 0, opts) end,
         fn opts -> Document.text(doc, 0, table_detection: opts) end,
         fn opts -> Document.spans(doc, 0, span_merging: opts) end,
         fn opts -> Document.spans(doc, 0, span_merging: [adaptive: opts]) end,
@@ -306,6 +312,10 @@ defmodule PdfElixide.OptionKeysTest do
 
       assert_raise ArgumentError, ~r/duplicate keys \[:detect_headings\]/, fn ->
         Document.to_html(doc, detect_headings: true, detect_headings: false)
+      end
+
+      assert_raise ArgumentError, ~r/duplicate keys \[:deep\]/, fn ->
+        Document.inks(doc, 0, deep: true, deep: false)
       end
     end
   end

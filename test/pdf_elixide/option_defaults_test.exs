@@ -78,6 +78,10 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.__option_defaults__(:open) == %{password: nil}
     end
 
+    test "inks/3" do
+      assert Document.__option_defaults__(:inks) == %{deep: false}
+    end
+
     test "text/2,3" do
       assert Document.__option_defaults__(:text) == %{
                extract_tables: true,
@@ -242,6 +246,7 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.chars!(doc, @columns, []) == Document.chars!(doc, @columns)
       assert Document.text_lines!(doc, @columns, []) == Document.text_lines!(doc, @columns)
       assert Document.spans!(doc, @columns, []) == Document.spans!(doc, @columns)
+      assert Document.inks!(doc, @columns, []) == Document.inks!(doc, @columns)
     end
 
     test "tables/3 with no options matches tables/2", %{doc: doc} do
