@@ -6,6 +6,7 @@ use crate::{
     binary::owned_binary,
     error::to_nif_err,
     form::{editor_field_value_from_nif, editor_form_field_to_nif, FieldNif, FieldValueNif},
+    fs_path::path_arg,
     resource::Closable,
     EditorResource,
 };
@@ -32,8 +33,8 @@ impl From<SaveOptionsNif> for SaveOptions {
 
 /// Opens a PDF document from the specified file path.
 #[rustler::nif(schedule = "DirtyIo")]
-fn editor_open(path: String) -> NifResult<ResourceArc<EditorResource>> {
-    let editor = DocumentEditor::open(path).map_err(to_nif_err)?;
+fn editor_open(path: Binary) -> NifResult<ResourceArc<EditorResource>> {
+    let editor = DocumentEditor::open(path_arg(path)?).map_err(to_nif_err)?;
 
     Ok(ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
@@ -93,12 +94,16 @@ fn editor_to_bytes(
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_save(
     resource: ResourceArc<EditorResource>,
-    path: String,
+    path: Binary,
     options: SaveOptionsNif,
 ) -> NifResult<Atom> {
+    // Decoded before the lock: rejecting a path needs no editor, and an
+    // exclusive guard serializes every other call on the handle.
+    let path = path_arg(path)?;
+
     resource.editor.with_lock(|editor| {
         editor
-            .save_with_options(path, options.into())
+            .save_with_options(&path, options.into())
             .map_err(to_nif_err)?;
 
         Ok(atoms::ok())

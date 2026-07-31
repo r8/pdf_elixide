@@ -17,6 +17,7 @@ mod error;
 mod extract_options;
 mod fonts;
 mod form;
+mod fs_path;
 mod geometry;
 mod images;
 mod metadata;

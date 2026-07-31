@@ -2,75 +2,190 @@ defmodule PdfElixide.PathContractTest do
   @moduledoc """
   The file-path contract, in one place.
 
-  Every path this library accepts crosses into a NIF that decodes it as a Rust
-  `String`, so a path that is not valid UTF-8 fails at argument decode — an
-  `ArgumentError`, the caller-bug half of the split `PdfElixide.Error`
-  documents, never an `%Error{reason: :io}`. Nothing about that is enforced in
-  Elixir: it is a property of Rustler's decoder, which is exactly why it needs
-  pinning rather than trusting. The "File paths" section of `PdfElixide` is what
-  these tests hold to account.
+  A path crosses into a NIF as a `Binary` and is turned into an `OsStr` from
+  those bytes unchanged, so on Unix the set of paths this library accepts is the
+  set the operating system accepts. Nothing about that is enforced in Elixir,
+  which is why it needs pinning rather than trusting. The "File paths" section of
+  `PdfElixide` is what these tests hold to account.
 
-  The two failure *routes* are deliberately both covered, because they produce
-  different messages. A path passed as its own argument raises `:badarg`, which
-  Elixir normalizes to a bare `ArgumentError` naming nothing; `:image_output_dir`
-  is a `NifMap` field instead, so it arrives through
-  `PdfElixide.Native.Wrap.call/1`'s "Could not decode field" clause and *does*
-  name the key. Losing that second one would be a silent downgrade in
-  diagnosability, so its message is asserted, not just its type.
+  The inversion worth stating plainly: on Unix a path with no UTF-8 spelling
+  used to be an `ArgumentError` at argument decode, and is now an ordinary
+  filesystem question — `%Error{reason: :io}` when the file is not there.
+  Windows keeps the old answer, because it cannot name a file in arbitrary
+  bytes. Both halves are asserted, in a matched pair of blocks that skip on each
+  other's platform, so the suite always reports which contract it held to.
 
-  Also pinned here: the constraint is UTF-8 and not ASCII (a non-ASCII path that
-  is valid UTF-8 opens fine), and the documented gap between the `Path.t()` specs
-  and the `is_binary/1` guards beneath them (a charlist raises
+  Two questions decide the gates, and they are **not the same question**. Which
+  answer a path gets is the *platform*, since the divergence is `fs_path.rs`'s
+  `#[cfg(not(unix))]` arm and nothing else. Whether a byte-named file can be
+  *stored* is the *filesystem*: macOS answers `:eilseq` because APFS rejects such
+  a name outright, while Linux runs the VM in `+fna` and passes the bytes
+  through. So the round-trip block has no coverage on a developer machine here,
+  only in CI.
+
+  `@byte_names_round_trip` folds the platform in ahead of the filesystem probe
+  rather than checking them side by side, and the order is load-bearing: on
+  Windows the probe answers *true*, because the VM translates the stray byte into
+  a legal NTFS name and writes it, while the NIF gets the raw binary and rejects
+  it. Probing first would run the block there and fail all of it.
+
+  Also pinned here: `:image_output_dir`, which is *not* a path — it is pasted
+  into the generated markup, so it stays UTF-8-only and rejects a bad value
+  through `PdfElixide.Native.Wrap.call/1`'s "Could not decode field" clause,
+  which names the key. That message is asserted, not just its type; losing it
+  would be a silent downgrade in diagnosability, and it is now the only
+  `ArgumentError` route left in the family. Plus the documented gap between the
+  `Path.t()` specs and the `is_binary/1` guards beneath them (a charlist raises
   `FunctionClauseError`).
   """
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
   alias PdfElixide.Editor
+  alias PdfElixide.Error
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
 
-  # A lone 0xFF byte is not valid UTF-8 in any position, so this is a binary no
-  # `String` decode can accept — and a perfectly legal filename on Linux.
-  @bad_path <<0xFF>>
+  # A lone 0xFF byte is not valid UTF-8 in any position, so this is a filename
+  # no `String` decode could accept — and a perfectly legal one on Linux.
+  @bad_name <<0xFF>> <> ".pdf"
+  @missing_path Path.join(System.tmp_dir!(), "pdf_elixide_absent_" <> @bad_name)
 
-  describe "a path that is not valid UTF-8" do
-    test "Document.open/2 raises ArgumentError" do
-      assert_raise ArgumentError, fn -> Document.open(@bad_path) end
+  # The platform, because `fs_path.rs` decodes a path differently on Windows —
+  # which holds whatever the filesystem would accept, and is why the probe below
+  # cannot answer this on its own.
+  @windows match?({:win32, _}, :os.type())
+
+  # Evaluated once at compile time: whether a byte-named path can round-trip
+  # through *this library* here. Two independent reasons it cannot, and the
+  # platform is folded in ahead of the filesystem probe rather than checked
+  # beside it — on Windows the probe answers `true`, since the VM translates the
+  # stray byte into a legal NTFS name and writes it, while the NIF is handed the
+  # raw binary and requires UTF-8. macOS fails the probe instead: APFS rejects
+  # the name outright. Keeping it one expression also keeps the probe off the
+  # platform that would answer it misleadingly.
+  @byte_names_round_trip not @windows and
+                           (fn ->
+                              probe =
+                                Path.join(System.tmp_dir!(), "pdf_elixide_probe_" <> <<0xFF>>)
+
+                              storable = File.write(probe, "probe") == :ok
+                              File.rm(probe)
+                              storable
+                            end).()
+
+  describe "a path with no UTF-8 spelling, on Unix" do
+    @describetag skip: @windows and "Windows rejects a byte path before opening it"
+
+    test "Document.open/2 reports a filesystem error, not an ArgumentError" do
+      assert {:error, %Error{reason: :io}} = Document.open(@missing_path)
     end
 
-    test "Document.open!/2 raises ArgumentError, not a PdfElixide.Error" do
-      assert_raise ArgumentError, fn -> Document.open!(@bad_path) end
+    test "Document.open!/2 raises a PdfElixide.Error, not an ArgumentError" do
+      assert_raise Error, fn -> Document.open!(@missing_path) end
+    end
+
+    test "Editor.open/1 reports a filesystem error" do
+      assert {:error, %Error{reason: :io}} = Editor.open(@missing_path)
+    end
+
+    test "Editor.open!/1 raises a PdfElixide.Error" do
+      assert_raise Error, fn -> Editor.open!(@missing_path) end
+    end
+  end
+
+  describe "a path with no UTF-8 spelling, on Windows" do
+    @describetag skip: not @windows and "only Windows rejects a byte path"
+
+    # The executable half of the claim `PdfElixide`'s "File paths" section and
+    # `fs_path.rs` otherwise make only in prose. It is an `ArgumentError` rather
+    # than an `%Error{}` because the rejection happens at argument decode, which
+    # makes it a caller bug in the sense `PdfElixide.Error` documents.
+    test "Document.open/2 raises ArgumentError" do
+      assert_raise ArgumentError, fn -> Document.open(@missing_path) end
+    end
+
+    test "Document.open!/2 raises ArgumentError" do
+      assert_raise ArgumentError, fn -> Document.open!(@missing_path) end
     end
 
     test "Editor.open/1 raises ArgumentError" do
-      assert_raise ArgumentError, fn -> Editor.open(@bad_path) end
+      assert_raise ArgumentError, fn -> Editor.open(@missing_path) end
     end
 
     test "Editor.open!/1 raises ArgumentError" do
-      assert_raise ArgumentError, fn -> Editor.open!(@bad_path) end
+      assert_raise ArgumentError, fn -> Editor.open!(@missing_path) end
+    end
+  end
+
+  describe "a byte-named file round-trips" do
+    @describetag :tmp_dir
+    @describetag skip:
+                   not @byte_names_round_trip and
+                     "this host cannot round-trip a byte-named path"
+
+    test "Document.open/2 reads one", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, @bad_name)
+      File.cp!(@valid_pdf, path)
+
+      assert {:ok, doc} = Document.open(path)
+      assert doc.page_count == 3
+      assert Document.source_path(doc) == path
     end
 
-    test "Editor.save/3 raises ArgumentError" do
-      editor = Editor.open!(@valid_pdf)
-      assert_raise ArgumentError, fn -> Editor.save(editor, @bad_path) end
+    test "Editor.open/1 reads one", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, @bad_name)
+      File.cp!(@valid_pdf, path)
+
+      assert {:ok, editor} = Editor.open(path)
+      assert Editor.source_path(editor) == path
     end
 
-    test "Editor.save!/3 raises ArgumentError" do
-      editor = Editor.open!(@valid_pdf)
-      assert_raise ArgumentError, fn -> Editor.save!(editor, @bad_path) end
+    test "Editor.save/3 writes one, and it reopens", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "out-" <> @bad_name)
+
+      assert :ok = Editor.open!(@valid_pdf) |> Editor.save(path)
+      assert File.exists?(path)
+      assert {:ok, doc} = Document.open(path)
+      assert doc.page_count == 3
     end
 
-    test "Image.save/3 raises ArgumentError" do
+    test "Image.save/3 writes one", %{tmp_dir: tmp_dir} do
       [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      path = Path.join(tmp_dir, <<0xFF>> <> ".png")
 
-      # `:format` is given explicitly so the failure is the NIF's path decode
-      # rather than `Path.extname/1` on a raw-byte binary.
-      assert_raise ArgumentError, fn ->
-        Document.Image.save(image, @bad_path, format: :png)
-      end
+      # `:format` is given explicitly rather than inferred, so a change in
+      # `Path.extname/1` on a raw-byte binary cannot quietly become the reason
+      # this passes or fails.
+      assert :ok = Document.Image.save(image, path, format: :png)
+      assert File.exists?(path)
+    end
+  end
+
+  describe "inspecting a handle opened from a byte-named file" do
+    # Needs no such file to exist: `Inspect` reads the struct field. Validity is
+    # the whole bar, and it is exactly the condition `IO.puts/1` checks — it
+    # raises `:no_translation` on a binary with no UTF-8 spelling, so an
+    # unescaped basename here would turn a log line or an IEx prompt into a
+    # crash.
+    test "Document renders a printable result" do
+      doc = %Document{ref: make_ref(), version: {1, 4}, page_count: 3, source_path: @bad_name}
+
+      assert String.valid?(inspect(doc))
+    end
+
+    test "Editor renders a printable result" do
+      editor = %Editor{ref: make_ref(), source_path: @bad_name}
+
+      assert String.valid?(inspect(editor))
+    end
+
+    test "a valid-UTF-8 path still renders as a bare basename" do
+      doc = %Document{ref: make_ref(), version: {1, 4}, page_count: 3, source_path: "a/b.pdf"}
+
+      assert inspect(doc) == "#PdfElixide.Document<b.pdf v1.4>"
     end
   end
 
@@ -84,7 +199,7 @@ defmodule PdfElixide.PathContractTest do
         Document.to_markdown(doc,
           include_images: true,
           embed_images: false,
-          image_output_dir: @bad_path
+          image_output_dir: <<0xFF>>
         )
       end
     end
@@ -94,16 +209,16 @@ defmodule PdfElixide.PathContractTest do
         Document.to_html(doc,
           include_images: true,
           embed_images: false,
-          image_output_dir: @bad_path
+          image_output_dir: <<0xFF>>
         )
       end
     end
   end
 
-  describe "the constraint is UTF-8, not ASCII" do
+  describe "a non-ASCII path" do
     @describetag :tmp_dir
 
-    test "a non-ASCII path opens", %{tmp_dir: tmp_dir} do
+    test "opens", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "café.pdf")
       File.cp!(@valid_pdf, path)
 
@@ -111,7 +226,7 @@ defmodule PdfElixide.PathContractTest do
       assert doc.page_count == 3
     end
 
-    test "a non-ASCII path is written to", %{tmp_dir: tmp_dir} do
+    test "is written to", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "sortie-café.pdf")
 
       assert :ok = Editor.open!(@valid_pdf) |> Editor.save(path)
@@ -126,6 +241,27 @@ defmodule PdfElixide.PathContractTest do
 
     test "Editor.open/1 rejects a charlist" do
       assert_raise FunctionClauseError, fn -> Editor.open(~c"sample.pdf") end
+    end
+
+    test "Editor.save/3 rejects a charlist" do
+      editor = Editor.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Editor.save(editor, ~c"out.pdf") end
+    end
+
+    test "Image.save/3 rejects a charlist" do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+
+      assert_raise FunctionClauseError, fn ->
+        Document.Image.save(image, ~c"out.png", format: :png)
+      end
+    end
+
+    test "Image.save!/3 rejects a charlist" do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+
+      assert_raise FunctionClauseError, fn ->
+        Document.Image.save!(image, ~c"out.png", format: :png)
+      end
     end
   end
 end

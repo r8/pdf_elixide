@@ -14,8 +14,8 @@ permissions:
 
 jobs:
   build:
-    name: "Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}"
-    runs-on: ubuntu-latest
+    name: "Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }} (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
@@ -23,10 +23,33 @@ jobs:
         include:
           - elixir: "1.15.8"
             otp: "26.2.5"
+            os: ubuntu-latest
+            checks: true
           - elixir: "1.19.5"
             otp: "28.4.2"
+            os: ubuntu-latest
+            checks: true
             dialyzer: true
             docs: true
+          # The only leg that compiles `fs_path.rs`'s `#[cfg(not(unix))]` arm —
+          # a `cfg`-gated item is dropped before type checking, so on Unix a
+          # rename in that body would go unnoticed while still shipping in the
+          # `x86_64-pc-windows-*` artifacts `release.yml` publishes.
+          #
+          # The image tracks `release.yml`, which builds both of those artifacts
+          # on `windows-2022`: testing on an image we do not ship from would
+          # weaken the point of the leg. **Move this when that moves.** It also
+          # cannot be a floating label — `windows-latest` and `windows-2025`
+          # both became the Visual Studio 2026 image in June 2026, which reports
+          # an `ImageOS` no released `erlef/setup-beam` knows how to map.
+          #
+          # It carries `checks:` false because credo, formatting, `hex.audit`
+          # and `deps.unlock` read the same source on any host, so the Ubuntu
+          # legs already cover them and repeating them here only costs
+          # wall-clock on the slowest runner.
+          - elixir: "1.19.5"
+            otp: "28.4.2"
+            os: windows-2022
 
     steps:
       - uses: actions/checkout@v6
@@ -65,8 +88,10 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
       - name: Check for unused dependencies
+        if: matrix.checks
         run: mix deps.unlock --check-unused
       - name: Audit dependencies
+        if: matrix.checks
         run: mix hex.audit
       - name: Compile
         run: mix compile --warnings-as-errors
@@ -75,8 +100,10 @@ jobs:
       - name: Run tests
         run: mix test --warnings-as-errors
       - name: Run credo
+        if: matrix.checks
         run: mix credo --strict
       - name: Run formatter
+        if: matrix.checks
         run: mix format --check-formatted
       # The only gate on the guides in `guides/`. ExDoc warns on an `extras:`
       # path that is missing from disk, and on a doc link to a guide that was
@@ -90,13 +117,21 @@ jobs:
       # subtly across OTP releases, and the analysis is a gate, not a matrix.
       # It shares this job because `config/test.exs` force-builds the NIF, so a
       # separate job would pay the whole cargo build a second time.
+      #
+      # The key hashes `mix.lock`, not `**/mix.lock` — the idiom most Elixir CI
+      # examples use, and wrong here. This step runs after the build, so a
+      # recursive glob would walk `target/` (40k+ entries) and fail the whole
+      # template with "Fail to hash files under directory"; the two caches above
+      # escape it only by running against a bare checkout. It also matches no
+      # extra file: the project has one lock file and no hex dependency ships
+      # one.
       - name: Restore PLT cache
         id: plt-cache
         if: matrix.dialyzer
         uses: actions/cache/restore@v5
         with:
           path: plts
-          key: plt-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          key: plt-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
             plt-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
       - name: Build PLT
@@ -118,8 +153,21 @@ jobs:
   # the dev profile, where the `build` job's NIF is a release build with LTO, so
   # the two share only the registry cache.
   rust:
-    name: "Rust (fmt, clippy, test)"
-    runs-on: ubuntu-latest
+    name: "Rust (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows runs `cargo test` alone. Formatting and clippy read the same
+        # source on either host, so the only thing the second runner adds is a
+        # compiler that takes the `#[cfg(not(unix))]` branch. Pinned to the same
+        # image as the `build` job above and as `release.yml`; move all three
+        # together.
+        include:
+          - os: ubuntu-latest
+            lint: true
+          - os: windows-2022
 
     steps:
       - uses: actions/checkout@v6
@@ -127,6 +175,7 @@ jobs:
       # nightly-only — hence `cargo +nightly fmt`, matching the git hooks.
       # Nightly is installed first so stable remains the default toolchain.
       - name: Set up Rust nightly (rustfmt)
+        if: matrix.lint
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
@@ -137,8 +186,10 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
       - name: Check Rust formatting
+        if: matrix.lint
         run: cargo +nightly fmt --check
       - name: Run clippy
+        if: matrix.lint
         run: cargo clippy --all-targets -- -D warnings
       # `metadata.rs`'s PDF text-string decoder is pinned at byte level here,
       # since no fixture can express a malformed UTF-16 buffer. Everything else

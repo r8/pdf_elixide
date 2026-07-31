@@ -1,0 +1,11 @@
+# Normalise everything to LF in the repository and on checkout, so a Windows
+# working tree is not the odd one out.
+* text=auto eol=lf
+
+# Then exempt the fixtures, which are byte-exact. Most are hand-written PDFs with
+# no NUL in their first 8000 bytes, so the `text=auto` heuristic above would
+# classify them as text and rewrite their line endings on a Windows checkout —
+# shifting every xref offset and invalidating every stream length. These lines
+# must stay *below* the wildcard: the last matching pattern wins.
+*.pdf binary
+*.bin binary

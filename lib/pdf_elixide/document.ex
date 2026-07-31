@@ -182,8 +182,8 @@ defmodule PdfElixide.Document do
   @doc """
   Opens a PDF document from the specified file path.
 
-  The path must be a valid-UTF-8 binary — see the "File paths" section of
-  `PdfElixide`.
+  The path is handed to the operating system unchanged — see the "File paths"
+  section of `PdfElixide`.
   """
   @spec open(Path.t(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
   def open(path, opts \\ []) when is_binary(path) and is_list(opts) do
@@ -204,8 +204,8 @@ defmodule PdfElixide.Document do
   @doc """
   Opens a PDF document from the specified file path, raising an error if it fails.
 
-  The path must be a valid-UTF-8 binary — see the "File paths" section of
-  `PdfElixide`.
+  The path is handed to the operating system unchanged — see the "File paths"
+  section of `PdfElixide`.
   """
   @spec open!(Path.t(), open_opts()) :: t()
   def open!(path, opts \\ []) when is_binary(path) and is_list(opts) do
@@ -214,6 +214,10 @@ defmodule PdfElixide.Document do
 
   @doc """
   Opens a PDF document from the given binary data.
+
+  Takes bytes you already have — an HTTP response body, a database blob — so no
+  path is involved; use `open/2` to read a file. `source_path/1` is `nil` for the
+  resulting document.
   """
   @spec from_binary(binary(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
   def from_binary(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
@@ -233,6 +237,9 @@ defmodule PdfElixide.Document do
 
   @doc """
   Opens a PDF document from the given binary data, raising an error if it fails.
+
+  Takes bytes you already have — an HTTP response body, a database blob — so no
+  path is involved; use `open!/2` to read a file.
   """
   @spec from_binary!(binary(), open_opts()) :: t()
   def from_binary!(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
@@ -871,9 +878,14 @@ defmodule PdfElixide.Document do
       only when `:include_images` is `true` and `:embed_images` is `false`.
       It is created if missing, and one that cannot be created is an `:io`
       error; the writes themselves are best-effort, since an image that
-      fails to encode or write is dropped. It must be a valid-UTF-8 binary
-      like every other path — see the "File paths" section of `PdfElixide`.
-      Defaults to `nil`.
+      fails to encode or write is dropped. Defaults to `nil`.
+
+      This is a `t:String.t/0` and **not** a path in the sense the "File
+      paths" section of `PdfElixide` describes: it is also pasted into the
+      `src` attribute of every generated image reference, so it must be
+      valid UTF-8 and a value that is not raises `ArgumentError` naming the
+      key. A directory whose name has no UTF-8 spelling cannot be used here
+      even where the filesystem allows one.
 
       **Give every concurrent conversion its own directory.** Filenames are
       fixed — `pageN_M.png`, one-based page then one-based position in that
@@ -917,7 +929,7 @@ defmodule PdfElixide.Document do
           extract_tables: boolean(),
           include_images: boolean(),
           embed_images: boolean(),
-          image_output_dir: Path.t() | nil,
+          image_output_dir: String.t() | nil,
           include_form_fields: boolean(),
           strip_running_headers_footers: boolean(),
           expand_ligatures: boolean(),
@@ -1097,9 +1109,11 @@ defmodule PdfElixide.Document do
     * `:image_output_dir` — directory to write extracted images to, used
       only when `:include_images` is `true` and `:embed_images` is `false`.
       Behaves exactly as it does for Markdown, including the
-      filename-collision caveat — see `t:markdown_opts/0`. Defaults to `nil`.
+      filename-collision caveat and the requirement that it be valid UTF-8
+      rather than an arbitrary path — see `t:markdown_opts/0`. Defaults to
+      `nil`.
 
-      The path is interpolated into the `src` attribute **without HTML
+      It is interpolated into the `src` attribute **without HTML
       escaping**, so a directory whose name contains `"` or `&` produces
       malformed markup and a crafted one can inject attributes. Never build
       it from untrusted input. It is the only unescaped input here — see the
@@ -1124,7 +1138,7 @@ defmodule PdfElixide.Document do
           extract_tables: boolean(),
           include_images: boolean(),
           embed_images: boolean(),
-          image_output_dir: Path.t() | nil,
+          image_output_dir: String.t() | nil,
           include_form_fields: boolean(),
           max_image_pixels: non_neg_integer() | nil,
           reading_order: :structure_tree | :column_aware | :top_to_bottom
@@ -2562,7 +2576,7 @@ defmodule PdfElixide.Document do
     import Inspect.Algebra
 
     def inspect(%PdfElixide.Document{version: {maj, min}, source_path: path}, _opts) do
-      src = if path, do: Path.basename(path), else: "<binary>"
+      src = PdfElixide.Inspecting.source(path)
       concat(["#PdfElixide.Document<", src, " v", to_string(maj), ".", to_string(min), ">"])
     end
   end

@@ -21,6 +21,7 @@ use crate::{
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
+    fs_path::path_arg,
     geometry::{rect_from_corners, RectNif},
     images::{image_to_nif, ImageNif},
     outline::{outline_to_nif, OutlineItemNif},
@@ -290,8 +291,8 @@ fn cached_fields(resource: &DocumentResource) -> NifResult<((u8, u8), Option<usi
 /// Opens a PDF document from the specified file path, returning the handle
 /// together with the version and page count Elixir caches on the struct.
 #[rustler::nif(schedule = "DirtyIo")]
-fn document_open(path: String, options: OpenOptionsNif<'_>) -> NifResult<OpenedDocument> {
-    let doc = PdfDocument::open(path).map_err(to_nif_err)?;
+fn document_open(path: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedDocument> {
+    let doc = PdfDocument::open(path_arg(path)?).map_err(to_nif_err)?;
     options.apply(&doc)?;
 
     let resource = ResourceArc::new(DocumentResource {

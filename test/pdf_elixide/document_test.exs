@@ -388,7 +388,9 @@ defmodule PdfElixide.DocumentTest do
                  image_output_dir: tmp_dir
                )
 
-      assert markdown =~ "![Image 1 from page 1](#{Elixir.Path.join(tmp_dir, "page1_1.png")})"
+      # Upstream joins with a literal `/`, not the platform separator, so this
+      # is not `Path.join/2`: on Windows that would assert a `\` never emitted.
+      assert markdown =~ "![Image 1 from page 1](#{tmp_dir}/page1_1.png)"
       refute markdown =~ "data:image/png;base64,"
       assert File.exists?(Elixir.Path.join(tmp_dir, "page1_1.png"))
     end
@@ -724,7 +726,9 @@ defmodule PdfElixide.DocumentTest do
                  image_output_dir: tmp_dir
                )
 
-      assert html =~ ~s(<img src="#{Elixir.Path.join(tmp_dir, "page1_1.png")}")
+      # Upstream joins with a literal `/`, not the platform separator, so this
+      # is not `Path.join/2`: on Windows that would assert a `\` never emitted.
+      assert html =~ ~s(<img src="#{tmp_dir}/page1_1.png")
       refute html =~ "data:image/png;base64,"
       assert File.exists?(Elixir.Path.join(tmp_dir, "page1_1.png"))
     end
@@ -769,6 +773,10 @@ defmodule PdfElixide.DocumentTest do
     end
 
     @tag :tmp_dir
+    # Skipped on Windows because `"` is not a legal filename character there, so
+    # the directory cannot be created and the test never reaches its assertion.
+    # That is a limit on expressing the case, not a difference in behaviour.
+    @tag skip: match?({:win32, _}, :os.type()) and "a Windows filename cannot contain a quote"
     test "an image_output_dir is not attribute-escaped in src", %{tmp_dir: tmp_dir} do
       doc = Document.open!(@markdown_pdf)
       # A double quote is a legal filename character, and upstream interpolates

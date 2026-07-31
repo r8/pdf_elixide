@@ -156,6 +156,9 @@ defmodule PdfElixide.Document.Image do
   That pass-through copies the stored blob once, straight into the returned
   binary; the PNG and re-encoding paths hold the encoded image and the binary at
   the same time, so they peak at roughly twice the output size.
+
+  Returns the bytes rather than writing them, so no path is involved; use
+  `save/3` to write a file.
   """
   @spec to_binary(t(), image_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
@@ -166,6 +169,9 @@ defmodule PdfElixide.Document.Image do
 
   @doc """
   Same as `to_binary/2` but returns the binary directly, raising on error.
+
+  Returns the bytes rather than writing them, so no path is involved; use
+  `save!/3` to write a file.
   """
   @spec to_binary!(t(), image_opts()) :: binary()
   def to_binary!(%__MODULE__{} = image, opts \\ []) when is_list(opts) do
@@ -179,8 +185,8 @@ defmodule PdfElixide.Document.Image do
   from the path extension (`.png` → PNG, `.jpg`/`.jpeg` → JPEG). An unknown
   extension with no `:format` option raises `ArgumentError`.
 
-  The path must be a valid-UTF-8 binary — see the "File paths" section of
-  `PdfElixide`.
+  The path is handed to the operating system unchanged — see the "File paths"
+  section of `PdfElixide`.
   """
   @spec save(t(), Path.t(), image_opts()) :: :ok | {:error, Error.t()}
   def save(%__MODULE__{ref: ref}, path, opts \\ [])
@@ -195,6 +201,9 @@ defmodule PdfElixide.Document.Image do
 
   @doc """
   Same as `save/3` but raises on error.
+
+  The path is handed to the operating system unchanged — see the "File paths"
+  section of `PdfElixide`.
   """
   @spec save!(t(), Path.t(), image_opts()) :: :ok
   def save!(%__MODULE__{} = image, path, opts \\ [])

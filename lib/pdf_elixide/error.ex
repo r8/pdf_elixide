@@ -49,8 +49,9 @@ defmodule PdfElixide.Error do
       (`detect_heading:` for `:detect_headings`), a key given twice, a value the
       native layer cannot decode, a value out of range (`{:min_overlap, 2.0}`) —
       and undecodable values outside an options map, such as a form field value
-      that is not a tagged tuple or a path that is not valid UTF-8 (see the
-      "File paths" section of `PdfElixide`; a bad path is never an `:io` error).
+      that is not a tagged tuple. A *path* is opaque bytes and so has almost
+      nothing to reject — only Windows, which cannot name a file in arbitrary
+      bytes, raises here; see the "File paths" section of `PdfElixide`.
 
   Build option lists with `Keyword.merge/2` rather than `++`, since a duplicated
   key is rejected instead of resolved to the first occurrence. So nothing about

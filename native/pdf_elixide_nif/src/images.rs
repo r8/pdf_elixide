@@ -1,12 +1,15 @@
 use std::{borrow::Cow, io::Cursor};
 
 use pdf_oxide::extractors::{ColorSpace, ImageData, PdfImage, PixelFormat};
-use rustler::{Encoder, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc, Term};
+use rustler::{
+    Binary, Encoder, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc, Term,
+};
 
 use crate::{
     atoms,
     binary::{binary_term, owned_binary},
     error::{tagged_err, to_nif_err},
+    fs_path::path_arg,
     geometry::{rect_to_nif, RectNif},
     resource::Closable,
     ImageResource,
@@ -164,13 +167,16 @@ fn image_to_binary(
 #[rustler::nif(schedule = "DirtyIo")]
 fn image_save(
     resource: ResourceArc<ImageResource>,
-    path: String,
+    path: Binary,
     format: OutputFormatNif,
 ) -> NifResult<rustler::Atom> {
+    // Decoded before the lock: rejecting a path needs no image.
+    let path = path_arg(path)?;
+
     resource.image.with_read(|image| {
         match format {
-            OutputFormatNif::Png => image.save_as_png(path).map_err(to_nif_err)?,
-            OutputFormatNif::Jpeg => image.save_as_jpeg(path).map_err(to_nif_err)?,
+            OutputFormatNif::Png => image.save_as_png(&path).map_err(to_nif_err)?,
+            OutputFormatNif::Jpeg => image.save_as_jpeg(&path).map_err(to_nif_err)?,
         }
 
         Ok(atoms::ok())

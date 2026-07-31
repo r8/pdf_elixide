@@ -29,23 +29,22 @@ defmodule PdfElixide do
 
   ## File paths
 
-  Every path this library accepts — `PdfElixide.Document.open/2`,
-  `PdfElixide.Editor.open/1`, `PdfElixide.Editor.save/3`,
-  `PdfElixide.Document.Image.save/3`, and the `:image_output_dir` conversion
-  option — is a binary that **must be valid UTF-8**. A path carrying any other
-  byte raises `ArgumentError` before the filesystem is touched; it is never an
-  `:io` error. See the "Errors versus exceptions" section of `PdfElixide.Error`.
+  A path is whatever the operating system calls one, handed to it unchanged. On
+  Unix that means an opaque byte string, so a filename with no UTF-8 spelling
+  works here just as it does with `File.read/1`, and a path that cannot be
+  opened or written is an `:io` error like any other.
 
-  That is worth knowing on Linux, where the BEAM's default filename encoding
-  treats names as raw bytes: a path handed back by `File.ls/1` or
-  `Path.wildcard/1` can be a binary no UTF-8 spelling can express, and passing
-  it here raises rather than reporting a filesystem error. Read such a file
-  yourself and use `PdfElixide.Document.from_binary/2` or
-  `PdfElixide.Editor.from_binary/1`, which take opaque bytes. macOS and Windows
-  run the VM with UTF-8 filename encoding, so the question does not arise there.
+  **On Windows a path must be valid UTF-8**, and one that is not raises
+  `ArgumentError` before the filesystem is touched — see the "Errors versus
+  exceptions" section of `PdfElixide.Error`. Every well-formed Windows path has
+  a UTF-8 spelling, so this costs nothing in practice — but it does make this
+  library **stricter than `File` there**, which will translate a stray byte into
+  some legal filename and write it rather than refuse.
 
   Only the binary form of `Path.t()` is accepted; a charlist raises
-  `FunctionClauseError`. Contrast a *password*, which genuinely is a byte string
-  and is decoded as one — see `t:PdfElixide.Document.open_opts/0`.
+  `FunctionClauseError`. A path is therefore shaped like a *password* — opaque
+  bytes rather than text, see `t:PdfElixide.Document.open_opts/0` — and not like
+  `:image_output_dir`, which is a string because it is also pasted into the
+  generated markup; see `t:PdfElixide.Document.markdown_opts/0`.
   """
 end
