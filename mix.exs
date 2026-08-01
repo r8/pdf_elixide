@@ -26,6 +26,7 @@ defmodule PdfElixide.MixProject do
   defp description do
     """
     Elixir bindings for pdf_oxide, a high-performance PDF library written in Rust.
+    Extract text, tables, images, forms, annotations, and metadata, or convert PDFs to Markdown and HTML.
     """
   end
 
