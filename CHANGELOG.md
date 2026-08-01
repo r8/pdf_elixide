@@ -5,6 +5,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.11.1](https://github.com/r8/pdf_elixide/compare/v0.11.0...v0.11.1) (2026-08-01)
+
+
+
+
+### Bug Fixes:
+
+* accept any path the OS does, so a byte filename no longer raises by [@r8](https://github.com/r8)
+
 ## [v0.11.0](https://github.com/r8/pdf_elixide/compare/v0.10.0...v0.11.0) (2026-07-30)
 
 
