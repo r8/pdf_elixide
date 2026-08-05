@@ -14,10 +14,11 @@ defmodule PdfElixide.Editor do
   the editor — you can keep editing and write again. `close/1` **discards
   unsaved edits**, so write before you close.
 
-  *Every* call on an editor takes the handle's lock exclusively — including
-  `PdfElixide.Form.fields/1`, which only reads — so concurrent use of a single
-  editor serializes. Give each process its own editor if you need them to work
-  at once; see the [Concurrency](guides/concurrency.md) guide.
+  Every call that writes or mutates takes the handle's lock exclusively — and so
+  does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
+  a single editor serializes. Only `page_count/1` and `modified?/1` take the lock
+  shared. Give each process its own editor if you need them to work at once; see
+  the [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Error
@@ -27,11 +28,21 @@ defmodule PdfElixide.Editor do
   # Spelled out rather than `defstruct @enforce_keys`, unlike the value structs:
   # `:source_path` is nil for an editor built from a binary, so it cannot be
   # enforced.
-  @enforce_keys [:ref]
-  defstruct [:ref, :source_path]
+  @enforce_keys [:ref, :version]
+  defstruct [:ref, :version, :source_path]
 
+  @typedoc """
+  An open editor.
+
+  `:version` arrives with the handle, from the same native call that opens the
+  editor, and is served from the struct thereafter: it is the version of the
+  document the editor was opened from, and no editing operation changes it.
+
+  `:source_path` is `nil` for an editor built with `from_binary/1`.
+  """
   @type t :: %__MODULE__{
           ref: reference(),
+          version: {non_neg_integer(), non_neg_integer()},
           source_path: Path.t() | nil
         }
 
@@ -43,8 +54,8 @@ defmodule PdfElixide.Editor do
   """
   @spec open(Path.t()) :: {:ok, t()} | {:error, Error.t()}
   def open(path) when is_binary(path) do
-    with {:ok, ref} <- Wrap.call(fn -> Native.editor_open(path) end) do
-      {:ok, %__MODULE__{ref: ref, source_path: path}}
+    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_open(path) end) do
+      {:ok, %__MODULE__{ref: ref, version: version, source_path: path}}
     end
   end
 
@@ -68,8 +79,8 @@ defmodule PdfElixide.Editor do
   """
   @spec from_binary(binary()) :: {:ok, t()} | {:error, Error.t()}
   def from_binary(bytes) when is_binary(bytes) do
-    with {:ok, ref} <- Wrap.call(fn -> Native.editor_from_bytes(bytes) end) do
-      {:ok, %__MODULE__{ref: ref, source_path: nil}}
+    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_from_bytes(bytes) end) do
+      {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
     end
   end
 
@@ -93,6 +104,55 @@ defmodule PdfElixide.Editor do
   def source_path(%__MODULE__{source_path: p}), do: p
 
   @doc """
+  Returns the PDF specification version of the document being edited, as a
+  `{major, minor}` tuple.
+
+  This is the version of the document the editor was opened from, which editing
+  does not change. It is read from the struct, so it keeps working after
+  `close/1`.
+  """
+  @spec version(t()) :: {non_neg_integer(), non_neg_integer()}
+  def version(%__MODULE__{version: v}), do: v
+
+  @doc """
+  Returns the number of pages the editor currently holds.
+
+  Counts the pages as edited rather than as found on disk, so unlike `version/1`
+  this asks the editor on every call.
+
+  Returns `{:error, %PdfElixide.Error{reason: :closed}}` after `close/1`.
+  """
+  @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
+  def page_count(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.editor_page_count(ref) end)
+  end
+
+  @doc """
+  Returns the number of pages the editor currently holds, raising an error if it fails.
+  """
+  @spec page_count!(t()) :: non_neg_integer()
+  def page_count!(%__MODULE__{} = editor) do
+    page_count(editor) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns whether the editor holds changes that have not been written out.
+
+  `false` for a freshly opened editor, and `true` once something has changed it —
+  `PdfElixide.Form.set_value/3`, say.
+
+  A full rewrite clears it again, so `save/3` and `to_binary/2` both leave the
+  editor unmodified — `to_binary/2` included, even though it writes no file. An
+  incremental `save/3` does not: after `save(editor, path, incremental: true)`
+  the flag stays `true`.
+  """
+  @spec modified?(t()) :: boolean()
+  def modified?(%__MODULE__{ref: ref}) do
+    # `Wrap.call!/1` for the reason spelled out on `PdfElixide.Document.encrypted?/1`.
+    Wrap.call!(fn -> Native.editor_is_modified(ref) end)
+  end
+
+  @doc """
   Releases the editor's native memory immediately.
 
   An editor holds the source document plus its pending edits in memory on the
@@ -105,8 +165,8 @@ defmodule PdfElixide.Editor do
   **Unsaved edits are discarded** — call `save/3` or `to_binary/2` first.
   Afterwards, functions that read or mutate the editor return
   `{:error, %PdfElixide.Error{reason: :closed}}`, and their bang variants raise
-  it. `source_path/1` keeps working, since it reads the struct rather than the
-  native handle.
+  it. `source_path/1` and `version/1` keep working, since they read the struct
+  rather than the native handle.
 
       editor = PdfElixide.Editor.open!("form.pdf")
       :ok = PdfElixide.Form.set_value(editor, "name", {:text, "Ada"})

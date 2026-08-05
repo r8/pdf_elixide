@@ -177,7 +177,7 @@ defmodule PdfElixide.PathContractTest do
     end
 
     test "Editor renders a printable result" do
-      editor = %Editor{ref: make_ref(), source_path: @bad_name}
+      editor = %Editor{ref: make_ref(), version: {1, 4}, source_path: @bad_name}
 
       assert String.valid?(inspect(editor))
     end

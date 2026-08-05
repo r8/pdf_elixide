@@ -98,6 +98,8 @@ defmodule PdfElixide.Native do
   def editor_from_bytes(_bytes), do: err()
   def editor_close(_editor), do: err()
   def editor_closed(_editor), do: err()
+  def editor_page_count(_editor), do: err()
+  def editor_is_modified(_editor), do: err()
   def editor_form_fields(_editor), do: err()
   def editor_set_form_field_value(_editor, _name, _value), do: err()
   def editor_to_bytes(_editor, _options), do: err()

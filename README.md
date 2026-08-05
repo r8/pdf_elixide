@@ -916,6 +916,10 @@ original AcroForm structure and only appends the field-value updates:
 Bang variants `Editor.open!/1`, `Editor.save!/3`, `Editor.to_binary!/2`,
 and `Form.set_value!/3` raise on error.
 
+An editor also answers for the document it holds: `Editor.page_count/1`,
+`Editor.version/1`, `Editor.source_path/1`, and `Editor.modified?/1`, which
+reports whether there are changes still to be written.
+
 ## Documentation
 
 Full API documentation is published on [HexDocs](https://hexdocs.pm/pdf_elixide).

@@ -32,7 +32,9 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
+  alias PdfElixide.Editor
   alias PdfElixide.Error
+  alias PdfElixide.Form
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
@@ -48,6 +50,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
   @search_pdf Path.join(@fixtures, "search.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
+  @form_pdf Path.join(@fixtures, "form.pdf")
 
   @columns 0
   @artifacts 1
@@ -839,6 +842,52 @@ defmodule PdfElixide.UpstreamDriftTest do
         assert rects -- lines == rects
         assert length(rects) + length(lines) <= length(paths)
       end
+    end
+  end
+
+  describe "which writes clear the editor's modified flag" do
+    setup do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "pdf_elixide_drift_#{System.unique_integer([:positive])}.pdf"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+      {:ok, out_path: path}
+    end
+
+    defp edited_editor do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+      assert Editor.modified?(editor)
+      editor
+    end
+
+    # Only the full-rewrite serializer resets the flag, and it is reached by
+    # both a save to a file and a save to bytes. `Editor.modified?/1` documents
+    # the asymmetry below as a caller-visible rule, so a release that made an
+    # incremental save reset it too — or stopped `to_binary/2` from doing so —
+    # would silently make that documentation wrong.
+    test "a full rewrite clears it, whether it lands in a file or in bytes", %{
+      out_path: out_path
+    } do
+      to_file = edited_editor()
+      :ok = Editor.save(to_file, out_path)
+      refute Editor.modified?(to_file)
+
+      to_bytes = edited_editor()
+      {:ok, _bytes} = Editor.to_binary(to_bytes)
+      refute Editor.modified?(to_bytes)
+    end
+
+    test "an incremental save does not", %{out_path: out_path} do
+      editor = edited_editor()
+
+      :ok = Editor.save(editor, out_path, incremental: true)
+
+      assert Editor.modified?(editor)
     end
   end
 end

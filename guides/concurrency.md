@@ -75,11 +75,15 @@ afterwards. Expect contention rather than a speedup proportional to workers.
 
 ## The other handles
 
-`PdfElixide.Editor` is different in kind, because it mutates. The underlying
-editor exposes even its readers as mutations, so *every* editor call takes the
-handle exclusively and concurrent use of a single editor serializes instead of
-running in parallel. Give each process its own editor if you need them to work at
-once.
+`PdfElixide.Editor` is different in kind, because it mutates. Every call that
+writes or changes the document takes the handle exclusively, so concurrent
+*editing* of a single editor serializes instead of running in parallel. Give each
+process its own editor if you need them to work at once.
+
+Two editor calls are shared reads: `PdfElixide.Editor.page_count/1` and
+`PdfElixide.Editor.modified?/1`, whose upstream counterparts genuinely only look.
+They do not wait on each other — but a shared guard still waits behind an
+exclusive one, so either will queue behind an in-flight save on the same handle.
 
 `PdfElixide.Form.fields/1` inherits whichever source it is handed — a shared read
 on a document, the editor's exclusive lock on an editor — so listing fields from

@@ -31,24 +31,68 @@ impl From<SaveOptionsNif> for SaveOptions {
     }
 }
 
+/// What both open NIFs hand back: the handle, plus the one field
+/// `%PdfElixide.Editor{}` caches at open, in one call. Same shape and same
+/// reasoning as `OpenedDocument` (`document.rs`), including when it should
+/// become a `NifMap`.
+type OpenedEditor = (ResourceArc<EditorResource>, (u8, u8));
+
+/// Reads the field `%PdfElixide.Editor{}` caches at open.
+///
+/// The read goes through `with_read` rather than reading the `DocumentEditor`
+/// before it is moved into the `Closable`, so it stays inside `contain_panic`.
+/// Nothing is swallowed the way `cached_fields` swallows an unreadable page
+/// count: `version()` is infallible upstream, so the only failure reachable here
+/// is a panic, and failing the open is the honest answer to that.
+fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
+    resource.editor.with_read(|editor| Ok(editor.version()))
+}
+
 /// Opens a PDF document from the specified file path.
 #[rustler::nif(schedule = "DirtyIo")]
-fn editor_open(path: Binary) -> NifResult<ResourceArc<EditorResource>> {
+fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::open(path_arg(path)?).map_err(to_nif_err)?;
 
-    Ok(ResourceArc::new(EditorResource {
+    let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
-    }))
+    });
+    let version = cached_version(&resource)?;
+
+    Ok((resource, version))
 }
 
 /// Opens a PDF document from the given binary data.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn editor_from_bytes(bytes: Binary) -> NifResult<ResourceArc<EditorResource>> {
+fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
 
-    Ok(ResourceArc::new(EditorResource {
+    let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
-    }))
+    });
+    let version = cached_version(&resource)?;
+
+    Ok((resource, version))
+}
+
+/// Shared where every mutating editor NIF is exclusive: upstream's
+/// `current_page_count` takes `&self`, so nothing here needs to exclude a
+/// concurrent reader. Deliberately not cached on the Elixir struct the way the
+/// version is — upstream recomputes it on every call, and the page-mutating
+/// methods that would move it are not bound here yet.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_page_count(resource: ResourceArc<EditorResource>) -> NifResult<usize> {
+    // `EditableDocument::page_count` would take `&mut self` and return a
+    // `Result` for trait-shape reasons alone, delegating straight to this.
+    resource
+        .editor
+        .with_read(|editor| Ok(editor.current_page_count()))
+}
+
+/// Shared for the same reason as `editor_page_count`: upstream's `is_modified`
+/// takes `&self`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_is_modified(resource: ResourceArc<EditorResource>) -> NifResult<bool> {
+    resource.editor.with_read(|editor| Ok(editor.is_modified()))
 }
 
 /// Releases the editor's native memory now, rather than waiting for the BEAM to

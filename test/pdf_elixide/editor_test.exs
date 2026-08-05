@@ -1,6 +1,7 @@
 defmodule PdfElixide.EditorTest do
   use ExUnit.Case, async: true
 
+  alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form
@@ -8,6 +9,7 @@ defmodule PdfElixide.EditorTest do
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
+  @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @invalid_pdf Path.join(@fixtures, "invalid.bin")
 
   describe "open/1" do
@@ -68,6 +70,102 @@ defmodule PdfElixide.EditorTest do
     test "returns nil after from_binary/1" do
       editor = Editor.from_binary!(File.read!(@valid_pdf))
       assert Editor.source_path(editor) == nil
+    end
+  end
+
+  describe "version/1" do
+    test "returns the source document's version as a {major, minor} tuple" do
+      editor = Editor.open!(@valid_pdf)
+      assert Editor.version(editor) == {1, 4}
+    end
+
+    test "agrees with the same document opened read-only" do
+      editor = Editor.open!(@valid_pdf)
+      doc = Document.open!(@valid_pdf)
+
+      assert Editor.version(editor) == Document.version(doc)
+    end
+
+    test "is cached at open, so it survives close/1" do
+      editor = Editor.open!(@valid_pdf)
+      :ok = Editor.close(editor)
+
+      assert Editor.version(editor) == {1, 4}
+    end
+  end
+
+  describe "page_count/1 and page_count!/1" do
+    test "counts the pages of the document being edited" do
+      editor = Editor.open!(@valid_pdf)
+
+      assert {:ok, 3} = Editor.page_count(editor)
+      assert Editor.page_count!(editor) == 3
+    end
+
+    test "counts the same after from_binary/1" do
+      editor = Editor.from_binary!(File.read!(@valid_pdf))
+      assert Editor.page_count!(editor) == 3
+    end
+
+    test "agrees with the same document opened read-only" do
+      editor = Editor.open!(@valid_pdf)
+      doc = Document.open!(@valid_pdf)
+
+      assert Editor.page_count!(editor) == Document.page_count!(doc)
+    end
+
+    test "answers 0 for a document with no pages" do
+      editor = Editor.open!(@no_pages_pdf)
+      assert {:ok, 0} = Editor.page_count(editor)
+    end
+
+    # No binding mutates the page order yet, so the count an editor reports can
+    # only be the source document's — this pins that an ordinary edit is not
+    # mistaken for one that adds or removes a page.
+    test "is unchanged by an edit that does not touch the page tree" do
+      editor = Editor.open!(@form_pdf)
+      before = Editor.page_count!(editor)
+
+      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+
+      assert Editor.page_count!(editor) == before
+    end
+
+    test "reports a closed editor rather than a cached number" do
+      editor = Editor.open!(@valid_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.page_count(editor)
+      assert_raise Error, "Editor is closed", fn -> Editor.page_count!(editor) end
+    end
+  end
+
+  describe "modified?/1" do
+    test "is false for a freshly opened editor" do
+      refute Editor.modified?(Editor.open!(@form_pdf))
+    end
+
+    test "flips once the editor is changed" do
+      editor = Editor.open!(@form_pdf)
+      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+
+      assert Editor.modified?(editor)
+    end
+
+    test "to_binary/2 clears it, even though it writes no file" do
+      editor = Editor.open!(@form_pdf)
+      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+
+      {:ok, _bytes} = Editor.to_binary(editor)
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises on a closed editor" do
+      editor = Editor.open!(@valid_pdf)
+      :ok = Editor.close(editor)
+
+      assert_raise Error, "Editor is closed", fn -> Editor.modified?(editor) end
     end
   end
 
@@ -262,6 +360,7 @@ defmodule PdfElixide.EditorTest do
                Editor.to_binary(editor)
 
       assert {:error, %Error{reason: :closed}} = Editor.save(editor, out_path)
+      assert {:error, %Error{reason: :closed}} = Editor.page_count(editor)
       assert {:error, %Error{reason: :closed}} = Form.fields(editor)
 
       assert {:error, %Error{reason: :closed}} =
@@ -278,13 +377,15 @@ defmodule PdfElixide.EditorTest do
       assert error.reason == :closed
 
       assert_raise Error, "Editor is closed", fn -> Editor.save!(editor, out_path) end
+      assert_raise Error, "Editor is closed", fn -> Editor.page_count!(editor) end
     end
 
-    test "source_path/1 keeps working after close" do
+    test "the struct-reading functions keep working after close" do
       editor = Editor.open!(@valid_pdf)
       :ok = Editor.close(editor)
 
       assert Editor.source_path(editor) == @valid_pdf
+      assert Editor.version(editor) == {1, 4}
       assert inspect(editor) == "#PdfElixide.Editor<sample.pdf>"
     end
 
