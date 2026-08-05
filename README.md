@@ -62,7 +62,7 @@ Add `pdf_elixide` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:pdf_elixide, "~> 0.11.1"}
+    {:pdf_elixide, "~> 0.12.0"}
   ]
 end
 ```

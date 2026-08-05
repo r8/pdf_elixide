@@ -5,6 +5,17 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.12.0](https://github.com/r8/pdf_elixide/compare/v0.11.1...v0.12.0) (2026-08-05)
+
+
+
+
+### Features:
+
+* add Editor version, page count and modified getters by [@r8](https://github.com/r8)
+
+* add text search by [@r8](https://github.com/r8)
+
 ## [v0.11.1](https://github.com/r8/pdf_elixide/compare/v0.11.0...v0.11.1) (2026-08-01)
 
 
