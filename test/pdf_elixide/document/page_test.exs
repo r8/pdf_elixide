@@ -5,6 +5,7 @@ defmodule PdfElixide.Document.PageTest do
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
@@ -644,6 +645,40 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@table_pdf)
       assert_raise Error, fn -> Page.lines!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "search/2,3" do
+    test "delegates to Document.search/4 for the page" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert Page.search(page, "Page") == Document.search(doc, "Page", 1)
+      assert {:ok, [%SearchMatch{page: 1}]} = Page.search(page, "Page")
+    end
+
+    test "passes options through" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert {:ok, [%SearchMatch{}]} = Page.search(page, "page", case_insensitive: true)
+      assert {:ok, []} = Page.search(page, "page")
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.search(%Page{doc: doc, index: 99}, "Page")
+    end
+  end
+
+  describe "search!/2,3" do
+    test "returns the matches directly" do
+      doc = Document.open!(@valid_pdf)
+      assert [%SearchMatch{page: 2}] = Page.search!(Document.page!(doc, 2), "Page")
+      assert [%SearchMatch{page: 2}] = Page.search!(Document.page!(doc, 2), "Page", [])
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.search!(%Page{doc: doc, index: 99}, "Page") end
     end
   end
 

@@ -140,6 +140,13 @@ defmodule PdfElixide.OptionKeysTest do
 
   @tables_opts [{:region, @rect} | @table_detection_opts]
 
+  @search_opts [
+    literal: true,
+    case_insensitive: true,
+    whole_word: true,
+    max_results: 5
+  ]
+
   @save_opts [
     incremental: false,
     compress: true,
@@ -229,6 +236,12 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!([deep: true], &Document.inks(doc, 0, &1))
     end
 
+    test "search/3,4" do
+      doc = doc()
+      accepts_each!(@search_opts, &Document.search(doc, "Page", &1))
+      accepts_each!(@search_opts, &Document.search(doc, "Page", 0, &1))
+    end
+
     test ":span_merging and its nested :adaptive" do
       doc = doc()
       accepts_each!(@span_merging_opts, &Document.spans(doc, 0, span_merging: &1))
@@ -285,6 +298,8 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.spans(doc, 0, opts) end,
         fn opts -> Document.tables(doc, 0, opts) end,
         fn opts -> Document.inks(doc, 0, opts) end,
+        fn opts -> Document.search(doc, "Page", opts) end,
+        fn opts -> Document.search(doc, "Page", 0, opts) end,
         fn opts -> Document.text(doc, 0, table_detection: opts) end,
         fn opts -> Document.spans(doc, 0, span_merging: opts) end,
         fn opts -> Document.spans(doc, 0, span_merging: [adaptive: opts]) end,

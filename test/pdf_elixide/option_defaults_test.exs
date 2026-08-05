@@ -215,6 +215,18 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "search/3,4" do
+      # `:literal` is the one default here that is not upstream's — upstream and
+      # every official binding treat the pattern as a regular expression. See
+      # the Search guide for why this binding inverts it.
+      assert Document.__option_defaults__(:search) == %{
+               literal: true,
+               case_insensitive: false,
+               whole_word: false,
+               max_results: 0
+             }
+    end
+
     test "Editor.save/3 and to_binary/2" do
       assert Editor.__option_defaults__(:save) == %{
                incremental: false,
@@ -247,6 +259,11 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.text_lines!(doc, @columns, []) == Document.text_lines!(doc, @columns)
       assert Document.spans!(doc, @columns, []) == Document.spans!(doc, @columns)
       assert Document.inks!(doc, @columns, []) == Document.inks!(doc, @columns)
+
+      assert Document.search!(doc, "the", @columns, []) ==
+               Document.search!(doc, "the", @columns)
+
+      assert Document.search!(doc, "the", []) == Document.search!(doc, "the")
     end
 
     test "tables/3 with no options matches tables/2", %{doc: doc} do

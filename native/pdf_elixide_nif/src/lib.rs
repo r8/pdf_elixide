@@ -25,6 +25,7 @@ mod optional_content;
 mod outline;
 mod paths;
 mod resource;
+mod search;
 mod span;
 mod table;
 mod text_line;
@@ -43,7 +44,7 @@ pub(crate) mod atoms {
         // Font encoding tags (see fonts.rs / PdfElixide.Document.Font)
         standard, custom, identity,
         // Error reason tags (see error.rs / PdfElixide.Error)
-        encrypted, wrong_password, invalid_pdf, unsupported,
+        encrypted, wrong_password, invalid_pdf, invalid_pattern, unsupported,
         not_found, out_of_range, io, lock_poisoned, panic, closed, other
     }
 }

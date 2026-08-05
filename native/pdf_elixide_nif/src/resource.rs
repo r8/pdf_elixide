@@ -29,11 +29,13 @@ use crate::error::{closed_err, lock_err, panic_err};
 /// caused by concurrency — two sequential calls do it too — so it is documented
 /// for callers in `guides/concurrency.md`.
 ///
-/// [`Closable::with_lock`] is exclusive, and is for exactly two things: the
-/// editor, whose `DocumentEditor` methods take `&mut self`, and
+/// [`Closable::with_lock`] is exclusive, and is for exactly three things: the
+/// editor, whose `DocumentEditor` methods take `&mut self`;
 /// `document_authenticate`, whose object-cache invalidation must not be
-/// straddled by a reader. Both run the caller's work in a closure so the guard
-/// never escapes — see [`contain_panic`] for why that matters.
+/// straddled by a reader; and `document_clear_search_index`, whose release a
+/// concurrent search would otherwise undo. Both accessors run the caller's work
+/// in a closure so the guard never escapes — see [`contain_panic`] for why that
+/// matters.
 pub struct Closable<T> {
     /// Name used in the `:closed` error message, e.g. `"Document"`.
     label: &'static str,

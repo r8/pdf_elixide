@@ -9,6 +9,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Permissions
+  alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
@@ -63,6 +64,14 @@ defmodule PdfElixide.DocumentTest do
   # One page per branch family of upstream's rectangle and straight-line
   # classification — the only fixture drawing a rectangle at all.
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
+  # One page laid out for `search`: a word inside a longer run (the whole-span
+  # box rule), two lines whose joined text forms a phrase, "cat" beside
+  # "category" and "concatenate", a literal "Fig. 3 (a)", the same word in three
+  # cases, and "aaa".
+  @search_pdf Path.join(@fixtures, "search.pdf")
+  # A page tree with /Count 0 and an empty /Kids — the only document reporting
+  # no pages, and so the only one reaching the page-less branch of `search/2`.
+  @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @unreachable_page 2
   @password "secret"
   @latin1_password "caf" <> <<0xE9>>
@@ -1564,6 +1573,228 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "search/2" do
+    test "returns {:ok, matches} across every page, in page order" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, [_, _, _] = matches} = Document.search(doc, "Page")
+      assert Enum.all?(matches, &match?(%SearchMatch{}, &1))
+      assert Enum.map(matches, & &1.page) == [0, 1, 2]
+      assert Enum.map(matches, & &1.text) == ["Page", "Page", "Page"]
+    end
+
+    test "is case-sensitive by default and case-insensitive on request" do
+      doc = Document.open!(@search_pdf)
+      assert Document.search!(doc, "Widgets") |> Enum.map(& &1.text) == ["Widgets"]
+
+      assert Document.search!(doc, "Widgets", case_insensitive: true)
+             |> Enum.map(& &1.text) == ["Widgets", "WIDGETS", "widgets"]
+    end
+
+    test ":whole_word requires a boundary at each end" do
+      doc = Document.open!(@search_pdf)
+
+      # "cat category concatenate" — three occurrences, one of them standalone.
+      assert length(Document.search!(doc, "cat")) == 3
+      assert length(Document.search!(doc, "cat", whole_word: true)) == 1
+    end
+
+    test "the pattern is literal by default, so regex metacharacters match themselves" do
+      doc = Document.open!(@search_pdf)
+
+      assert Document.search!(doc, "Fig. 3 (a)") |> Enum.map(& &1.text) == ["Fig. 3 (a)"]
+      # The `.` is a literal period, not a wildcard: nothing on the page reads
+      # "Fig" followed by any character and " 3".
+      assert Document.search!(doc, "Fig? 3") == []
+    end
+
+    test "literal: false opts into regular expressions" do
+      doc = Document.open!(@search_pdf)
+
+      assert Document.search!(doc, ~S"Fig\. \d+", literal: false)
+             |> Enum.map(& &1.text) == ["Fig. 3"]
+    end
+
+    test "an unparseable pattern is :invalid_pattern, not :invalid_pdf" do
+      doc = Document.open!(@search_pdf)
+
+      assert {:error, %Error{reason: :invalid_pattern}} =
+               Document.search(doc, "(", literal: false)
+
+      # …and is unreachable on the default path, where the pattern is escaped
+      # and the same character is matched as itself.
+      assert Document.search!(doc, "(") |> Enum.map(& &1.text) == ["("]
+    end
+
+    test ":max_results caps the total across pages" do
+      doc = Document.open!(@valid_pdf)
+      assert length(Document.search!(doc, "Page", max_results: 2)) == 2
+      # 0 means unlimited, not "none".
+      assert length(Document.search!(doc, "Page", max_results: 0)) == 3
+    end
+
+    test "returns {:ok, []} for a pattern that does not occur" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.search(doc, "Nonexistent")
+    end
+
+    test "raises FunctionClauseError for an empty pattern" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.search(doc, "") end
+      assert_raise FunctionClauseError, fn -> Document.search(doc, "", 0) end
+    end
+
+    test "raises FunctionClauseError for a non-binary pattern" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.search(doc, :page) end
+    end
+
+    test "returns {:ok, []} for an encrypted document that was never authenticated" do
+      # Same posture as `text/2`, which answers `""` there.
+      doc = Document.open!(@encrypted_pdf)
+      assert {:ok, []} = Document.search(doc, "Page")
+
+      # A second handle, deliberately: the same-handle sequence is a different
+      # claim and `describe "authenticate/2"` makes it.
+      authenticated = Document.open!(@encrypted_pdf, password: "secret")
+      assert {:ok, [_ | _]} = Document.search(authenticated, "Page")
+    end
+
+    test "reports an unparseable pattern on a document with no pages" do
+      # The page-less branch answers `[]` without reaching a page, but must still
+      # reach upstream, which is where the pattern is compiled.
+      doc = Document.open!(@no_pages_pdf)
+
+      assert {:error, %Error{reason: :invalid_pattern}} =
+               Document.search(doc, "(", literal: false)
+
+      # `[]` rather than an error is what the branch exists for — the sibling
+      # whole-document extractors answer the same way, and the per-page arity
+      # still has no page to reach.
+      assert {:ok, []} = Document.search(doc, "x")
+      assert {:ok, ""} = Document.text(doc)
+      assert {:ok, []} = Document.chars(doc)
+      assert {:error, %Error{reason: :out_of_range}} = Document.search(doc, "x", 0)
+    end
+
+    test "returns :closed for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert {:error, %Error{reason: :closed}} = Document.search(doc, "Page")
+    end
+  end
+
+  describe "search!/2" do
+    test "returns the matches of the whole document" do
+      doc = Document.open!(@valid_pdf)
+      assert [%SearchMatch{} | _] = Document.search!(doc, "Page")
+    end
+
+    test "raises Error for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert_raise Error, fn -> Document.search!(doc, "Page") end
+    end
+  end
+
+  describe "search/3 and search/4" do
+    test "searches only the given page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, [match]} = Document.search(doc, "Page", 1)
+      assert match.page == 1
+    end
+
+    test "each page's matches equal the whole-document result filtered by page" do
+      # `per_page_equivalence_test.exs` cannot generate this one — its helpers
+      # pass no pattern — so the equivalence is asserted here instead.
+      doc = Document.open!(@valid_pdf)
+      whole = Document.search!(doc, "Page")
+
+      per_page =
+        Enum.flat_map(0..(Document.page_count!(doc) - 1)//1, &Document.search!(doc, "Page", &1))
+
+      assert whole == per_page
+    end
+
+    test "returns :out_of_range for a page index past the last page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.search(doc, "Page", 99)
+    end
+
+    test "takes the same options as the whole-document arity" do
+      doc = Document.open!(@search_pdf)
+      assert length(Document.search!(doc, "cat", 0, whole_word: true)) == 1
+    end
+  end
+
+  describe "search!/3 and search!/4" do
+    test "returns the matches for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert [%SearchMatch{page: 0}] = Document.search!(doc, "Page", 0)
+      assert [%SearchMatch{page: 0}] = Document.search!(doc, "Page", 0, [])
+    end
+
+    test "raises Error for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.search!(doc, "Page", 99) end
+    end
+
+    test "raises FunctionClauseError for a non-integer page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.search!(doc, "Page", :first) end
+    end
+  end
+
+  describe "a match's boxes" do
+    test "cover the whole span the match sits in, not the matched characters" do
+      doc = Document.open!(@search_pdf)
+      [span] = Document.spans!(doc, 0) |> Enum.filter(&(&1.text =~ "Widgets"))
+      [match] = Document.search!(doc, "Widgets")
+
+      assert match.span_boxes == [span.bbox]
+      assert match.bbox == span.bbox
+    end
+
+    test "list one box per span for a match crossing spans, with bbox their union" do
+      # "Quarterly" and "Report" are separate lines; upstream joins a page's
+      # spans with a space before matching, so a pattern can span both.
+      doc = Document.open!(@search_pdf)
+      [match] = Document.search!(doc, "Quarterly Report")
+
+      assert [%Rect{y: 640.0} = first, %Rect{y: 600.0} = second] = match.span_boxes
+      assert match.bbox.y == second.y
+      assert match.bbox.height == first.y + first.height - second.y
+    end
+  end
+
+  describe "prepare_search/1 and clear_search_index/1" do
+    test "both answer :ok and leave search results unchanged" do
+      doc = Document.open!(@valid_pdf)
+      before = Document.search!(doc, "Page")
+
+      assert :ok = Document.prepare_search(doc)
+      assert Document.search!(doc, "Page") == before
+
+      assert :ok = Document.clear_search_index(doc)
+      assert Document.search!(doc, "Page") == before
+    end
+
+    test "the bang variants answer :ok too" do
+      doc = Document.open!(@valid_pdf)
+      assert :ok = Document.prepare_search!(doc)
+      assert :ok = Document.clear_search_index!(doc)
+    end
+
+    test "both report a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Document.prepare_search(doc)
+      assert {:error, %Error{reason: :closed}} = Document.clear_search_index(doc)
+      assert_raise Error, fn -> Document.prepare_search!(doc) end
+      assert_raise Error, fn -> Document.clear_search_index!(doc) end
+    end
+  end
+
   describe "fonts/1" do
     test "returns {:ok, fonts} for every page as a flat list of structs" do
       doc = Document.open!(@fonts_pdf)
@@ -2608,6 +2839,36 @@ defmodule PdfElixide.DocumentTest do
     test "raises FunctionClauseError for a non-binary password" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.authenticate(doc, :secret) end
+    end
+
+    test "a handle read before authenticating answers correctly afterwards" do
+      doc = Document.open!(@encrypted_pdf)
+
+      # Every one of these caches its own empty result natively, and `search/2`
+      # caches into one nothing evicts from — so reading first is what makes this
+      # sequence worth asserting rather than the plain `authenticate` above.
+      assert {:ok, ""} = Document.text(doc, 0)
+      assert {:ok, []} = Document.chars(doc, 0)
+      assert {:ok, []} = Document.search(doc, "Page")
+
+      assert {:ok, true} = Document.authenticate(doc, @password)
+
+      fresh = Document.open!(@encrypted_pdf, password: @password)
+      assert Document.text!(doc, 0) == Document.text!(fresh, 0)
+      assert Document.chars!(doc, 0) == Document.chars!(fresh, 0)
+      assert Document.search!(doc, "Page") == Document.search!(fresh, "Page")
+      assert Document.page_count!(doc) == 3
+    end
+
+    test "a rejected password leaves the handle as it was" do
+      doc = Document.open!(@encrypted_pdf)
+      assert {:ok, []} = Document.search(doc, "Page")
+
+      assert {:ok, false} = Document.authenticate(doc, "wrong")
+
+      assert {:ok, []} = Document.search(doc, "Page")
+      assert {:ok, true} = Document.authenticate(doc, @password)
+      assert {:ok, [_ | _]} = Document.search(doc, "Page")
     end
   end
 

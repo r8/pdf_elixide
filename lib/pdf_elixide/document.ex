@@ -7,21 +7,23 @@ defmodule PdfElixide.Document do
   A `%Document{}` is safe to pass to other processes, and its reads run
   *concurrently*: every function here takes the native handle's lock shared, so
   N processes extracting from one document do not queue behind each other.
-  `authenticate/2` and `close/1` are the two exceptions, taking the lock
-  exclusively. The [Concurrency](guides/concurrency.md) guide has the rest,
-  including the tagged-PDF hazard that makes fanning out *by page* the shape to
-  prefer.
+  `authenticate/2`, `clear_search_index/1` and `close/1` are the exceptions,
+  taking the lock exclusively. The [Concurrency](guides/concurrency.md) guide
+  has the rest, including the tagged-PDF hazard that makes fanning out *by page*
+  the shape to prefer.
 
   ## Whole-document extraction and memory
 
   Every extractor here has a whole-document arity — `chars/1`, `words/1`,
   `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `rects/1`, `lines/1`,
   `images/1`, `fonts/1`, `annotations/1`, `text/1`, `to_markdown/1` and
-  `to_html/1`. Each walks all
-  pages inside a **single** native call and returns one flat list, so its cost
-  scales with the whole document rather than with what the caller keeps. As the
-  call returns, the results exist twice — as the native vector and as the Elixir
-  terms encoded from it — so peak usage is roughly double the final list.
+  `to_html/1` — as does `search/2`. Each walks all pages inside a **single**
+  native call and returns one flat list, so its cost scales with the whole
+  document rather than with what the caller keeps. As the call returns, the
+  results exist twice — as the native vector and as the Elixir terms encoded
+  from it — so peak usage is roughly double the final list. `search/2` given a
+  `:max_results` is the one that need not walk every page; see
+  `t:search_opts/0`.
 
   Three of them hold native memory *after* the call as well, since each returned
   struct carries a handle that BEAM memory accounting cannot see:
@@ -94,11 +96,12 @@ defmodule PdfElixide.Document do
     * `chars/1`, `spans/1`, `paths/1` — with `rects/1` and `lines/1`, which are
       the same values narrowed — and `images/1` stay in raw, unrotated user
       space, whatever the rotation.
-    * `words/1`, `text_lines/1` and the cell boxes of `tables/1` are mapped into
-      the **displayed** frame, since upstream builds them on the span pipeline
-      that reorders a rotated page for reading. The mapping is selective: a
-      `180`-degree page maps everything, while a `90`- or `270`-degree page maps
-      only text whose own text matrix is rotated, leaving a horizontal run raw.
+    * `words/1`, `text_lines/1`, the cell boxes of `tables/1` and the boxes on a
+      `search/2` match are mapped into the **displayed** frame, since upstream
+      builds them on the span pipeline that reorders a rotated page for reading.
+      The mapping is selective: a `180`-degree page maps everything, while a
+      `90`- or `270`-degree page maps only text whose own text matrix is
+      rotated, leaving a horizontal run raw.
 
   So on a `180`-degree page, `spans/1` and `words/1` describing the very same
   line report mirrored boxes. Compare or lay out boxes from **one** extractor,
@@ -119,6 +122,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Permissions
+  alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
@@ -275,7 +279,7 @@ defmodule PdfElixide.Document do
   It takes the handle's lock *exclusively*, where reads take it shared, so it
   waits for every in-flight call on the same document — and an extraction can
   hold its share of that lock for seconds. *Immediately* means as soon as the
-  handle is idle, not preemptively. That is one of the two exclusive calls the
+  handle is idle, not preemptively. That is one of the exclusive calls the
   [Concurrency](guides/concurrency.md) guide is about.
 
   Afterwards, functions that read the document return
@@ -451,6 +455,12 @@ defmodule PdfElixide.Document do
 
   The password is a byte string and is not required to be valid UTF-8 — see
   `t:open_opts/0`, whose `:password` option takes the same values.
+
+  An encrypted document read *before* it is authenticated extracts as empty —
+  `text/2` answers `""`, `search/2` answers `[]`. A first successful
+  authentication reloads the document, so everything after it answers as though
+  the handle had been opened with `open/2`'s `:password`, and it costs about what
+  opening the document cost — a rejected password too.
 
   This is the one read-side function that takes the document's lock
   *exclusively*, so it waits for in-flight calls on the handle and blocks new
@@ -2164,6 +2174,7 @@ defmodule PdfElixide.Document do
   def __option_defaults__(:chars), do: build_chars_options([])
   def __option_defaults__(:spans), do: build_spans_options([])
   def __option_defaults__(:tables), do: build_tables_options([])
+  def __option_defaults__(:search), do: build_search_options([])
   def __option_defaults__(:table_detection), do: build_table_detection_option([])
   def __option_defaults__(:span_merging), do: build_span_merging_option([])
   def __option_defaults__(:adaptive_threshold), do: build_adaptive_threshold_option([])
@@ -2326,6 +2337,196 @@ defmodule PdfElixide.Document do
   def lines!(doc, page_index)
       when is_integer(page_index) and page_index >= 0 do
     lines(doc, page_index) |> Wrap.unwrap!()
+  end
+
+  @typedoc """
+  Options accepted by the `search` and `search!` functions.
+
+    * `:literal` — treat the pattern as plain text rather than a regular
+      expression. Defaults to `true`; see the [Search](guides/search.md) guide
+      for the regular expression syntax `literal: false` accepts.
+    * `:case_insensitive` — match regardless of case. Defaults to `false`.
+    * `:whole_word` — require a word boundary at each end of the match.
+      Defaults to `false`.
+    * `:max_results` — stop after this many matches, counted across pages.
+      Defaults to `0`, meaning no limit. This bounds the work as well as the
+      list: searching the whole document stops at the page that reaches the
+      limit, leaving the ones after it unread and unindexed.
+
+  There is no `:page_range`: searching one page is what `search/3` and
+  `search/4` are for.
+  """
+  @type search_opts :: [
+          literal: boolean(),
+          case_insensitive: boolean(),
+          whole_word: boolean(),
+          max_results: non_neg_integer()
+        ]
+
+  @search_opts_keys [:literal, :case_insensitive, :whole_word, :max_results]
+
+  @doc """
+  Finds every occurrence of `pattern` in the document's text, as
+  `PdfElixide.Document.SearchMatch` structs.
+
+  With a keyword list (or nothing) as the third argument, searches every page
+  and returns the matches in page order. With a zero-based integer, searches
+  that single page instead.
+
+      Document.search(doc, "Figure 3")
+      Document.search(doc, "figure 3", case_insensitive: true)
+      Document.search(doc, "Figure 3", 0)
+      Document.search(doc, ~S"Figure \\d+", 0, literal: false)
+
+  The pattern is plain text by default. Pass `literal: false` to treat it as a
+  regular expression, which reports an unparseable one as
+  `%PdfElixide.Error{reason: :invalid_pattern}`.
+
+  A match's boxes cover whole runs of text rather than the matched characters —
+  see `PdfElixide.Document.SearchMatch`. Searching builds a per-page index that
+  is reused by later searches and released by `clear_search_index/1` or
+  `close/1`. The [Search](guides/search.md) guide covers both.
+
+  The whole-document form builds every page's matches in memory at once — see the
+  "Whole-document extraction and memory" section of `PdfElixide.Document` for
+  when to prefer the per-page arity.
+
+  See `t:search_opts/0` for the available options.
+  """
+  @spec search(t(), String.t(), search_opts() | non_neg_integer()) ::
+          {:ok, [SearchMatch.t()]} | {:error, Error.t()}
+  def search(doc, pattern, page_index_or_opts \\ [])
+
+  # An empty pattern matches at every byte position, and `max_results: 0` does
+  # not cap it. Refused as a malformed argument, so it raises rather than
+  # returning an `%Error{}`.
+  def search(%__MODULE__{ref: ref}, pattern, opts)
+      when is_binary(pattern) and pattern != "" and is_list(opts) do
+    options = build_search_options(opts)
+
+    with {:ok, matches} <- Wrap.call(fn -> Native.document_all_search(ref, pattern, options) end) do
+      {:ok, Enum.map(matches, &SearchMatch.from_nif/1)}
+    end
+  end
+
+  def search(%__MODULE__{} = doc, pattern, page_index)
+      when is_binary(pattern) and pattern != "" and is_integer(page_index) and page_index >= 0 do
+    search(doc, pattern, page_index, [])
+  end
+
+  @doc """
+  Finds every occurrence of `pattern`, raising an error if it fails.
+  """
+  @spec search!(t(), String.t(), search_opts() | non_neg_integer()) :: [SearchMatch.t()]
+  def search!(doc, pattern, page_index_or_opts \\ [])
+
+  def search!(%__MODULE__{} = doc, pattern, opts)
+      when is_binary(pattern) and pattern != "" and is_list(opts) do
+    search(doc, pattern, opts) |> Wrap.unwrap!()
+  end
+
+  def search!(%__MODULE__{} = doc, pattern, page_index)
+      when is_binary(pattern) and pattern != "" and is_integer(page_index) and page_index >= 0 do
+    search!(doc, pattern, page_index, [])
+  end
+
+  @doc """
+  Finds every occurrence of `pattern` on the page at the given zero-based index.
+
+  See `t:search_opts/0` for the available options.
+  """
+  @spec search(t(), String.t(), non_neg_integer(), search_opts()) ::
+          {:ok, [SearchMatch.t()]} | {:error, Error.t()}
+  def search(%__MODULE__{ref: ref}, pattern, page_index, opts)
+      when is_binary(pattern) and pattern != "" and is_integer(page_index) and page_index >= 0 and
+             is_list(opts) do
+    options = build_search_options(opts)
+
+    with {:ok, matches} <-
+           Wrap.call(fn -> Native.document_search(ref, pattern, page_index, options) end) do
+      {:ok, Enum.map(matches, &SearchMatch.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Finds every occurrence of `pattern` on the page at the given zero-based index,
+  raising an error if it fails.
+  """
+  @spec search!(t(), String.t(), non_neg_integer(), search_opts()) :: [SearchMatch.t()]
+  def search!(doc, pattern, page_index, opts)
+      when is_binary(pattern) and pattern != "" and is_integer(page_index) and page_index >= 0 and
+             is_list(opts) do
+    search(doc, pattern, page_index, opts) |> Wrap.unwrap!()
+  end
+
+  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:search)`.
+  defp build_search_options(opts) do
+    opts = Keyword.validate!(opts, @search_opts_keys)
+
+    %{
+      literal: Keyword.get(opts, :literal, true),
+      case_insensitive: Keyword.get(opts, :case_insensitive, false),
+      whole_word: Keyword.get(opts, :whole_word, false),
+      max_results: Keyword.get(opts, :max_results, 0)
+    }
+  end
+
+  @doc """
+  Builds the search index for every page, so a later `search/2` does not pay for
+  the whole document at once.
+
+  Searching already builds the index lazily, so this only moves that cost — see
+  the [Search](guides/search.md) guide.
+  """
+  @spec prepare_search(t()) :: :ok | {:error, Error.t()}
+  def prepare_search(%__MODULE__{ref: ref}) do
+    case Wrap.call(fn -> Native.document_prepare_search(ref) end) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Builds the search index for every page, raising an error if it fails.
+  """
+  @spec prepare_search!(t()) :: :ok
+  def prepare_search!(%__MODULE__{} = doc) do
+    # Local `case` rather than `Wrap.unwrap!/1`: `prepare_search/1` answers a
+    # bare `:ok`, not `{:ok, value}`, so there is no payload to unwrap.
+    case prepare_search(doc) do
+      :ok -> :ok
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Releases the cached search index, and the page text and boxes it holds.
+
+  The document stays usable; a later `search/2` rebuilds what it needs. Nothing
+  evicts from this index on its own, so on a large document this is the only
+  release short of `close/1` — see the [Search](guides/search.md) guide.
+
+  Unlike the other reads here it takes the handle's lock *exclusively*, so it
+  waits for calls already in flight — see [Concurrency](guides/concurrency.md).
+  """
+  @spec clear_search_index(t()) :: :ok | {:error, Error.t()}
+  def clear_search_index(%__MODULE__{ref: ref}) do
+    case Wrap.call(fn -> Native.document_clear_search_index(ref) end) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Releases the cached search index, raising an error if it fails.
+  """
+  @spec clear_search_index!(t()) :: :ok
+  def clear_search_index!(%__MODULE__{} = doc) do
+    # Local `case` for the same reason as `prepare_search!/1`.
+    case clear_search_index(doc) do
+      :ok -> :ok
+      {:error, error} -> raise error
+    end
   end
 
   @doc """

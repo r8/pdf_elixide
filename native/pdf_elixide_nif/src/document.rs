@@ -5,6 +5,7 @@ use pdf_oxide::{
     error::Result,
     extractors::forms::FormExtractor,
     layout::SpatialCollectionFiltering,
+    search::{SearchOptions, TextSearcher},
     PdfDocument,
 };
 use rustler::{Atom, Binary, NifMap, NifResult, NifUnitEnum, ResourceArc};
@@ -13,11 +14,11 @@ use crate::{
     annotations::{annotation_to_nif, AnnotationNif},
     atoms,
     char::{char_to_nif, CharNif},
-    error::{tagged_err, to_nif_err, to_nif_page_err},
+    error::{tagged_err, to_nif_err, to_nif_page_err, to_search_err},
     extract_options::{
         CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, OnPageErrorNif, RegionFilter,
-        SpansOptions, SpansOptionsNif, TablesOptions, TablesOptionsNif, TextOptions,
-        TextOptionsNif, WordsOptions, WordsOptionsNif,
+        SearchOptionsNif, SpansOptions, SpansOptionsNif, TablesOptions, TablesOptionsNif,
+        TextOptions, TextOptionsNif, WordsOptions, WordsOptionsNif,
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
@@ -27,6 +28,7 @@ use crate::{
     outline::{outline_to_nif, OutlineItemNif},
     paths::{path_to_nif, PathNif},
     resource::Closable,
+    search::{search_match_to_nif, SearchMatchNif},
     span::{span_to_nif, SpanNif},
     table::{table_to_nif, TableNif},
     text_line::{text_line_to_nif, TextLineNif},
@@ -425,20 +427,38 @@ fn document_is_encrypted(resource: ResourceArc<DocumentResource>) -> NifResult<b
 ///
 /// **The one document NIF that takes the lock exclusively**, though upstream's
 /// `authenticate` is `&self` like everything else here. A first successful
-/// authentication invalidates upstream's object cache — objects loaded before it
-/// still hold ciphertext strings, so a later cache hit would return them forever
-/// (upstream issue #323) — and nothing upstream stops a concurrent `load_object`
-/// from straddling that `clear()`. `with_lock` is what makes the invalidation
-/// atomic against every reader on the handle. It costs nothing: this is a
-/// one-shot call, where the extractors it excludes are the hot path.
+/// authentication replaces the whole `PdfDocument` (see below), and nothing
+/// upstream stops a concurrent reader from straddling that swap. `with_lock` is
+/// what makes it atomic against every reader on the handle. It costs nothing:
+/// this is a one-shot call, where the extractors it excludes are the hot path.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_authenticate(
     resource: ResourceArc<DocumentResource>,
     password: Binary,
 ) -> NifResult<bool> {
-    resource
-        .doc
-        .with_lock(|doc| doc.authenticate(password.as_slice()).map_err(to_nif_err))
+    resource.doc.with_lock(|doc| {
+        // Not encrypted, or already authenticated: nothing can have been cached
+        // from an undecryptable read, so authenticate in place.
+        if doc.is_authenticated() {
+            return doc.authenticate(password.as_slice()).map_err(to_nif_err);
+        }
+
+        // Upstream's `authenticate` clears only its object cache, so the empty
+        // results cached by every pre-auth read would be served for the life of
+        // the handle; two of those caches have no clear site at all. Rebuilding
+        // drops them. The fresh document is authenticated *before* the swap, so
+        // a failure leaves the handle exactly as it was.
+        let fresh = PdfDocument::from_bytes(doc.source_bytes.clone()).map_err(to_nif_err)?;
+        let ok = fresh
+            .authenticate(password.as_slice())
+            .map_err(to_nif_err)?;
+
+        if ok {
+            *doc = fresh;
+        }
+
+        Ok(ok)
+    })
 }
 
 /// Extracts one page's text under the caller's options.
@@ -1041,6 +1061,77 @@ fn document_all_lines(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
             );
         }
         Ok(lines)
+    })
+}
+
+/// Searches a single page (zero-indexed) for `pattern`.
+///
+/// Reaches the page through `page_range` rather than `TextSearcher::search_page`,
+/// which takes a pre-built `regex::Regex` and ignores every option but
+/// `max_results`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_search(
+    resource: ResourceArc<DocumentResource>,
+    pattern: String,
+    page_index: usize,
+    options: SearchOptionsNif,
+) -> NifResult<Vec<SearchMatchNif>> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        let options = SearchOptions::from(options).with_page_range(page_index, page_index);
+        let hits = TextSearcher::search(doc, &pattern, &options).map_err(to_search_err)?;
+        Ok(hits.into_iter().map(search_match_to_nif).collect())
+    })
+}
+
+/// Searches every page for `pattern`, in page order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_all_search(
+    resource: ResourceArc<DocumentResource>,
+    pattern: String,
+    options: SearchOptionsNif,
+) -> NifResult<Vec<SearchMatchNif>> {
+    resource.doc.with_read(|doc| {
+        let mut options = SearchOptions::from(options);
+
+        // A document with no pages must answer `[]` like every sibling
+        // extractor, but not by returning early: `TextSearcher::search` compiles
+        // the pattern before it reads the page count, so an early return would
+        // accept an unparseable one. An inverted range keeps the call and still
+        // visits nothing — `start..=end` is empty when `start > end`.
+        if doc.page_count().map_err(to_nif_err)? == 0 {
+            options = options.with_page_range(1, 0);
+        }
+
+        let hits = TextSearcher::search(doc, &pattern, &options).map_err(to_search_err)?;
+        Ok(hits.into_iter().map(search_match_to_nif).collect())
+    })
+}
+
+/// Builds the search index for every page up front, so the first `search` call
+/// does not pay for the whole document.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_prepare_search(resource: ResourceArc<DocumentResource>) -> NifResult<Atom> {
+    resource.doc.with_read(|doc| {
+        doc.prepare_search().map_err(to_nif_err)?;
+        Ok(atoms::ok())
+    })
+}
+
+/// Drops the cached search index, releasing the page text and span boxes it
+/// holds.
+///
+/// Exclusive, unlike every other read here, because upstream's
+/// `search_page_index` drops its map guard before extracting a page and
+/// re-acquires it to insert. A concurrent search would therefore be free to put
+/// its page back *after* the clear returned, leaving the one call that releases
+/// this memory unable to promise it did.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_clear_search_index(resource: ResourceArc<DocumentResource>) -> NifResult<Atom> {
+    resource.doc.with_lock(|doc| {
+        doc.clear_search_index();
+        Ok(atoms::ok())
     })
 }
 

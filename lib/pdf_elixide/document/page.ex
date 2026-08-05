@@ -33,6 +33,7 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
+  alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
@@ -457,6 +458,27 @@ defmodule PdfElixide.Document.Page do
   @spec lines!(t()) :: [PdfElixide.Document.Path.t()]
   def lines!(page) do
     lines(page) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Finds every occurrence of `pattern` on the page.
+
+  The pattern is plain text unless `literal: false` is given. See
+  `t:PdfElixide.Document.search_opts/0` for the available options.
+  """
+  @spec search(t(), String.t(), Document.search_opts()) ::
+          {:ok, [SearchMatch.t()]} | {:error, Error.t()}
+  def search(%__MODULE__{doc: doc, index: index}, pattern, opts \\ [])
+      when is_binary(pattern) and is_list(opts) do
+    Document.search(doc, pattern, index, opts)
+  end
+
+  @doc """
+  Same as `search/3` but raises an error if it fails.
+  """
+  @spec search!(t(), String.t(), Document.search_opts()) :: [SearchMatch.t()]
+  def search!(page, pattern, opts \\ []) when is_binary(pattern) and is_list(opts) do
+    search(page, pattern, opts) |> Wrap.unwrap!()
   end
 
   @doc """

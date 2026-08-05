@@ -46,6 +46,8 @@ defmodule PdfElixide.UpstreamDriftTest do
   @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
+  @search_pdf Path.join(@fixtures, "search.pdf")
+  @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
 
   @columns 0
   @artifacts 1
@@ -567,6 +569,103 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       # Said plainly: the same line, two frames.
       refute origins(Document.text_lines!(doc, @rotate_180)) == [origin(span)]
+    end
+
+    test "a search match is mapped, like words, and unlike the span it sits in",
+         %{doc: doc} do
+      # `search` reaches its spans through `PdfDocument::search_page_index`,
+      # which calls the plain `extract_spans` — so it is on the mapped side of
+      # the split above, even though `spans/2` is not. Nothing in either
+      # signature shows that, which is why it is pinned rather than assumed.
+      assert [%{bbox: %{x: 72.0, y: 720.0}} = span] = Document.spans!(doc, @rotate_180)
+      assert [match] = Document.search!(doc, span.text, @rotate_180)
+
+      assert origin(match) == origins(Document.words!(doc, @rotate_180)) |> hd()
+      refute origin(match) == origin(span)
+
+      # The control: on the 90-degree page nothing is mapped, so search agrees
+      # with `spans` again.
+      assert [span_90] = Document.spans!(doc, @rotate_90)
+      assert [match_90] = Document.search!(doc, span_90.text, @rotate_90)
+      assert origin(match_90) == origin(span_90)
+    end
+  end
+
+  describe "text search" do
+    # Everything here is upstream's rule, not this binding's, and none of it is
+    # visible from `TextSearcher::search`'s signature. `guides/search.md` is
+    # what tells callers about each one; a failure here means that guide has
+    # gone wrong, so fix the guide rather than the assertion.
+    setup do: %{doc: open(@search_pdf)}
+
+    test "a match's boxes cover whole spans, not the matched characters",
+         %{doc: doc} do
+      # `compute_match_bbox` (`src/search/text_search.rs`) selects spans by byte
+      # overlap and takes each one's whole `bbox`; upstream carries
+      # `char_widths` and `char_x_offsets` on the span and never consults them.
+      # So a one-word match inside a long line reports the whole line's box.
+      assert [span] = Document.spans!(doc, 0) |> Enum.filter(&(&1.text =~ "Widgets"))
+      assert [match] = Document.search!(doc, "Widgets")
+
+      assert match.span_boxes == [span.bbox]
+      assert match.bbox == span.bbox
+      assert span.bbox.width > 200.0
+    end
+
+    test "spans are joined with a space, so a match can cross a line",
+         %{doc: doc} do
+      # `build_text_with_positions` concatenates a page's spans into one string,
+      # pushing a `' '` after any span not already ending in one — no newline
+      # anywhere. "Quarterly" and "Report" are on separate lines and still match
+      # as one phrase.
+      assert [match] = Document.search!(doc, "Quarterly Report")
+      assert [%{y: 640.0}, %{y: 600.0}] = match.span_boxes
+    end
+
+    test "matches are leftmost-first and non-overlapping", %{doc: doc} do
+      # `find_iter` semantics: "aa" occurs twice in "aaa" by inspection, but the
+      # second overlaps the first and is never reported.
+      assert length(Document.search!(doc, "aa")) == 1
+    end
+
+    test "whole_word wraps the pattern without grouping it", %{doc: doc} do
+      # `build_regex` builds `\b{pattern}\b`, not `\b(?:{pattern})\b`, so an
+      # alternation binds as `(\bcat)|(Report\b)`. A correctly grouped pattern
+      # would match "cat" and "Report" only; the leading `\b` alone also admits
+      # "category". This is the whole reason `:literal` defaults to `true`
+      # here — `regex::escape` makes the trap unreachable on the default path.
+      matched = Document.search!(doc, "cat|Report", literal: false, whole_word: true)
+
+      assert Enum.map(matched, & &1.text) == ["Report", "cat", "cat"]
+      assert length(Document.search!(doc, "cat|Report", literal: false)) == 4
+    end
+
+    test "an unparseable pattern arrives as InvalidPdf with a known prefix",
+         %{doc: doc} do
+      # Upstream maps a `regex` compile failure onto `Error::InvalidPdf`, the
+      # same variant a corrupt document produces. `error::to_search_err` tells
+      # the two apart by the message prefix alone, which is the coupling this
+      # pins: if upstream rewords it, the reason atom silently degrades to
+      # `:invalid_pdf` and callers matching `:invalid_pattern` stop seeing it.
+      assert {:error, %Error{reason: :invalid_pattern, message: message}} =
+               Document.search(doc, "(", literal: false)
+
+      assert message =~ "Invalid regex pattern: "
+    end
+  end
+
+  describe "searching a document with no pages" do
+    test "an inverted page range visits no page" do
+      # `TextSearcher::search` clamps the *end* of the range it is given
+      # (`end.min(page_count.saturating_sub(1))`) and never the start, so
+      # `document_all_search` says "no pages" as the range `1..=0` — empty,
+      # rather than the `0..=0` upstream would derive on its own and fail in
+      # `get_page`.
+      #
+      # If this starts erroring, upstream has begun clamping the start too:
+      # find another way to express an empty sweep rather than restoring the
+      # early return, which would accept an unparseable pattern here.
+      assert {:ok, []} = Document.search(open(@no_pages_pdf), "x")
     end
   end
 

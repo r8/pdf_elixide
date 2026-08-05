@@ -24,16 +24,21 @@ pages =
 :ok = Document.close(doc)
 ```
 
-## The two exclusive calls
+## The exclusive calls
 
-Everything on a document reads through a shared lock except these two, which
+Everything on a document reads through a shared lock except these three, which
 take the handle *exclusively* — they wait for every in-flight call on that handle
 and block new ones for their duration.
 
   * `PdfElixide.Document.authenticate/2` is exclusive because a first successful
-    authentication invalidates a cache underneath that a concurrent read must not
-    be halfway through. Authenticate *before* fanning the document out to
+    authentication replaces the document underneath, which a concurrent read must
+    not be halfway through. Authenticate *before* fanning the document out to
     workers, not after.
+  * `PdfElixide.Document.clear_search_index/1` is exclusive because a search
+    running beside it would put its page back into the index moments after the
+    release returned. Waiting for the searches to finish is what lets it promise
+    the memory is gone. Its sibling `PdfElixide.Document.prepare_search/1` is an
+    ordinary shared read.
   * `PdfElixide.Document.close/1` waits for every in-flight call to return rather
     than interrupting it — *immediately* means as soon as the handle is idle, not
     preemptively, and an extraction can hold its share of the lock for seconds.

@@ -20,6 +20,8 @@ defmodule PdfElixide.Error do
       `from_binary!/2`; `PdfElixide.Document.authenticate/2` reports a wrong
       password as `{:ok, false}` instead.
     * `:invalid_pdf` — malformed or unparseable PDF data.
+    * `:invalid_pattern` — the search pattern could not be parsed. Comes only
+      from `PdfElixide.Document.search/2` and friends under `literal: false`.
     * `:unsupported` — an unsupported PDF version, feature, or filter.
     * `:not_found` — a referenced object was not found.
     * `:out_of_range` — the page index is outside the document.
@@ -74,6 +76,7 @@ defmodule PdfElixide.Error do
           :encrypted
           | :wrong_password
           | :invalid_pdf
+          | :invalid_pattern
           | :unsupported
           | :not_found
           | :out_of_range

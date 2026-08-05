@@ -31,6 +31,22 @@ pub fn to_nif_page_err(page_index: usize, e: PdfError) -> Error {
     tagged_err(classify(&e), format!("page {page_index}: {e}"))
 }
 
+/// The prefix `TextSearcher::build_regex` puts on a rejected pattern.
+const INVALID_PATTERN_PREFIX: &str = "Invalid regex pattern: ";
+
+/// Same as [`to_nif_err`], but reports a rejected search pattern as
+/// `:invalid_pattern`. Upstream raises it as an `InvalidPdf` like any other, so
+/// the message is the only thing separating the two; a reworded one degrades to
+/// `:invalid_pdf`.
+pub fn to_search_err(e: PdfError) -> Error {
+    match &e {
+        PdfError::InvalidPdf(message) if message.starts_with(INVALID_PATTERN_PREFIX) => {
+            tagged_err(atoms::invalid_pattern(), e.to_string())
+        }
+        _ => to_nif_err(e),
+    }
+}
+
 /// Creates a standard "Lock is poisoned" error for poisoned locks.
 ///
 /// Defensive: every guard is now taken through `Closable::with_lock` /

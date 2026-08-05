@@ -1,4 +1,4 @@
-//! Decoded option maps for the six text-family extractors.
+//! Decoded option maps for the six text-family extractors, and for `search`.
 //!
 //! Every struct here is the Rust half of an Elixir keyword list that
 //! `PdfElixide.Document` has already normalized into a **complete** map — a
@@ -20,6 +20,7 @@ use pdf_oxide::{
     extractors::{AdaptiveThresholdConfig, SpanMergingConfig},
     geometry::Rect,
     layout::RectFilterMode,
+    search::SearchOptions,
     structure::spatial_table_detector::{TableDetectionConfig, TableStrategy},
 };
 use rustler::{NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
@@ -615,6 +616,25 @@ impl From<TablesOptionsNif> for TablesOptions {
             detection: o.detection.into(),
             region: o.region.map(rect_from_nif),
         }
+    }
+}
+
+/// Options for `PdfElixide.Document.search/3,4`.
+#[derive(NifMap, Debug)]
+pub struct SearchOptionsNif {
+    pub case_insensitive: bool,
+    pub literal: bool,
+    pub whole_word: bool,
+    pub max_results: usize,
+}
+
+impl From<SearchOptionsNif> for SearchOptions {
+    fn from(o: SearchOptionsNif) -> Self {
+        SearchOptions::new()
+            .with_case_insensitive(o.case_insensitive)
+            .with_literal(o.literal)
+            .with_whole_word(o.whole_word)
+            .with_max_results(o.max_results)
     }
 }
 

@@ -22,6 +22,12 @@ defmodule PdfElixide.PerPageEquivalenceTest do
   `:on_page_error`. `to_markdown/1` (a `---` break) and `to_html/1` (a
   `<div class="page">` wrapper) differ the same way, and the moduledoc says so.
 
+  `search/2` holds the same equivalence but cannot be generated here — the
+  helpers below call `f!(doc)` and `Page.f!(page)` with no further arguments,
+  and a search needs a pattern. Adding one would also defeat the vacuity guard
+  below, which has no pattern to make non-empty. It is asserted by hand in
+  `document_test.exs` instead.
+
   `fonts/1`, `images/1` and `tables/1` return structs carrying a native handle,
   and two extractions never mint the same one, so those compare with `:ref`
   dropped — the same reasoning `document_test.exs` gives for comparing a

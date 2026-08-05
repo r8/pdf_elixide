@@ -24,6 +24,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract text lines (each with its bounding box and constituent words)
 - Extract individual characters with glyph boxes, baseline origins, advances, and color
 - Extract spans (runs of text sharing one text state, with the raw PDF text-state parameters)
+- Search the whole document or one page for literal text or a regular expression, with each match located on the page
 - Detect tables, read their rows and cells, and render one as Markdown, HTML, or plain text
 - Extract vector paths (lines, curves, rectangles) with their drawing operations and stroke/fill style, or just the rectangles or straight lines among them
 - Read the document outline (bookmarks / table of contents) as a nested tree
@@ -509,6 +510,24 @@ Each span carries:
 - `:text_rise` — the `Ts` baseline shift as a ratio of the font size (`float()`); positive is superscript, negative subscript
 - `:heading_level` — the heading level `1`–`6` when the span is part of a heading, otherwise `nil`
 - `:mcid` — the marked-content ID for Tagged PDFs (`non_neg_integer()` or `nil`)
+
+### Searching text
+
+`PdfElixide.Document.search/2` finds every occurrence of a pattern in the
+document, and `search/3` searches a single page.
+
+```elixir
+Document.search!(doc, "Figure 3")
+#=> [%PdfElixide.Document.SearchMatch{page: 4, text: "Figure 3", bbox: %Rect{…}}]
+
+Document.search!(doc, "figure 3", 4, case_insensitive: true)
+Document.search!(doc, ~S"Figure \d+", literal: false)
+```
+
+The pattern is plain text unless `literal: false` is given — the opposite of
+`pdf_oxide`'s own default. Both arities are also reachable from a page handle.
+See the [Search](guides/search.md) guide for the pattern syntax, what a match's
+boxes cover, and the per-page index searching builds.
 
 ### Detecting tables
 
