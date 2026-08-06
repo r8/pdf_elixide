@@ -23,7 +23,9 @@ defmodule PdfElixide.Error do
     * `:invalid_pattern` — the search pattern could not be parsed. Comes only
       from `PdfElixide.Document.search/2` and friends under `literal: false`.
     * `:unsupported` — an unsupported PDF version, feature, or filter.
-    * `:not_found` — a referenced object was not found.
+    * `:not_found` — a referenced object was not found, or no form field carries
+      the name given to `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2` or
+      `PdfElixide.Form.set_value/3`.
     * `:out_of_range` — the page index is outside the document.
     * `:io` — an underlying IO error.
     * `:panic` — the native library panicked on this input, i.e. hit a bug

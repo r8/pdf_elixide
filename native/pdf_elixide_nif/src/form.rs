@@ -29,7 +29,10 @@ pub enum FieldValueNif {
 
 pub fn document_form_field_to_nif(field: FormField) -> FieldNif {
     FieldNif {
-        name: field.name,
+        // `full_name`, not the partial `/T` `name`: it is the key
+        // `set_form_field_value` matches on and the one the editor path
+        // produces, and the two sources must agree.
+        name: field.full_name,
         kind: field_type_to_atom(field.field_type),
         value: document_field_value_to_nif(field.value),
     }

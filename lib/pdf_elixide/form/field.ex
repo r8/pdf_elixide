@@ -2,8 +2,18 @@ defmodule PdfElixide.Form.Field do
   @moduledoc """
   A single AcroForm field: its `:name`, its `:kind`, and its current `:value`.
 
-  Obtained from `PdfElixide.Form.fields/1`. The `:name` is the field's fully
-  qualified name and is what `PdfElixide.Form.set_value/3` addresses it by.
+  Obtained from `PdfElixide.Form.fields/1`, or one at a time from
+  `PdfElixide.Form.field/2`.
+
+  The `:name` is the field's fully qualified name and is what
+  `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2` and
+  `PdfElixide.Form.set_value/3` address it by. For a field nested under a parent
+  that is dotted — `"person.first"`, not `"first"` — and it is the same whether
+  the form was read from a `PdfElixide.Document` or a `PdfElixide.Editor`.
+
+  A parent that carries a name but declares no type is itself reported as a
+  field, with `kind: :unknown` and `value: nil`, so a nested form yields a
+  struct for the grouping level as well as for each leaf under it.
   """
   @enforce_keys [:name, :kind, :value]
 

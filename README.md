@@ -875,11 +875,25 @@ end)
 
 Each field carries:
 
-- `:name` — the field's PDF name (`String.t()`)
+- `:name` — the field's fully qualified PDF name (`String.t()`), dotted for a
+  field nested under a parent
 - `:kind` — one of `:button | :text | :choice | :signature | :unknown`
 - `:value` — one of `{:text, String.t()} | {:boolean, boolean()} | {:name, String.t()} | {:array, [String.t()]} | nil`
 
 A bang variant, `PdfElixide.Form.fields!/1`, returns the list directly and raises on error.
+
+For a single field there is no need to walk the list — `PdfElixide.Form.field/2`
+returns the struct and `PdfElixide.Form.value/2` just its value, from a document
+or an editor alike:
+
+```elixir
+{:ok, {:text, "John Doe"}} = PdfElixide.Form.value(doc, "full_name")
+{:ok, %PdfElixide.Form.Field{kind: :choice}} = PdfElixide.Form.field(doc, "country")
+```
+
+A name that is not in the form is `{:error, %PdfElixide.Error{reason: :not_found}}`,
+which is distinct from `{:ok, nil}` — a field that exists but carries no value.
+`field!/2` and `value!/2` raise instead.
 
 ### Filling form fields
 

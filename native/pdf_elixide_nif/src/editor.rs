@@ -4,7 +4,7 @@ use rustler::{Atom, Binary, NifMap, NifResult, OwnedBinary, ResourceArc};
 use crate::{
     atoms,
     binary::owned_binary,
-    error::to_nif_err,
+    error::{to_form_err, to_nif_err},
     form::{editor_field_value_from_nif, editor_form_field_to_nif, FieldNif, FieldValueNif},
     fs_path::path_arg,
     resource::Closable,
@@ -163,7 +163,7 @@ fn editor_set_form_field_value(
     resource.editor.with_lock(|editor| {
         editor
             .set_form_field_value(&name, editor_field_value_from_nif(value))
-            .map_err(to_nif_err)?;
+            .map_err(to_form_err)?;
 
         Ok(atoms::ok())
     })

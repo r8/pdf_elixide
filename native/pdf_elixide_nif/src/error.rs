@@ -47,6 +47,22 @@ pub fn to_search_err(e: PdfError) -> Error {
     }
 }
 
+/// The prefix `set_form_field_value` puts on an unknown field name.
+const FIELD_NOT_FOUND_PREFIX: &str = "Form field not found: ";
+
+/// Same as [`to_nif_err`], but reports an unknown form field name as
+/// `:not_found`, which is what `PdfElixide.Form.field/2` answers for the same
+/// condition. Told apart by message prefix, with the same trade-off as
+/// [`to_search_err`] above.
+pub fn to_form_err(e: PdfError) -> Error {
+    match &e {
+        PdfError::InvalidPdf(message) if message.starts_with(FIELD_NOT_FOUND_PREFIX) => {
+            tagged_err(atoms::not_found(), e.to_string())
+        }
+        _ => to_nif_err(e),
+    }
+}
+
 /// Creates a standard "Lock is poisoned" error for poisoned locks.
 ///
 /// Defensive: every guard is now taken through `Closable::with_lock` /

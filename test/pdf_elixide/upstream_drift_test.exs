@@ -890,4 +890,32 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Editor.modified?(editor)
     end
   end
+
+  describe "how upstream reports an unknown form field" do
+    # `set_form_field_value` raises `Error::InvalidPdf("Form field not found: …")`
+    # — the same variant a corrupt document produces — so `error::to_form_err`
+    # tells the two apart by the message prefix alone. Same coupling as the
+    # search-pattern canary above: if upstream rewords it, the reason silently
+    # degrades to `:invalid_pdf` and callers matching `:not_found` stop seeing
+    # it. `PdfElixide.Form.field/2` answers `:not_found` for the same condition
+    # from Elixir, so a drift here also splits the two halves of one contract.
+    test "an unknown name is an InvalidPdf carrying a known prefix" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :not_found, message: message}} =
+               Form.set_value(editor, "no_such_field", {:text, "x"})
+
+      assert message =~ "Form field not found: "
+    end
+
+    # The read side has no upstream per-field accessor to drift, so what is
+    # pinned here is that both routes still agree on the reason.
+    test "the read side reports the same reason" do
+      doc = Document.open!(@form_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:error, %Error{reason: :not_found}} = Form.field(doc, "no_such_field")
+    end
+  end
 end

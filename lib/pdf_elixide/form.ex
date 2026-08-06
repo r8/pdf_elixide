@@ -4,12 +4,15 @@ defmodule PdfElixide.Form do
 
   `fields/1` reads from *either* source — a read-only `PdfElixide.Document` or a
   mutable `PdfElixide.Editor` (`t:source/0`) — so inspecting a form needs no
-  editor. Writing does: `set_value/3` takes an `Editor` only, since a document
-  cannot be changed.
+  editor. `field/2` and `value/2` answer for one named field from the same two
+  sources. Writing needs an editor: `set_value/3` takes an `Editor` only, since
+  a document cannot be changed.
 
       # Inspect, read-only.
       doc = PdfElixide.Document.open!("form.pdf")
       fields = PdfElixide.Form.fields!(doc)
+      PdfElixide.Form.value!(doc, "full_name")
+      #=> {:text, "John Doe"}
 
       # Fill and persist.
       editor = PdfElixide.Editor.open!("form.pdf")
@@ -23,12 +26,15 @@ defmodule PdfElixide.Form do
 
   Fields are addressed by name, and only an existing field can be set — there is
   no way to add one. A name that is not in the form is
-  `{:error, %PdfElixide.Error{}}`.
+  `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and
+  `value/2` as much as from `set_value/3`.
 
   Which lock `fields/1` takes follows its source: a shared read on a
   `PdfElixide.Document`, and the editor's exclusive lock on a
-  `PdfElixide.Editor`, exactly as `set_value/3` takes. So concurrent form work
-  on one editor serializes even when it only reads; see the
+  `PdfElixide.Editor`, exactly as `set_value/3` takes. `field/2` and `value/2`
+  take the same lock and cost the same, so reading several fields one at a time
+  costs more than one `fields/1`. So concurrent form work on one editor
+  serializes even when it only reads; see the
   [Concurrency](guides/concurrency.md) guide.
   """
 
@@ -63,6 +69,59 @@ defmodule PdfElixide.Form do
   end
 
   @doc """
+  Returns the single form field carrying the given name.
+
+  The name is the fully qualified one `PdfElixide.Form.Field` describes. A name
+  that is not in the form is `{:error, %PdfElixide.Error{reason: :not_found}}`;
+  a form with two fields of the same name answers with the first.
+
+      PdfElixide.Form.field(doc, "full_name")
+      #=> {:ok, %PdfElixide.Form.Field{kind: :text, value: {:text, "John Doe"}}}
+
+  """
+  @spec field(source(), String.t()) :: {:ok, Field.t()} | {:error, Error.t()}
+  def field(source, name) when is_binary(name) do
+    with {:ok, fields} <- fields(source) do
+      case Enum.find(fields, &(&1.name == name)) do
+        %Field{} = field -> {:ok, field}
+        nil -> {:error, not_found(name)}
+      end
+    end
+  end
+
+  @doc """
+  Same as `field/2` but raises an error if it fails.
+  """
+  @spec field!(source(), String.t()) :: Field.t()
+  def field!(source, name) when is_binary(name) do
+    field(source, name) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns the value of the single form field carrying the given name.
+
+  `{:ok, nil}` means the field exists but carries no value — distinct from
+  `{:error, %PdfElixide.Error{reason: :not_found}}`, which means no field
+  carries that name. Reach for `field/2` when the field's `:kind` is needed too.
+
+      PdfElixide.Form.value(doc, "full_name")
+      #=> {:ok, {:text, "John Doe"}}
+
+  """
+  @spec value(source(), String.t()) :: {:ok, Field.value()} | {:error, Error.t()}
+  def value(source, name) when is_binary(name) do
+    with {:ok, %Field{value: value}} <- field(source, name), do: {:ok, value}
+  end
+
+  @doc """
+  Same as `value/2` but raises an error if it fails.
+  """
+  @spec value!(source(), String.t()) :: Field.value()
+  def value!(source, name) when is_binary(name) do
+    value(source, name) |> Wrap.unwrap!()
+  end
+
+  @doc """
   Sets the value of an existing form field on the given editor.
 
   The value uses the same tagged-tuple shape returned by `fields/1`
@@ -88,5 +147,11 @@ defmodule PdfElixide.Form do
       :ok -> :ok
       {:error, error} -> raise error
     end
+  end
+
+  # Mirrors upstream's own message for this condition, which `set_value/3`
+  # propagates with the same reason atom.
+  defp not_found(name) do
+    %Error{reason: :not_found, message: "Form field not found: #{name}"}
   end
 end
