@@ -73,8 +73,8 @@ defmodule PdfElixide.Document do
   dimensions, none is turned to match a rotated page (see below), and a page
   with no `/MediaBox` anywhere above it is an
   `%PdfElixide.Error{reason: :invalid_pdf}` rather than an assumed page size.
-  There is no reader for `/CropBox`, `/BleedBox`, `/TrimBox` or `/ArtBox`, which
-  `pdf_oxide` does not expose on a read-only document.
+  There is no reader for `/CropBox`, `/BleedBox`, `/TrimBox` or `/ArtBox` on a
+  read-only document.
 
   ### Which ancestor an inherited box comes from
 
@@ -162,8 +162,8 @@ defmodule PdfElixide.Document do
     * `:password` — password used to authenticate against an encrypted
       PDF. When the password is wrong, the call returns
       `{:error, %PdfElixide.Error{reason: :wrong_password}}` (or raises,
-      for the bang variants). When omitted or `nil`, no authentication
-      attempt is made beyond `pdf_oxide`'s built-in empty-password try.
+      for the bang variants). When omitted or `nil`, only the empty password is
+      tried automatically.
 
   The password is a *byte string*, not necessarily valid UTF-8: a password for
   a PDF of encryption revision 4 or lower is PDFDocEncoded, so
@@ -248,7 +248,6 @@ defmodule PdfElixide.Document do
     from_binary(bytes, opts) |> Wrap.unwrap!()
   end
 
-  # Default pinned by `option_defaults_test.exs` via `__option_defaults__(:open)`.
   defp build_open_options(opts) do
     opts = Keyword.validate!(opts, @open_opts_keys)
     %{password: Keyword.get(opts, :password)}
@@ -285,8 +284,9 @@ defmodule PdfElixide.Document do
   it. `version/1`, `source_path/1` and `page_count/1` keep working, since they
   read the struct rather than the native handle — `page_count/1` only for a
   document whose count was determined at open. Any
-  `PdfElixide.Document.Image` or `PdfElixide.Document.Font` handles already
-  extracted from the document remain valid, owning their data independently.
+  `PdfElixide.Document.Image`, `PdfElixide.Document.Font` or
+  `PdfElixide.Document.Table` handles already extracted from the document remain
+  valid, owning their data independently.
 
       doc = Document.open!("sample.pdf")
       text = Document.text!(doc, 0)
@@ -397,10 +397,8 @@ defmodule PdfElixide.Document do
     Wrap.call!(fn -> Native.document_is_encrypted(ref) end)
   end
 
-  # The reasons `Closable` itself produces, as opposed to the ones the NIF maps
-  # from a `pdf_oxide::Error`. A tolerant predicate answers `false` for a
-  # document whose feature cannot be determined, but a handle that cannot be
-  # used at all still raises, exactly as the plain `Wrap.call!/1` above does.
+  # A tolerant predicate may hide an unreadable feature, but not a handle that
+  # cannot be used at all.
   @handle_reasons [:closed, :lock_poisoned, :panic]
 
   defp tolerant_predicate!(fun) do
@@ -411,20 +409,8 @@ defmodule PdfElixide.Document do
     end
   end
 
-  # The one *semantic* option check this library owns, as opposed to the type
-  # checks the NIF's own decode performs. Upstream evaluates
-  # `overlap_with_rect(rect) >= ratio` where the overlap is clamped to
-  # `[0.0, 1.0]`, so an out-of-range ratio would fail silently and wrongly — a
-  # negative one matches every object, one above `1.0` matches none.
-  #
-  # It is checked here rather than left to the NIF (which keeps an identical
-  # check as defence in depth) so it reports the same `ArgumentError` as every
-  # other bad option value; a `tagged_err` cannot, being indistinguishable from
-  # a genuine `:other` PDF failure by the time it reaches `Wrap.call/1`.
-  # Pure arithmetic is also the one thing safe to duplicate in Elixir: the
-  # bound is ours, not sourced from upstream, so it cannot drift. A ratio that
-  # is not a number deliberately falls through to the NIF's decoder, which is
-  # what keeps the type checking in one place.
+  # Validate the semantic range here so it raises the same `ArgumentError` as
+  # other bad option values; the NIF keeps the same check as defence in depth.
   defp validate_region_mode!(opts, key) do
     case Keyword.get(opts, key, :intersects) do
       {:min_overlap, ratio} when is_number(ratio) and (ratio < 0.0 or ratio > 1.0) ->
@@ -652,7 +638,6 @@ defmodule PdfElixide.Document do
     inks(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Default pinned by `option_defaults_test.exs` via `__option_defaults__(:inks)`.
   defp build_inks_options(opts) do
     opts = Keyword.validate!(opts, @inks_opts_keys)
     %{deep: Keyword.get(opts, :deep, false)}
@@ -662,8 +647,7 @@ defmodule PdfElixide.Document do
   How a `:region` (or `:exclude_regions`) decides whether an object is inside
   it.
 
-    * `:intersects` — any overlap at all counts. The default, and what
-      `pdf_oxide` uses everywhere it does not take a mode.
+    * `:intersects` — any overlap at all counts. This is the default.
     * `:fully_contained` — the object's bounding box must lie entirely
       within the region.
     * `{:min_overlap, ratio}` — at least `ratio` of the object's area must
@@ -688,17 +672,15 @@ defmodule PdfElixide.Document do
   Options accepted by the `text` and `text!` functions.
 
     * `:extract_tables` — detect tables and render them inline as
-      space-padded, column-aligned rows. Defaults to `true`, matching
-      `pdf_oxide`'s own `extract_text`.
+      space-padded, column-aligned rows. Defaults to `true`.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
       Unlike in `t:markdown_opts/0`, it is live here.
     * `:table_detection` — a keyword list tuning the spatial table
       detector; see `t:table_detection_opts/0`. Only consulted when
       `:extract_tables` is `true`, and its `:text_fallback` key is ignored
-      here — upstream forces it to `false` on the text path, so a page with
-      no ruling lines yields no tables regardless. Defaults to `nil` (the
-      upstream default config).
+      here: the text path always disables it, so a page with no ruling lines
+      yields no tables regardless. Defaults to `nil`.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the text inside
       it. An extracted `bbox` can be handed straight back in. Defaults to
       `nil`.
@@ -738,7 +720,7 @@ defmodule PdfElixide.Document do
   When `:exclude_layers` or `:exclude_inks` is non-empty,
   **only `:region` and `:region_mode` still apply** — `:extract_tables`,
   `:expand_ligatures`, `:table_detection`, `:exclude_regions` and
-  `:exclude_regions_mode` fall back to their upstream defaults
+  `:exclude_regions_mode` fall back to their defaults
   (`:extract_tables` to `true`, the rest to off).
 
   `:reading_order`, `:include_form_fields` and
@@ -846,7 +828,6 @@ defmodule PdfElixide.Document do
     text(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:text)`.
   defp build_text_options(opts) do
     opts = Keyword.validate!(opts, @text_opts_keys)
 
@@ -903,14 +884,13 @@ defmodule PdfElixide.Document do
       the top/bottom band of a majority of pages. Defaults to `false`.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Accepted for forward
-      compatibility, but currently has **no effect** on Markdown output;
-      upstream applies it only on the plain-text path used by `text/2`.
-      Defaults to `false`.
+      compatibility, but currently has **no effect** on Markdown output; it is
+      applied only on the plain-text path used by `text/2`. Defaults to `false`.
     * `:annotate_skipped_pages` — emit a block quote naming any page that
       is a scan with no usable text layer, rather than rendering it blank.
       Defaults to `true`.
     * `:max_image_pixels` — skip images whose width times height exceeds
-      this count. `nil` means `pdf_oxide`'s own 16 MP limit, not "no
+      this count. `nil` means the built-in 16 MP limit, not "no
       limit" — pass a large integer to lift it, or `0` to skip every
       image. Defaults to `nil`.
     * `:reading_order` — how text blocks are ordered:
@@ -921,8 +901,7 @@ defmodule PdfElixide.Document do
       content-bearing text; `:aggressive` also wraps whitespace-only
       spans. Defaults to `:conservative`.
 
-  Defaults mirror `pdf_oxide`'s own conversion defaults, so calling
-  `to_markdown/1` is equivalent to `to_markdown/2` with no options.
+  Calling `to_markdown/1` is equivalent to `to_markdown/2` with no options.
 
   An unknown key, or a declared key given a value of the wrong type, raises
   `ArgumentError` naming the offending key; see the "Errors versus exceptions"
@@ -1028,7 +1007,6 @@ defmodule PdfElixide.Document do
     to_markdown(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:markdown)`.
   defp build_markdown_options(opts) do
     opts = Keyword.validate!(opts, @markdown_opts_keys)
 
@@ -1072,8 +1050,7 @@ defmodule PdfElixide.Document do
   @typedoc """
   Options accepted by the `to_html` and `to_html!` functions.
 
-  Only the options that upstream actually reads on its HTML path are
-  exposed, so every one of them changes the output. `:bold_markers`,
+  Only options that affect HTML output are exposed. `:bold_markers`,
   `:annotate_skipped_pages`, `:strip_running_headers_footers` and
   `:expand_ligatures` — all valid for `to_markdown/2` — are therefore absent
   here, and passing one raises `ArgumentError`, as does a declared key given a
@@ -1125,7 +1102,7 @@ defmodule PdfElixide.Document do
     * `:include_form_fields` — inline AcroForm field values at their
       positions on the page. Defaults to `true`.
     * `:max_image_pixels` — skip images whose width times height exceeds
-      this count. `nil` means `pdf_oxide`'s own 16 MP limit, not "no
+      this count. `nil` means the built-in 16 MP limit, not "no
       limit" — pass a large integer to lift it, or `0` to skip every
       image. Defaults to `nil`.
     * `:reading_order` — how text blocks are ordered:
@@ -1133,8 +1110,7 @@ defmodule PdfElixide.Document do
       back to an XY-cut), `:column_aware`, or `:top_to_bottom`. Defaults
       to `:structure_tree`.
 
-  Defaults mirror `pdf_oxide`'s own conversion defaults, so calling
-  `to_html/1` is equivalent to `to_html/2` with no options.
+  Calling `to_html/1` is equivalent to `to_html/2` with no options.
   """
   @type html_opts :: [
           preserve_layout: boolean(),
@@ -1255,7 +1231,6 @@ defmodule PdfElixide.Document do
     to_html(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:html)`.
   defp build_html_options(opts) do
     opts = Keyword.validate!(opts, @html_opts_keys)
 
@@ -1286,8 +1261,7 @@ defmodule PdfElixide.Document do
   end
 
   @typedoc """
-  A span-extraction tuning preset, named after `pdf_oxide`'s own
-  `ExtractionProfile` constants. A profile changes the TJ-offset and
+  A span-extraction tuning preset. A profile changes the TJ-offset and
   word-margin thresholds used to turn glyphs into spans, before any word
   clustering happens.
   """
@@ -1315,18 +1289,17 @@ defmodule PdfElixide.Document do
     * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
       Defaults to `:intersects`.
     * `:word_gap_threshold` — the inter-glyph gap in points that starts a
-      new word. `nil` lets upstream compute it adaptively from page
+      new word. `nil` computes it adaptively from page
       statistics (median character width × 0.3). Defaults to `nil`.
     * `:profile` — a `t:extraction_profile/0`, or `nil` for none.
       Defaults to `nil`.
 
-  ## `:word_gap_threshold` and `:profile` are deprecated upstream
+  ## Legacy extraction controls
 
-  Both are pending removal in `pdf_oxide`, and `:profile` does more than its
-  name suggests: passing *any* profile switches span extraction to a legacy
-  ordering path, so it can change word **order** and not merely word
-  boundaries — even for `:conservative`, nominally the default profile. Prefer
-  leaving both at `nil`.
+  `:word_gap_threshold` and `:profile` are retained for compatibility. Passing
+  *any* profile switches to a legacy ordering path, so it can change word
+  **order**, not merely word boundaries — even for `:conservative`, nominally
+  the default profile. Prefer leaving both at `nil`.
 
   `:region` composes with everything else here: it is applied after
   extraction, so it does not discard the thresholds or the profile.
@@ -1416,7 +1389,6 @@ defmodule PdfElixide.Document do
     words(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:words)`.
   defp build_words_options(opts) do
     opts = Keyword.validate!(opts, @words_opts_keys)
 
@@ -1432,12 +1404,12 @@ defmodule PdfElixide.Document do
   @typedoc """
   Options accepted by the `text_lines` and `text_lines!` functions.
 
-  The same options as `t:words_opts/0` — including the upstream deprecation
-  of `:word_gap_threshold` and `:profile` documented there — plus:
+  The same options as `t:words_opts/0` — including the legacy controls
+  `:word_gap_threshold` and `:profile` documented there — plus:
 
     * `:line_gap_threshold` — the vertical gap in points that starts a new
-      line. `nil` lets upstream compute it. Defaults to `nil`, and is
-      deprecated upstream alongside the other two.
+      line. `nil` computes it automatically. Defaults to `nil`; like the other
+      two legacy controls, prefer leaving it unset.
   """
   @type text_lines_opts :: [
           include_artifacts: boolean(),
@@ -1527,7 +1499,6 @@ defmodule PdfElixide.Document do
     text_lines(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:text_lines)`.
   defp build_text_lines_options(opts) do
     opts = Keyword.validate!(opts, @text_lines_opts_keys)
 
@@ -1639,7 +1610,6 @@ defmodule PdfElixide.Document do
     chars(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:chars)`.
   defp build_chars_options(opts) do
     opts = Keyword.validate!(opts, @chars_opts_keys)
 
@@ -1746,7 +1716,7 @@ defmodule PdfElixide.Document do
       `:top_to_bottom`. Note these values differ from the `:reading_order` of
       `t:markdown_opts/0`, which is a separate setting.
     * `:span_merging` — a `t:span_merging_opts/0` keyword list, or `nil`
-      for upstream's default merging. Defaults to `nil`.
+      for the default merging behavior. Defaults to `nil`.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the spans
       inside it. Defaults to `nil`.
     * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
@@ -1855,7 +1825,6 @@ defmodule PdfElixide.Document do
     spans(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:spans)`.
   defp build_spans_options(opts) do
     opts = Keyword.validate!(opts, @spans_opts_keys)
 
@@ -1879,9 +1848,6 @@ defmodule PdfElixide.Document do
   # option was wrong.
   defp build_span_merging_option(nil), do: nil
 
-  # Defaults pinned by `option_defaults_test.exs` via
-  # `__option_defaults__(:span_merging)`, which passes `[]` to reach this clause
-  # rather than the `nil` one.
   defp build_span_merging_option(opts) when is_list(opts) do
     opts = Keyword.validate!(opts, @span_merging_opts_keys)
 
@@ -1905,9 +1871,6 @@ defmodule PdfElixide.Document do
 
   defp build_adaptive_threshold_option(nil), do: nil
 
-  # Defaults pinned by `option_defaults_test.exs` via
-  # `__option_defaults__(:adaptive_threshold)`, which passes `[]` to reach this
-  # clause rather than the `nil` one.
   defp build_adaptive_threshold_option(opts) when is_list(opts) do
     opts = Keyword.validate!(opts, @adaptive_threshold_opts_keys)
 
@@ -1923,9 +1886,8 @@ defmodule PdfElixide.Document do
   defp build_adaptive_threshold_option(other), do: other
 
   @typedoc """
-  Options tuning `pdf_oxide`'s spatial table detector. Accepted directly by
-  the `tables` functions, and as the `:table_detection` option of the `text`
-  functions.
+  Options tuning the spatial table detector. Accepted directly by the `tables`
+  functions, and as the `:table_detection` option of the `text` functions.
 
     * `:preset` — the base configuration every other key overrides:
       `:default`, `:strict` (demands ruling lines and regular rows) or
@@ -1945,8 +1907,7 @@ defmodule PdfElixide.Document do
     * `:v_split_gap` — minimum gap between vertical-line groups that splits
       a cluster.
     * `:text_fallback` — allow text-only detection when a page has no
-      ruling lines. Ignored on the `text` path, where upstream forces it to
-      `false`.
+      ruling lines. Ignored on the `text` path, which always disables it.
     * `:enabled` — set to `false` to disable detection entirely.
 
   Every key except `:preset` defaults to `nil`, meaning "keep the preset's
@@ -1989,8 +1950,8 @@ defmodule PdfElixide.Document do
   `t:table_detection_opts/0` key, plus
 
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the tables
-      overlapping it. Defaults to `nil`. There is no `:region_mode`:
-      upstream filters tables by bounding-box intersection only.
+      overlapping it. Defaults to `nil`. There is no `:region_mode`; tables use
+      bounding-box intersection only.
 
   Unlike the `:table_detection` option of the `text` functions, the detection
   keys are given *flat* here rather than nested under one key.
@@ -2093,7 +2054,6 @@ defmodule PdfElixide.Document do
     tables(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:tables)`.
   defp build_tables_options(opts) do
     opts = Keyword.validate!(opts, @tables_opts_keys)
 
@@ -2114,10 +2074,6 @@ defmodule PdfElixide.Document do
   # Takes an already-validated keyword list: `tables/2,3` allows `:region`
   # alongside the detection keys, while the `:table_detection` option of the
   # `text` functions does not, so each caller checks its own key list.
-  #
-  # Defaults pinned by `option_defaults_test.exs` via
-  # `__option_defaults__(:table_detection)`, which passes `[]` so the map form is
-  # built at all.
   defp build_table_detection(opts) do
     %{
       preset: Keyword.get(opts, :preset, :default),
@@ -2137,23 +2093,6 @@ defmodule PdfElixide.Document do
   end
 
   @doc false
-  # The exact option map each `build_*_options/1` produces for an empty list —
-  # every default this library owns, reachable from a test.
-  #
-  # A `NifMap` decode is total, so a builder that stopped emitting a key fails
-  # loudly on the next call and any test catches it. A changed default *value*
-  # is the drift nothing catches: `f(doc, key: default) == f(doc)` cannot fail,
-  # both sides going through this same builder to the same map, and roughly
-  # half the keys default to `nil` and are observable on no fixture at all.
-  #
-  # `test/pdf_elixide/option_defaults_test.exs` therefore compares these maps
-  # against hand-written ones, key by key. This function delegates rather than
-  # restating a single number, so it cannot disagree with the builders — only
-  # the test can, which is the point.
-  #
-  # The three nested families reach their list-taking clause, since `[]` rather
-  # than `nil` is what forces the map form; `:preset` is the only key in them
-  # whose default is not `nil`.
   @spec __option_defaults__(atom()) :: map()
   def __option_defaults__(:open), do: build_open_options([])
   def __option_defaults__(:inks), do: build_inks_options([])
@@ -2452,7 +2391,6 @@ defmodule PdfElixide.Document do
     search(doc, pattern, page_index, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:search)`.
   defp build_search_options(opts) do
     opts = Keyword.validate!(opts, @search_opts_keys)
 

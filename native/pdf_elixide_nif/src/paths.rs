@@ -36,9 +36,9 @@ pub enum LineJoinNif {
     Bevel,
 }
 
-/// A single path operation, encoded to Elixir as a flat tagged tuple
-/// (`{:move_to, x, y}`, `{:curve_to, c1x, c1y, c2x, c2y, ex, ey}`, ...) or, for
-/// `ClosePath`, the bare atom `:close_path`.
+// A single path operation, encoded to Elixir as a flat tagged tuple
+// (`{:move_to, x, y}`, `{:curve_to, c1x, c1y, c2x, c2y, ex, ey}`, ...) or, for
+// `ClosePath`, the bare atom `:close_path`.
 #[derive(Debug, Clone, Copy)]
 pub enum PathOpNif {
     MoveTo(f32, f32),

@@ -13,9 +13,9 @@ defmodule PdfElixide.Color do
 
   Text and vector graphics — `PdfElixide.Document.Char`,
   `PdfElixide.Document.Span`, `PdfElixide.Document.Path` — are always
-  `PdfElixide.Color.RGB`, never the other structs. Upstream `pdf_oxide` resolves
-  every colorspace (CMYK, Lab, Separation, ICCBased) to DeviceRGB while
-  extracting, so the original colorspace is gone before it reaches Elixir.
+  `PdfElixide.Color.RGB`, never the other structs. Extraction resolves every
+  colorspace (CMYK, Lab, Separation, ICCBased) to DeviceRGB, so the original
+  colorspace is no longer available in those results.
 
   `PdfElixide.Document.Annotation` is the exception: its `:color` and
   `:interior_color` carry the raw `/C` and `/IC` component arrays, so any of the

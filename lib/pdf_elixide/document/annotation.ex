@@ -86,8 +86,8 @@ defmodule PdfElixide.Document.Annotation do
   Separation space reads as `%PdfElixide.Color.Gray{}` even though the value is
   a tint, not an intensity.
 
-  A `nil` field means no color was decoded — either because the entry is absent
-  or because it is an empty array, which upstream does not distinguish.
+  A `nil` field means either that the entry is absent or that it is an empty
+  array; those two cases are not distinguished.
   """
   @type color :: Color.t()
 

@@ -307,8 +307,6 @@ defmodule PdfElixide.Form do
     end)
   end
 
-  # Mirrors upstream's own message for this condition, which `put_value/3`
-  # propagates with the same reason atom.
   defp not_found(name) do
     %Error{reason: :not_found, message: "Form field not found: #{name}"}
   end

@@ -1,25 +1,5 @@
-//! Walks the AcroForm field tree ahead of upstream's extractor.
-//!
-//! Two things `FormExtractor::extract_fields` cannot give this crate, both about
-//! `/FT` and both in `extract_field_recursive` (`src/extractors/forms.rs`):
-//!
-//! **A signature typed on an ancestor.** §12.7.3.1 makes `/FT` inheritable, but
-//! upstream reads `field_dict.get("FT")` off the field's own dictionary with no
-//! parent walk, so a `/Sig` leaf typed only above it classifies as `Unknown("")`
-//! — an ordinary fillable field, which `Form.put_value/3` then destroys (see
-//! `ensure_not_signature` in `editor.rs`). The walk carries the inherited `/FT`
-//! down instead.
-//!
-//! **A tree that must not be handed to upstream at all.** That recursion has no
-//! visited set, no depth parameter and no cap, so a cyclic `/Kids` runs until
-//! the *native* stack is gone — an abort, not a panic `contain_panic` can
-//! degrade. Hence the limits below, applied before upstream sees the tree.
-//!
-//! Everything else is deliberately tolerated — an unresolvable object, a field
-//! that is not a dictionary, `/Kids` that is not an array all stop that branch
-//! rather than failing the call, which is why each resolution here is `.ok()`.
-//! Upstream runs immediately after and is what decides whether the document is
-//! readable at all.
+// Validates an AcroForm field tree and resolves inherited signature types
+// before extraction.
 
 use std::collections::HashSet;
 
@@ -38,32 +18,15 @@ use crate::{
     error::{tagged_err, to_nif_err},
 };
 
-/// Maximum `/Kids` nesting this crate will walk, and therefore the deepest tree
-/// upstream's uncapped recursion is allowed to see.
-///
-/// 256 is far past any real form — the deepest hierarchies in the wild are the
-/// two or three levels a grouped field needs — and matches `MAX_OUTLINE_DEPTH`,
-/// the other place an attacker-controlled chain of native frames is capped.
+// Bound the native recursion before handing the tree to the uncapped extractor.
 const MAX_FIELD_DEPTH: usize = 256;
 
-/// Maximum number of field nodes visited, counting a node once per path that
-/// reaches it.
-///
-/// The depth cap alone does not bound the work: `/Kids` arrays that converge on
-/// shared subtrees form a DAG whose path count is exponential in its depth, and
-/// neither this walk nor upstream's memoizes, so both expand every path. Real
-/// forms are in the thousands of fields — the largest IRS AcroForms are a few
-/// thousand — so this leaves three orders of magnitude of headroom.
+// Depth alone does not bound a DAG whose shared subtrees are reached by many paths.
 const MAX_FIELD_NODES: usize = 100_000;
 
-/// The `/FT` name a signature field carries.
 const SIGNATURE_FIELD_TYPE: &str = "Sig";
 
-/// Why a field tree was refused before upstream saw it.
-///
-/// A marker rather than a `tagged_err` built where the limit is checked, for the
-/// reason `outline.rs`'s `TooDeep` is one: building a reason atom needs a live
-/// BEAM, so the walk would otherwise be unreachable from `cargo test`.
+// Keep the walk BEAM-independent; build reason atoms only at its boundary.
 #[derive(Debug, PartialEq)]
 enum Refused {
     Cycle,
@@ -71,12 +34,8 @@ enum Refused {
     TooLarge,
 }
 
-/// The field names `Form.fields/1` must hide and `Form.put_value/3` must refuse.
-///
-/// Names rather than object references, because the editor's read path sees only
-/// `FormFieldWrapper`, which exposes a name and no `object_ref`. Keying on the
-/// name is also what keeps the two sources reporting identically, which is the
-/// invariant the whole `full_name` rule exists to protect.
+// Names, rather than object references, are the common key available to both
+// document and editor form APIs.
 #[derive(Debug, Default)]
 pub struct SignatureNames(HashSet<String>);
 
@@ -86,12 +45,7 @@ impl SignatureNames {
     }
 }
 
-/// Upstream's fields, with the tree validated first and the signature names
-/// resolved against an inherited `/FT`.
-///
-/// Both halves are returned because the document read path needs them together
-/// and the extraction is the expensive part; [`signature_names`] is the same
-/// call for the two sites that need only the names.
+// Return fields and signature names together to avoid repeating extraction.
 pub fn extract_fields(doc: &PdfDocument) -> NifResult<(Vec<FormField>, SignatureNames)> {
     let signatures = walk(doc).map_err(refused_err)?;
 
@@ -101,17 +55,11 @@ pub fn extract_fields(doc: &PdfDocument) -> NifResult<(Vec<FormField>, Signature
     Ok((fields, names))
 }
 
-/// As [`extract_fields`], for a caller that needs only the names.
 pub fn signature_names(doc: &PdfDocument) -> NifResult<SignatureNames> {
     extract_fields(doc).map(|(_fields, names)| names)
 }
 
-/// Reduces the walk's per-object verdict to the names both public rules key on.
-///
-/// **Only the first field of a name is consulted**, because that is the one
-/// `set_form_field_value` modifies: it returns on the first `full_name` match
-/// (`src/editor/document_editor.rs`). Refusing a name for a *later* field
-/// of that name would refuse a write that could never have reached it.
+// Only the first duplicate name matters because the editor writes the first match.
 fn signature_names_of(fields: &[FormField], signatures: &HashSet<ObjectRef>) -> SignatureNames {
     let mut names = HashSet::new();
     let mut seen = HashSet::new();
@@ -152,8 +100,8 @@ fn refused_err(refused: Refused) -> rustler::Error {
     }
 }
 
-/// Collects every field object whose *effective* `/FT` is `/Sig`, validating the
-/// tree on the way.
+// Collects every field object whose *effective* `/FT` is `/Sig`, validating the
+// tree on the way.
 fn walk(doc: &PdfDocument) -> Result<HashSet<ObjectRef>, Refused> {
     let Some(fields) = root_fields(doc) else {
         return Ok(HashSet::new());
@@ -173,8 +121,8 @@ fn walk(doc: &PdfDocument) -> Result<HashSet<ObjectRef>, Refused> {
     Ok(walker.signatures)
 }
 
-/// `/Root /AcroForm /Fields`, or `None` for a document with no form — which
-/// includes every way of failing to read one, per the tolerance above.
+// `/Root /AcroForm /Fields`, or `None` for a document with no form — which
+// includes every way of failing to read one, per the tolerance above.
 fn root_fields(doc: &PdfDocument) -> Option<Vec<Object>> {
     let catalog = doc.catalog().ok()?;
     let acroform = resolve(doc, catalog.as_dict()?.get("AcroForm")?)?;
@@ -192,18 +140,18 @@ fn resolve(doc: &PdfDocument, obj: &Object) -> Option<Object> {
 
 struct Walker<'a> {
     doc: &'a PdfDocument,
-    /// The references on the path from a root field to the current node — an
-    /// ancestor stack, not a visited set. A node reached twice by *different*
-    /// paths is a DAG, which upstream expands rather than looping on; only a
-    /// back edge is a cycle, and `MAX_FIELD_NODES` is what bounds the former.
+    // The references on the path from a root field to the current node — an
+    // ancestor stack, not a visited set. A node reached twice by *different*
+    // paths is a DAG, which upstream expands rather than looping on; only a
+    // back edge is a cycle, and `MAX_FIELD_NODES` is what bounds the former.
     path: Vec<ObjectRef>,
     signatures: HashSet<ObjectRef>,
     budget: usize,
 }
 
 impl Walker<'_> {
-    /// `inherited_signature` is its ancestors' verdict, which a node with no
-    /// `/FT` of its own adopts.
+    // `inherited_signature` is its ancestors' verdict, which a node with no
+    // `/FT` of its own adopts.
     fn node(
         &mut self,
         obj: &Object,
@@ -235,10 +183,10 @@ impl Walker<'_> {
         result
     }
 
-    /// Classifies the node and recurses into its `/Kids`.
-    ///
-    /// Split from [`Self::node`] so the ancestor stack is popped on every exit
-    /// without a `?` in sight having to remember to do it.
+    // Classifies the node and recurses into its `/Kids`.
+    //
+    // Split from [`Self::node`] so the ancestor stack is popped on every exit
+    // without a `?` in sight having to remember to do it.
     fn kids(
         &mut self,
         obj: &Object,
@@ -297,8 +245,6 @@ mod tests {
         PdfDocument::open(path).expect("fixture opens")
     }
 
-    /// What upstream classified each field as, which is what the canary below
-    /// compares this walk against.
     fn field_types_of(fields: &[FormField]) -> HashMap<&str, &FieldType> {
         fields
             .iter()
@@ -313,12 +259,6 @@ mod tests {
         signature_names_of(&fields, &signatures)
     }
 
-    /// The canary for the whole module: if upstream ever resolves an inherited
-    /// `/FT` itself, this walk has lost its justification and should go.
-    ///
-    /// Asserted against the extractor rather than through the binding, because
-    /// after the fix nothing caller-visible distinguishes an inherited signature
-    /// from an own one — `Form.fields/1` hides both.
     #[test]
     fn upstream_still_types_an_inherited_signature_as_unknown() {
         let doc = fixture("form_signature_edge.pdf");
@@ -342,9 +282,6 @@ mod tests {
         assert!(names.contains("inherited"));
     }
 
-    /// A `/Tx` kid under a `/Sig` parent is a text field: inheritance stops at
-    /// the first own `/FT`, and refusing it would make an ordinary field
-    /// unwritable.
     #[test]
     fn an_own_field_type_overrides_an_inherited_signature() {
         let names = names_of(&fixture("form_signature_edge.pdf"));
@@ -352,9 +289,6 @@ mod tests {
         assert!(!names.contains("inherited.typed"));
     }
 
-    /// Duplicated names resolve the way the setter resolves them. `shadowed` is
-    /// `/Tx` first and `/Sig` second, so the write reaches the text field and
-    /// nothing is refused.
     #[test]
     fn only_the_first_field_of_a_name_decides() {
         let names = names_of(&fixture("form_signature_edge.pdf"));
@@ -370,8 +304,6 @@ mod tests {
         assert!(!names.contains("signer_name"));
     }
 
-    /// The forms every other fixture has are flat and signature-free, and must
-    /// stay untouched by the walk.
     #[test]
     fn a_form_with_no_signature_refuses_nothing() {
         for name in ["form.pdf", "form_hierarchical.pdf"] {
@@ -387,33 +319,19 @@ mod tests {
         }
     }
 
-    /// The reason the walk exists at all. Upstream would recurse here until the
-    /// native stack is gone, so **nothing in either test suite may call
-    /// `FormExtractor::extract_fields` on this fixture** — an abort is not a
-    /// test failure, it is the process dying.
     #[test]
     fn refuses_a_cyclic_kids_chain() {
         assert_eq!(walk(&fixture("form_cyclic.pdf")), Err(Refused::Cycle));
     }
 
-    /// A document with no `/AcroForm` walks to nothing rather than failing, so
-    /// `Form.fields/1` keeps answering `{:ok, []}` for one.
     #[test]
     fn a_document_with_no_form_walks_to_nothing() {
         assert_eq!(walk(&fixture("sample.pdf")), Ok(HashSet::new()));
     }
 
-    /// The three limits, over synthetic trees: no fixture reaches them, and one
-    /// deep or wide enough to would be megabytes of committed `.pdf`.
-    ///
-    /// `Walker` is driven directly here — the limits live on the recursion, not
-    /// on the document — so these need no `PdfDocument` at all.
     mod limits {
         use super::*;
 
-        /// A `/Kids` chain `levels` deep, as direct dictionaries: depth is what
-        /// is being measured, and a direct kid exercises the same recursion
-        /// without an object table to build.
         fn chain(levels: usize) -> Object {
             (1..levels).fold(leaf(), |kid, _| {
                 Object::Dictionary(HashMap::from([(
@@ -427,8 +345,6 @@ mod tests {
             Object::Dictionary(HashMap::new())
         }
 
-        /// A node with `width` identical kids, `levels` deep — `width ^ levels`
-        /// paths, which is what `MAX_FIELD_NODES` and nothing else bounds.
         fn bush(levels: usize, width: usize) -> Object {
             (0..levels).fold(leaf(), |kid, _| {
                 Object::Dictionary(HashMap::from([(

@@ -1,17 +1,5 @@
-//! Decoded option maps for the six text-family extractors, and for `search`.
-//!
-//! Every struct here is the Rust half of an Elixir keyword list that
-//! `PdfElixide.Document` has already normalized into a **complete** map — a
-//! `NifMap` decode is total, so the builders on the Elixir side must emit every
-//! key. Simple defaults therefore live in Elixir; the multi-field *presets*
-//! (`TableDetectionConfig`, `SpanMergingConfig`) are resolved here so their
-//! numbers stay sourced from upstream and cannot drift, the same reasoning
-//! `table.rs` records for `TextPipelineConfig::from_conversion_options`.
-//!
-//! The `Option<T>` fields of a preset map mean "keep the preset's value";
-//! anything else overrides it. Presets are applied by mutating a base config
-//! rather than by struct literal, so an upstream release that adds a field
-//! keeps compiling and keeps that field at its upstream value.
+// Elixir supplies complete option maps. Rust resolves multi-field presets so
+// unspecified fields continue to inherit their upstream values.
 
 use pdf_oxide::{
     config::ExtractionProfile,
@@ -33,8 +21,8 @@ use crate::{
 
 // Shared value types -----------------------------------------------------------------------------
 
-/// How a region filter decides whether an object is inside the region:
-/// `:intersects`, `:fully_contained`, or `{:min_overlap, ratio}`.
+// How a region filter decides whether an object is inside the region:
+// `:intersects`, `:fully_contained`, or `{:min_overlap, ratio}`.
 #[derive(NifTaggedEnum, Debug)]
 pub enum RectFilterModeNif {
     Intersects,
@@ -52,26 +40,8 @@ impl From<RectFilterModeNif> for RectFilterMode {
     }
 }
 
-/// Rejects a `{:min_overlap, ratio}` whose ratio falls outside `0.0..=1.0`.
-///
-/// Upstream evaluates the mode as `overlap_with_rect(rect) >= ratio`, where the
-/// overlap is bounded to `[0.0, 1.0]`, so an out-of-range ratio fails *silently*
-/// rather than loudly: a negative one matches every object — which through
-/// `exclude_regions` empties the page — and one above 1.0 matches none, turning
-/// an exclusion into a no-op. There is no upstream check to inherit and no
-/// upstream test covering it: `MinOverlap` is unreachable from every binding
-/// upstream ships, all of which hardcode `Intersects`.
-///
-/// The single range test also rejects NaN and both infinities, every IEEE
-/// comparison against NaN being false. Erlang floats can be neither, so that
-/// is belt-and-braces.
-///
-/// **Unreachable from Elixir, and kept anyway.**
-/// `Document.validate_region_mode!/2` applies the identical bound before
-/// building the options map, so a bad ratio raises `ArgumentError` there. This
-/// stays as defence in depth for any future caller reaching the NIF by another
-/// route, the same posture as `MAX_OUTLINE_DEPTH` in `outline.rs`. Keep the
-/// message in step with the Elixir one if either changes.
+// Defence in depth for callers bypassing Elixir's identical semantic check;
+// the inclusive range also rejects NaN and infinities.
 fn validate_mode(field: &str, mode: &RectFilterModeNif) -> NifResult<()> {
     if let RectFilterModeNif::MinOverlap(ratio) = mode {
         if !(0.0..=1.0).contains(ratio) {
@@ -89,21 +59,16 @@ fn validate_mode(field: &str, mode: &RectFilterModeNif) -> NifResult<()> {
     Ok(())
 }
 
-/// What the whole-document text loop does with a page that fails to extract:
-/// `:skip` it (the default, and upstream's own policy) or `:halt` the call.
-///
-/// Read only by `document_extract_all_text`. The per-page NIF decodes it with
-/// the rest of the map and ignores it, having a single page whose error it
-/// always propagates — the same inert-on-one-path shape `:expand_ligatures`
-/// has in the Markdown options.
+// Only whole-document text extraction reads this; a per-page call always
+// propagates its one possible page error.
 #[derive(NifUnitEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnPageErrorNif {
     Skip,
     Halt,
 }
 
-/// A region filter: the rectangle plus the mode it is applied under. Absent
-/// when the caller passed no `:region`.
+// A region filter: the rectangle plus the mode it is applied under. Absent
+// when the caller passed no `:region`.
 pub struct RegionFilter {
     pub rect: Rect,
     pub mode: RectFilterMode,
@@ -116,9 +81,9 @@ fn region_filter(region: Option<RectNif>, mode: RectFilterModeNif) -> Option<Reg
     })
 }
 
-/// The span-extraction tuning preset, named after the upstream
-/// `ExtractionProfile` consts. Mapped to the consts directly rather than
-/// through `ExtractionProfile::by_name`, which has no entry for `TJ_HEAVY`.
+// The span-extraction tuning preset, named after the upstream
+// `ExtractionProfile` consts. Mapped to the consts directly rather than
+// through `ExtractionProfile::by_name`, which has no entry for `TJ_HEAVY`.
 #[derive(NifUnitEnum, Debug)]
 pub enum ExtractionProfileNif {
     Conservative,
@@ -150,10 +115,10 @@ impl From<ExtractionProfileNif> for ExtractionProfile {
     }
 }
 
-/// The reading-order strategy for span extraction. This is upstream's
-/// `document::ReadingOrder`, not the `ReadingOrderMode` the Markdown and HTML
-/// converters take — the two enums are unrelated and name their variants
-/// differently.
+// The reading-order strategy for span extraction. This is upstream's
+// `document::ReadingOrder`, not the `ReadingOrderMode` the Markdown and HTML
+// converters take — the two enums are unrelated and name their variants
+// differently.
 #[derive(NifUnitEnum, Debug)]
 pub enum SpanReadingOrderNif {
     TopToBottom,
@@ -173,7 +138,7 @@ impl From<SpanReadingOrderNif> for ReadingOrder {
 
 // Table detection --------------------------------------------------------------------------------
 
-/// Which boundary evidence the spatial detector uses on one axis.
+// Which boundary evidence the spatial detector uses on one axis.
 #[derive(NifUnitEnum, Debug)]
 pub enum TableStrategyNif {
     Lines,
@@ -191,7 +156,7 @@ impl From<TableStrategyNif> for TableStrategy {
     }
 }
 
-/// The base `TableDetectionConfig` an override map starts from.
+// The base `TableDetectionConfig` an override map starts from.
 #[derive(NifUnitEnum, Debug)]
 pub enum TablePresetNif {
     Default,
@@ -209,9 +174,9 @@ impl From<TablePresetNif> for TableDetectionConfig {
     }
 }
 
-/// Every field of upstream's `TableDetectionConfig`, each `nil` unless the
-/// caller overrode it. Python's `table_settings` dict reaches only five of
-/// these.
+// Every field of upstream's `TableDetectionConfig`, each `nil` unless the
+// caller overrode it. Python's `table_settings` dict reaches only five of
+// these.
 #[derive(NifMap, Debug)]
 pub struct TableDetectionNif {
     pub preset: TablePresetNif,
@@ -274,7 +239,7 @@ impl From<TableDetectionNif> for TableDetectionConfig {
 
 // Span merging -----------------------------------------------------------------------------------
 
-/// The base `SpanMergingConfig` an override map starts from.
+// The base `SpanMergingConfig` an override map starts from.
 #[derive(NifUnitEnum, Debug)]
 pub enum SpanPresetNif {
     Default,
@@ -296,8 +261,8 @@ impl From<SpanPresetNif> for SpanMergingConfig {
     }
 }
 
-/// Overrides for the adaptive gap-statistics sub-config. Only consulted when
-/// the resolved config has `use_adaptive_threshold` set.
+// Overrides for the adaptive gap-statistics sub-config. Only consulted when
+// the resolved config has `use_adaptive_threshold` set.
 #[derive(NifMap, Debug)]
 pub struct AdaptiveThresholdNif {
     pub median_multiplier: Option<f32>,
@@ -308,8 +273,8 @@ pub struct AdaptiveThresholdNif {
 }
 
 impl AdaptiveThresholdNif {
-    /// Applies the overrides on top of the preset's own adaptive config, or on
-    /// top of the upstream default when the preset carries none.
+    // Applies the overrides on top of the preset's own adaptive config, or on
+    // top of the upstream default when the preset carries none.
     fn apply(self, base: Option<AdaptiveThresholdConfig>) -> AdaptiveThresholdConfig {
         let mut config = base.unwrap_or_default();
         if let Some(v) = self.median_multiplier {
@@ -331,8 +296,8 @@ impl AdaptiveThresholdNif {
     }
 }
 
-/// Every field of upstream's `SpanMergingConfig`. The Python bindings expose
-/// none of this.
+// Every field of upstream's `SpanMergingConfig`. The Python bindings expose
+// none of this.
 #[derive(NifMap, Debug)]
 pub struct SpanMergingNif {
     pub preset: SpanPresetNif,
@@ -391,7 +356,7 @@ impl From<SpanMergingNif> for SpanMergingConfig {
 
 // Per-extractor option maps ----------------------------------------------------------------------
 
-/// Options for `PdfElixide.Document.text/2,3`.
+// Options for `PdfElixide.Document.text/2,3`.
 #[derive(NifMap, Debug)]
 pub struct TextOptionsNif {
     pub extract_tables: bool,
@@ -407,29 +372,29 @@ pub struct TextOptionsNif {
 }
 
 impl TextOptionsNif {
-    /// The only option map with two filter modes to check.
+    // The only option map with two filter modes to check.
     pub fn validate(&self) -> NifResult<()> {
         validate_mode("region_mode", &self.region_mode)?;
         validate_mode("exclude_regions_mode", &self.exclude_regions_mode)
     }
 }
 
-/// A decoded `TextOptionsNif`, split into the two shapes the upstream text
-/// surface accepts. Layer/ink filtering forces `extract_text_filtered*`, which
-/// hardcodes its own `ConversionOptions` — see `document.rs` for the routing.
+// A decoded `TextOptionsNif`, split into the two shapes the upstream text
+// surface accepts. Layer/ink filtering forces `extract_text_filtered*`, which
+// hardcodes its own `ConversionOptions` — see `document.rs` for the routing.
 pub struct TextOptions {
     pub conversion: ConversionOptions,
     pub region: Option<RegionFilter>,
     pub exclude_layers: Vec<String>,
     pub exclude_inks: Vec<String>,
-    /// Ours, not upstream's — deliberately kept out of `conversion`, which is
-    /// the options type `pdf_oxide` receives.
+    // Ours, not upstream's — deliberately kept out of `conversion`, which is
+    // the options type `pdf_oxide` receives.
     pub on_page_error: OnPageErrorNif,
 }
 
 impl TextOptions {
-    /// True when the caller asked for layer or ink filtering, which upstream
-    /// can only serve through the filtered entry points.
+    // True when the caller asked for layer or ink filtering, which upstream
+    // can only serve through the filtered entry points.
     pub fn filtered(&self) -> bool {
         !self.exclude_layers.is_empty() || !self.exclude_inks.is_empty()
     }
@@ -457,7 +422,7 @@ impl From<TextOptionsNif> for TextOptions {
     }
 }
 
-/// Options for `PdfElixide.Document.chars/2,3`.
+// Options for `PdfElixide.Document.chars/2,3`.
 #[derive(NifMap, Debug)]
 pub struct CharsOptionsNif {
     pub region: Option<RectNif>,
@@ -488,7 +453,7 @@ impl From<CharsOptionsNif> for CharsOptions {
     }
 }
 
-/// Options for `PdfElixide.Document.words/2,3`.
+// Options for `PdfElixide.Document.words/2,3`.
 #[derive(NifMap, Debug)]
 pub struct WordsOptionsNif {
     pub include_artifacts: bool,
@@ -522,7 +487,7 @@ impl From<WordsOptionsNif> for WordsOptions {
     }
 }
 
-/// Options for `PdfElixide.Document.text_lines/2,3`.
+// Options for `PdfElixide.Document.text_lines/2,3`.
 #[derive(NifMap, Debug)]
 pub struct LinesOptionsNif {
     pub include_artifacts: bool,
@@ -559,7 +524,7 @@ impl From<LinesOptionsNif> for LinesOptions {
     }
 }
 
-/// Options for `PdfElixide.Document.spans/2,3`.
+// Options for `PdfElixide.Document.spans/2,3`.
 #[derive(NifMap, Debug)]
 pub struct SpansOptionsNif {
     pub reading_order: SpanReadingOrderNif,
@@ -596,9 +561,9 @@ impl From<SpansOptionsNif> for SpansOptions {
     }
 }
 
-/// Options for `PdfElixide.Document.tables/2,3`. There is no `region_mode`:
-/// upstream's `extract_tables_in_rect_with_config` filters by bbox
-/// intersection only.
+// Options for `PdfElixide.Document.tables/2,3`. There is no `region_mode`:
+// upstream's `extract_tables_in_rect_with_config` filters by bbox
+// intersection only.
 #[derive(NifMap, Debug)]
 pub struct TablesOptionsNif {
     pub detection: TableDetectionNif,
@@ -619,7 +584,7 @@ impl From<TablesOptionsNif> for TablesOptions {
     }
 }
 
-/// Options for `PdfElixide.Document.search/3,4`.
+// Options for `PdfElixide.Document.search/3,4`.
 #[derive(NifMap, Debug)]
 pub struct SearchOptionsNif {
     pub case_insensitive: bool,
@@ -642,9 +607,6 @@ impl From<SearchOptionsNif> for SearchOptions {
 mod tests {
     use super::*;
 
-    /// An override map that overrides nothing. Spelled out rather than derived
-    /// from `Default`, so adding a field to `TableDetectionNif` without deciding
-    /// what it does here is a compile error.
     fn no_table_overrides(preset: TablePresetNif) -> TableDetectionNif {
         TableDetectionNif {
             preset,
@@ -663,7 +625,6 @@ mod tests {
         }
     }
 
-    /// As above, for span merging.
     fn no_span_overrides(preset: SpanPresetNif) -> SpanMergingNif {
         SpanMergingNif {
             preset,
@@ -699,14 +660,6 @@ mod tests {
         preset.into()
     }
 
-    /// Sets one override on the `:default` preset and asserts the resolved
-    /// config equals that preset with **only** the named field changed.
-    ///
-    /// The comparison is against a whole struct, not the one field, which is
-    /// what makes this catch misrouting: writing `config.column_tolerance = v`
-    /// in the `row_tolerance` arm compiles, and no fixture separates two float
-    /// thresholds. The two-value form is for the fields whose NIF and upstream
-    /// spellings differ (the strategies).
     macro_rules! assert_table_override {
         ($field:ident, $nif_value:expr, $config_value:expr) => {{
             let mut overrides = no_table_overrides(TablePresetNif::Default);
@@ -726,9 +679,6 @@ mod tests {
         };
     }
 
-    /// The span-merging counterpart of [`assert_table_override`]. Single-valued,
-    /// because every `SpanMergingNif` field is a scalar named exactly as
-    /// upstream names it.
     macro_rules! assert_span_override {
         ($field:ident, $value:expr) => {{
             let mut overrides = no_span_overrides(SpanPresetNif::Default);
@@ -745,20 +695,6 @@ mod tests {
         }};
     }
 
-    /// The "resolve presets in Rust, apply overrides by mutating a base" rule,
-    /// stated as one assertion: an override map that overrides nothing must
-    /// leave the preset exactly as upstream built it.
-    ///
-    /// This is what stops a `From` impl being rewritten as a struct literal.
-    /// A literal compiles, passes every Elixir test — `option_defaults_test.exs`
-    /// compares the *keyword defaults*, not the resolved config, and roughly
-    /// half of these keys are observable on no fixture at all — and silently
-    /// resets every field the caller did not name back to `Default`. It is also
-    /// why an upstream release that *adds* a field keeps working rather than
-    /// quietly zeroing it.
-    /// Compared against upstream's *own* constructor rather than against
-    /// `table_preset`, so this pins the preset mapping at the same time: a
-    /// `:strict` that quietly resolved to `relaxed()` would fail here.
     #[test]
     fn an_override_map_that_overrides_nothing_is_exactly_the_preset() {
         for (preset, expected) in [
@@ -786,9 +722,6 @@ mod tests {
         }
     }
 
-    /// Every table override lands on its own field and disturbs no other. The
-    /// values are chosen to differ from the `:default` preset, so an arm that
-    /// silently dropped the override would fail rather than coincide.
     #[test]
     fn each_table_override_lands_on_its_own_field() {
         assert_table_override!(enabled, false);
@@ -813,8 +746,6 @@ mod tests {
         assert_table_override!(text_fallback, false);
     }
 
-    /// The span-merging counterpart. `adaptive` is absent here — it is the one
-    /// override that is not a scalar, and it has tests of its own below.
     #[test]
     fn each_span_override_lands_on_its_own_field() {
         assert_span_override!(space_threshold_em_ratio, 0.42);
@@ -829,16 +760,6 @@ mod tests {
         assert_span_override!(merge_tm_tj_runs, false);
     }
 
-    /// `AdaptiveThresholdNif::apply` layers onto the base it is handed, keeping
-    /// every field the caller did not name.
-    ///
-    /// Called directly rather than through a preset, and that is the point: every
-    /// upstream preset today carries either `None` or
-    /// `Some(AdaptiveThresholdConfig::default())`, so routing through one would
-    /// pass whether `apply` respected the base or ignored it. Handing it a base
-    /// that is *not* the default is the only way to tell those apart, and it
-    /// pins the contract for the upstream release where a preset starts carrying
-    /// a tuned config.
     #[test]
     fn adaptive_overrides_layer_onto_the_supplied_base() {
         let base = AdaptiveThresholdConfig {
@@ -864,8 +785,6 @@ mod tests {
         assert_eq!(no_adaptive_overrides().apply(Some(base.clone())), base);
     }
 
-    /// With no base, the overrides layer onto upstream's default rather than
-    /// onto zeroes — `base.unwrap_or_default()`.
     #[test]
     fn adaptive_overrides_fall_back_to_the_upstream_default() {
         let mut overrides = no_adaptive_overrides();
@@ -885,10 +804,6 @@ mod tests {
         );
     }
 
-    /// The nested case, end to end: an `adaptive` map inside a `SpanMergingNif`
-    /// must reach the resolved config's `adaptive_config`, and must layer onto
-    /// whatever the *preset* carried rather than replacing it — the
-    /// `config.adaptive_config.take()` in `From<SpanMergingNif>`.
     #[test]
     fn a_nested_adaptive_map_reaches_the_resolved_config() {
         let mut overrides = no_span_overrides(SpanPresetNif::Adaptive);
@@ -910,8 +825,6 @@ mod tests {
             .is_some());
     }
 
-    /// A preset with no adaptive config of its own still accepts an `adaptive`
-    /// map, layered onto upstream's default.
     #[test]
     fn a_nested_adaptive_map_applies_to_a_preset_that_carries_none() {
         assert!(span_preset(SpanPresetNif::Default)
@@ -927,12 +840,6 @@ mod tests {
         );
     }
 
-    /// Upstream canary, and the reason the presets are resolved in Rust at all:
-    /// their numbers are supposed to stay *upstream's*. If a release collapses
-    /// two of them, every caller picking between them is silently choosing the
-    /// same thing, and no fixture in `mix test` is fine-grained enough to
-    /// notice — `upstream_drift_test.exs` says as much, and can only check that
-    /// each name still resolves to a real constructor.
     #[test]
     fn the_presets_are_still_distinct_from_one_another() {
         let tables = [
@@ -960,17 +867,6 @@ mod tests {
         }
     }
 
-    /// Stronger than distinctness: each preset still *means* what its typedoc in
-    /// `PdfElixide.Document` tells callers it means. A release that keeps the
-    /// presets distinct but reverses their character would leave the docs lying,
-    /// and nothing else would catch it.
-    ///
-    /// Only the precise claims are asserted. `t:table_detection_opts/0` also
-    /// calls `:relaxed` "tolerant", which is a summary rather than a field-wise
-    /// claim — it *is* looser on `row_tolerance` and `max_table_columns`, but
-    /// `column_tolerance` runs the other way (10.0 against the default's 15.0).
-    /// Don't promote that word to an assertion; it would pin an upstream quirk
-    /// as if the binding intended it.
     #[test]
     fn the_presets_still_mean_what_the_typedocs_say() {
         // ":strict (demands ruling lines and regular rows)"

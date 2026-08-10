@@ -30,11 +30,11 @@ defmodule PdfElixide do
 
   ## Concurrency
 
-  Every handle this library returns may be passed to other processes. A
-  document, image, font or table reads through a *shared* lock, so one handle
-  serves concurrent reads; an editor mutates, so its calls take the handle
-  exclusively and serialize. The full account is the
-  [Concurrency](guides/concurrency.md) guide.
+  Every handle this library returns may be passed to other processes. Documents,
+  images, fonts and tables support concurrent reads. Editor mutations serialize;
+  its read-only accessors do not all take the same kind of lock. The full account,
+  including the exact exceptions, is the [Concurrency](guides/concurrency.md)
+  guide.
 
   ## File paths
 

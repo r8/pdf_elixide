@@ -1,11 +1,11 @@
 # Concurrency
 
-A `%PdfElixide.Document{}` is safe to pass to another process, and its reads run
-*concurrently*: every function that reads the document takes the native handle's
-lock shared, so N workers extracting from one open document do not queue behind
-each other. Only the struct travels between processes — the PDF stays where it
-was loaded — so there is no reason to open the same file once per worker, nor to
-keep a document inside the process that opened it.
+A `%PdfElixide.Document{}` is safe to pass to another process. Native document
+reads use shared access, so workers extracting from one open document do not
+queue behind each other at the handle boundary. Values already cached on the
+Elixir struct — the version, source path, and usually the page count — need no
+native access. There is no reason to open the same file once per worker or keep
+a document inside the process that opened it.
 
 ```elixir
 alias PdfElixide.Document
@@ -26,9 +26,8 @@ pages =
 
 ## The exclusive calls
 
-Everything on a document reads through a shared lock except these three, which
-take the handle *exclusively* — they wait for every in-flight call on that handle
-and block new ones for their duration.
+Three document operations take the native handle *exclusively*. They wait for
+in-flight native calls on that handle and block new ones for their duration.
 
   * `PdfElixide.Document.authenticate/2` is exclusive because a first successful
     authentication replaces the document underneath, which a concurrent read must
@@ -49,29 +48,21 @@ and block new ones for their duration.
 
 ## The `/ActualText` hazard
 
-There is one **correctness** hazard, and it belongs to the underlying library
-rather than to this binding.
+Some tagged PDFs declare competing `/ActualText` replacements for the same
+marked content. Repeated extractions of the same page on one handle can then
+return inconsistent replacement text without an accompanying error, whether
+the calls overlap or run one after another.
 
-On a tagged PDF that declares `/ActualText` both inside a page's content stream
-and on a structure element covering the same marked content, the record of which
-declaration wins is kept per *page index* on the shared document instead of per
-call. Two extractions that touch the same page can therefore cross-contaminate,
-and one of them returns the wrong replacement text for that page — text no error
-accompanies.
-
-Concurrency is only one way to trigger it: two calls in a row on one handle do it
-too, which is why this is not a reason to stop sharing a document. Fanning the
-work out **by page** avoids it entirely, since workers that never share a page
-never collide. The shape to avoid is two whole-document extractions running on
-one handle at once.
+Fanning work out **by page** avoids cross-contamination between workers that
+never share a page. Avoid running two whole-document text-family extractions on
+one handle at once when these PDFs are in scope.
 
 ## Throughput is not linear
 
-What the concurrency does *not* do is scale linearly. `pdf_oxide` serializes the
-first, uncached read of each PDF object across threads and only lets
-already-cached reads through in parallel, so a document being read for the first
-time contends inside the library and runs close to fully parallel only
-afterwards. Expect contention rather than a speedup proportional to workers.
+Concurrency does *not* guarantee linear scaling. First-time extraction can
+still contend while the document is being loaded and decoded, while repeated
+work may benefit more from cached data. Benchmark representative PDFs rather
+than expecting speedup proportional to the worker count.
 
 ## The other handles
 
@@ -81,23 +72,20 @@ writes or changes the document takes the handle exclusively, so concurrent
 process its own editor if you need them to work at once.
 
 Two editor calls are shared reads: `PdfElixide.Editor.page_count/1` and
-`PdfElixide.Editor.modified?/1`, whose upstream counterparts genuinely only look.
-They do not wait on each other — but a shared guard still waits behind an
-exclusive one, so either will queue behind an in-flight save on the same handle.
+`PdfElixide.Editor.modified?/1`. They do not wait on each other, but either will
+queue behind an in-flight exclusive operation such as a save on the same handle.
 
 `PdfElixide.Form.fields/1` inherits whichever source it is handed — a shared read
 on a document, the editor's exclusive lock on an editor — so listing fields from
 an editor serializes even though it only reads.
 
-`PdfElixide.Form.put_values/2` is a convenience, not a batching optimization: it
-takes the exclusive lock once per field plus once for the read it validates
-against, exactly as the same number of `PdfElixide.Form.put_value/3` calls would.
-`PdfElixide.Form.update_value/3` takes it twice, once to read and once to write,
-so another process holding the same editor can write in between.
+`PdfElixide.Form.put_values/2` validates values together but does not make their
+writes atomic. `PdfElixide.Form.update_value/3` is likewise a read followed by a
+write, so another process holding the same editor can write in between.
 
 `PdfElixide.Document.Image`, `PdfElixide.Document.Font` and
 `PdfElixide.Document.Table` handles are shareable the same way as a document, and
-without the hazard above: each owns a value that is already materialized, with no
-shared cache behind it, so concurrent `to_binary/2`, `data/1` and table rendering
-really do run in parallel. Their `close/1` is the exclusive one, and waits for an
-in-flight call exactly as a document's does.
+without the `/ActualText` hazard above. Concurrent `to_binary/2`, `data/1` and
+table rendering calls can run alongside each other. Their `close/1` is the
+exclusive operation and waits for an in-flight call exactly as a document's
+does.

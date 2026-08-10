@@ -10,14 +10,8 @@ pub struct RectNif {
     height: f32,
 }
 
-/// Decodes a caller-supplied `%PdfElixide.Geometry.Rect{}` — an extracted
-/// `bbox` handed straight back as a `:region` option, in the common case.
-///
-/// Built through `Rect::new` rather than as a struct literal so a hand-written
-/// rect with reversed corners normalizes the way it does for every other
-/// `pdf_oxide` caller. `Rect`'s fields are public and the geometry helpers
-/// assume non-negative dimensions, so a negative width would otherwise reach
-/// `intersects` unnormalized and silently match nothing.
+// Use the constructor so hand-written rectangles normalize before reaching
+// geometry helpers that assume non-negative dimensions.
 pub fn rect_from_nif(rect: RectNif) -> Rect {
     Rect::new(rect.x, rect.y, rect.width, rect.height)
 }
@@ -31,9 +25,9 @@ pub fn rect_to_nif(rect: Rect) -> RectNif {
     }
 }
 
-/// Builds a `RectNif` from two opposite corners — an annotation's `/Rect`
-/// `[x1, y1, x2, y2]` or a page's `/MediaBox` — normalizing so the corners may
-/// be given in any order.
+// Builds a `RectNif` from two opposite corners — an annotation's `/Rect`
+// `[x1, y1, x2, y2]` or a page's `/MediaBox` — normalizing so the corners may
+// be given in any order.
 pub fn rect_from_corners(x1: f64, y1: f64, x2: f64, y2: f64) -> RectNif {
     RectNif {
         x: x1.min(x2) as f32,

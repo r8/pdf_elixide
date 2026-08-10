@@ -1,5 +1,5 @@
-//! Optional-content group and ink discovery — the vocabulary the
-//! `:exclude_layers` and `:exclude_inks` extraction filters accept.
+// Optional-content group and ink discovery — the vocabulary the
+// `:exclude_layers` and `:exclude_inks` extraction filters accept.
 
 use pdf_oxide::{
     error::{Error, Result},
@@ -12,19 +12,8 @@ use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource}
 
 // Layers -----------------------------------------------------------------------------------------
 
-/// Reads the catalog's optional-content group names.
-///
-/// Deliberately **not** `PdfDocument::get_layers`, which is otherwise identical:
-/// upstream decodes a string-valued `/Name` with strict `String::from_utf8` and
-/// skips what fails, dropping every UTF-16 and PDFDocEncoded name — while the
-/// matcher this list feeds, `optional_content::ocg_name_is_excluded`, decodes the
-/// same bytes with `decode_pdf_text_string` and *would* have matched them.
-/// Binding upstream would ship a vocabulary the filter does not share. Every
-/// other branch mirrors upstream, leaving the decoder as the single divergence.
-///
-/// Returns upstream's `Result` rather than a `NifResult` so it stays callable
-/// from `cargo test`, where building the atom a `to_nif_err` carries would abort
-/// the process instead of failing the test.
+// Use the filter's PDF text decoder so every listed layer name can also be
+// matched by `:exclude_layers`.
 fn read_layers(doc: &PdfDocument) -> Result<Vec<String>> {
     let catalog = doc.catalog()?;
     let catalog_dict = catalog
@@ -68,9 +57,6 @@ fn read_layers(doc: &PdfDocument) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// Lists the optional-content group names the document catalog declares, in
-/// `/OCGs` order. Neither sorted nor deduplicated, and `[]` for a document with
-/// no optional content.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_layers(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<String>> {
     resource
@@ -80,20 +66,12 @@ fn document_layers(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<Str
 
 // Inks -------------------------------------------------------------------------------------------
 
-/// Options for `PdfElixide.Document.inks/2,3`.
-///
-/// `deep` selects between two upstream calls rather than configuring one, and it
-/// is decoded here rather than branched on in Elixir so a non-boolean value is
-/// rejected by the `NifMap` decoder — the single authority on option types —
-/// and reaches the caller as an `ArgumentError` naming the key, uniform with
-/// every other bad option value.
+// Decode `deep` here so invalid values follow the common NifMap error contract.
 #[derive(NifMap, Debug)]
 pub struct InksOptionsNif {
     pub deep: bool,
 }
 
-/// Lists the Separation / DeviceN ink names a page declares, sorted and
-/// deduplicated by upstream. `deep` also walks `Do` into Form XObject resources.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_inks(
     resource: ResourceArc<DocumentResource>,
@@ -121,14 +99,6 @@ mod tests {
         format!("{}/../../test/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
     }
 
-    /// Upstream canary, inverted: it asserts the *difference* [`read_layers`]
-    /// documents, and is the only thing keeping that function's reason to exist
-    /// honest — nothing in the binding calls `get_layers`, so upstream adopting
-    /// the lenient decoder would retire the local read in silence. A failure is
-    /// therefore not a bug but a decision to make deliberately.
-    ///
-    /// The two names upstream cannot reach are asserted separately, so a partial
-    /// fix still fails.
     #[test]
     fn layers_still_diverge_from_upstreams_get_layers() {
         let doc = PdfDocument::open(fixture("layers_and_inks.pdf")).expect("open");

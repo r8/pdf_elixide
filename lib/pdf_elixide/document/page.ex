@@ -62,17 +62,9 @@ defmodule PdfElixide.Document.Page do
 
   The rect is normalized: `:x` and `:y` are the bottom-left corner and `:width`
   and `:height` are non-negative, even for a file that writes the two corners in
-  the reverse order. It is **not** turned to match `rotation/1`: a `90`-degree
-  page of a 612 × 792 MediaBox still reports 612 × 792 and displays 792 points
-  wide.
-
-  The origin need not be `{0.0, 0.0}`, and when it is not, nothing this library
-  returns is rebased on it — a glyph at the left edge of a page whose box starts
-  at `10.0` reports an `x` near `10.0`. `/MediaBox` is also inheritable
-  (ISO 32000-1 §7.7.3.4): a page without one takes the box from an ancestor
-  `/Pages` node, and where two ancestors declare one, which of them wins is not
-  stable. Both are covered by the "Page boxes and the coordinate origin" section
-  of `PdfElixide.Document`.
+  the reverse order. It is not turned to match `rotation/1`. See "Page boxes and
+  the coordinate origin" in `PdfElixide.Document` for inherited boxes,
+  non-zero origins and the coordinate frame.
 
   A page with no `/MediaBox` anywhere above it, or whose entry is not an array,
   or is an array of fewer than four elements, is malformed and yields
@@ -147,11 +139,9 @@ defmodule PdfElixide.Document.Page do
   Returns the page's `/Rotate` — the clockwise rotation a viewer applies when
   displaying it — as `0`, `90`, `180` or `270`.
 
-  A page's own `/Rotate` wins, but the entry is inheritable (ISO 32000-1
-  §7.7.3.4): a page without one takes the value from an ancestor `/Pages` node,
-  and `0` when no ancestor has one either. Where two ancestors declare one,
-  which of them wins is not stable — see the "Page boxes and the coordinate
-  origin" section of `PdfElixide.Document`, which covers `/Rotate` as well.
+  A page without `/Rotate` inherits it from an ancestor and otherwise reads as
+  `0`. See "Page boxes and the coordinate origin" in `PdfElixide.Document` for
+  the full inheritance behavior.
 
   Two normalizations are worth knowing:
 
@@ -159,11 +149,9 @@ defmodule PdfElixide.Document.Page do
     * a value that is **not a multiple of 90** is invalid per §7.7.3.3 and reads
       as `0` — it is *not* rounded down, so `45` is `0`, not `90`.
 
-  `media_box/1`, and the `width/1` and `height/1` derived from it, are never
-  swapped to match: a `90`-degree page of a 612 × 792 MediaBox displays 792
-  points wide and 612 tall. Rotation also decides which frame an extracted
-  `bbox` is expressed in — see "Rotated pages and extracted geometry" in
-  `PdfElixide.Document`.
+  `media_box/1`, `width/1` and `height/1` are not swapped to match. Rotation also
+  affects the frame of some extracted bounding boxes; see "Rotated pages and
+  extracted geometry" in `PdfElixide.Document`.
   """
   @spec rotation(t()) :: {:ok, rotation()} | {:error, Error.t()}
   def rotation(%__MODULE__{doc: %Document{ref: ref}, index: index}) do

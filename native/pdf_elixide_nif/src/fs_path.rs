@@ -1,16 +1,11 @@
-//! Decoding of filesystem path arguments. Named `fs_path` and not `path`
-//! because `paths.rs` beside it is vector *graphics* path extraction.
+// Decoding of filesystem path arguments. Named `fs_path` and not `path`
+// because `paths.rs` beside it is vector *graphics* path extraction.
 
 use std::path::PathBuf;
 
 use rustler::{Binary, NifResult};
 
-/// Decodes a path argument into whatever the operating system calls a path —
-/// the contract in the "File paths" section of the `PdfElixide` moduledoc.
-///
-/// `Error::BadArg` rather than a `tagged_err` is what keeps a rejected path an
-/// `ArgumentError` instead of a `%PdfElixide.Error{}` — the caller-bug half of
-/// that split.
+// `BadArg` keeps an undecodable path an `ArgumentError`, not a PDF error.
 pub fn path_arg(path: Binary) -> NifResult<PathBuf> {
     decode(path.as_slice()).ok_or(rustler::Error::BadArg)
 }
@@ -27,11 +22,11 @@ fn decode(bytes: &[u8]) -> Option<PathBuf> {
     decode_utf8_only(bytes)
 }
 
-/// The branch Windows takes, which has no choice: `OsStringExt::from_wide`
-/// consumes `u16`, so there is no bytes-to-path mapping to use.
-///
-/// Compiled unconditionally rather than behind `#[cfg(windows)]` so the unit
-/// test below reaches it on every host, not only the Windows CI leg.
+// The branch Windows takes, which has no choice: `OsStringExt::from_wide`
+// consumes `u16`, so there is no bytes-to-path mapping to use.
+//
+// Compiled unconditionally rather than behind `#[cfg(windows)]` so the unit
+// test below reaches it on every host, not only the Windows CI leg.
 #[cfg_attr(unix, allow(dead_code))]
 fn decode_utf8_only(bytes: &[u8]) -> Option<PathBuf> {
     std::str::from_utf8(bytes).ok().map(PathBuf::from)

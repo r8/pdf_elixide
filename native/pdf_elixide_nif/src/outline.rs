@@ -3,27 +3,8 @@ use rustler::{NifMap, NifResult, NifTaggedEnum};
 
 use crate::{atoms, error::tagged_err};
 
-/// Maximum outline nesting this conversion will walk.
-///
-/// [`outline_item_to_nif`] recurses over `children`, and so does the `NifMap`
-/// encoder that turns the result into terms, so an attacker-controlled `/First`
-/// chain would otherwise overflow the *native* stack. That is not a catchable
-/// panic — it aborts the OS process, taking the whole BEAM with it, so
-/// `contain_panic` cannot degrade it the way it does an upstream `unwrap`.
-///
-/// 256 is far past any real table of contents while staying inside the dirty
-/// scheduler's stack, and recursing this far is safe *a fortiori*: upstream's
-/// much heavier `parse_outline_item` already recursed to the same depth on this
-/// same thread to build the tree we are handed.
-///
-/// **This is defence in depth, not a complete fix.** `PdfDocument::get_outline`
-/// returns a fully owned tree, built eagerly by `parse_outline_item`, which has
-/// no depth parameter, no visited set and no cap of its own — nor does its
-/// `/Next` sibling walk, where a cycle loops until it exhausts memory. A
-/// document deep enough to matter therefore dies *there*, before this code runs.
-/// `load_object`'s own `MAX_RECURSION_DEPTH` does not help, being scoped to a
-/// single resolution. The cap is what keeps this crate from being the remaining
-/// hole, and becomes the effective guard once upstream closes theirs.
+// Bound both this recursion and the recursive NifMap encoder. This remains
+// defence in depth because the outline is already parsed before it reaches us.
 const MAX_OUTLINE_DEPTH: usize = 256;
 
 #[derive(NifMap, Debug)]
@@ -39,20 +20,15 @@ pub enum DestinationNif {
     Named(String),
 }
 
-/// Signals an outline nested deeper than [`MAX_OUTLINE_DEPTH`].
-///
-/// A marker type rather than a `tagged_err` built where the cap is checked, so
-/// the recursion stays reachable from `cargo test`: every reason atom needs a
-/// live BEAM to exist, which is why `error.rs`'s own tests can only cover
-/// `panic_message`.
+// Keep the recursive conversion BEAM-independent; build the reason atom outside.
 #[derive(Debug)]
 struct TooDeep;
 
-/// Rejects an outline nested past [`MAX_OUTLINE_DEPTH`] with `:unsupported`.
-///
-/// The whole outline fails rather than being silently truncated: a caller who
-/// asked for the table of contents is better served by an error it can match on
-/// than by a tree that quietly stops part-way down.
+// Rejects an outline nested past [`MAX_OUTLINE_DEPTH`] with `:unsupported`.
+//
+// The whole outline fails rather than being silently truncated: a caller who
+// asked for the table of contents is better served by an error it can match on
+// than by a tree that quietly stops part-way down.
 pub fn outline_to_nif(items: Vec<OutlineItem>) -> NifResult<Vec<OutlineItemNif>> {
     items
         .into_iter()
@@ -66,11 +42,11 @@ pub fn outline_to_nif(items: Vec<OutlineItem>) -> NifResult<Vec<OutlineItemNif>>
         })
 }
 
-/// Converts one item and its subtree. `depth` is zero for a top-level item.
-///
-/// The cap is checked here, on the item, rather than before recursing into a
-/// child list: an item at the last allowed depth with no children is fine, and
-/// checking the list would reject it for the empty recursion its own leaves make.
+// Converts one item and its subtree. `depth` is zero for a top-level item.
+//
+// The cap is checked here, on the item, rather than before recursing into a
+// child list: an item at the last allowed depth with no children is fine, and
+// checking the list would reject it for the empty recursion its own leaves make.
 fn outline_item_to_nif(item: OutlineItem, depth: usize) -> Result<OutlineItemNif, TooDeep> {
     if depth >= MAX_OUTLINE_DEPTH {
         return Err(TooDeep);
@@ -94,8 +70,6 @@ fn outline_item_to_nif(item: OutlineItem, depth: usize) -> Result<OutlineItemNif
 mod tests {
     use super::*;
 
-    /// A linear chain of `levels` nested items — the shape a malicious `/First`
-    /// chain produces, and the only one whose depth is unambiguous.
     fn chain(levels: usize) -> OutlineItem {
         (1..levels).fold(leaf(), |child, _| OutlineItem {
             title: String::from("nested"),

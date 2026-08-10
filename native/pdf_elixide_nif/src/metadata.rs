@@ -14,10 +14,10 @@ use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource}
 
 // Info dictionary --------------------------------------------------------------------------------
 
-/// Document Info dictionary metadata. Every field is optional; a document with
-/// no `/Info` dictionary yields an all-`nil` map. Dates are the raw PDF date
-/// strings (e.g. `D:20230101120000+00'00'`); `trapped` is the `/Trapped` name
-/// (`True` / `False` / `Unknown`) when present.
+// Document Info dictionary metadata. Every field is optional; a document with
+// no `/Info` dictionary yields an all-`nil` map. Dates are the raw PDF date
+// strings (e.g. `D:20230101120000+00'00'`); `trapped` is the `/Trapped` name
+// (`True` / `False` / `Unknown`) when present.
 #[derive(NifMap, Debug)]
 pub struct MetadataNif {
     title: Option<String>,
@@ -31,19 +31,8 @@ pub struct MetadataNif {
     trapped: Option<String>,
 }
 
-/// Decodes a PDF text string (ISO 32000-1 §7.9.2.2). The decoding itself is
-/// upstream's public `decode_pdf_text_string` — the same one `pdf_oxide` applies
-/// to optional-content group names: a `FE FF` / `FF FE` byte-order mark selects
-/// UTF-16, a BOM-less buffer that is valid UTF-8 is taken as UTF-8 (non-spec
-/// leniency for the many producers that write it), and anything else is
-/// PDFDocEncoding — Latin-1 except over `0x80`–`0x9F`, where the PDF glyphs
-/// (`0x85` en dash, `0x90` right single quote, `0x92` trademark) sit where the
-/// C1 controls would be.
-///
-/// The one case upstream has no branch for is PDF 2.0's UTF-8 text string
-/// (ISO 32000-2 §7.9.2.2), tagged `EF BB BF`: those bytes *are* valid UTF-8, so
-/// they decode as text but keep the BOM as a leading U+FEFF, which `str::trim`
-/// does not remove (U+FEFF is not `White_Space`). Strip it first.
+// The shared decoder handles UTF-16, UTF-8 and PDFDocEncoding. Strip PDF 2.0's
+// UTF-8 BOM first because the decoder otherwise preserves it as U+FEFF.
 fn decode_pdf_text_string(bytes: &[u8]) -> String {
     let body = match bytes {
         [0xEF, 0xBB, 0xBF, rest @ ..] => rest,
@@ -53,14 +42,8 @@ fn decode_pdf_text_string(bytes: &[u8]) -> String {
     pdf_oxide::optional_content::decode_pdf_text_string(body)
 }
 
-/// Reads the document Info dictionary into a `MetadataNif`. Every field —
-/// `/Producer` and `/Creator` included — is read from the resolved `/Info`
-/// dictionary here rather than through `PdfDocument::document_producer` /
-/// `document_creator`: those decode with a *different*, private upstream
-/// decoder that has no UTF-8 branch, so one struct would otherwise mix two
-/// decodings (a `EF BB BF`-tagged `/Producer` arriving as `ï»¿…` mojibake next
-/// to a correctly decoded `/Title`). Reading them here also gives them the same
-/// `/Name` fallback as `/Trapped`, and resolves `/Info` once instead of thrice.
+// Decode every `/Info` field through one path so `/Producer` and `/Creator` do
+// not use a different, UTF-8-unaware helper.
 fn read_metadata(doc: &PdfDocument) -> MetadataNif {
     let info = doc
         .trailer()
@@ -92,8 +75,6 @@ fn read_metadata(doc: &PdfDocument) -> MetadataNif {
     }
 }
 
-/// Reads the Info dictionary metadata. Missing `/Info` yields an all-`nil` map,
-/// not an error.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_info(resource: ResourceArc<DocumentResource>) -> NifResult<MetadataNif> {
     resource.doc.with_read(|doc| Ok(read_metadata(doc)))
@@ -101,9 +82,9 @@ fn document_info(resource: ResourceArc<DocumentResource>) -> NifResult<MetadataN
 
 // XMP metadata -----------------------------------------------------------------------------------
 
-/// XMP (Extensible Metadata Platform) metadata. Field names drop the upstream
-/// namespace prefixes (`dc_` / `xmp_` / `pdf_` / `xmp_rights_`); `raw_xml`
-/// carries the original XMP packet as an escape hatch.
+// XMP (Extensible Metadata Platform) metadata. Field names drop the upstream
+// namespace prefixes (`dc_` / `xmp_` / `pdf_` / `xmp_rights_`); `raw_xml`
+// carries the original XMP packet as an escape hatch.
 #[derive(NifMap, Debug)]
 pub struct XmpMetadataNif {
     title: Option<String>,
@@ -153,7 +134,6 @@ fn xmp_to_nif(xmp: XmpMetadata) -> XmpMetadataNif {
     }
 }
 
-/// Extracts XMP metadata. Returns `nil` when the document carries no XMP packet.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_xmp_metadata(
     resource: ResourceArc<DocumentResource>,
@@ -166,8 +146,8 @@ fn document_xmp_metadata(
 
 // Permissions ------------------------------------------------------------------------------------
 
-/// Decoded `/P` permission flags (ISO 32000-1 §7.6.3.2). Per spec these are
-/// advisory. `raw` is the pre-decoded two's-complement `/P` integer.
+// Decoded `/P` permission flags (ISO 32000-1 §7.6.3.2). Per spec these are
+// advisory. `raw` is the pre-decoded two's-complement `/P` integer.
 #[derive(NifMap, Debug)]
 pub struct PermissionsNif {
     print_low_res: bool,
@@ -195,8 +175,6 @@ fn permissions_to_nif(perms: PdfPermissions) -> PermissionsNif {
     }
 }
 
-/// Returns the document's permission flags, or `nil` when the document is not
-/// encrypted (no permission dictionary).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_permissions(
     resource: ResourceArc<DocumentResource>,
@@ -208,9 +186,6 @@ fn document_permissions(
 
 // Page labels ------------------------------------------------------------------------------------
 
-/// Returns one logical page label per page, in page order. Pages outside any
-/// declared label range fall back to their decimal page number (upstream
-/// behavior).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<String>> {
     resource.doc.with_read(|doc| {
@@ -222,10 +197,10 @@ fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
     })
 }
 
-/// Returns one page's logical page label. Upstream has no single-label accessor
-/// on `PdfDocument` — `Pdf::page_label` takes `&mut self` and is itself
-/// `get_label(&self.page_labels()?, page)` — so the label ranges are extracted
-/// per call, and `document_page_labels` remains the bulk path.
+// Returns one page's logical page label. Upstream has no single-label accessor
+// on `PdfDocument` — `Pdf::page_label` takes `&mut self` and is itself
+// `get_label(&self.page_labels()?, page)` — so the label ranges are extracted
+// per call, and `document_page_labels` remains the bulk path.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_label(
     resource: ResourceArc<DocumentResource>,
@@ -255,28 +230,6 @@ mod tests {
         )
     }
 
-    /// Upstream canary, inverted: this one asserts a *difference*, and it is the
-    /// only thing keeping [`read_metadata`]'s reason to exist honest.
-    ///
-    /// `read_metadata` reads all nine `/Info` fields itself rather than calling
-    /// `PdfDocument::document_producer` / `document_creator`, purely because
-    /// those two decode through a *private* upstream decoder that has no UTF-8
-    /// branch and no `/Name` fallback (`pdf_oxide/src/document.rs`,
-    /// `document_info_string`). Mixing the two would put a mojibaked
-    /// `/Producer` next to a correctly decoded `/Title` in one `%Metadata{}`.
-    ///
-    /// Nothing in the binding calls those accessors, so if upstream ever unifies
-    /// its two decoders the justification evaporates in silence. A failure here
-    /// is therefore *not* a bug — it means the local read may no longer be
-    /// earning its keep, and that is a decision to make deliberately.
-    ///
-    /// `metadata_encodings.pdf` provides both branches upstream lacks:
-    /// `/Creator` is raw UTF-8 with no BOM, `/Producer` carries PDF 2.0's
-    /// `EF BB BF`. The exact mojibake is not asserted, only that it differs.
-    ///
-    /// Only the decoder half is checked. The `/Name` fallback is the other half
-    /// of the same divergence, but no fixture gives `/Producer` or `/Creator` a
-    /// name value — the only two fields the upstream accessors reach.
     #[test]
     fn producer_and_creator_still_diverge_from_upstreams_own_accessors() {
         let doc = PdfDocument::open(fixture("metadata_encodings.pdf")).expect("fixture opens");
@@ -348,12 +301,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_lossy_utf8_on_an_unpaired_surrogate() {
-        // Upstream's fallback, pinned rather than endorsed: strict `from_utf16`
-        // fails and the *whole* buffer, BOM included, is then decoded lossily as
-        // UTF-8. This is worse than the `from_utf16_lossy` this binding used to
-        // do itself, and is the accepted price of having a single decoder. A
-        // future upstream `from_utf16_lossy` would be an improvement — update
-        // this assertion then, don't route around it.
+        // Record the shared decoder's lossy fallback for an unpaired surrogate.
         assert_eq!(
             decode(b"\xFE\xFF\xD8\x3D\x00A"),
             "\u{FFFD}\u{FFFD}\u{FFFD}=\u{0}A"

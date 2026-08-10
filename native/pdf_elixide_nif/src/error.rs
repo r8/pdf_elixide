@@ -5,37 +5,31 @@ use rustler::{Atom, Error};
 
 use crate::atoms;
 
-/// The NIF returns this as `{:error, {reason, message}}`; the Elixir side
-/// (`PdfElixide.Native.Wrap`) turns it into a `%PdfElixide.Error{}` struct so
-/// callers can pattern-match on `reason`.
+// The NIF returns this as `{:error, {reason, message}}`; the Elixir side
+// (`PdfElixide.Native.Wrap`) turns it into a `%PdfElixide.Error{}` struct so
+// callers can pattern-match on `reason`.
 pub fn tagged_err(reason: Atom, message: impl Into<String>) -> Error {
     Error::Term(Box::new((reason, message.into())))
 }
 
-/// Converts a `pdf_oxide::Error` into a tagged Rustler error, mapping the
-/// variant to one of the stable reason atoms (see [`classify`]).
+// Converts a `pdf_oxide::Error` into a tagged Rustler error, mapping the
+// variant to one of the stable reason atoms (see [`classify`]).
 pub fn to_nif_err(e: PdfError) -> Error {
     tagged_err(classify(&e), e.to_string())
 }
 
-/// Same as [`to_nif_err`], but names the page the failure came from.
-///
-/// Used by the whole-document text loop under `on_page_error: :halt`, where the
-/// caller otherwise has no way to tell *which* page failed: the reason atom and
-/// upstream's message are the same whichever page produced them. The atom is
-/// left to [`classify`] so a halted page reports exactly what the equivalent
-/// per-page call would.
+// Preserve the per-page reason atom while adding the page index to its message.
 pub fn to_nif_page_err(page_index: usize, e: PdfError) -> Error {
     tagged_err(classify(&e), format!("page {page_index}: {e}"))
 }
 
-/// The prefix `TextSearcher::build_regex` puts on a rejected pattern.
+// The prefix `TextSearcher::build_regex` puts on a rejected pattern.
 const INVALID_PATTERN_PREFIX: &str = "Invalid regex pattern: ";
 
-/// Same as [`to_nif_err`], but reports a rejected search pattern as
-/// `:invalid_pattern`. Upstream raises it as an `InvalidPdf` like any other, so
-/// the message is the only thing separating the two; a reworded one degrades to
-/// `:invalid_pdf`.
+// Same as [`to_nif_err`], but reports a rejected search pattern as
+// `:invalid_pattern`. Upstream raises it as an `InvalidPdf` like any other, so
+// the message is the only thing separating the two; a reworded one degrades to
+// `:invalid_pdf`.
 pub fn to_search_err(e: PdfError) -> Error {
     match &e {
         PdfError::InvalidPdf(message) if message.starts_with(INVALID_PATTERN_PREFIX) => {
@@ -45,13 +39,13 @@ pub fn to_search_err(e: PdfError) -> Error {
     }
 }
 
-/// The prefix `set_form_field_value` puts on an unknown field name.
+// The prefix `set_form_field_value` puts on an unknown field name.
 const FIELD_NOT_FOUND_PREFIX: &str = "Form field not found: ";
 
-/// Same as [`to_nif_err`], but reports an unknown form field name as
-/// `:not_found`, which is what `PdfElixide.Form.field/2` answers for the same
-/// condition. Told apart by message prefix, with the same trade-off as
-/// [`to_search_err`] above.
+// Same as [`to_nif_err`], but reports an unknown form field name as
+// `:not_found`, which is what `PdfElixide.Form.field/2` answers for the same
+// condition. Told apart by message prefix, with the same trade-off as
+// [`to_search_err`] above.
 pub fn to_form_err(e: PdfError) -> Error {
     match &e {
         PdfError::InvalidPdf(message) if message.starts_with(FIELD_NOT_FOUND_PREFIX) => {
@@ -61,15 +55,15 @@ pub fn to_form_err(e: PdfError) -> Error {
     }
 }
 
-/// Defensive: every guard is now taken through `Closable::with_lock` /
-/// `with_read`, which contain a panic before it can poison anything (see
-/// `crate::resource::contain_panic`), so this should no longer be reachable.
+// Defensive: every guard is now taken through `Closable::with_lock` /
+// `with_read`, which contain a panic before it can poison anything (see
+// `crate::resource::contain_panic`), so this should no longer be reachable.
 pub fn lock_err() -> Error {
     tagged_err(atoms::lock_poisoned(), "Lock is poisoned")
 }
 
-/// Carries the panic message when it is a string, which it is for `panic!` and
-/// `expect`/`unwrap`.
+// Carries the panic message when it is a string, which it is for `panic!` and
+// `expect`/`unwrap`.
 pub fn panic_err(payload: &(dyn Any + Send)) -> Error {
     tagged_err(
         atoms::panic(),
@@ -77,9 +71,9 @@ pub fn panic_err(payload: &(dyn Any + Send)) -> Error {
     )
 }
 
-/// Extracts the message from a caught panic payload. `panic!` and the
-/// `expect`/`unwrap` family box either a `&str` or a `String`; anything else
-/// (a custom payload from `panic_any`) has no message to report.
+// Extracts the message from a caught panic payload. `panic!` and the
+// `expect`/`unwrap` family box either a `&str` or a `String`; anything else
+// (a custom payload from `panic_any`) has no message to report.
 fn panic_message(payload: &(dyn Any + Send)) -> &str {
     if let Some(message) = payload.downcast_ref::<&str>() {
         message
@@ -90,27 +84,13 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
-/// `label` names the handle, e.g. `"Document"`; see `crate::resource::Closable`.
+// `label` names the handle, e.g. `"Document"`; see `crate::resource::Closable`.
 pub fn closed_err(label: &str) -> Error {
     tagged_err(atoms::closed(), format!("{label} is closed"))
 }
 
-/// Maps a `pdf_oxide::Error` variant to a stable reason atom. Anything not
-/// explicitly mapped (including feature-gated variants) falls through to
-/// `:other`, with the original message preserved by the caller.
-///
-/// **`:wrong_password` is a deliberate gap here.** Upstream has no such
-/// variant: `PdfDocument::authenticate` reports a rejected password as
-/// `Ok(false)`, and `EncryptedPdf` — the only password-adjacent variant — means
-/// "not authenticated yet", not "wrong password". The atom is therefore
-/// *synthesized* by `OpenOptionsNif::apply` (`crate::document`) from that
-/// `false`, and nothing routed through `classify` can produce it.
-///
-/// If upstream ever does grow a wrong-password variant, it lands on the `_`
-/// arm below and `open(password:)` starts reporting `%Error{reason: :other}`,
-/// silently breaking every caller matching `:wrong_password`. The canary in
-/// `test/pdf_elixide/upstream_drift_test.exs` is what catches that; the fix
-/// then is an explicit arm here, not a relaxed assertion there.
+// `:wrong_password` is synthesized while applying open options because a
+// rejected password is `Ok(false)`, not a `pdf_oxide::Error` variant.
 fn classify(e: &PdfError) -> Atom {
     match e {
         PdfError::EncryptedPdf => atoms::encrypted(),

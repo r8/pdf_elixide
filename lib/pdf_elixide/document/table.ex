@@ -179,14 +179,12 @@ defmodule PdfElixide.Document.Table do
     to_markdown(table, opts) |> Wrap.unwrap!()
   end
 
-  # Default pinned by `option_defaults_test.exs` via `__option_defaults__(:markdown)`.
   defp build_markdown_options(opts) do
     opts = Keyword.validate!(opts, @markdown_opts_keys)
     %{bold_markers: Keyword.get(opts, :bold_markers, :conservative)}
   end
 
   @doc false
-  # See `PdfElixide.Document.__option_defaults__/1` for why this exists.
   @spec __option_defaults__(:markdown) :: map()
   def __option_defaults__(:markdown), do: build_markdown_options([])
 
@@ -200,9 +198,9 @@ defmodule PdfElixide.Document.Table do
   become `<thead>`/`<th>`, the rest `<tbody>`/`<td>`, and merged cells keep their
   `colspan`/`rowspan` as attributes. An empty table renders as `""`.
 
-  Cell text is escaped like every other string `pdf_oxide` puts in HTML — see
-  the "Escaping" section of `PdfElixide.Document.to_html/2`. This renderer has
-  no image path, so nothing in its output is unescaped.
+  Cell text is escaped — see the "Escaping" section of
+  `PdfElixide.Document.to_html/2`. This renderer has no image path, so nothing in
+  its output is unescaped.
   """
   @spec to_html(t()) :: {:ok, String.t()} | {:error, Error.t()}
   def to_html(%__MODULE__{ref: ref}) when is_reference(ref) do
@@ -247,8 +245,8 @@ defmodule PdfElixide.Document.Table do
 
   The table is normally freed when the BEAM garbage-collects the handle;
   `close/1` frees it now, which is worth doing when walking many tables and
-  keeping only their text — it frees upstream's own copy, glyph metrics and all,
-  the larger of the two representations a `%Table{}` holds. The struct's own
+  keeping only their text — it frees the native copy, glyph metrics and all, the
+  larger of the two representations a `%Table{}` holds. The struct's own
   fields — rows, cells, spans — are plain data and stay readable afterwards;
   only `to_markdown/2`, `to_html/1` and `to_text/1` stop working, returning
   `{:error, %PdfElixide.Error{reason: :closed}}` (bang variants raise it).

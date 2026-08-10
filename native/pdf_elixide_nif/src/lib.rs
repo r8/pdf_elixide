@@ -63,12 +63,7 @@ impl rustler::Resource for DocumentResource {}
 
 struct EditorResource {
     editor: Closable<DocumentEditor>,
-    /// The signature names of the editor's *source* document, built on first use
-    /// (see `signature_names` in editor.rs).
-    ///
-    /// Cacheable only because nothing bound touches `DocumentEditor::source`. A
-    /// NIF that edits the source document, or adds or removes a form field,
-    /// invalidates this and must clear it.
+    // Cacheable while no bound operation mutates the source document or fields.
     signature_names: OnceLock<SignatureNames>,
 }
 

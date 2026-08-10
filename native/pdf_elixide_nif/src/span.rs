@@ -27,8 +27,8 @@ pub struct SpanNif {
     mcid: Option<u32>,
 }
 
-/// Decodes a span the caller owns, moving its two heap strings out rather than
-/// copying them.
+// Decodes a span the caller owns, moving its two heap strings out rather than
+// copying them.
 pub fn span_to_nif(mut span: TextSpan, page: usize) -> SpanNif {
     let text = std::mem::take(&mut span.text);
     let font = std::mem::take(&mut span.font_name);
@@ -36,19 +36,14 @@ pub fn span_to_nif(mut span: TextSpan, page: usize) -> SpanNif {
     span_parts_to_nif(text, font, &span, page)
 }
 
-/// Decodes a span the caller only borrows — the table path, which hands its
-/// spans to the `TableResource` afterwards rather than consuming them.
-///
-/// Only the two strings are copied. `SpanNif` carries none of the per-glyph
-/// vectors (`char_widths`, `char_x_offsets`), which are the bulk of a span, so
-/// decoding from a borrow never clones them; cloning the whole `TextSpan` to
-/// reach the same result would.
+// The table path borrows spans; copy only the two strings, not the per-glyph
+// vectors retained by the table resource.
 pub fn span_ref_to_nif(span: &TextSpan, page: usize) -> SpanNif {
     span_parts_to_nif(span.text.clone(), span.font_name.clone(), span, page)
 }
 
-/// The one field literal both spellings above share, so a new `SpanNif` field
-/// cannot be added to one and forgotten in the other.
+// The one field literal both spellings above share, so a new `SpanNif` field
+// cannot be added to one and forgotten in the other.
 fn span_parts_to_nif(text: String, font: String, span: &TextSpan, page: usize) -> SpanNif {
     SpanNif {
         text,

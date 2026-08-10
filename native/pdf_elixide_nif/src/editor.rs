@@ -34,24 +34,14 @@ impl From<SaveOptionsNif> for SaveOptions {
     }
 }
 
-/// What both open NIFs hand back: the handle, plus the one field
-/// `%PdfElixide.Editor{}` caches at open, in one call. Same shape and same
-/// reasoning as `OpenedDocument` (`document.rs`), including when it should
-/// become a `NifMap`.
+// Return the handle and its cached version atomically.
 type OpenedEditor = (ResourceArc<EditorResource>, (u8, u8));
 
-/// Reads the field `%PdfElixide.Editor{}` caches at open.
-///
-/// The read goes through `with_read` rather than reading the `DocumentEditor`
-/// before it is moved into the `Closable`, so it stays inside `contain_panic`.
-/// Nothing is swallowed the way `cached_fields` swallows an unreadable page
-/// count: `version()` is infallible upstream, so the only failure reachable here
-/// is a panic, and failing the open is the honest answer to that.
+// Read after constructing `Closable` so the cached value is panic-contained.
 fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
 }
 
-/// Opens an editor over the PDF at the given file path.
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::open(path_arg(path)?).map_err(to_nif_err)?;
@@ -65,7 +55,6 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     Ok((resource, version))
 }
 
-/// Opens an editor over the given PDF bytes.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
@@ -79,32 +68,21 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
     Ok((resource, version))
 }
 
-/// Shared where every mutating editor NIF is exclusive: upstream's
-/// `current_page_count` takes `&self`, so nothing here needs to exclude a
-/// concurrent reader. Deliberately not cached on the Elixir struct the way the
-/// version is — upstream recomputes it on every call, and the page-mutating
-/// methods that would move it are not bound here yet.
+// Shared and live because the native call takes `&self` and may change over time.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_page_count(resource: ResourceArc<EditorResource>) -> NifResult<usize> {
-    // `EditableDocument::page_count` would take `&mut self` and return a
-    // `Result` for trait-shape reasons alone, delegating straight to this.
     resource
         .editor
         .with_read(|editor| Ok(editor.current_page_count()))
 }
 
-/// Shared for the same reason as `editor_page_count`: upstream's `is_modified`
-/// takes `&self`.
+// Shared for the same reason as `editor_page_count`: upstream's `is_modified`
+// takes `&self`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_is_modified(resource: ResourceArc<EditorResource>) -> NifResult<bool> {
     resource.editor.with_read(|editor| Ok(editor.is_modified()))
 }
 
-/// Releases the editor's native memory now, rather than waiting for the BEAM to
-/// garbage-collect the handle. Idempotent; later calls on the handle fail with
-/// `:closed`, and any unsaved edits are discarded. Takes the editor lock, so it
-/// waits for an in-flight call on the same handle to return rather than
-/// interrupting it — see [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
     resource.editor.close();
@@ -112,17 +90,12 @@ fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
     atoms::ok()
 }
 
-/// Returns whether the editor has been released with `editor_close`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_closed(resource: ResourceArc<EditorResource>) -> bool {
     resource.editor.is_closed()
 }
 
-/// The signature names of the editor's source document, built once per handle —
-/// see the `EditorResource` field in `lib.rs` for what makes one build enough.
-///
-/// A failed build is not cached, so a malformed field tree reports the same
-/// verdict on every call rather than a remembered one.
+// Failed builds are not cached, so malformed trees fail consistently.
 fn signature_names<'a>(
     resource: &'a EditorResource,
     editor: &DocumentEditor,
@@ -185,23 +158,8 @@ fn editor_save(
     })
 }
 
-/// Refuses a write to a `/Sig` field, which would destroy the signature.
-///
-/// **Not redundant with `field_nif` dropping signature fields from
-/// `Form.fields/1`.** Upstream matches `set_form_field_value` on the full name
-/// whatever the extractor reported, so a caller naming one directly still
-/// reaches the write.
-///
-/// **Every write is destructive, not just a `nil`**, so don't narrow this to one:
-/// upstream reads a signature dictionary `/V` as no value at all and then inserts
-/// `/V` unconditionally, so any value replaces the dictionary just as thoroughly.
-///
-/// The names come from the source document, which is the list the write matches
-/// against, and cover a `/Sig` typed only on an ancestor — see `form_tree.rs`,
-/// which also resolves a duplicated name the way the write resolves it: first
-/// match wins.
-///
-/// It reports `:not_found` so all four public functions tell one story.
+// Guard the write itself: hiding signatures from reads does not stop a caller
+// naming one directly, and any value would replace its `/V` dictionary.
 fn ensure_not_signature(signatures: &SignatureNames, name: &str) -> NifResult<()> {
     if signatures.contains(name) {
         // Upstream's own spelling carries an "Invalid PDF: " prefix its `Display`
@@ -217,13 +175,8 @@ fn ensure_not_signature(signatures: &SignatureNames, name: &str) -> NifResult<()
     Ok(())
 }
 
-/// The `Option` is what makes a malformed value an `ArgumentError`: rustler's
-/// `Option<T>` decoder discards `T`'s own error and answers `BadArg` for every
-/// non-`nil` term, so an unrecognized shape raises rather than reaching Elixir
-/// as an `%Error{}`. Removing it — splitting out a clears-the-field variant,
-/// say — would silently change the exception type callers see. That decoding
-/// runs before the body, so a bad value on a signature field still raises rather
-/// than reaching `ensure_not_signature`.
+// `Option<T>` preserves the public `ArgumentError` contract for malformed
+// non-nil values while allowing nil to clear a field.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_set_form_field_value(
     resource: ResourceArc<EditorResource>,

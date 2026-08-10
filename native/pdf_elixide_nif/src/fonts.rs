@@ -26,9 +26,9 @@ pub struct FontNif {
     resource: ResourceArc<FontResource>,
 }
 
-/// A font's character encoding, encoded to Elixir as a flat tagged term:
-/// `{:standard, "WinAnsiEncoding"}` for a named base encoding, or the bare atom
-/// `:custom` / `:identity`.
+// A font's character encoding, encoded to Elixir as a flat tagged term:
+// `{:standard, "WinAnsiEncoding"}` for a named base encoding, or the bare atom
+// `:custom` / `:identity`.
 pub enum EncodingNif {
     Standard(String),
     Custom,
@@ -55,31 +55,8 @@ impl From<&Encoding> for EncodingNif {
     }
 }
 
-/// Splits a `/BaseFont` name into "is this a subset?" and the name with any
-/// subset prefix removed.
-///
-/// A subset prefix is *exactly* six uppercase ASCII letters followed by `+`
-/// (ISO 32000-1 §9.6.4), e.g. `ABCDEF+Arial`. Anything else — a shorter or
-/// longer run, a lowercase or digit-bearing one, or a `+` that is simply part
-/// of the name — is left alone, so `Helvetica+Bold` keeps both halves.
-///
-/// **This is a choice, and upstream makes it three different ways**, which is
-/// why the rule is written out here rather than borrowed:
-///
-/// - `predefined_cidfont::is_predefined` requires the same exact shape, for the
-///   same stated reason — not truncating Asian-tooling names that legitimately
-///   contain `+`. That is the one this follows.
-/// - `FontDict::classify_std14` strips at the first `+` unless the suffix is
-///   empty, with no shape check.
-/// - `PdfDocument::page_font_face_lookups` strips at the first `+`
-///   unconditionally.
-///
-/// The middle one is why `FontNif`'s `base_font` and its `bold` / `weight` can
-/// disagree about which name they describe: those come from `FontInfo::is_bold`
-/// and friends, computed under `classify_std14`'s looser rule. `Helvetica+Bold`
-/// is reported with its name intact and classified as the standard-14 `Bold`.
-/// Deliberate — the strict rule is the right one for a *reported* name — but
-/// don't "fix" one side without the other.
+// ISO 32000-1 §9.6.4 defines a subset prefix as exactly six uppercase ASCII
+// letters and `+`; a `+` in any other shape remains part of the reported name.
 fn split_subset_prefix(base_font: &str) -> (bool, String) {
     match base_font.split_once('+') {
         Some((prefix, rest))
@@ -91,10 +68,10 @@ fn split_subset_prefix(base_font: &str) -> (bool, String) {
     }
 }
 
-/// Converts a `FontInfo` (and its per-page resource name) into its NIF
-/// representation: eager metadata plus a resource handle to the font itself, so
-/// the embedded font-program bytes are pulled lazily (on `font_data`) rather
-/// than copied at extraction time.
+// Converts a `FontInfo` (and its per-page resource name) into its NIF
+// representation: eager metadata plus a resource handle to the font itself, so
+// the embedded font-program bytes are pulled lazily (on `font_data`) rather
+// than copied at extraction time.
 pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> FontNif {
     let (subset, base_font) = split_subset_prefix(&font.base_font);
 
@@ -115,20 +92,8 @@ pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> F
     }
 }
 
-/// Extracts every font referenced by a single page's Resources, with rich
-/// metadata.
-///
-/// Infallible by construction, mirroring `PdfDocument::page_font_face_lookups`
-/// — not just its Resources-resolving preamble but its whole per-page body,
-/// including the `if self.load_fonts_public(..).is_ok()`. Four points let a page
-/// contribute no fonts instead of an error: an unresolvable page, a page object
-/// that is not a dictionary, a dangling `/Resources` reference (all three in
-/// `page_resources`) and a font that fails to load, below.
-///
-/// So an empty `Vec` means either "references no fonts" or "could not be read",
-/// and unlike the predicates in `document.rs` that distinction is *not* restored
-/// by a strict variant: this one matches an upstream loop's policy rather than
-/// second-guessing it.
+// Font discovery is intentionally tolerant: an unreadable page, resources
+// dictionary or font contributes no result rather than failing the call.
 pub fn extract_page_fonts(doc: &PdfDocument, page_index: usize) -> Vec<FontNif> {
     page_font_set(doc, page_index)
         .into_iter()
@@ -136,14 +101,7 @@ pub fn extract_page_fonts(doc: &PdfDocument, page_index: usize) -> Vec<FontNif> 
         .collect()
 }
 
-/// The whole of [`extract_page_fonts`] except the `FontNif` conversion: one
-/// page's `(resource name, font)` pairs, sorted, or an empty `Vec` at any of the
-/// four give-up points described above.
-///
-/// Split out because [`font_to_nif`] mints a `ResourceArc`, which needs a live
-/// BEAM — so the transcription of upstream's loop would otherwise be unreachable
-/// from `cargo test`. `page_fonts_still_match_upstream_lookups` is what that
-/// buys.
+// Keep BEAM-independent discovery separate from ResourceArc construction.
 fn page_font_set(doc: &PdfDocument, page_index: usize) -> Vec<(String, Arc<FontInfo>)> {
     let resources = page_resources(doc, page_index);
 
@@ -160,9 +118,9 @@ fn page_font_set(doc: &PdfDocument, page_index: usize) -> Vec<(String, Arc<FontI
     fonts
 }
 
-/// Resolves a page's Resources dictionary via the public `get_page` /
-/// `load_object` path (so it works without the upstream `rendering` feature),
-/// falling back to an empty dictionary on any failure.
+// Resolves a page's Resources dictionary via the public `get_page` /
+// `load_object` path (so it works without the upstream `rendering` feature),
+// falling back to an empty dictionary on any failure.
 fn page_resources(doc: &PdfDocument, page_index: usize) -> Object {
     let empty = || Object::Dictionary(HashMap::new());
 
@@ -180,9 +138,6 @@ fn page_resources(doc: &PdfDocument, page_index: usize) -> Object {
     }
 }
 
-/// Returns the font's raw embedded font-program bytes (the TrueType / OpenType
-/// file) as an Erlang binary, or the atom `nil` when the font has no embedded
-/// program (e.g. the standard 14).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn font_data<'a>(env: Env<'a>, resource: ResourceArc<FontResource>) -> NifResult<Term<'a>> {
     resource.font.with_read(|font| {
@@ -193,11 +148,11 @@ fn font_data<'a>(env: Env<'a>, resource: ResourceArc<FontResource>) -> NifResult
     })
 }
 
-/// Releases this handle's reference to the font now, rather than waiting for the
-/// BEAM to garbage-collect it. Idempotent. The embedded font program is freed
-/// once no other extracted handle still references the same font. Takes the
-/// handle's lock exclusively, so it waits for an in-flight read on the same
-/// handle to return — see [`Closable::close`](crate::resource::Closable::close).
+// Releases this handle's reference to the font now, rather than waiting for the
+// BEAM to garbage-collect it. Idempotent. The embedded font program is freed
+// once no other extracted handle still references the same font. Takes the
+// handle's lock exclusively, so it waits for an in-flight read on the same
+// handle to return — see [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn font_close(resource: ResourceArc<FontResource>) -> rustler::Atom {
     resource.font.close();
@@ -205,7 +160,6 @@ fn font_close(resource: ResourceArc<FontResource>) -> rustler::Atom {
     atoms::ok()
 }
 
-/// Returns whether the font handle has been released with `font_close`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn font_closed(resource: ResourceArc<FontResource>) -> bool {
     resource.font.is_closed()
@@ -223,30 +177,18 @@ mod tests {
         )
     }
 
-    /// Asserts both halves of the decision at once, so a failure shows what the
-    /// rule made of the whole name rather than whichever assertion fired first.
     fn assert_split(base_font: &str, expected: (bool, &str)) {
         let (subset, name) = split_subset_prefix(base_font);
 
         assert_eq!((subset, name.as_str()), expected, "{base_font}");
     }
 
-    /// The happy path, and the only shape `fonts.pdf` exercises.
     #[test]
     fn strips_a_six_uppercase_letter_subset_prefix() {
         assert_split("ABCDEF+Arial", (true, "Arial"));
         assert_split("XEAACC+Ryumin-Light", (true, "Ryumin-Light"));
     }
 
-    /// Every near-miss of the six-uppercase-letter shape, none of which any
-    /// fixture produces — and each of which a looser rule would silently
-    /// mis-report, since the wrong answer is a plausible font name rather than
-    /// an error.
-    ///
-    /// `Helvetica+Bold` is the one that matters most. `FontDict::classify_std14`
-    /// (`pdf_oxide/src/fonts/font_dict.rs`) *would* strip it, which is why
-    /// [`split_subset_prefix`]'s doc comment warns that `base_font` and the
-    /// `bold` / `weight` fields beside it are computed under different rules.
     #[test]
     fn keeps_a_name_whose_plus_is_not_a_subset_prefix() {
         // Wrong length: five and seven letters.
@@ -261,9 +203,6 @@ mod tests {
         assert_split("Helvetica", (false, "Helvetica"));
     }
 
-    /// Two boundary shapes worth fixing in place rather than discovering later:
-    /// a bare prefix is a subset of the empty name (not "not a subset"), and
-    /// `split_once` takes the *first* `+`, so a second one stays in the name.
     #[test]
     fn splits_only_at_the_first_plus() {
         assert_split("ABCDEF+", (true, ""));
@@ -271,12 +210,6 @@ mod tests {
         assert_split("+Arial", (false, "+Arial"));
     }
 
-    /// The length test is `prefix.len()`, which counts **bytes**, so on its own
-    /// it would accept a three-character prefix of six-byte characters. What
-    /// saves it is that the two guards compose: `is_ascii_uppercase` is false
-    /// for every non-ASCII scalar, so a multi-byte prefix is rejected whichever
-    /// side of six bytes it lands on. Pinned because dropping either guard
-    /// yields a wrong answer, not a panic.
     #[test]
     fn rejects_a_multi_byte_prefix_whatever_its_byte_length() {
         // Six bytes, three characters.
@@ -285,19 +218,6 @@ mod tests {
         assert_split("ABCDEÉ+Arial", (false, "ABCDEÉ+Arial"));
     }
 
-    /// Upstream canary. [`page_font_set`] and [`page_resources`] transcribe
-    /// `PdfDocument::page_font_face_lookups`, and **nothing in the binding calls
-    /// the upstream original**, so only this can tell you when the two stop
-    /// agreeing.
-    ///
-    /// Compares *resource-name key sets*, not values, deliberately: upstream's
-    /// canonical name strips at the first `+` unconditionally where
-    /// [`split_subset_prefix`] demands the six-uppercase shape. Which fonts a
-    /// page yields is the shared claim; what they are called is not.
-    ///
-    /// `broken_page.pdf` is the load-bearing half — its page 2 resolves through
-    /// neither the page tree nor the scanning fallback, so it is the fixture
-    /// where both sides must agree on *nothing* rather than on something.
     #[test]
     fn page_fonts_still_match_upstream_lookups() {
         for name in ["fonts.pdf", "sample.pdf", "broken_page.pdf"] {

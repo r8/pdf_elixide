@@ -21,7 +21,6 @@ defmodule PdfElixide.Native do
 
   use RustlerPrecompiled, opts
 
-  # Document operations
   def document_open(_path, _options), do: err()
   def document_from_bytes(_bytes, _options), do: err()
   def document_close(_doc), do: err()
@@ -93,7 +92,6 @@ defmodule PdfElixide.Native do
   def document_layers(_doc), do: err()
   def document_page_inks(_doc, _page_index, _options), do: err()
 
-  # Editor operations
   def editor_open(_path), do: err()
   def editor_from_bytes(_bytes), do: err()
   def editor_close(_editor), do: err()

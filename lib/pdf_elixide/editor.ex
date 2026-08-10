@@ -285,7 +285,6 @@ defmodule PdfElixide.Editor do
     to_binary(editor, opts) |> Wrap.unwrap!()
   end
 
-  # Defaults pinned by `option_defaults_test.exs` via `__option_defaults__(:save)`.
   defp build_save_options(opts) do
     opts = Keyword.validate!(opts, @save_opts_keys)
 
@@ -298,7 +297,6 @@ defmodule PdfElixide.Editor do
   end
 
   @doc false
-  # See `PdfElixide.Document.__option_defaults__/1` for why this exists.
   @spec __option_defaults__(:save) :: map()
   def __option_defaults__(:save), do: build_save_options([])
 

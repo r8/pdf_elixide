@@ -109,11 +109,9 @@ unknown names, duplicates, names that are not strings and values outside
 {:ok, editor} = Form.put_values(editor, [{"full_name", "Jane Doe"}, {"country", ["Canada"]}])
 ```
 
-**It is not a transaction.** What can still fail after validation is the handle
-itself — a closed editor, a panic — and that stops at the first error with the
-earlier writes already applied. It is a convenience rather than a batching
-optimization: it locks once per field, exactly as the same number of
-`put_value/3` calls would.
+**It is not a transaction.** A failure after validation stops at the first
+error, with any earlier writes already applied. It is a convenience for
+validation and composition, not an atomic batch.
 
 `PdfElixide.Form.update_value/3` transforms a field in place, handing `fun` the
 current value and writing back whatever it returns:
@@ -219,4 +217,4 @@ editor takes the editor's lock *exclusively* — the same lock a write takes —
 concurrent form work on one editor serializes even when it only reads. `field/2`
 and `value/2` are `fields/1` filtered in Elixir, so reading several fields one at
 a time costs more than one `fields/1`. Give each process its own editor if you
-need them to work at once; see the [Concurrency](guides/concurrency.md) guide.
+need them to work at once; see the [Concurrency](concurrency.md) guide.

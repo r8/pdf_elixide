@@ -29,22 +29,22 @@ pub struct ImageNif {
     rotation_degrees: i32,
 }
 
-/// How the image was stored in the PDF: a compressed JPEG blob (`:jpeg`, so
-/// re-encoding to JPEG is lossless pass-through) or decoded pixels (`:raw`).
+// How the image was stored in the PDF: a compressed JPEG blob (`:jpeg`, so
+// re-encoding to JPEG is lossless pass-through) or decoded pixels (`:raw`).
 #[derive(NifUnitEnum, Debug)]
 pub enum SourceFormatNif {
     Jpeg,
     Raw,
 }
 
-/// The requested output encoding for `image_to_binary` / `image_save`.
+// The requested output encoding for `image_to_binary` / `image_save`.
 #[derive(NifUnitEnum, Debug)]
 pub enum OutputFormatNif {
     Png,
     Jpeg,
 }
 
-/// The layout of raw (uncompressed) pixel data.
+// The layout of raw (uncompressed) pixel data.
 #[derive(NifUnitEnum, Debug)]
 pub enum PixelFormatNif {
     Rgb,
@@ -62,8 +62,8 @@ impl From<PixelFormat> for PixelFormatNif {
     }
 }
 
-/// The image's color space, resolved to a plain atom. `ICCBased(_)` flattens to
-/// `:icc_based` (the component count is dropped).
+// The image's color space, resolved to a plain atom. `ICCBased(_)` flattens to
+// `:icc_based` (the component count is dropped).
 #[derive(NifUnitEnum, Debug)]
 pub enum ColorSpaceNif {
     DeviceRgb,
@@ -106,15 +106,8 @@ impl From<ColorSpace> for ColorSpaceNif {
     }
 }
 
-/// Converts an extracted `PdfImage` into its NIF representation: eager metadata
-/// plus a resource handle to the image itself, so the pixel data is encoded
-/// lazily (on `image_to_binary` / `image_save`) rather than at extraction time.
-///
-/// Only the *encode* is deferred. The whole `PdfImage` is moved into the
-/// resource here, so its decoded pixels — or its original JPEG blob — stay
-/// resident until the handle is closed or garbage-collected. That is what makes
-/// `Document.images/1` hold every image in the document at once, which its
-/// `@doc` and the `PdfElixide.Document` moduledoc both spell out.
+// Encoding is lazy, but the complete decoded image or JPEG blob is resident in
+// this resource from extraction onward.
 pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
     ImageNif {
         page,
@@ -131,15 +124,8 @@ pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
     }
 }
 
-/// Encodes the image to the requested format and returns the bytes as an Erlang
-/// binary. PNG goes through `to_png_bytes`; JPEG passes the original bytes
-/// through for non-CMYK JPEG-stored images (zero loss) and otherwise decodes and
-/// re-encodes.
-///
-/// The pass-through branch yields a `Cow::Borrowed` of the blob still held by the
-/// resource, so it is copied once — straight into the Erlang binary — rather than
-/// being cloned into an intermediate `Vec` first. The encoding branches own their
-/// output already, so that single copy is all any path costs.
+// Borrow a pass-through JPEG so it is copied only once, directly into the
+// Erlang binary; encoding paths already own their output.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn image_to_binary(
     resource: ResourceArc<ImageResource>,
@@ -163,7 +149,6 @@ fn image_to_binary(
     })
 }
 
-/// Writes the image to `path`, encoded as the requested format.
 #[rustler::nif(schedule = "DirtyIo")]
 fn image_save(
     resource: ResourceArc<ImageResource>,
@@ -183,14 +168,8 @@ fn image_save(
     })
 }
 
-/// Returns the image's raw stored bytes as a flat tagged tuple:
-/// `{:jpeg, <binary>}` (the original DCTDecode blob) or
-/// `{:raw, <binary>, pixel_format}` (bare pixels — not a standalone file).
-///
-/// The tuple is built here rather than through an `Encoder` impl so the
-/// allocation can fail into an error term, and so the bytes are copied straight
-/// out of the guard's borrow instead of being cloned into an intermediate `Vec`
-/// first.
+// Build the tagged tuple here so allocation can fail into the error contract
+// and borrowed bytes are copied without an intermediate `Vec`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn image_data<'a>(env: Env<'a>, resource: ResourceArc<ImageResource>) -> NifResult<Term<'a>> {
     resource.image.with_read(|image| {
@@ -208,10 +187,10 @@ fn image_data<'a>(env: Env<'a>, resource: ResourceArc<ImageResource>) -> NifResu
     })
 }
 
-/// Releases the image's pixel data now, rather than waiting for the BEAM to
-/// garbage-collect the handle. Idempotent. Takes the handle's lock exclusively,
-/// so it waits for an in-flight read on the same handle to return — see
-/// [`Closable::close`](crate::resource::Closable::close).
+// Releases the image's pixel data now, rather than waiting for the BEAM to
+// garbage-collect the handle. Idempotent. Takes the handle's lock exclusively,
+// so it waits for an in-flight read on the same handle to return — see
+// [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn image_close(resource: ResourceArc<ImageResource>) -> rustler::Atom {
     resource.image.close();
@@ -219,13 +198,12 @@ fn image_close(resource: ResourceArc<ImageResource>) -> rustler::Atom {
     atoms::ok()
 }
 
-/// Returns whether the image has been released with `image_close`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn image_closed(resource: ResourceArc<ImageResource>) -> bool {
     resource.image.is_closed()
 }
 
-/// Decodes the image and re-encodes it as JPEG bytes in memory.
+// Decodes the image and re-encodes it as JPEG bytes in memory.
 fn encode_jpeg(image: &PdfImage) -> NifResult<Vec<u8>> {
     let dynamic = image.to_dynamic_image().map_err(to_nif_err)?;
     let mut buffer = Cursor::new(Vec::new());

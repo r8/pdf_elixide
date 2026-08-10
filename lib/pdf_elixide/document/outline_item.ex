@@ -13,8 +13,8 @@ defmodule PdfElixide.Document.OutlineItem do
       page index (the raw name string is preserved)
     * `nil` — the item has no determinable destination
 
-  Named destinations are only surfaced when `pdf_oxide` could not resolve them;
-  resolvable ones already arrive as `{:page, page_index}`.
+  Named destinations are surfaced only when they could not be resolved;
+  resolvable ones arrive as `{:page, page_index}`.
   """
 
   @typedoc "Where an outline item points."

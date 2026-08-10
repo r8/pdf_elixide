@@ -24,8 +24,8 @@ pub struct TableNif {
     has_header: bool,
     real_grid: bool,
     rows: Vec<TableRowNif>,
-    /// Handle to the upstream `Table` itself, kept so the table can be rendered
-    /// later by upstream's own converters (see `table_to_markdown` below).
+    // Handle to the upstream `Table` itself, kept so the table can be rendered
+    // later by upstream's own converters (see `table_to_markdown` below).
     resource: ResourceArc<TableResource>,
 }
 
@@ -46,17 +46,8 @@ pub struct TableCellNif {
     spans: Vec<SpanNif>,
 }
 
-/// Decodes a table, and hands the upstream value itself to the resource.
-///
-/// Rendering needs that upstream value: its cells carry `TextSpan`s whose glyph
-/// metrics decide bold markers and inter-token spacing, and those do not survive
-/// a trip through the decoded map. So the decoded fields are built from a
-/// *borrow* and `table` is moved into the resource last — the fields of a struct
-/// expression are evaluated in the order they are written, so the `rows` borrow
-/// has ended by then. Cloning for the resource instead would put two full deep
-/// copies of every cell, span and per-glyph vector on the heap at once; decoding
-/// from a borrow copies only what `TableNif` actually keeps, which is never the
-/// glyph metrics.
+// Build decoded fields from a borrow, then move the original table into the
+// renderer resource; cloning it would duplicate every glyph metric.
 pub fn table_to_nif(table: Table, page: usize) -> TableNif {
     TableNif {
         page,
@@ -103,24 +94,16 @@ fn table_cell_to_nif(cell: &TableCell, page: usize) -> TableCellNif {
     }
 }
 
-/// The one conversion option a table renderer actually reads. Upstream's
-/// Markdown table path consults `bold_marker_behavior` (through `is_bold_raw`)
-/// and nothing else; its HTML table path reads no configuration at all.
+// The one conversion option a table renderer actually reads. Upstream's
+// Markdown table path consults `bold_marker_behavior` (through `is_bold_raw`)
+// and nothing else; its HTML table path reads no configuration at all.
 #[derive(NifMap, Debug)]
 pub struct TableMarkdownOptionsNif {
     pub bold_markers: BoldMarkersNif,
 }
 
-/// Renders a single table through upstream's own converter.
-///
-/// Upstream exposes no `Table::to_markdown`/`to_html` and keeps
-/// `render_table_markdown`/`render_table_html` private, but
-/// `OutputConverter::convert_with_tables` emits just the tables when handed no
-/// spans — which is exactly how upstream's own tests exercise those renderers.
-///
-/// The config is built the way the whole-document path builds it — through
-/// `TextPipelineConfig::from_conversion_options` — so a table rendered on its
-/// own cannot drift from the same table rendered as part of its page.
+// Use the same pipeline configuration as whole-page conversion so standalone
+// table rendering cannot drift from page rendering.
 fn render(
     converter: &dyn OutputConverter,
     table: &Table,
@@ -170,11 +153,11 @@ fn table_to_text(resource: ResourceArc<TableResource>) -> NifResult<String> {
     resource.table.with_read(|table| Ok(table.render_text()))
 }
 
-/// Releases the detected table now, rather than waiting for the BEAM to
-/// garbage-collect the handle. Idempotent; the rendering NIFs above then fail
-/// with `:closed`. Takes the handle's lock exclusively, so it waits for an
-/// in-flight render on the same handle to return — see
-/// [`Closable::close`](crate::resource::Closable::close).
+// Releases the detected table now, rather than waiting for the BEAM to
+// garbage-collect the handle. Idempotent; the rendering NIFs above then fail
+// with `:closed`. Takes the handle's lock exclusively, so it waits for an
+// in-flight render on the same handle to return — see
+// [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_close(resource: ResourceArc<TableResource>) -> Atom {
     resource.table.close();
@@ -182,7 +165,6 @@ fn table_close(resource: ResourceArc<TableResource>) -> Atom {
     atoms::ok()
 }
 
-/// Returns whether the table has been released with `table_close`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_closed(resource: ResourceArc<TableResource>) -> bool {
     resource.table.is_closed()

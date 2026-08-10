@@ -26,9 +26,7 @@ search, and each match comes back with the boxes needed to point at it.
 **The pattern is literal by default.** `Document.search(doc, "Fig. 3 (a)")` looks
 for exactly that text; the `.` is a period and the parentheses are parentheses.
 
-This is deliberately *not* what `pdf_oxide` and its official bindings do — they
-treat the pattern as a regular expression unless told otherwise. Pass
-`literal: false` to opt in:
+Pass `literal: false` to use a regular expression:
 
 ```elixir
 Document.search!(doc, ~S"Figure \d+", literal: false)
@@ -148,12 +146,9 @@ Two calls control it:
     first `search/2` and onto a call you choose, which is useful when that first
     search is on a latency path.
 
-`PdfElixide.Document.authenticate/2` drops it as well: a search made before an
-encrypted document was authenticated could only have indexed empty pages.
-
 Searching and `prepare_search/1` take the document's lock *shared*, like every
 other read here, so searching from several processes at once is fine.
 `clear_search_index/1` takes it exclusively and waits for them. See the
-[Concurrency](guides/concurrency.md) guide for what that does and does not buy.
+[Concurrency](concurrency.md) guide for what that does and does not buy.
 
 [regex]: https://docs.rs/regex/latest/regex/#syntax
