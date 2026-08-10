@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use pdf_oxide::{
     converters::{BoldMarkerBehavior, ConversionOptions, ReadingOrderMode},
     error::Result,
-    extractors::forms::FormExtractor,
     layout::SpatialCollectionFiltering,
     search::{SearchOptions, TextSearcher},
     PdfDocument,
@@ -22,6 +21,7 @@ use crate::{
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
+    form_tree,
     fs_path::path_arg,
     geometry::{rect_from_corners, RectNif},
     images::{image_to_nif, ImageNif},
@@ -1391,11 +1391,21 @@ fn document_has_text_layer(
 }
 
 /// Extracts form fields from the PDF document.
+///
+/// Through `form_tree` rather than `FormExtractor::extract_fields` directly, for
+/// the two reasons that module gives. Uncached, unlike the editor's:
+/// `document_authenticate` swaps the whole `PdfDocument`, so a cache here would
+/// need an invalidation rule for that one call.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
     resource.doc.with_read(|doc| {
-        let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
-        Ok(fields.into_iter().map(document_form_field_to_nif).collect())
+        let (fields, signatures) = form_tree::extract_fields(doc)?;
+
+        Ok(fields
+            .into_iter()
+            .filter(|field| !signatures.contains(&field.full_name))
+            .filter_map(document_form_field_to_nif)
+            .collect())
     })
 }
 

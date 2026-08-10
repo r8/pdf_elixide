@@ -287,10 +287,10 @@ defmodule PdfElixide.ConcurrencyTest do
       # each writer's *last* write rather than by who finished last.
       writers = [
         Task.async(fn ->
-          for i <- 1..@writes, do: Form.set_value(editor, "full_name", {:text, "a-#{i}"})
+          for i <- 1..@writes, do: Form.set_value(editor, "full_name", "a-#{i}")
         end),
         Task.async(fn ->
-          for i <- 1..@writes, do: Form.set_value(editor, "subscribe", {:boolean, even?(i)})
+          for i <- 1..@writes, do: Form.set_value(editor, "subscribe", even?(i))
         end)
       ]
 
@@ -310,8 +310,8 @@ defmodule PdfElixide.ConcurrencyTest do
 
       # Neither writer's last write was lost behind the other's.
       final = Map.new(Form.fields!(editor), &{&1.name, &1.value})
-      assert final["full_name"] == {:text, "a-#{@writes}"}
-      assert final["subscribe"] == {:boolean, even?(@writes)}
+      assert final["full_name"] == "a-#{@writes}"
+      assert final["subscribe"] == even?(@writes)
 
       # The property the exclusive lock actually buys: a read interleaved with
       # writes sees a whole form, never a half-applied mutation or a lost field.
@@ -335,7 +335,7 @@ defmodule PdfElixide.ConcurrencyTest do
 
       work =
         Enum.map(written, fn value ->
-          fn -> {:write, Form.set_value(editor, "full_name", {:text, value})} end
+          fn -> {:write, Form.set_value(editor, "full_name", value)} end
         end) ++
           Enum.map(1..@concurrency, fn _ -> fn -> {:snapshot, Editor.to_binary!(editor)} end end)
 
@@ -367,7 +367,7 @@ defmodule PdfElixide.ConcurrencyTest do
         fields = pdf |> Document.from_binary!() |> Form.fields!()
         assert length(fields) == 3
 
-        assert {:text, value} = Enum.find(fields, &(&1.name == "full_name")).value
+        value = Enum.find(fields, &(&1.name == "full_name")).value
         assert MapSet.member?(allowed, value)
       end
     end
@@ -449,13 +449,13 @@ defmodule PdfElixide.ConcurrencyTest do
   defp closed_outcome?({:error, %Error{reason: :closed}}), do: true
   defp closed_outcome?(_outcome), do: false
 
-  defp well_formed_field?(%Field{name: "full_name", kind: :text, value: {:text, value}}),
+  defp well_formed_field?(%Field.Text{name: "full_name", value: value}),
     do: is_binary(value)
 
-  defp well_formed_field?(%Field{name: "subscribe", kind: :button, value: {:boolean, value}}),
+  defp well_formed_field?(%Field.Button{name: "subscribe", value: value}),
     do: is_boolean(value)
 
-  defp well_formed_field?(%Field{name: "country", kind: :choice, value: nil}), do: true
+  defp well_formed_field?(%Field.Choice{name: "country", value: nil}), do: true
   defp well_formed_field?(_field), do: false
 
   defp even?(n), do: rem(n, 2) == 0

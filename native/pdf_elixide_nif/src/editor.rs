@@ -1,11 +1,14 @@
+use std::sync::OnceLock;
+
 use pdf_oxide::editor::{DocumentEditor, EditableDocument, SaveOptions};
 use rustler::{Atom, Binary, NifMap, NifResult, OwnedBinary, ResourceArc};
 
 use crate::{
     atoms,
     binary::owned_binary,
-    error::{to_form_err, to_nif_err},
-    form::{editor_field_value_from_nif, editor_form_field_to_nif, FieldNif, FieldValueNif},
+    error::{tagged_err, to_form_err, to_nif_err},
+    form::{editor_form_field_to_nif, set_value_from_nif, FieldNif, FieldValueNif},
+    form_tree::{self, SignatureNames},
     fs_path::path_arg,
     resource::Closable,
     EditorResource,
@@ -55,6 +58,7 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
+        signature_names: OnceLock::new(),
     });
     let version = cached_version(&resource)?;
 
@@ -68,6 +72,7 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
+        signature_names: OnceLock::new(),
     });
     let version = cached_version(&resource)?;
 
@@ -113,11 +118,37 @@ fn editor_closed(resource: ResourceArc<EditorResource>) -> bool {
     resource.editor.is_closed()
 }
 
+/// The signature names of the editor's source document, built once per handle —
+/// see the `EditorResource` field in `lib.rs` for what makes one build enough.
+///
+/// A failed build is not cached, so a malformed field tree reports the same
+/// verdict on every call rather than a remembered one.
+fn signature_names<'a>(
+    resource: &'a EditorResource,
+    editor: &DocumentEditor,
+) -> NifResult<&'a SignatureNames> {
+    if let Some(names) = resource.signature_names.get() {
+        return Ok(names);
+    }
+
+    let names = form_tree::signature_names(editor.source())?;
+
+    Ok(resource.signature_names.get_or_init(|| names))
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_form_fields(resource: ResourceArc<EditorResource>) -> NifResult<Vec<FieldNif>> {
     resource.editor.with_lock(|editor| {
+        // By name, because a `FormFieldWrapper` carries no `object_ref`. The
+        // document path filters the same names, so the two sources agree.
+        let signatures = signature_names(&resource, editor)?;
         let fields = editor.get_form_fields().map_err(to_nif_err)?;
-        Ok(fields.into_iter().map(editor_form_field_to_nif).collect())
+
+        Ok(fields
+            .into_iter()
+            .filter(|field| !signatures.contains(field.name()))
+            .filter_map(editor_form_field_to_nif)
+            .collect())
     })
 }
 
@@ -154,6 +185,45 @@ fn editor_save(
     })
 }
 
+/// Refuses a write to a `/Sig` field, which would destroy the signature.
+///
+/// **Not redundant with `field_nif` dropping signature fields from
+/// `Form.fields/1`.** Upstream matches `set_form_field_value` on the full name
+/// whatever the extractor reported, so a caller naming one directly still
+/// reaches the write.
+///
+/// **Every write is destructive, not just a `nil`**, so don't narrow this to one:
+/// upstream reads a signature dictionary `/V` as no value at all and then inserts
+/// `/V` unconditionally, so any value replaces the dictionary just as thoroughly.
+///
+/// The names come from the source document, which is the list the write matches
+/// against, and cover a `/Sig` typed only on an ancestor — see `form_tree.rs`,
+/// which also resolves a duplicated name the way the write resolves it: first
+/// match wins.
+///
+/// It reports `:not_found` so all four public functions tell one story.
+fn ensure_not_signature(signatures: &SignatureNames, name: &str) -> NifResult<()> {
+    if signatures.contains(name) {
+        // Upstream's own spelling carries an "Invalid PDF: " prefix its `Display`
+        // prepends; this matches what `Form.field/2` builds in Elixir instead.
+        // The two `:not_found` messages already differ across the read side, so
+        // the atom is the whole of the contract.
+        return Err(tagged_err(
+            atoms::not_found(),
+            format!("Form field not found: {name}"),
+        ));
+    }
+
+    Ok(())
+}
+
+/// The `Option` is what makes a malformed value an `ArgumentError`: rustler's
+/// `Option<T>` decoder discards `T`'s own error and answers `BadArg` for every
+/// non-`nil` term, so an unrecognized shape raises rather than reaching Elixir
+/// as an `%Error{}`. Removing it — splitting out a clears-the-field variant,
+/// say — would silently change the exception type callers see. That decoding
+/// runs before the body, so a bad value on a signature field still raises rather
+/// than reaching `ensure_not_signature`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_set_form_field_value(
     resource: ResourceArc<EditorResource>,
@@ -161,8 +231,11 @@ fn editor_set_form_field_value(
     value: Option<FieldValueNif>,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
+        // Inside the guard, so check and write cannot straddle another writer.
+        ensure_not_signature(signature_names(&resource, editor)?, &name)?;
+
         editor
-            .set_form_field_value(&name, editor_field_value_from_nif(value))
+            .set_form_field_value(&name, set_value_from_nif(value))
             .map_err(to_form_err)?;
 
         Ok(atoms::ok())

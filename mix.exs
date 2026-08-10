@@ -140,7 +140,11 @@ defmodule PdfElixide.MixProject do
       "Editing and forms": [
         PdfElixide.Editor,
         PdfElixide.Form,
-        PdfElixide.Form.Field
+        PdfElixide.Form.Field,
+        PdfElixide.Form.Field.Text,
+        PdfElixide.Form.Field.Button,
+        PdfElixide.Form.Field.Choice,
+        PdfElixide.Form.Field.Unknown
       ]
     ]
   end

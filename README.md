@@ -31,7 +31,7 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract raster images (photos, logos, scans) with their on-page geometry, encoding them to PNG or JPEG on demand
 - Extract the fonts a page uses (type, encoding, weight) and pull out embedded font programs
 - Read annotations (links, notes, highlights, form widgets) with their geometry, contents, colors, and flags
-- Extract AcroForm fields (name, kind, value)
+- Extract AcroForm fields — one struct per field type, with the field's name and value
 - Fill AcroForm fields and save the result to a file or in-memory binary
 - Read document metadata — both the `/Info` dictionary and the XMP packet
 - Read encryption permission flags (print, copy, modify, …)
@@ -863,22 +863,28 @@ raising on error.
 
 ### Extracting form fields
 
-`PdfElixide.Form.fields/1` returns the AcroForm fields of the document as a list of `%PdfElixide.Form.Field{}` structs:
+`PdfElixide.Form.fields/1` returns the AcroForm fields of the document, one struct
+per field type:
 
 ```elixir
 {:ok, fields} = PdfElixide.Form.fields(doc)
-
-Enum.each(fields, fn %PdfElixide.Form.Field{name: name, kind: kind, value: value} ->
-  IO.inspect({name, kind, value})
-end)
+#=> [%PdfElixide.Form.Field.Text{name: "full_name", value: "John Doe"},
+#    %PdfElixide.Form.Field.Button{name: "subscribe", value: true},
+#    %PdfElixide.Form.Field.Choice{name: "country", value: nil}]
 ```
 
-Each field carries:
+The four structs are `PdfElixide.Form.Field.Text` (`/Tx`), `.Button` (`/Btn` —
+push buttons, check boxes, radio groups), `.Choice` (`/Ch`) and `.Unknown` (no
+recognized `/FT`, including the grouping parents a nested form reports).
+`PdfElixide.Form.Field` is the umbrella defining the union type. Each carries:
 
 - `:name` — the field's fully qualified PDF name (`String.t()`), dotted for a
   field nested under a parent
-- `:kind` — one of `:button | :text | :choice | :signature | :unknown`
-- `:value` — one of `{:text, String.t()} | {:boolean, boolean()} | {:name, String.t()} | {:array, [String.t()]} | nil`
+- `:value` — a plain term: a string, `true`/`false`, a list of strings, or `nil`
+  for a field carrying no value
+
+Signature fields (`/FT /Sig`) are not reported; this API covers fillable form
+fields only.
 
 A bang variant, `PdfElixide.Form.fields!/1`, returns the list directly and raises on error.
 
@@ -887,8 +893,8 @@ returns the struct and `PdfElixide.Form.value/2` just its value, from a document
 or an editor alike:
 
 ```elixir
-{:ok, {:text, "John Doe"}} = PdfElixide.Form.value(doc, "full_name")
-{:ok, %PdfElixide.Form.Field{kind: :choice}} = PdfElixide.Form.field(doc, "country")
+{:ok, "John Doe"} = PdfElixide.Form.value(doc, "full_name")
+{:ok, %PdfElixide.Form.Field.Choice{}} = PdfElixide.Form.field(doc, "country")
 ```
 
 A name that is not in the form is `{:error, %PdfElixide.Error{reason: :not_found}}`,
@@ -907,9 +913,9 @@ alias PdfElixide.Form
 
 {:ok, editor} = Editor.open("path/to/form.pdf")
 
-# Values use the same tagged-tuple shape returned by Form.fields/1.
-:ok = Form.set_value(editor, "full_name", {:text, "Jane Doe"})
-:ok = Form.set_value(editor, "subscribe", {:boolean, true})
+# Values are the plain terms Form.fields/1 returns.
+:ok = Form.set_value(editor, "full_name", "Jane Doe")
+:ok = Form.set_value(editor, "subscribe", true)
 
 # Write the filled PDF to disk.
 :ok = Editor.save(editor, "path/to/filled.pdf")
@@ -917,6 +923,10 @@ alias PdfElixide.Form
 # Or get the bytes back for streaming / storage.
 {:ok, bytes} = Editor.to_binary(editor)
 ```
+
+Writing a check box or radio group's value back is not always faithful; see the
+"Check boxes and radio groups" section of `PdfElixide.Form` before round-tripping
+one.
 
 Both `save/3` and `to_binary/2` accept a keyword list of options
 (`:incremental`, `:compress`, `:linearize`, `:garbage_collect`). For

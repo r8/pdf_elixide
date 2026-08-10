@@ -6,7 +6,7 @@ defmodule PdfElixide.Editor do
   memory and writes them out on demand. The shape is open, mutate, write:
 
       editor = PdfElixide.Editor.open!("form.pdf")
-      :ok = PdfElixide.Form.set_value(editor, "name", {:text, "Ada"})
+      :ok = PdfElixide.Form.set_value(editor, "name", "Ada")
       :ok = PdfElixide.Editor.save(editor, "filled.pdf")
       :ok = PdfElixide.Editor.close(editor)
 
@@ -169,7 +169,7 @@ defmodule PdfElixide.Editor do
   rather than the native handle.
 
       editor = PdfElixide.Editor.open!("form.pdf")
-      :ok = PdfElixide.Form.set_value(editor, "name", {:text, "Ada"})
+      :ok = PdfElixide.Form.set_value(editor, "name", "Ada")
       :ok = PdfElixide.Editor.save(editor, "filled.pdf")
       :ok = PdfElixide.Editor.close(editor)
 

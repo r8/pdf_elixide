@@ -1,69 +1,52 @@
 defmodule PdfElixide.Form.Field do
   @moduledoc """
-  A single AcroForm field: its `:name`, its `:kind`, and its current `:value`.
+  A single AcroForm field, one struct per field type this API covers:
+
+    * `PdfElixide.Form.Field.Text` — free-text entry (`/Tx`).
+    * `PdfElixide.Form.Field.Button` — push buttons, check boxes and radio
+      groups (`/Btn`).
+    * `PdfElixide.Form.Field.Choice` — list boxes and combo boxes (`/Ch`).
+    * `PdfElixide.Form.Field.Unknown` — no recognized `/FT`, including the
+      grouping parents a nested form reports.
 
   Obtained from `PdfElixide.Form.fields/1`, or one at a time from
   `PdfElixide.Form.field/2`.
 
-  The `:name` is the field's fully qualified name and is what
-  `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2` and
-  `PdfElixide.Form.set_value/3` address it by. For a field nested under a parent
-  that is dotted — `"person.first"`, not `"first"` — and it is the same whether
-  the form was read from a `PdfElixide.Document` or a `PdfElixide.Editor`.
+  Every struct carries `:name` — the fully qualified, dotted name
+  (`"person.first"`, not `"first"`) that `PdfElixide.Form.field/2`,
+  `PdfElixide.Form.value/2` and `PdfElixide.Form.set_value/3` address it by,
+  identical whether the form was read from a `PdfElixide.Document` or a
+  `PdfElixide.Editor` — and `:value`, a plain term (`t:value/0`).
 
   A parent that carries a name but declares no type is itself reported as a
-  field, with `kind: :unknown` and `value: nil`, so a nested form yields a
-  struct for the grouping level as well as for each leaf under it.
+  field, so a nested form yields a struct for the grouping level as well as for
+  each leaf under it.
   """
-  @enforce_keys [:name, :kind, :value]
+  alias PdfElixide.Form.Field.Button
+  alias PdfElixide.Form.Field.Choice
+  alias PdfElixide.Form.Field.Text
+  alias PdfElixide.Form.Field.Unknown
 
-  defstruct @enforce_keys
+  @typedoc "Any form field."
+  @type t :: Text.t() | Button.t() | Choice.t() | Unknown.t()
 
   @typedoc """
-  The field's type, as declared by the PDF's `/FT` entry.
+  A field's value as a plain term: a string, a boolean, a list of strings, or
+  `nil` for a field carrying no value.
 
-    * `:button` — push buttons, check boxes and radio groups.
-    * `:text` — free-text entry.
-    * `:choice` — list boxes and combo boxes.
-    * `:signature` — a digital signature field.
-    * `:unknown` — the field declares no recognized type.
+  This is both what a field reports and exactly what
+  `PdfElixide.Form.set_value/3` accepts — anything else raises `ArgumentError` —
+  so a value read from one form can be written straight into another.
+
+  Button fields are the exception, and writing one back is not always faithful —
+  see the "Check boxes and radio groups" section of `PdfElixide.Form` before
+  round-tripping a `PdfElixide.Form.Field.Button`.
+
+  Each struct's moduledoc describes the subset a well-formed PDF can put on its
+  kind; a malformed `/V` whose PDF type is foreign to the field's kind (say, an
+  array on a text field) is passed through as the corresponding plain term
+  rather than dropped, so any of these shapes can in principle appear on any
+  struct.
   """
-  @type kind ::
-          :button
-          | :text
-          | :choice
-          | :signature
-          | :unknown
-
-  @typedoc """
-  A field's value, tagged by the shape the PDF stores it in.
-
-  The tag follows the underlying PDF object rather than the field's `t:kind/0`,
-  so match on the tag rather than inferring it from the kind:
-
-    * `{:text, value}` — a text string. The usual shape for a `:text` field, and
-      for a `:choice` field with one selection.
-    * `{:boolean, value}` — a true/false toggle.
-    * `{:name, value}` — a PDF name, without its leading slash. How a check box
-      or radio group reports its state, typically `"Off"` when unset and the
-      on-state's name when set.
-    * `{:array, values}` — several strings, e.g. a multi-select `:choice` field.
-    * `nil` — the field carries no value.
-
-  `PdfElixide.Form.set_value/3` accepts exactly these shapes, so a value read
-  from one field can be written to another unchanged. Anything else — a bare
-  string, an unrecognized tag — raises `ArgumentError`.
-  """
-  @type value ::
-          {:text, String.t()}
-          | {:boolean, boolean()}
-          | {:name, String.t()}
-          | {:array, [String.t()]}
-          | nil
-
-  @type t :: %__MODULE__{
-          name: String.t(),
-          kind: kind(),
-          value: value()
-        }
+  @type value :: String.t() | boolean() | [String.t()] | nil
 end

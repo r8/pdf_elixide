@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use pdf_oxide::{
     editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo,
     structure::table_extractor::Table, PdfDocument,
 };
 
-use crate::resource::Closable;
+use crate::{form_tree::SignatureNames, resource::Closable};
 
 mod annotations;
 mod binary;
@@ -17,6 +17,7 @@ mod error;
 mod extract_options;
 mod fonts;
 mod form;
+mod form_tree;
 mod fs_path;
 mod geometry;
 mod images;
@@ -36,7 +37,6 @@ mod word;
 pub(crate) mod atoms {
     rustler::atoms! {
         ok, error,
-        button, text, choice, signature, unknown,
         // Path operation tags (see paths.rs / PdfElixide.Document.Path)
         move_to, line_to, curve_to, rectangle, close_path,
         // Raw image data tags (see images.rs / PdfElixide.Document.Image.data/1)
@@ -63,6 +63,13 @@ impl rustler::Resource for DocumentResource {}
 
 struct EditorResource {
     editor: Closable<DocumentEditor>,
+    /// The signature names of the editor's *source* document, built on first use
+    /// (see `signature_names` in editor.rs).
+    ///
+    /// Cacheable only because nothing bound touches `DocumentEditor::source`. A
+    /// NIF that edits the source document, or adds or removes a form field,
+    /// invalidates this and must clear it.
+    signature_names: OnceLock<SignatureNames>,
 }
 
 #[rustler::resource_impl]

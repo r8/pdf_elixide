@@ -51,6 +51,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @search_pdf Path.join(@fixtures, "search.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
+  @signature_pdf Path.join(@fixtures, "form_signature.pdf")
 
   @columns 0
   @artifacts 1
@@ -860,7 +861,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     defp edited_editor do
       editor = Editor.open!(@form_pdf)
       on_exit(fn -> Editor.close(editor) end)
-      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+      :ok = Form.set_value(editor, "full_name", "Ada")
       assert Editor.modified?(editor)
       editor
     end
@@ -904,7 +905,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       on_exit(fn -> Editor.close(editor) end)
 
       assert {:error, %Error{reason: :not_found, message: message}} =
-               Form.set_value(editor, "no_such_field", {:text, "x"})
+               Form.set_value(editor, "no_such_field", "x")
 
       assert message =~ "Form field not found: "
     end
@@ -916,6 +917,53 @@ defmodule PdfElixide.UpstreamDriftTest do
       on_exit(fn -> Document.close(doc) end)
 
       assert {:error, %Error{reason: :not_found}} = Form.field(doc, "no_such_field")
+    end
+  end
+
+  describe "what upstream does to a field's value on write" do
+    # `FormExtractor::extract_fields` still classifies the fixture's field as
+    # `FieldType::Signature`, which is what `field_nif` drops it on. Pinned from
+    # the outside, since the classification itself is not observable: if
+    # upstream ever reported it as something else, it would silently start
+    # appearing in `fields/1` as a fillable field.
+    test "a /Sig field is still classified as one, so it stays out of fields/1" do
+      doc = Document.open!(@signature_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:ok, [%PdfElixide.Form.Field.Text{name: "signer_name"}]} = Form.fields(doc)
+    end
+
+    # `flush_form_fields_to_modified_objects` inserts `/V` unconditionally, so
+    # clearing a field writes a PDF null over whatever was there. On an ordinary
+    # field that is merely how clearing works; on a `/Sig` field it is what
+    # destroys the signature dictionary, which is the whole reason
+    # `Form.set_value/3` refuses one. Upstream's serializer for *new* fields
+    # already skips a null — if that guard ever reaches the existing-field flush
+    # too, this fails and the refusal can be reconsidered.
+    #
+    # Deliberately over `form.pdf`: the mechanism is generic, and the signature
+    # fixture must never actually be written to.
+    test "clearing a field writes a PDF null over its value" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      :ok = Form.set_value(editor, "full_name", nil)
+
+      assert Editor.to_binary!(editor, compress: false) =~ "/V null"
+    end
+
+    # The other half of the same flush: for a `/Btn` field it copies `/V` into
+    # `/AS` verbatim, so a custom on-state written as a string lands as a string
+    # where §12.5.5 requires a name. This is why `Form` documents that spelling
+    # as making matters worse rather than as a workaround, and it is the reason
+    # the `{:name, _}` write escape was removed rather than kept pointing at it.
+    test "a bare string on a button is copied into /AS as a string" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      :ok = Form.set_value(editor, "subscribe", "Export1")
+
+      assert Editor.to_binary!(editor, compress: false) =~ "/AS (Export1)"
     end
   end
 end

@@ -126,7 +126,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@form_pdf)
       before = Editor.page_count!(editor)
 
-      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+      :ok = Form.set_value(editor, "full_name", "Ada")
 
       assert Editor.page_count!(editor) == before
     end
@@ -147,14 +147,14 @@ defmodule PdfElixide.EditorTest do
 
     test "flips once the editor is changed" do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+      :ok = Form.set_value(editor, "full_name", "Ada")
 
       assert Editor.modified?(editor)
     end
 
     test "to_binary/2 clears it, even though it writes no file" do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+      :ok = Form.set_value(editor, "full_name", "Ada")
 
       {:ok, _bytes} = Editor.to_binary(editor)
 
@@ -185,7 +185,7 @@ defmodule PdfElixide.EditorTest do
 
     test "form field mutations are present in the saved bytes" do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", {:text, "Jane Doe"})
+      :ok = Form.set_value(editor, "full_name", "Jane Doe")
       {:ok, bytes} = Editor.to_binary(editor)
       assert String.contains?(bytes, "Jane Doe")
     end
@@ -364,7 +364,7 @@ defmodule PdfElixide.EditorTest do
       assert {:error, %Error{reason: :closed}} = Form.fields(editor)
 
       assert {:error, %Error{reason: :closed}} =
-               Form.set_value(editor, "full_name", {:text, "Ada"})
+               Form.set_value(editor, "full_name", "Ada")
 
       refute File.exists?(out_path)
     end
@@ -391,14 +391,14 @@ defmodule PdfElixide.EditorTest do
 
     test "edits saved before closing are unaffected", %{out_path: out_path} do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", {:text, "Ada"})
+      :ok = Form.set_value(editor, "full_name", "Ada")
       :ok = Editor.save(editor, out_path)
 
       :ok = Editor.close(editor)
 
       reopened = Editor.open!(out_path)
       assert {:ok, fields} = Form.fields(reopened)
-      assert Enum.any?(fields, &(&1.name == "full_name" and &1.value == {:text, "Ada"}))
+      assert Enum.any?(fields, &(&1.name == "full_name" and &1.value == "Ada"))
     end
   end
 end
