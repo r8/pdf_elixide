@@ -5,6 +5,21 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.13.0](https://github.com/r8/pdf_elixide/compare/v0.12.0...v0.13.0) (2026-08-10)
+
+
+
+
+### Features:
+
+* classify form fields from their flags by [@r8](https://github.com/r8)
+
+* return the editor from every form write so filling a form is one pipeline by [@r8](https://github.com/r8)
+
+* represent form fields as per-kind structs by [@r8](https://github.com/r8)
+
+* add Form.field/2 and value/2 and key form fields by full name by [@r8](https://github.com/r8)
+
 ## [v0.12.0](https://github.com/r8/pdf_elixide/compare/v0.11.1...v0.12.0) (2026-08-05)
 
 
