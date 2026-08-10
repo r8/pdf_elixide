@@ -1,18 +1,29 @@
 defmodule PdfElixide.Editor do
   @moduledoc """
-  Mutable, in-memory PDF editor backed by `pdf_oxide`'s `DocumentEditor`.
+  Mutable, in-memory PDF editor.
 
   Where `PdfElixide.Document` only reads, an editor accumulates changes in
   memory and writes them out on demand. The shape is open, mutate, write:
 
-      editor = PdfElixide.Editor.open!("form.pdf")
-      :ok = PdfElixide.Form.set_value(editor, "name", "Ada")
-      :ok = PdfElixide.Editor.save(editor, "filled.pdf")
-      :ok = PdfElixide.Editor.close(editor)
+      "form.pdf"
+      |> PdfElixide.Editor.open!()
+      |> PdfElixide.Form.put_value!("name", "Ada")
+      |> PdfElixide.Editor.save!("filled.pdf")
+      |> PdfElixide.Editor.close()
+      #=> :ok
 
   Nothing is written until `save/3` or `to_binary/2` runs, and neither consumes
   the editor — you can keep editing and write again. `close/1` **discards
   unsaved edits**, so write before you close.
+
+  Every function that changes an editor returns the editor, as above, and the
+  tuple-returning half is uniform in the same way, so both compose as one
+  pipeline. `to_binary/2` and `close/1` are the two ways such a pipeline ends.
+
+  **An editor is a mutable handle, not a value, and rebinding does not fork it**
+  — the editor a mutating call returns is the one that went in, so an earlier
+  binding will not give you the document as it was before the edit. The
+  [Forms](guides/forms.md) guide has both shapes and the full account.
 
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
@@ -139,7 +150,7 @@ defmodule PdfElixide.Editor do
   Returns whether the editor holds changes that have not been written out.
 
   `false` for a freshly opened editor, and `true` once something has changed it —
-  `PdfElixide.Form.set_value/3`, say.
+  `PdfElixide.Form.put_value/3`, say.
 
   A full rewrite clears it again, so `save/3` and `to_binary/2` both leave the
   editor unmodified — `to_binary/2` included, even though it writes no file. An
@@ -168,10 +179,12 @@ defmodule PdfElixide.Editor do
   it. `source_path/1` and `version/1` keep working, since they read the struct
   rather than the native handle.
 
-      editor = PdfElixide.Editor.open!("form.pdf")
-      :ok = PdfElixide.Form.set_value(editor, "name", "Ada")
-      :ok = PdfElixide.Editor.save(editor, "filled.pdf")
-      :ok = PdfElixide.Editor.close(editor)
+      "form.pdf"
+      |> PdfElixide.Editor.open!()
+      |> PdfElixide.Form.put_value!("name", "Ada")
+      |> PdfElixide.Editor.save!("filled.pdf")
+      |> PdfElixide.Editor.close()
+      #=> :ok
 
   """
   @spec close(t()) :: :ok
@@ -194,9 +207,6 @@ defmodule PdfElixide.Editor do
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`.
 
-  Defaults mirror `pdf_oxide`'s own full-rewrite defaults, so calling `save/2`
-  is equivalent to `save/3` with no options.
-
   An unknown key, or a declared key given a value that is not a boolean,
   raises `ArgumentError` naming the offending key; see the "Errors versus
   exceptions" section of `PdfElixide.Error`.
@@ -211,18 +221,23 @@ defmodule PdfElixide.Editor do
   @save_opts_keys [:incremental, :compress, :linearize, :garbage_collect]
 
   @doc """
-  Writes all in-memory changes to a PDF file at the given path.
+  Writes all in-memory changes to a PDF file at the given path, and returns the
+  editor.
+
+  Writing does not consume the editor: you can keep editing and write again.
 
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
   """
-  @spec save(t(), Path.t(), save_opts()) :: :ok | {:error, Error.t()}
-  def save(%__MODULE__{ref: ref}, path, opts \\ [])
+  @spec save(t(), Path.t(), save_opts()) :: {:ok, t()} | {:error, Error.t()}
+  def save(%__MODULE__{ref: ref} = editor, path, opts \\ [])
       when is_binary(path) and is_list(opts) do
     options = build_save_options(opts)
 
+    # `{:ok, _}`, never `{:ok, :ok}`: `Wrap.call/1` wraps any bare NIF return, so
+    # pinning the literal would not be exhaustive.
     case Wrap.call(fn -> Native.editor_save(ref, path, options) end) do
-      {:ok, _} -> :ok
+      {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
     end
   end
@@ -233,16 +248,10 @@ defmodule PdfElixide.Editor do
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
   """
-  @spec save!(t(), Path.t(), save_opts()) :: :ok
+  @spec save!(t(), Path.t(), save_opts()) :: t()
   def save!(%__MODULE__{} = editor, path, opts \\ [])
       when is_binary(path) and is_list(opts) do
-    # Keeps a local `case` where every other bang variant pipes through
-    # `Wrap.unwrap!/1`: `save/3` answers a bare `:ok`, not `{:ok, value}`, so
-    # there is no payload to unwrap.
-    case save(editor, path, opts) do
-      :ok -> :ok
-      {:error, error} -> raise error
-    end
+    editor |> save(path, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -251,10 +260,11 @@ defmodule PdfElixide.Editor do
   The result is a fully self-contained PDF that can be written to disk,
   stored in a database, or streamed over HTTP.
 
-  Accepts the same `t:save_opts/0` keyword list as `save/3`. Note that
-  `:incremental` is not supported here — upstream returns
-  `{:error, _}` because incremental updates can only be appended to
-  the original file.
+  Accepts the same `t:save_opts/0` keyword list as `save/3`, except
+  `:incremental` — an incremental update is an append to the original file, so
+  there is nothing to append to in memory and passing `incremental: true` here
+  returns `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`. Use `save/3` for
+  an incremental write.
 
   The whole document is serialised in native memory before being copied
   into the returned binary, so peak usage is roughly twice the output

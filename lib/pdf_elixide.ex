@@ -19,6 +19,15 @@ defmodule PdfElixide do
       markdown = PdfElixide.Document.to_markdown!(doc)
       :ok = PdfElixide.Document.close(doc)
 
+  Editing one is open, mutate, write — and every mutating call returns the
+  editor, so it composes as a single pipeline:
+
+      "form.pdf"
+      |> PdfElixide.Editor.open!()
+      |> PdfElixide.Form.put_value!("full_name", "Jane Doe")
+      |> PdfElixide.Editor.save!("filled.pdf")
+      |> PdfElixide.Editor.close()
+
   ## Concurrency
 
   Every handle this library returns may be passed to other processes. A
@@ -42,9 +51,6 @@ defmodule PdfElixide do
   some legal filename and write it rather than refuse.
 
   Only the binary form of `Path.t()` is accepted; a charlist raises
-  `FunctionClauseError`. A path is therefore shaped like a *password* — opaque
-  bytes rather than text, see `t:PdfElixide.Document.open_opts/0` — and not like
-  `:image_output_dir`, which is a string because it is also pasted into the
-  generated markup; see `t:PdfElixide.Document.markdown_opts/0`.
+  `FunctionClauseError`.
   """
 end

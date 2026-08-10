@@ -6,7 +6,7 @@
 //! **A signature typed on an ancestor.** §12.7.3.1 makes `/FT` inheritable, but
 //! upstream reads `field_dict.get("FT")` off the field's own dictionary with no
 //! parent walk, so a `/Sig` leaf typed only above it classifies as `Unknown("")`
-//! — an ordinary fillable field, which `Form.set_value/3` then destroys (see
+//! — an ordinary fillable field, which `Form.put_value/3` then destroys (see
 //! `ensure_not_signature` in `editor.rs`). The walk carries the inherited `/FT`
 //! down instead.
 //!
@@ -71,7 +71,7 @@ enum Refused {
     TooLarge,
 }
 
-/// The field names `Form.fields/1` must hide and `Form.set_value/3` must refuse.
+/// The field names `Form.fields/1` must hide and `Form.put_value/3` must refuse.
 ///
 /// Names rather than object references, because the editor's read path sees only
 /// `FormFieldWrapper`, which exposes a name and no `object_ref`. Keying on the
@@ -110,7 +110,7 @@ pub fn signature_names(doc: &PdfDocument) -> NifResult<SignatureNames> {
 ///
 /// **Only the first field of a name is consulted**, because that is the one
 /// `set_form_field_value` modifies: it returns on the first `full_name` match
-/// (`src/editor/document_editor.rs:5671`). Refusing a name for a *later* field
+/// (`src/editor/document_editor.rs`). Refusing a name for a *later* field
 /// of that name would refuse a write that could never have reached it.
 fn signature_names_of(fields: &[FormField], signatures: &HashSet<ObjectRef>) -> SignatureNames {
     let mut names = HashSet::new();
@@ -202,8 +202,8 @@ struct Walker<'a> {
 }
 
 impl Walker<'_> {
-    /// Visits one field object. `inherited_signature` is its ancestors' verdict,
-    /// which a node with no `/FT` of its own adopts.
+    /// `inherited_signature` is its ancestors' verdict, which a node with no
+    /// `/FT` of its own adopts.
     fn node(
         &mut self,
         obj: &Object,

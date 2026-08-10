@@ -48,8 +48,7 @@ pub enum DestinationNif {
 #[derive(Debug)]
 struct TooDeep;
 
-/// Converts a document's top-level outline items, rejecting one nested past
-/// [`MAX_OUTLINE_DEPTH`] with `:unsupported`.
+/// Rejects an outline nested past [`MAX_OUTLINE_DEPTH`] with `:unsupported`.
 ///
 /// The whole outline fails rather than being silently truncated: a caller who
 /// asked for the table of contents is better served by an error it can match on

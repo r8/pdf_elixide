@@ -32,7 +32,8 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a high-perf
 - Extract the fonts a page uses (type, encoding, weight) and pull out embedded font programs
 - Read annotations (links, notes, highlights, form widgets) with their geometry, contents, colors, and flags
 - Extract AcroForm fields — one struct per field type, with the field's name and value
-- Fill AcroForm fields and save the result to a file or in-memory binary
+- Fill AcroForm fields and save the result to a file or in-memory binary — every
+  editing call returns the editor, so filling and saving composes as one pipeline
 - Read document metadata — both the `/Info` dictionary and the XMP packet
 - Read encryption permission flags (print, copy, modify, …)
 - Read logical page labels (roman numerals, prefixes, etc.)
@@ -861,88 +862,45 @@ Widget (form field) annotations additionally populate `:field_type`,
 `PdfElixide.Form`. `annotations!/1` and `annotations!/2` return the list directly,
 raising on error.
 
-### Extracting form fields
+### Form fields
 
-`PdfElixide.Form.fields/1` returns the AcroForm fields of the document, one struct
-per field type:
+`PdfElixide.Form.fields/1` returns the AcroForm fields of a document, one struct
+per field type, each carrying a fully qualified `:name` and a `:value` that is a
+plain term — a string, `true`/`false`, a list of strings, or `nil`:
 
 ```elixir
 {:ok, fields} = PdfElixide.Form.fields(doc)
 #=> [%PdfElixide.Form.Field.Text{name: "full_name", value: "John Doe"},
 #    %PdfElixide.Form.Field.Button{name: "subscribe", value: true},
 #    %PdfElixide.Form.Field.Choice{name: "country", value: nil}]
-```
 
-The four structs are `PdfElixide.Form.Field.Text` (`/Tx`), `.Button` (`/Btn` —
-push buttons, check boxes, radio groups), `.Choice` (`/Ch`) and `.Unknown` (no
-recognized `/FT`, including the grouping parents a nested form reports).
-`PdfElixide.Form.Field` is the umbrella defining the union type. Each carries:
-
-- `:name` — the field's fully qualified PDF name (`String.t()`), dotted for a
-  field nested under a parent
-- `:value` — a plain term: a string, `true`/`false`, a list of strings, or `nil`
-  for a field carrying no value
-
-Signature fields (`/FT /Sig`) are not reported; this API covers fillable form
-fields only.
-
-A bang variant, `PdfElixide.Form.fields!/1`, returns the list directly and raises on error.
-
-For a single field there is no need to walk the list — `PdfElixide.Form.field/2`
-returns the struct and `PdfElixide.Form.value/2` just its value, from a document
-or an editor alike:
-
-```elixir
 {:ok, "John Doe"} = PdfElixide.Form.value(doc, "full_name")
-{:ok, %PdfElixide.Form.Field.Choice{}} = PdfElixide.Form.field(doc, "country")
 ```
 
-A name that is not in the form is `{:error, %PdfElixide.Error{reason: :not_found}}`,
-which is distinct from `{:ok, nil}` — a field that exists but carries no value.
-`field!/2` and `value!/2` raise instead.
-
-### Filling form fields
-
-To modify a PDF, open it as a `PdfElixide.Editor` instead of a `PdfElixide.Document`,
-set values with `PdfElixide.Form.set_value/3`, then persist the result with
-`PdfElixide.Editor.save/3` (file) or `PdfElixide.Editor.to_binary/2` (in-memory).
+To fill one, open the file as a `PdfElixide.Editor` instead of a
+`PdfElixide.Document`. Every editing call returns the editor, so writing and
+saving is one pipeline:
 
 ```elixir
 alias PdfElixide.Editor
 alias PdfElixide.Form
 
-{:ok, editor} = Editor.open("path/to/form.pdf")
-
-# Values are the plain terms Form.fields/1 returns.
-:ok = Form.set_value(editor, "full_name", "Jane Doe")
-:ok = Form.set_value(editor, "subscribe", true)
-
-# Write the filled PDF to disk.
-:ok = Editor.save(editor, "path/to/filled.pdf")
-
-# Or get the bytes back for streaming / storage.
-{:ok, bytes} = Editor.to_binary(editor)
+"path/to/form.pdf"
+|> Editor.open!()
+|> Form.put_value!("full_name", "Jane Doe")
+|> Form.put_value!("subscribe", true)
+|> Editor.save!("path/to/filled.pdf")
+|> Editor.close()
 ```
 
-Writing a check box or radio group's value back is not always faithful; see the
-"Check boxes and radio groups" section of `PdfElixide.Form` before round-tripping
-one.
+`Editor.to_binary/2` returns the bytes instead of writing a file, and the
+non-bang functions compose the same way as one `with/1`. An editor is a
+**mutable handle, not a value**: the editor a write returns is the one that went
+in, so rebinding does not fork it.
 
-Both `save/3` and `to_binary/2` accept a keyword list of options
-(`:incremental`, `:compress`, `:linearize`, `:garbage_collect`). For
-form filling against an existing PDF, an incremental save preserves the
-original AcroForm structure and only appends the field-value updates:
-
-```elixir
-:ok = Editor.save(editor, "path/to/filled.pdf", incremental: true)
-```
-
-Bang variants `Editor.open!/1`, `Editor.save!/3`, `Editor.to_binary!/2`,
-and `Form.set_value!/3` raise on error.
-
-An editor also answers for the document it holds: `Editor.page_count/1`,
-`Editor.version/1`, `Editor.source_path/1`, and `Editor.modified?/1`, which
-reports whether there are changes still to be written.
+See the [Forms](guides/forms.md) guide for the field structs, both pipeline
+shapes, writing several fields at once, the save options, and the signature and
+check-box caveats.
 
 ## Documentation
 

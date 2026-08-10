@@ -195,13 +195,11 @@ defmodule PdfElixide.Document.Page do
       or its content stream shows no text and invokes no XObject.
     * **`true` is not a promise that `text/1` returns anything.** A page whose
       only XObject holds no text still answers `true`, and so does a page whose
-      content stream cannot be decoded — deliberately, so that extraction is
-      attempted rather than skipped on a guess.
+      content stream cannot be decoded.
 
   One asymmetry looks like a bug but is not: a page with no fonts whose sole
-  XObject is an *image* answers `false`, which is what makes the image-only case
-  answerable cheaply. Text drawn in invisible render mode (`Tr 3`) is not
-  considered either way.
+  XObject is an *image* answers `false`. Text drawn in invisible render mode
+  (`Tr 3`) is not considered either way.
   """
   @spec has_text_layer(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_text_layer(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -213,8 +211,8 @@ defmodule PdfElixide.Document.Page do
 
   Unlike `PdfElixide.Document.has_structure_tree?/1` and
   `PdfElixide.Document.has_xfa?/1`, this degrades nothing: *every* error raises,
-  not just a failure of the handle — see the predicates list in
-  `PdfElixide.Error`.
+  not just a failure of the handle — see the "Errors versus exceptions" section
+  of `PdfElixide.Error`.
 
   Sweep a document with it:
 

@@ -126,7 +126,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@form_pdf)
       before = Editor.page_count!(editor)
 
-      :ok = Form.set_value(editor, "full_name", "Ada")
+      Form.put_value!(editor, "full_name", "Ada")
 
       assert Editor.page_count!(editor) == before
     end
@@ -147,14 +147,14 @@ defmodule PdfElixide.EditorTest do
 
     test "flips once the editor is changed" do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", "Ada")
+      Form.put_value!(editor, "full_name", "Ada")
 
       assert Editor.modified?(editor)
     end
 
     test "to_binary/2 clears it, even though it writes no file" do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", "Ada")
+      Form.put_value!(editor, "full_name", "Ada")
 
       {:ok, _bytes} = Editor.to_binary(editor)
 
@@ -185,7 +185,7 @@ defmodule PdfElixide.EditorTest do
 
     test "form field mutations are present in the saved bytes" do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", "Jane Doe")
+      Form.put_value!(editor, "full_name", "Jane Doe")
       {:ok, bytes} = Editor.to_binary(editor)
       assert String.contains?(bytes, "Jane Doe")
     end
@@ -250,14 +250,14 @@ defmodule PdfElixide.EditorTest do
 
     test "writes a non-empty PDF file to the given path", %{out_path: out_path} do
       editor = Editor.open!(@valid_pdf)
-      assert :ok = Editor.save(editor, out_path)
+      assert {:ok, ^editor} = Editor.save(editor, out_path)
       assert File.exists?(out_path)
       assert File.stat!(out_path).size > 0
     end
 
     test "the written file round-trips into a new editor", %{out_path: out_path} do
       editor = Editor.open!(@form_pdf)
-      :ok = Editor.save(editor, out_path)
+      Editor.save!(editor, out_path)
       assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
     end
 
@@ -277,7 +277,7 @@ defmodule PdfElixide.EditorTest do
     test "save/3 with incremental: true writes a round-trippable PDF",
          %{out_path: out_path} do
       editor = Editor.open!(@form_pdf)
-      assert :ok = Editor.save(editor, out_path, incremental: true)
+      assert {:ok, ^editor} = Editor.save(editor, out_path, incremental: true)
       assert File.stat!(out_path).size > 0
       assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
     end
@@ -286,10 +286,25 @@ defmodule PdfElixide.EditorTest do
          %{out_path: out_path} do
       editor = Editor.open!(@form_pdf)
 
-      assert :ok =
+      assert {:ok, ^editor} =
                Editor.save(editor, out_path, compress: false, garbage_collect: false)
 
       assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
+    end
+
+    test "the returned editor is still usable", %{out_path: out_path} do
+      second_path = out_path <> ".second"
+      on_exit(fn -> File.rm(second_path) end)
+
+      editor = Editor.open!(@form_pdf)
+
+      # Writing does not consume the editor, which is what makes returning it
+      # from `save/3` safe rather than merely convenient.
+      assert {:ok, editor} = Editor.save(editor, out_path)
+      assert {:ok, _editor} = Editor.save(editor, second_path)
+
+      assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
+      assert {:ok, %Editor{}} = Editor.from_binary(File.read!(second_path))
     end
   end
 
@@ -305,9 +320,9 @@ defmodule PdfElixide.EditorTest do
       {:ok, out_path: path}
     end
 
-    test "returns :ok on success", %{out_path: out_path} do
+    test "returns the editor on success", %{out_path: out_path} do
       editor = Editor.open!(@valid_pdf)
-      assert :ok = Editor.save!(editor, out_path)
+      assert ^editor = Editor.save!(editor, out_path)
       assert File.exists?(out_path)
     end
 
@@ -364,7 +379,7 @@ defmodule PdfElixide.EditorTest do
       assert {:error, %Error{reason: :closed}} = Form.fields(editor)
 
       assert {:error, %Error{reason: :closed}} =
-               Form.set_value(editor, "full_name", "Ada")
+               Form.put_value(editor, "full_name", "Ada")
 
       refute File.exists?(out_path)
     end
@@ -391,14 +406,60 @@ defmodule PdfElixide.EditorTest do
 
     test "edits saved before closing are unaffected", %{out_path: out_path} do
       editor = Editor.open!(@form_pdf)
-      :ok = Form.set_value(editor, "full_name", "Ada")
-      :ok = Editor.save(editor, out_path)
+      Form.put_value!(editor, "full_name", "Ada")
+      Editor.save!(editor, out_path)
 
       :ok = Editor.close(editor)
 
       reopened = Editor.open!(out_path)
       assert {:ok, fields} = Form.fields(reopened)
       assert Enum.any?(fields, &(&1.name == "full_name" and &1.value == "Ada"))
+    end
+  end
+
+  describe "the editing pipeline" do
+    setup do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "pdf_elixide_pipeline_#{System.unique_integer([:positive])}.pdf"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+      {:ok, out_path: path}
+    end
+
+    test "open, fill, save and close compose as one expression", %{out_path: out_path} do
+      # The shape the whole return-the-editor change exists for. Every mutating
+      # function hands the editor back, so only `close/1` terminates it.
+      assert :ok =
+               @form_pdf
+               |> Editor.open!()
+               |> Form.put_value!("full_name", "Jane Doe")
+               |> Form.put_value!("subscribe", true)
+               |> Editor.save!(out_path)
+               |> Editor.close()
+
+      reopened = Document.open!(out_path)
+      assert {:ok, "Jane Doe"} = Form.value(reopened, "full_name")
+      assert {:ok, true} = Form.value(reopened, "subscribe")
+    end
+
+    test "the tuple half reads as one with/1", %{out_path: out_path} do
+      values = %{"full_name" => "Jane Doe", "country" => ["Canada"]}
+
+      result =
+        with {:ok, editor} <- Editor.open(@form_pdf),
+             {:ok, editor} <- Form.put_values(editor, values),
+             {:ok, editor} <- Editor.save(editor, out_path) do
+          Editor.close(editor)
+        end
+
+      assert result == :ok
+
+      reopened = Document.open!(out_path)
+      assert {:ok, "Jane Doe"} = Form.value(reopened, "full_name")
+      assert {:ok, ["Canada"]} = Form.value(reopened, "country")
     end
   end
 end

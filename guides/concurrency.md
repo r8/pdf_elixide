@@ -89,6 +89,12 @@ exclusive one, so either will queue behind an in-flight save on the same handle.
 on a document, the editor's exclusive lock on an editor — so listing fields from
 an editor serializes even though it only reads.
 
+`PdfElixide.Form.put_values/2` is a convenience, not a batching optimization: it
+takes the exclusive lock once per field plus once for the read it validates
+against, exactly as the same number of `PdfElixide.Form.put_value/3` calls would.
+`PdfElixide.Form.update_value/3` takes it twice, once to read and once to write,
+so another process holding the same editor can write in between.
+
 `PdfElixide.Document.Image`, `PdfElixide.Document.Font` and
 `PdfElixide.Document.Table` handles are shareable the same way as a document, and
 without the hazard above: each owns a value that is already materialized, with no

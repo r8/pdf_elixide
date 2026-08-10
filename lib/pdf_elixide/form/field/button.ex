@@ -7,9 +7,10 @@ defmodule PdfElixide.Form.Field.Button do
   `nil` when the field carries no `/V`. See `t:PdfElixide.Form.Field.value/0` for
   what a malformed one can put here.
 
-  `PdfElixide.Form.set_value/3` can write only `/Yes` and `/Off`, so writing a
+  `PdfElixide.Form.put_value/3` can write only `/Yes` and `/Off`, so writing a
   button's value back is not always faithful — see the "Check boxes and radio
-  groups" section of `PdfElixide.Form` before round-tripping one.
+  groups" section of the [Forms](guides/forms.md) guide before round-tripping
+  one.
   """
   @enforce_keys [:name, :value]
 

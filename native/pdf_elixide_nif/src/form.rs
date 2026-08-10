@@ -8,7 +8,7 @@ use pdf_oxide::{
 use rustler::{NifStruct, NifUntaggedEnum};
 
 /// A field's value as a plain term, in **both** directions: what `fields/1`
-/// reports and what `PdfElixide.Form.set_value/3` sends. One type rather than a
+/// reports and what `PdfElixide.Form.put_value/3` sends. One type rather than a
 /// read one and a write one, because their being identical is the contract —
 /// a value read off a field must be writable straight back — and two copies
 /// could only maintain that by hand.
@@ -228,7 +228,7 @@ mod tests {
     /// this test would catch upstream changing.
     ///
     /// The read and the write share `FieldValueNif`, so the composition below is
-    /// exactly what a caller piping `fields/1` into `set_value/3` performs, with
+    /// exactly what a caller piping `fields/1` into `put_value/3` performs, with
     /// nothing translating between them.
     #[test]
     fn a_read_value_written_back_lands_as_the_same_pdf_object() {

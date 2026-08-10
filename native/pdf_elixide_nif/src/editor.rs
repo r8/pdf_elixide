@@ -51,7 +51,7 @@ fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
 }
 
-/// Opens a PDF document from the specified file path.
+/// Opens an editor over the PDF at the given file path.
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::open(path_arg(path)?).map_err(to_nif_err)?;
@@ -65,7 +65,7 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     Ok((resource, version))
 }
 
-/// Opens a PDF document from the given binary data.
+/// Opens an editor over the given PDF bytes.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;

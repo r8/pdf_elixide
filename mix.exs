@@ -76,6 +76,7 @@ defmodule PdfElixide.MixProject do
       extras: [
         "README.md": [title: "Overview"],
         "guides/concurrency.md": [],
+        "guides/forms.md": [],
         # `filename:` because ExDoc reserves `search.html` for its own search
         # page and refuses an extra that would generate it.
         "guides/search.md": [filename: "text-search"],

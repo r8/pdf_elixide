@@ -81,10 +81,9 @@ defmodule PdfElixide.Document do
   `/MediaBox` and `/Rotate` are inheritable: a page declaring neither takes them
   from an ancestor `/Pages` node, unambiguously where exactly one ancestor
   declares the entry. Where **two** nested ancestors declare it, which wins is
-  not stable — upstream resolves the inheritable attributes differently
-  depending on how many pages have already been read, so the same page can
-  report a different box, and a different rotation, on a later call. Almost all
-  documents declare each entry at one level only and are unaffected.
+  not stable: the same page can report a different box, and a different
+  rotation, on a later call. Almost all documents declare each entry at one
+  level only and are unaffected.
 
   ## Rotated pages and extracted geometry
 
@@ -97,8 +96,7 @@ defmodule PdfElixide.Document do
       the same values narrowed — and `images/1` stay in raw, unrotated user
       space, whatever the rotation.
     * `words/1`, `text_lines/1`, the cell boxes of `tables/1` and the boxes on a
-      `search/2` match are mapped into the **displayed** frame, since upstream
-      builds them on the span pipeline that reorders a rotated page for reading.
+      `search/2` match are mapped into the **displayed** frame.
       The mapping is selective: a `180`-degree page maps everything, while a
       `90`- or `270`-degree page maps only text whose own text matrix is
       rotated, leaving a horizontal run raw.
@@ -402,10 +400,7 @@ defmodule PdfElixide.Document do
   # The reasons `Closable` itself produces, as opposed to the ones the NIF maps
   # from a `pdf_oxide::Error`. A tolerant predicate answers `false` for a
   # document whose feature cannot be determined, but a handle that cannot be
-  # used at all still raises, exactly as the plain `Wrap.call!/1` above does —
-  # which is what keeps this pair's behavior identical to the swallow it
-  # replaced, back when the NIF discarded the upstream error before Elixir could
-  # see it.
+  # used at all still raises, exactly as the plain `Wrap.call!/1` above does.
   @handle_reasons [:closed, :lock_poisoned, :panic]
 
   defp tolerant_predicate!(fun) do
@@ -462,11 +457,11 @@ defmodule PdfElixide.Document do
   the handle had been opened with `open/2`'s `:password`, and it costs about what
   opening the document cost — a rejected password too.
 
-  This is the one read-side function that takes the document's lock
-  *exclusively*, so it waits for in-flight calls on the handle and blocks new
-  ones for its duration. Authenticate before sharing the document with other
-  processes, not after — see the [Concurrency](guides/concurrency.md) guide,
-  whose other exclusive call is `close/1`.
+  Like `clear_search_index/1` and `close/1`, and unlike every other read here,
+  this takes the document's lock *exclusively*, so it waits for in-flight calls
+  on the handle and blocks new ones for its duration. Authenticate before
+  sharing the document with other processes, not after — see the
+  [Concurrency](guides/concurrency.md) guide.
   """
   @spec authenticate(t(), binary()) :: {:ok, boolean()} | {:error, Error.t()}
   def authenticate(%__MODULE__{ref: ref}, password) when is_binary(password) do
@@ -740,8 +735,7 @@ defmodule PdfElixide.Document do
 
   ## Layer and ink filtering drops the other options
 
-  Layer and ink filtering is served by a call that builds its own conversion
-  options internally, so when `:exclude_layers` or `:exclude_inks` is non-empty,
+  When `:exclude_layers` or `:exclude_inks` is non-empty,
   **only `:region` and `:region_mode` still apply** — `:extract_tables`,
   `:expand_ligatures`, `:table_detection`, `:exclude_regions` and
   `:exclude_regions_mode` fall back to their upstream defaults
@@ -1764,10 +1758,8 @@ defmodule PdfElixide.Document do
 
   ## `:span_merging` drops the other options
 
-  A merging configuration is served by a call that accepts neither a reading
-  order nor layer/ink filters, so when `:span_merging` is set,
-  `:reading_order`, `:exclude_layers` and `:exclude_inks` are ignored.
-  `:region` still applies, being a post-filter.
+  When `:span_merging` is set, `:reading_order`, `:exclude_layers` and
+  `:exclude_inks` are ignored. `:region` still applies, being a post-filter.
   """
   @type spans_opts :: [
           reading_order: :top_to_bottom | :column_aware | :structure,
@@ -2003,9 +1995,8 @@ defmodule PdfElixide.Document do
   Unlike the `:table_detection` option of the `text` functions, the detection
   keys are given *flat* here rather than nested under one key.
 
-  `:region` keeps the detection options you passed, where `pdf_oxide`'s own
-  region call substitutes its `:relaxed` preset. Pass `preset: :relaxed` to ask
-  for that explicitly.
+  `:region` keeps the detection options you passed rather than loosening them.
+  Pass `preset: :relaxed` to ask for that explicitly.
   """
   @type tables_opts :: [
           region: Rect.t() | nil,
@@ -2380,7 +2371,9 @@ defmodule PdfElixide.Document do
 
   The pattern is plain text by default. Pass `literal: false` to treat it as a
   regular expression, which reports an unparseable one as
-  `%PdfElixide.Error{reason: :invalid_pattern}`.
+  `%PdfElixide.Error{reason: :invalid_pattern}`. An empty pattern is rejected
+  outright with a `FunctionClauseError`, since it would match at every position
+  on every page.
 
   A match's boxes cover whole runs of text rather than the matched characters —
   see `PdfElixide.Document.SearchMatch`. Searching builds a per-page index that
@@ -2397,9 +2390,9 @@ defmodule PdfElixide.Document do
           {:ok, [SearchMatch.t()]} | {:error, Error.t()}
   def search(doc, pattern, page_index_or_opts \\ [])
 
-  # An empty pattern matches at every byte position, and `max_results: 0` does
-  # not cap it. Refused as a malformed argument, so it raises rather than
-  # returning an `%Error{}`.
+  # `pattern != ""` is a guard rather than an `%Error{}` because `:max_results`
+  # is no defence: it bounds the page walk as well as the list, so a capped call
+  # still returns a cap's worth of zero-width matches at offset 0.
   def search(%__MODULE__{ref: ref}, pattern, opts)
       when is_binary(pattern) and pattern != "" and is_list(opts) do
     options = build_search_options(opts)

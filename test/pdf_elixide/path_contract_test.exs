@@ -146,7 +146,7 @@ defmodule PdfElixide.PathContractTest do
     test "Editor.save/3 writes one, and it reopens", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "out-" <> @bad_name)
 
-      assert :ok = Editor.open!(@valid_pdf) |> Editor.save(path)
+      assert {:ok, %Editor{}} = Editor.open!(@valid_pdf) |> Editor.save(path)
       assert File.exists?(path)
       assert {:ok, doc} = Document.open(path)
       assert doc.page_count == 3
@@ -229,7 +229,7 @@ defmodule PdfElixide.PathContractTest do
     test "is written to", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "sortie-café.pdf")
 
-      assert :ok = Editor.open!(@valid_pdf) |> Editor.save(path)
+      assert {:ok, %Editor{}} = Editor.open!(@valid_pdf) |> Editor.save(path)
       assert File.exists?(path)
     end
   end

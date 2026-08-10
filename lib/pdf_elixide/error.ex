@@ -25,7 +25,7 @@ defmodule PdfElixide.Error do
     * `:unsupported` — an unsupported PDF version, feature, or filter.
     * `:not_found` — a referenced object was not found, or no form field carries
       the name given to `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2` or
-      `PdfElixide.Form.set_value/3`.
+      `PdfElixide.Form.put_value/3`.
     * `:out_of_range` — the page index is outside the document.
     * `:io` — an underlying IO error.
     * `:panic` — the native library panicked on this input, i.e. hit a bug
@@ -53,7 +53,7 @@ defmodule PdfElixide.Error do
       (`detect_heading:` for `:detect_headings`), a key given twice, a value the
       native layer cannot decode, a value out of range (`{:min_overlap, 2.0}`) —
       and undecodable values outside an options map, such as a form field value
-      that is none of the shapes `PdfElixide.Form.set_value/3` accepts. A *path*
+      that is none of the shapes `PdfElixide.Form.put_value/3` accepts. A *path*
       is opaque bytes and so has almost
       nothing to reject — only Windows, which cannot name a file in arbitrary
       bytes, raises here; see the "File paths" section of `PdfElixide`.

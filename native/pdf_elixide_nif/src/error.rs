@@ -5,8 +5,6 @@ use rustler::{Atom, Error};
 
 use crate::atoms;
 
-/// Builds a Rustler `Error::Term` carrying a `{reason, message}` tuple.
-///
 /// The NIF returns this as `{:error, {reason, message}}`; the Elixir side
 /// (`PdfElixide.Native.Wrap`) turns it into a `%PdfElixide.Error{}` struct so
 /// callers can pattern-match on `reason`.
@@ -63,8 +61,6 @@ pub fn to_form_err(e: PdfError) -> Error {
     }
 }
 
-/// Creates a standard "Lock is poisoned" error for poisoned locks.
-///
 /// Defensive: every guard is now taken through `Closable::with_lock` /
 /// `with_read`, which contain a panic before it can poison anything (see
 /// `crate::resource::contain_panic`), so this should no longer be reachable.
@@ -72,9 +68,8 @@ pub fn lock_err() -> Error {
     tagged_err(atoms::lock_poisoned(), "Lock is poisoned")
 }
 
-/// Creates the error reported when a panic is caught inside a resource guard,
-/// carrying the panic message when it is a string (which it is for `panic!` and
-/// `expect`/`unwrap`).
+/// Carries the panic message when it is a string, which it is for `panic!` and
+/// `expect`/`unwrap`.
 pub fn panic_err(payload: &(dyn Any + Send)) -> Error {
     tagged_err(
         atoms::panic(),
@@ -95,8 +90,7 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
-/// Creates the error reported for a handle that was released with `close`
-/// (see `crate::resource::Closable`). `label` names the handle, e.g. `"Document"`.
+/// `label` names the handle, e.g. `"Document"`; see `crate::resource::Closable`.
 pub fn closed_err(label: &str) -> Error {
     tagged_err(atoms::closed(), format!("{label} is closed"))
 }

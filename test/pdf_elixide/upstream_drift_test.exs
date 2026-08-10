@@ -861,7 +861,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     defp edited_editor do
       editor = Editor.open!(@form_pdf)
       on_exit(fn -> Editor.close(editor) end)
-      :ok = Form.set_value(editor, "full_name", "Ada")
+      Form.put_value!(editor, "full_name", "Ada")
       assert Editor.modified?(editor)
       editor
     end
@@ -875,7 +875,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       out_path: out_path
     } do
       to_file = edited_editor()
-      :ok = Editor.save(to_file, out_path)
+      Editor.save!(to_file, out_path)
       refute Editor.modified?(to_file)
 
       to_bytes = edited_editor()
@@ -886,7 +886,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     test "an incremental save does not", %{out_path: out_path} do
       editor = edited_editor()
 
-      :ok = Editor.save(editor, out_path, incremental: true)
+      Editor.save!(editor, out_path, incremental: true)
 
       assert Editor.modified?(editor)
     end
@@ -905,7 +905,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       on_exit(fn -> Editor.close(editor) end)
 
       assert {:error, %Error{reason: :not_found, message: message}} =
-               Form.set_value(editor, "no_such_field", "x")
+               Form.put_value(editor, "no_such_field", "x")
 
       assert message =~ "Form field not found: "
     end
@@ -937,7 +937,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     # clearing a field writes a PDF null over whatever was there. On an ordinary
     # field that is merely how clearing works; on a `/Sig` field it is what
     # destroys the signature dictionary, which is the whole reason
-    # `Form.set_value/3` refuses one. Upstream's serializer for *new* fields
+    # `Form.put_value/3` refuses one. Upstream's serializer for *new* fields
     # already skips a null — if that guard ever reaches the existing-field flush
     # too, this fails and the refusal can be reconsidered.
     #
@@ -947,7 +947,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       editor = Editor.open!(@form_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      :ok = Form.set_value(editor, "full_name", nil)
+      Form.put_value!(editor, "full_name", nil)
 
       assert Editor.to_binary!(editor, compress: false) =~ "/V null"
     end
@@ -961,7 +961,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       editor = Editor.open!(@form_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      :ok = Form.set_value(editor, "subscribe", "Export1")
+      Form.put_value!(editor, "subscribe", "Export1")
 
       assert Editor.to_binary!(editor, compress: false) =~ "/AS (Export1)"
     end

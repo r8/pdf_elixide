@@ -1309,8 +1309,6 @@ fn document_all_tables(
     })
 }
 
-/// Returns the page's `/MediaBox` as a normalised rect.
-///
 /// Upstream hands back the four raw array elements — absolute corners in file
 /// order — so a malformed box may arrive reversed. `rect_from_corners`
 /// normalises it, because `PdfElixide.Geometry.Rect` promises a bottom-left

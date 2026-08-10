@@ -14,7 +14,7 @@ defmodule PdfElixide.Form.Field do
 
   Every struct carries `:name` — the fully qualified, dotted name
   (`"person.first"`, not `"first"`) that `PdfElixide.Form.field/2`,
-  `PdfElixide.Form.value/2` and `PdfElixide.Form.set_value/3` address it by,
+  `PdfElixide.Form.value/2` and `PdfElixide.Form.put_value/3` address it by,
   identical whether the form was read from a `PdfElixide.Document` or a
   `PdfElixide.Editor` — and `:value`, a plain term (`t:value/0`).
 
@@ -35,12 +35,12 @@ defmodule PdfElixide.Form.Field do
   `nil` for a field carrying no value.
 
   This is both what a field reports and exactly what
-  `PdfElixide.Form.set_value/3` accepts — anything else raises `ArgumentError` —
+  `PdfElixide.Form.put_value/3` accepts — anything else raises `ArgumentError` —
   so a value read from one form can be written straight into another.
 
   Button fields are the exception, and writing one back is not always faithful —
-  see the "Check boxes and radio groups" section of `PdfElixide.Form` before
-  round-tripping a `PdfElixide.Form.Field.Button`.
+  see the [Forms](guides/forms.md) guide before round-tripping a
+  `PdfElixide.Form.Field.Button`.
 
   Each struct's moduledoc describes the subset a well-formed PDF can put on its
   kind; a malformed `/V` whose PDF type is foreign to the field's kind (say, an

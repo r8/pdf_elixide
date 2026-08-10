@@ -18,10 +18,9 @@ defmodule PdfElixide.Document.Metadata do
   quote, `0x92` trademark) replace the C1 controls.
 
   A byte-order-mark-less string that happens to be valid UTF-8 is decoded as
-  UTF-8. That is `pdf_oxide`'s deliberate leniency towards the many producers
-  that write raw UTF-8 rather than what the spec says, so a Latin-1 string
-  whose bytes are also well-formed UTF-8 decodes as the latter. A value that
-  decodes to whitespace only is `nil`, as an absent one is.
+  UTF-8 rather than as PDFDocEncoding, so a Latin-1 string whose bytes are also
+  well-formed UTF-8 decodes as the latter. A value that decodes to whitespace
+  only is `nil`, as an absent one is.
 
   ## Fields
 

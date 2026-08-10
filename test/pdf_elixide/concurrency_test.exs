@@ -287,10 +287,10 @@ defmodule PdfElixide.ConcurrencyTest do
       # each writer's *last* write rather than by who finished last.
       writers = [
         Task.async(fn ->
-          for i <- 1..@writes, do: Form.set_value(editor, "full_name", "a-#{i}")
+          for i <- 1..@writes, do: Form.put_value(editor, "full_name", "a-#{i}")
         end),
         Task.async(fn ->
-          for i <- 1..@writes, do: Form.set_value(editor, "subscribe", even?(i))
+          for i <- 1..@writes, do: Form.put_value(editor, "subscribe", even?(i))
         end)
       ]
 
@@ -306,7 +306,7 @@ defmodule PdfElixide.ConcurrencyTest do
       snapshots = readers |> Task.await_many(@timeout) |> Enum.concat()
 
       assert length(write_results) == 2 * @writes
-      assert Enum.all?(write_results, &(&1 == :ok))
+      assert Enum.all?(write_results, &match?({:ok, %Editor{}}, &1))
 
       # Neither writer's last write was lost behind the other's.
       final = Map.new(Form.fields!(editor), &{&1.name, &1.value})
@@ -323,7 +323,7 @@ defmodule PdfElixide.ConcurrencyTest do
       end
     end
 
-    test "to_binary/2 racing set_value/3 always yields a parseable PDF" do
+    test "to_binary/2 racing put_value/3 always yields a parseable PDF" do
       editor = Editor.open!(@form_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
@@ -335,7 +335,7 @@ defmodule PdfElixide.ConcurrencyTest do
 
       work =
         Enum.map(written, fn value ->
-          fn -> {:write, Form.set_value(editor, "full_name", value)} end
+          fn -> {:write, Form.put_value(editor, "full_name", value)} end
         end) ++
           Enum.map(1..@concurrency, fn _ -> fn -> {:snapshot, Editor.to_binary!(editor)} end end)
 
@@ -353,7 +353,7 @@ defmodule PdfElixide.ConcurrencyTest do
       snapshots = for {:snapshot, pdf} <- results, do: pdf
 
       assert length(writes) == @concurrency
-      assert Enum.all?(writes, &(&1 == :ok))
+      assert Enum.all?(writes, &match?({:ok, %Editor{}}, &1))
       assert length(snapshots) == @concurrency
 
       # Every snapshot was taken *between* mutations, never during one: it
