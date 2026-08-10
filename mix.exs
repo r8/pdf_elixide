@@ -142,9 +142,13 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Editor,
         PdfElixide.Form,
         PdfElixide.Form.Field,
+        PdfElixide.Form.Field.Flags,
         PdfElixide.Form.Field.Text,
+        PdfElixide.Form.Field.Text.Flags,
         PdfElixide.Form.Field.Button,
+        PdfElixide.Form.Field.Button.Flags,
         PdfElixide.Form.Field.Choice,
+        PdfElixide.Form.Field.Choice.Flags,
         PdfElixide.Form.Field.Unknown
       ]
     ]

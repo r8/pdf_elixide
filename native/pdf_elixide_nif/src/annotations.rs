@@ -1,5 +1,6 @@
 use pdf_oxide::{
-    Annotation, AnnotationFlags, AnnotationSubtype, LinkAction, LinkDestination, WidgetFieldType,
+    extractors::forms::field_flags, Annotation, AnnotationFlags, AnnotationSubtype, LinkAction,
+    LinkDestination, WidgetFieldType,
 };
 use rustler::{NifMap, NifStruct, NifTaggedEnum, NifUnitEnum};
 
@@ -161,7 +162,7 @@ impl From<LinkAction> for LinkActionNif {
 // A widget form field's type, encoded as an atom or a flat tagged tuple:
 // `:text`, `:button`, `:signature`, `:unknown`, `{:checkbox, checked?}`,
 // `{:radio, selected | nil}`, or `{:choice, options, selected | nil}`.
-#[derive(NifTaggedEnum, Debug)]
+#[derive(NifTaggedEnum, Debug, PartialEq)]
 pub enum WidgetFieldTypeNif {
     Text,
     Checkbox(bool),
@@ -172,19 +173,39 @@ pub enum WidgetFieldTypeNif {
     Unknown,
 }
 
-impl From<WidgetFieldType> for WidgetFieldTypeNif {
-    fn from(field_type: WidgetFieldType) -> Self {
-        match field_type {
-            WidgetFieldType::Text => WidgetFieldTypeNif::Text,
-            WidgetFieldType::Checkbox { checked } => WidgetFieldTypeNif::Checkbox(checked),
-            WidgetFieldType::Radio { selected } => WidgetFieldTypeNif::Radio(selected),
-            WidgetFieldType::Button => WidgetFieldTypeNif::Button,
-            WidgetFieldType::Choice { options, selected } => {
-                WidgetFieldTypeNif::Choice(options, selected)
-            }
-            WidgetFieldType::Signature => WidgetFieldTypeNif::Signature,
-            WidgetFieldType::Unknown => WidgetFieldTypeNif::Unknown,
+// Upstream's classifier reads Table 227's Radio and Pushbutton bits backwards,
+// so the `/Btn` trio is re-derived here. Which of the three arrives says only
+// that `/FT` was `/Btn`, which is why no `/FT` string is needed.
+fn widget_field_type_nif(
+    field_type: WidgetFieldType,
+    flags: Option<u32>,
+    appearance_state: Option<&str>,
+) -> WidgetFieldTypeNif {
+    match field_type {
+        WidgetFieldType::Checkbox { .. }
+        | WidgetFieldType::Radio { .. }
+        | WidgetFieldType::Button => {
+            button_field_type_nif(flags.unwrap_or_default(), appearance_state)
         }
+        WidgetFieldType::Text => WidgetFieldTypeNif::Text,
+        WidgetFieldType::Choice { options, selected } => {
+            WidgetFieldTypeNif::Choice(options, selected)
+        }
+        WidgetFieldType::Signature => WidgetFieldTypeNif::Signature,
+        WidgetFieldType::Unknown => WidgetFieldTypeNif::Unknown,
+    }
+}
+
+// The payloads are upstream's, kept identical so only the classification changes.
+fn button_field_type_nif(flags: u32, appearance_state: Option<&str>) -> WidgetFieldTypeNif {
+    if flags & field_flags::PUSH_BUTTON != 0 {
+        WidgetFieldTypeNif::Button
+    } else if flags & field_flags::RADIO != 0 {
+        WidgetFieldTypeNif::Radio(appearance_state.map(String::from))
+    } else {
+        let checked = appearance_state.is_some_and(|state| state != "Off" && !state.is_empty());
+
+        WidgetFieldTypeNif::Checkbox(checked)
     }
 }
 
@@ -249,7 +270,13 @@ pub fn annotation_to_nif(annotation: Annotation, page: usize) -> AnnotationNif {
         opacity: annotation.opacity,
         flags: flags_to_nif(annotation.flags),
         border: annotation.border.map(|border| border.to_vec()),
-        field_type: annotation.field_type.map(Into::into),
+        field_type: annotation.field_type.map(|field_type| {
+            widget_field_type_nif(
+                field_type,
+                annotation.field_flags,
+                annotation.appearance_state.as_deref(),
+            )
+        }),
         field_name: annotation.field_name,
         field_value: annotation.field_value,
         default_value: annotation.default_value,
@@ -261,6 +288,8 @@ pub fn annotation_to_nif(annotation: Annotation, page: usize) -> AnnotationNif {
 
 #[cfg(test)]
 mod tests {
+    use pdf_oxide::PdfDocument;
+
     use super::*;
 
     type Bit = (u32, u32, &'static str, fn(&FlagsNif) -> bool);
@@ -284,6 +313,93 @@ mod tests {
             |f| f.locked_contents,
         ),
     ];
+
+    // Reading a fixture is the only way to reach the parser: `field_type` is
+    // what it decides, not what the PDF declares.
+    #[test]
+    fn upstream_still_reads_the_button_flag_bits_backwards() {
+        let doc = PdfDocument::open(format!(
+            "{}/../../test/fixtures/form_flags.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("fixture opens");
+
+        let annotations = doc.get_annotations(0).expect("annotations extract");
+
+        let of = |name: &str| {
+            annotations
+                .iter()
+                .find(|annotation| annotation.field_name.as_deref() == Some(name))
+                .map(|annotation| (annotation.field_flags, annotation.field_type.clone()))
+                .expect("the fixture's widget")
+        };
+
+        assert_eq!(
+            of("push"),
+            (
+                Some(field_flags::PUSH_BUTTON),
+                Some(WidgetFieldType::Radio { selected: None })
+            ),
+            "upstream now reads bit 17 as Pushbutton"
+        );
+
+        assert_eq!(
+            of("radio"),
+            (Some(field_flags::RADIO), Some(WidgetFieldType::Button)),
+            "upstream now reads bit 16 as Radio"
+        );
+    }
+
+    #[test]
+    fn the_button_trio_is_reclassified_from_the_flags() {
+        assert_eq!(
+            button_field_type_nif(field_flags::PUSH_BUTTON, Some("Choice1")),
+            WidgetFieldTypeNif::Button
+        );
+        assert_eq!(
+            button_field_type_nif(field_flags::RADIO, Some("Choice1")),
+            WidgetFieldTypeNif::Radio(Some(String::from("Choice1")))
+        );
+        assert_eq!(
+            button_field_type_nif(0, Some("Yes")),
+            WidgetFieldTypeNif::Checkbox(true)
+        );
+        assert_eq!(
+            button_field_type_nif(0, Some("Off")),
+            WidgetFieldTypeNif::Checkbox(false)
+        );
+        assert_eq!(
+            button_field_type_nif(0, None),
+            WidgetFieldTypeNif::Checkbox(false)
+        );
+    }
+
+    #[test]
+    fn every_other_widget_type_passes_through() {
+        assert_eq!(
+            widget_field_type_nif(WidgetFieldType::Text, Some(field_flags::RADIO), None),
+            WidgetFieldTypeNif::Text
+        );
+        assert_eq!(
+            widget_field_type_nif(WidgetFieldType::Signature, None, None),
+            WidgetFieldTypeNif::Signature
+        );
+        assert_eq!(
+            widget_field_type_nif(WidgetFieldType::Unknown, None, None),
+            WidgetFieldTypeNif::Unknown
+        );
+        assert_eq!(
+            widget_field_type_nif(
+                WidgetFieldType::Choice {
+                    options: vec![String::from("One")],
+                    selected: Some(String::from("One")),
+                },
+                None,
+                None,
+            ),
+            WidgetFieldTypeNif::Choice(vec![String::from("One")], Some(String::from("One")))
+        );
+    }
 
     #[test]
     fn each_flag_bit_sets_exactly_its_own_field() {

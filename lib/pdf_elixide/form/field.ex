@@ -16,11 +16,19 @@ defmodule PdfElixide.Form.Field do
   (`"person.first"`, not `"first"`) that `PdfElixide.Form.field/2`,
   `PdfElixide.Form.value/2` and `PdfElixide.Form.put_value/3` address it by,
   identical whether the form was read from a `PdfElixide.Document` or a
-  `PdfElixide.Editor` — and `:value`, a plain term (`t:value/0`).
+  `PdfElixide.Editor` — `:value`, a plain term (`t:value/0`) — and `:flags`, the
+  decoded `/Ff` bits its type can carry.
+
+  The first three also carry a `:kind`, naming the widget the type covers —
+  each struct's `t:kind/0` lists its own. `Unknown` has none, having no type
+  whose bits would say.
 
   A parent that carries a name but declares no type is itself reported as a
   field, so a nested form yields a struct for the grouping level as well as for
   each leaf under it.
+
+  The "Field kinds and flags" section of the [Forms](guides/forms.md) guide
+  covers both in full.
   """
   alias PdfElixide.Form.Field.Button
   alias PdfElixide.Form.Field.Choice

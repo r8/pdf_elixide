@@ -15,8 +15,9 @@ defmodule PdfElixide.Form do
       |> PdfElixide.Editor.close()
 
   Fields come back as one struct per field type, listed in
-  `PdfElixide.Form.Field`, and are addressed by the fully qualified name each
-  carries. Only an existing field can be set — there is no way to add one — and
+  `PdfElixide.Form.Field`, each carrying the widget it is as a `:kind` and its
+  decoded `/Ff` bits as `:flags`, and are addressed by the fully qualified name
+  each carries. Only an existing field can be set — there is no way to add one — and
   a name that is not in the form is
   `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and
   `value/2` as much as from `put_value/3`. Signature fields are not fillable and
@@ -82,7 +83,8 @@ defmodule PdfElixide.Form do
   a form with two fields of the same name answers with the first.
 
       PdfElixide.Form.field(doc, "full_name")
-      #=> {:ok, %PdfElixide.Form.Field.Text{name: "full_name", value: "John Doe"}}
+      #=> {:ok, %PdfElixide.Form.Field.Text{name: "full_name", kind: :single_line,
+      #     value: "John Doe", flags: %PdfElixide.Form.Field.Text.Flags{…}}}
 
   """
   @spec field(source(), String.t()) :: {:ok, Field.t()} | {:error, Error.t()}

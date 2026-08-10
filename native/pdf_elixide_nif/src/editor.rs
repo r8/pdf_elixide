@@ -8,7 +8,7 @@ use crate::{
     binary::owned_binary,
     error::{tagged_err, to_form_err, to_nif_err},
     form::{editor_form_field_to_nif, set_value_from_nif, FieldNif, FieldValueNif},
-    form_tree::{self, SignatureNames},
+    form_tree::{self, Resolved},
     fs_path::path_arg,
     resource::Closable,
     EditorResource,
@@ -48,7 +48,7 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
-        signature_names: OnceLock::new(),
+        resolved_fields: OnceLock::new(),
     });
     let version = cached_version(&resource)?;
 
@@ -61,7 +61,7 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
-        signature_names: OnceLock::new(),
+        resolved_fields: OnceLock::new(),
     });
     let version = cached_version(&resource)?;
 
@@ -96,31 +96,35 @@ fn editor_closed(resource: ResourceArc<EditorResource>) -> bool {
 }
 
 // Failed builds are not cached, so malformed trees fail consistently.
-fn signature_names<'a>(
+fn resolved_fields<'a>(
     resource: &'a EditorResource,
     editor: &DocumentEditor,
-) -> NifResult<&'a SignatureNames> {
-    if let Some(names) = resource.signature_names.get() {
-        return Ok(names);
+) -> NifResult<&'a Resolved> {
+    if let Some(resolved) = resource.resolved_fields.get() {
+        return Ok(resolved);
     }
 
-    let names = form_tree::signature_names(editor.source())?;
+    let resolved = form_tree::resolved(editor.source())?;
 
-    Ok(resource.signature_names.get_or_init(|| names))
+    Ok(resource.resolved_fields.get_or_init(|| resolved))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_form_fields(resource: ResourceArc<EditorResource>) -> NifResult<Vec<FieldNif>> {
     resource.editor.with_lock(|editor| {
         // By name, because a `FormFieldWrapper` carries no `object_ref`. The
-        // document path filters the same names, so the two sources agree.
-        let signatures = signature_names(&resource, editor)?;
+        // document path resolves the same names, so the two sources agree.
+        let resolved = resolved_fields(&resource, editor)?;
         let fields = editor.get_form_fields().map_err(to_nif_err)?;
 
         Ok(fields
             .into_iter()
-            .filter(|field| !signatures.contains(field.name()))
-            .filter_map(editor_form_field_to_nif)
+            .filter(|field| !resolved.is_signature(field.name()))
+            .filter_map(|field| {
+                let flags = resolved.flags(field.name(), field.flags());
+
+                editor_form_field_to_nif(field, flags)
+            })
             .collect())
     })
 }
@@ -160,8 +164,8 @@ fn editor_save(
 
 // Guard the write itself: hiding signatures from reads does not stop a caller
 // naming one directly, and any value would replace its `/V` dictionary.
-fn ensure_not_signature(signatures: &SignatureNames, name: &str) -> NifResult<()> {
-    if signatures.contains(name) {
+fn ensure_not_signature(resolved: &Resolved, name: &str) -> NifResult<()> {
+    if resolved.is_signature(name) {
         // Upstream's own spelling carries an "Invalid PDF: " prefix its `Display`
         // prepends; this matches what `Form.field/2` builds in Elixir instead.
         // The two `:not_found` messages already differ across the read side, so
@@ -185,7 +189,7 @@ fn editor_set_form_field_value(
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         // Inside the guard, so check and write cannot straddle another writer.
-        ensure_not_signature(signature_names(&resource, editor)?, &name)?;
+        ensure_not_signature(resolved_fields(&resource, editor)?, &name)?;
 
         editor
             .set_form_field_value(&name, set_value_from_nif(value))

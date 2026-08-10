@@ -1179,12 +1179,16 @@ fn document_has_text_layer(
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FieldNif>> {
     resource.doc.with_read(|doc| {
-        let (fields, signatures) = form_tree::extract_fields(doc)?;
+        let (fields, resolved) = form_tree::extract_fields(doc)?;
 
         Ok(fields
             .into_iter()
-            .filter(|field| !signatures.contains(&field.full_name))
-            .filter_map(document_form_field_to_nif)
+            .filter(|field| !resolved.is_signature(&field.full_name))
+            .filter_map(|field| {
+                let flags = resolved.flags(&field.full_name, field.flags);
+
+                document_form_field_to_nif(field, flags)
+            })
             .collect())
     })
 }

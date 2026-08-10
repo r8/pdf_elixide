@@ -13,6 +13,7 @@ defmodule PdfElixide.FormTest do
   @signature_pdf Path.join(@fixtures, "form_signature.pdf")
   @signature_edge_pdf Path.join(@fixtures, "form_signature_edge.pdf")
   @cyclic_pdf Path.join(@fixtures, "form_cyclic.pdf")
+  @flags_pdf Path.join(@fixtures, "form_flags.pdf")
   @no_form_pdf Path.join(@fixtures, "sample.pdf")
 
   # The three `form.pdf` fields, in file order — one per struct the fixture can
@@ -232,6 +233,86 @@ defmodule PdfElixide.FormTest do
       assert {:ok, "Jane"} = Form.value(doc, "person.first")
       assert {:ok, ^editor} = Form.put_value(editor, "person.first", "Zoe")
       assert {:ok, "Zoe"} = Form.value(editor, "person.first")
+    end
+  end
+
+  describe "field kinds and flags" do
+    test "a document and an editor report every field identically" do
+      doc = Document.open!(@flags_pdf)
+      editor = Editor.open!(@flags_pdf)
+
+      # The whole point of resolving `/Ff` in one place: upstream reads it from
+      # two different structs on the two paths, and neither resolves inheritance.
+      assert Form.fields!(doc) == Form.fields!(editor)
+    end
+
+    test "a button's kind comes from its /Ff bits" do
+      doc = Document.open!(@flags_pdf)
+
+      assert %Field.Button{kind: :push} = Form.field!(doc, "push")
+      assert %Field.Button{kind: :radio} = Form.field!(doc, "radio")
+      assert %Field.Button{kind: :check_box} = Form.field!(doc, "check")
+    end
+
+    test "a choice field's kind comes from its /Ff bits" do
+      doc = Document.open!(@flags_pdf)
+
+      assert %Field.Choice{kind: :combo_box} = Form.field!(doc, "combo")
+      assert %Field.Choice{kind: :list_box} = Form.field!(doc, "list")
+    end
+
+    test "a text field's kind comes from its /Ff bits" do
+      doc = Document.open!(@flags_pdf)
+
+      assert %Field.Text{kind: :multiline} = Form.field!(doc, "notes")
+      assert %Field.Text{kind: :single_line} = Form.field!(doc, "secret")
+    end
+
+    test "a field declaring no /Ff gets the specification's defaults, not an unknown" do
+      doc = Document.open!(@flags_pdf)
+
+      assert %Field.Button{kind: :check_box, flags: %Field.Button.Flags{raw: 0}} =
+               Form.field!(doc, "check")
+
+      assert %Field.Choice{kind: :list_box, flags: %Field.Choice.Flags{raw: 0}} =
+               Form.field!(doc, "list")
+    end
+
+    test "decodes the bits the kind does not report" do
+      doc = Document.open!(@flags_pdf)
+
+      assert %Field.Text{flags: %Field.Text.Flags{password: true, multiline: false}} =
+               Form.field!(doc, "secret")
+
+      assert %Field.Text{flags: %Field.Text.Flags{read_only: true, raw: 1}} =
+               Form.field!(doc, "locked")
+    end
+
+    test "an unknown field carries only the flags every field has" do
+      doc = Document.open!(@hierarchical_pdf)
+
+      assert %Field.Unknown{
+               flags: %Field.Flags{read_only: false, required: false, no_export: false, raw: 0}
+             } = Form.field!(doc, "person")
+    end
+
+    test "a kid with no /Ff of its own inherits its parent's" do
+      doc = Document.open!(@flags_pdf)
+      editor = Editor.open!(@flags_pdf)
+
+      # Upstream reads /Ff off the field's own dictionary, so without the walk
+      # this leaf would report a cleared 0 and classify as a check box.
+      for source <- [doc, editor] do
+        assert %Field.Button{kind: :radio, flags: %Field.Button.Flags{raw: 32_768}} =
+                 Form.field!(source, "group.a")
+      end
+    end
+
+    test "an own /Ff replaces an inherited one rather than merging with it" do
+      doc = Document.open!(@flags_pdf)
+
+      assert %Field.Button{kind: :push, flags: %Field.Button.Flags{radio: false, raw: 65_536}} =
+               Form.field!(doc, "group.b")
     end
   end
 

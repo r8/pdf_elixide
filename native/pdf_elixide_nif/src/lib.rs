@@ -5,7 +5,7 @@ use pdf_oxide::{
     structure::table_extractor::Table, PdfDocument,
 };
 
-use crate::{form_tree::SignatureNames, resource::Closable};
+use crate::{form_tree::Resolved, resource::Closable};
 
 mod annotations;
 mod binary;
@@ -64,7 +64,7 @@ impl rustler::Resource for DocumentResource {}
 struct EditorResource {
     editor: Closable<DocumentEditor>,
     // Cacheable while no bound operation mutates the source document or fields.
-    signature_names: OnceLock<SignatureNames>,
+    resolved_fields: OnceLock<Resolved>,
 }
 
 #[rustler::resource_impl]

@@ -51,6 +51,7 @@ defmodule PdfElixide.DocumentTest do
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @annotation_colors_pdf Path.join(@fixtures, "annotation_colors.pdf")
+  @form_flags_pdf Path.join(@fixtures, "form_flags.pdf")
   # Two real pages under a /Pages node whose /Count says three, so page 2 has
   # no page object to resolve and is the only fixture whose text extraction
   # fails for one page and succeeds for the others.
@@ -3187,6 +3188,26 @@ defmodule PdfElixide.DocumentTest do
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.annotations!(doc, :first) end
+    end
+  end
+
+  describe "widget annotation field types" do
+    test "classifies a button widget from its /Ff bits" do
+      doc = Document.open!(@form_flags_pdf)
+
+      types =
+        doc
+        |> Document.annotations!(0)
+        |> Map.new(&{&1.field_name, &1.field_type})
+
+      assert types == %{"push" => :button, "radio" => {:radio, "Choice1"}}
+    end
+
+    test "agrees with the kind the same field reports as a form field" do
+      doc = Document.open!(@form_flags_pdf)
+
+      assert %PdfElixide.Form.Field.Button{kind: :push} = PdfElixide.Form.field!(doc, "push")
+      assert %PdfElixide.Form.Field.Button{kind: :radio} = PdfElixide.Form.field!(doc, "radio")
     end
   end
 

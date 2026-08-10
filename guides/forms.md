@@ -12,9 +12,9 @@ alias PdfElixide.Form
 doc = Document.open!("path/to/form.pdf")
 
 Form.fields!(doc)
-#=> [%PdfElixide.Form.Field.Text{name: "full_name", value: "John Doe"},
-#    %PdfElixide.Form.Field.Button{name: "subscribe", value: true},
-#    %PdfElixide.Form.Field.Choice{name: "country", value: nil}]
+#=> [%PdfElixide.Form.Field.Text{name: "full_name", kind: :single_line, value: "John Doe", …},
+#    %PdfElixide.Form.Field.Button{name: "subscribe", kind: :check_box, value: true, …},
+#    %PdfElixide.Form.Field.Choice{name: "country", kind: :list_box, value: nil, …}]
 ```
 
 ## Fields and their values
@@ -23,13 +23,15 @@ A field comes back as one struct per field type, so the type is what you match
 on: `PdfElixide.Form.Field.Text` (`/Tx`), `.Button` (`/Btn` — push buttons, check
 boxes and radio groups), `.Choice` (`/Ch`), and `.Unknown` for a field with no
 recognized type, which includes the grouping parents a nested form reports.
-`PdfElixide.Form.Field` is the umbrella defining the union.
+`PdfElixide.Form.Field` is the umbrella defining the union. Which widget a
+button or choice field is, the struct's `:kind` says — see below.
 
-**Every struct carries the same two keys.** `:name` is the field's fully
+**Every struct carries the same three keys.** `:name` is the field's fully
 qualified name, dotted for a field nested under a parent — `"person.first"`, not
 `"first"` — and is what every other function here addresses it by. `:value` is a
 plain term: a string, `true`/`false`, a list of strings, or `nil` for a field
-carrying no value.
+carrying no value. `:flags` is described under "Field kinds and flags" below,
+along with the `:kind` the first three also carry.
 
 **A value is written back exactly as it was read.** `t:PdfElixide.Form.Field.value/0`
 is both what a field reports and what `PdfElixide.Form.put_value/3` accepts —
@@ -45,13 +47,62 @@ Form.value!(doc, "full_name")
 #=> "John Doe"
 
 Form.field(doc, "country")
-#=> {:ok, %PdfElixide.Form.Field.Choice{name: "country", value: nil}}
+#=> {:ok, %PdfElixide.Form.Field.Choice{name: "country", kind: :list_box, value: nil, …}}
 ```
 
 **`{:ok, nil}` and `:not_found` are different answers.** A field that exists but
 carries no value is `{:ok, nil}`; a name the form does not carry is
 `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and `value/2`
 as much as from `put_value/3`. The bang variants raise it instead.
+
+## Field kinds and flags
+
+A field's `/FT` says only that it is a button, a choice field or a text field.
+Which *widget* it is — a check box or a radio group, a combo box or a list box —
+is decided by bits in its `/Ff` entry, and those bits are what `:kind` reports:
+
+| Struct | `:kind` | Default |
+|---|---|---|
+| `PdfElixide.Form.Field.Button` | `:check_box`, `:radio`, `:push` | `:check_box` |
+| `PdfElixide.Form.Field.Choice` | `:combo_box`, `:list_box` | `:list_box` |
+| `PdfElixide.Form.Field.Text` | `:single_line`, `:multiline` | `:single_line` |
+
+```elixir
+case Form.field!(doc, "subscribe") do
+  %Form.Field.Button{kind: :check_box, value: checked?} -> checked?
+  %Form.Field.Button{kind: :radio, value: selected} -> selected
+  %Form.Field.Button{kind: :push} -> nil
+end
+```
+
+**A field declaring no `/Ff` is not an unknown** — every bit is clear, and the
+defaults above are what the PDF specification says that means. Many real forms
+declare no `/Ff` at all.
+
+**A field inherits `/Ff` from its ancestors.** A radio group is commonly a parent
+carrying the flags over kids that carry none, and each kid reports the parent's
+kind. A kid declaring its own `/Ff` replaces the inherited value outright rather
+than merging bit by bit, so a `:push` button under a `:radio` parent stays a push
+button.
+
+`:flags` carries the whole entry decoded, one boolean per bit the specification
+names for that type, plus `:raw` for anything it does not:
+
+```elixir
+Form.field!(doc, "notes").flags
+#=> %PdfElixide.Form.Field.Text.Flags{multiline: true, password: false,
+#     read_only: false, required: false, comb: false, …, raw: 4096}
+```
+
+Each type has its own flags struct — `PdfElixide.Form.Field.Text.Flags`,
+`.Button.Flags`, `.Choice.Flags` — because the same bit means different things
+on different types. `PdfElixide.Form.Field.Unknown` carries
+`PdfElixide.Form.Field.Flags`, which holds the three bits every field has:
+`:read_only`, `:required` and `:no_export`.
+
+`PdfElixide.Document.Annotation` reports the same classification for a widget
+annotation, through its `:field_type`, so the two surfaces agree about a field
+that appears on both.
 
 ## Filling a form
 
@@ -187,6 +238,9 @@ field itself, which the PDF specification permits. Reading, verifying and
 producing signatures is a separate capability, and not one this library offers.
 
 ## Check boxes and radio groups
+
+`:kind` tells the two apart, per "Field kinds and flags" above. What follows
+applies to both, and to writing rather than reading.
 
 Setting a button field writes `/Yes` for `true` and `/Off` for `false`, and those
 are the only two states `put_value/3` can produce. That makes the read-then-write

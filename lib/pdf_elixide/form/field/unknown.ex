@@ -3,12 +3,15 @@ defmodule PdfElixide.Form.Field.Unknown do
   A field with no recognized `/FT` — either a grouping parent that declares no
   type at all, or a field whose `/FT` names a type that is not understood.
 
-  The only kind carrying a third field, `:raw_type`, which tells the two apart.
+  The only kind carrying a `:raw_type`, which tells the two apart, and the only
+  one with no `:kind` — there is no type whose bits would say what it is.
+  `:flags` is therefore `PdfElixide.Form.Field.Flags`, holding only the three
+  bits every field has.
 
   `:value` is whatever the field's `/V` holds, or `nil`; a grouping parent has
   none. See `t:PdfElixide.Form.Field.value/0`.
   """
-  @enforce_keys [:name, :raw_type, :value]
+  @enforce_keys [:name, :raw_type, :value, :flags]
 
   defstruct @enforce_keys
 
@@ -25,6 +28,7 @@ defmodule PdfElixide.Form.Field.Unknown do
   @type t :: %__MODULE__{
           name: String.t(),
           raw_type: raw_type(),
-          value: PdfElixide.Form.Field.value()
+          value: PdfElixide.Form.Field.value(),
+          flags: PdfElixide.Form.Field.Flags.t()
         }
 end

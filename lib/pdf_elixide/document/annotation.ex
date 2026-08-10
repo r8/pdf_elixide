@@ -56,10 +56,17 @@ defmodule PdfElixide.Document.Annotation do
   @typedoc """
   A widget form field's type.
 
-    * `:text`, `:button`, `:signature`, `:unknown` — bare kinds.
+    * `:text`, `:button`, `:signature`, `:unknown` — bare kinds. `:button` is a
+      push button specifically.
     * `{:checkbox, checked?}` — a checkbox and whether it is checked.
-    * `{:radio, selected | nil}` — a radio button and its selected value.
+    * `{:radio, selected | nil}` — a radio button and its selected value, read
+      from the widget's appearance state.
     * `{:choice, options, selected | nil}` — a dropdown/list and its choices.
+
+  Which of the three button kinds a `/Btn` widget is comes from its `/Ff` bits,
+  the same reading `PdfElixide.Form.Field.Button`'s `:kind` reports, so a field
+  reached through either surface is classified the same way. `:field_flags`
+  carries the undecoded entry; `PdfElixide.Form` decodes it.
   """
   @type field_type ::
           :text

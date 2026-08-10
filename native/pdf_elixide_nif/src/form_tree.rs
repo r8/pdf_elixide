@@ -1,7 +1,8 @@
-// Validates an AcroForm field tree and resolves inherited signature types
-// before extraction.
+// Validates an AcroForm field tree and resolves the inheritable attributes
+// upstream reads off a field's own dictionary — `/FT` and `/Ff` — before
+// extraction.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use pdf_oxide::{
     extractors::{
@@ -35,33 +36,44 @@ enum Refused {
 }
 
 // Names, rather than object references, are the common key available to both
-// document and editor form APIs.
+// document and editor form APIs — `get_form_fields` builds every wrapper with
+// `object_ref: None`.
 #[derive(Debug, Default)]
-pub struct SignatureNames(HashSet<String>);
+pub struct Resolved {
+    signatures: HashSet<String>,
+    flags: HashMap<String, u32>,
+}
 
-impl SignatureNames {
-    pub fn contains(&self, name: &str) -> bool {
-        self.0.contains(name)
+impl Resolved {
+    pub fn is_signature(&self, name: &str) -> bool {
+        self.signatures.contains(name)
+    }
+
+    // The caller's own reading is the fallback, so a field the walk could not
+    // reach still reports the bits upstream found on it.
+    pub fn flags(&self, name: &str, own: Option<u32>) -> Option<u32> {
+        self.flags.get(name).copied().or(own)
     }
 }
 
-// Return fields and signature names together to avoid repeating extraction.
-pub fn extract_fields(doc: &PdfDocument) -> NifResult<(Vec<FormField>, SignatureNames)> {
-    let signatures = walk(doc).map_err(refused_err)?;
+// Return fields and their resolved attributes together to avoid repeating
+// extraction.
+pub fn extract_fields(doc: &PdfDocument) -> NifResult<(Vec<FormField>, Resolved)> {
+    let walked = walk(doc).map_err(refused_err)?;
 
     let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
-    let names = signature_names_of(&fields, &signatures);
+    let resolved = resolved_of(&fields, &walked);
 
-    Ok((fields, names))
+    Ok((fields, resolved))
 }
 
-pub fn signature_names(doc: &PdfDocument) -> NifResult<SignatureNames> {
-    extract_fields(doc).map(|(_fields, names)| names)
+pub fn resolved(doc: &PdfDocument) -> NifResult<Resolved> {
+    extract_fields(doc).map(|(_fields, resolved)| resolved)
 }
 
 // Only the first duplicate name matters because the editor writes the first match.
-fn signature_names_of(fields: &[FormField], signatures: &HashSet<ObjectRef>) -> SignatureNames {
-    let mut names = HashSet::new();
+fn resolved_of(fields: &[FormField], walked: &Walked) -> Resolved {
+    let mut resolved = Resolved::default();
     let mut seen = HashSet::new();
 
     for field in fields {
@@ -72,14 +84,21 @@ fn signature_names_of(fields: &[FormField], signatures: &HashSet<ObjectRef>) -> 
         let is_signature = field.field_type == FieldType::Signature
             || field
                 .object_ref
-                .is_some_and(|obj_ref| signatures.contains(&obj_ref));
+                .is_some_and(|obj_ref| walked.signatures.contains(&obj_ref));
 
         if is_signature {
-            names.insert(field.full_name.clone());
+            resolved.signatures.insert(field.full_name.clone());
+        }
+
+        if let Some(flags) = field
+            .object_ref
+            .and_then(|obj_ref| walked.flags.get(&obj_ref))
+        {
+            resolved.flags.insert(field.full_name.clone(), *flags);
         }
     }
 
-    SignatureNames(names)
+    resolved
 }
 
 fn refused_err(refused: Refused) -> rustler::Error {
@@ -100,25 +119,34 @@ fn refused_err(refused: Refused) -> rustler::Error {
     }
 }
 
-// Collects every field object whose *effective* `/FT` is `/Sig`, validating the
-// tree on the way.
-fn walk(doc: &PdfDocument) -> Result<HashSet<ObjectRef>, Refused> {
+// What one walk of the field tree yields, keyed by object reference.
+#[derive(Debug, Default, PartialEq)]
+struct Walked {
+    // Every field object whose *effective* `/FT` is `/Sig`.
+    signatures: HashSet<ObjectRef>,
+    // Every field object's effective `/Ff`, absent where neither it nor any
+    // ancestor declares one.
+    flags: HashMap<ObjectRef, u32>,
+}
+
+// Resolves the inheritable attributes, validating the tree on the way.
+fn walk(doc: &PdfDocument) -> Result<Walked, Refused> {
     let Some(fields) = root_fields(doc) else {
-        return Ok(HashSet::new());
+        return Ok(Walked::default());
     };
 
     let mut walker = Walker {
         doc,
         path: Vec::new(),
-        signatures: HashSet::new(),
+        walked: Walked::default(),
         budget: MAX_FIELD_NODES,
     };
 
     for field in &fields {
-        walker.node(field, false, 0)?;
+        walker.node(field, Inherited::default(), 0)?;
     }
 
-    Ok(walker.signatures)
+    Ok(walker.walked)
 }
 
 // `/Root /AcroForm /Fields`, or `None` for a document with no form — which
@@ -138,6 +166,15 @@ fn resolve(doc: &PdfDocument, obj: &Object) -> Option<Object> {
     }
 }
 
+// The ancestors' verdict, which a node declaring neither attribute adopts.
+// §12.7.3.1 inherits each attribute whole, so `/Ff` is carried down as one
+// value rather than merged bit by bit.
+#[derive(Clone, Copy, Debug, Default)]
+struct Inherited {
+    signature: bool,
+    flags: Option<u32>,
+}
+
 struct Walker<'a> {
     doc: &'a PdfDocument,
     // The references on the path from a root field to the current node — an
@@ -145,19 +182,12 @@ struct Walker<'a> {
     // paths is a DAG, which upstream expands rather than looping on; only a
     // back edge is a cycle, and `MAX_FIELD_NODES` is what bounds the former.
     path: Vec<ObjectRef>,
-    signatures: HashSet<ObjectRef>,
+    walked: Walked,
     budget: usize,
 }
 
 impl Walker<'_> {
-    // `inherited_signature` is its ancestors' verdict, which a node with no
-    // `/FT` of its own adopts.
-    fn node(
-        &mut self,
-        obj: &Object,
-        inherited_signature: bool,
-        depth: usize,
-    ) -> Result<(), Refused> {
+    fn node(&mut self, obj: &Object, inherited: Inherited, depth: usize) -> Result<(), Refused> {
         if depth >= MAX_FIELD_DEPTH {
             return Err(Refused::TooDeep);
         }
@@ -174,7 +204,7 @@ impl Walker<'_> {
             self.path.push(obj_ref);
         }
 
-        let result = self.kids(obj, obj_ref, inherited_signature, depth);
+        let result = self.kids(obj, obj_ref, inherited, depth);
 
         if obj_ref.is_some() {
             self.path.pop();
@@ -191,7 +221,7 @@ impl Walker<'_> {
         &mut self,
         obj: &Object,
         obj_ref: Option<ObjectRef>,
-        inherited_signature: bool,
+        inherited: Inherited,
         depth: usize,
     ) -> Result<(), Refused> {
         let Some(field) = resolve(self.doc, obj) else {
@@ -201,16 +231,28 @@ impl Walker<'_> {
             return Ok(());
         };
 
-        // An own `/FT` settles it in both directions: a `/Tx` leaf under a `/Sig`
-        // parent is a text field, not an inherited signature.
+        // An own declaration settles it in both directions: a `/Tx` leaf under a
+        // `/Sig` parent is a text field, not an inherited signature.
         let signature = match dict.get("FT").and_then(|ft| resolve(self.doc, ft)) {
             Some(field_type) => field_type.as_name() == Some(SIGNATURE_FIELD_TYPE),
-            None => inherited_signature,
+            None => inherited.signature,
         };
 
-        if signature {
-            if let Some(obj_ref) = obj_ref {
-                self.signatures.insert(obj_ref);
+        let flags = match dict.get("Ff").and_then(|ff| resolve(self.doc, ff)) {
+            Some(Object::Integer(bits)) => u32::try_from(bits).ok(),
+            // A non-integer `/Ff` is malformed; upstream drops it too, and this
+            // walk does not decide whether a document is readable.
+            Some(_) => None,
+            None => inherited.flags,
+        };
+
+        if let Some(obj_ref) = obj_ref {
+            if signature {
+                self.walked.signatures.insert(obj_ref);
+            }
+
+            if let Some(flags) = flags {
+                self.walked.flags.insert(obj_ref, flags);
             }
         }
 
@@ -221,8 +263,10 @@ impl Walker<'_> {
             return Ok(());
         };
 
+        let inherited = Inherited { signature, flags };
+
         for kid in kids {
-            self.node(kid, signature, depth + 1)?;
+            self.node(kid, inherited, depth + 1)?;
         }
 
         Ok(())
@@ -231,8 +275,6 @@ impl Walker<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
 
     fn fixture(name: &str) -> PdfDocument {
@@ -252,11 +294,11 @@ mod tests {
             .collect()
     }
 
-    fn names_of(doc: &PdfDocument) -> SignatureNames {
-        let signatures = walk(doc).expect("a well-formed tree");
+    fn resolved_of_fixture(doc: &PdfDocument) -> Resolved {
+        let walked = walk(doc).expect("a well-formed tree");
         let fields = FormExtractor::extract_fields(doc).expect("fields extract");
 
-        signature_names_of(&fields, &signatures)
+        resolved_of(&fields, &walked)
     }
 
     #[test]
@@ -272,49 +314,92 @@ mod tests {
         );
     }
 
+    // After the walk resolves them, nothing caller-visible separates an
+    // inherited `/Ff` from an own one, so only this can notice upstream
+    // starting to walk the parent chain itself.
+    #[test]
+    fn upstream_still_reads_field_flags_off_the_own_dictionary() {
+        let doc = fixture("form_flags.pdf");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+
+        let inherited = fields
+            .iter()
+            .find(|field| field.full_name == "group.a")
+            .expect("the fixture's inheriting leaf");
+
+        assert_eq!(
+            inherited.flags, None,
+            "upstream now inherits /Ff: {inherited:?}"
+        );
+    }
+
+    #[test]
+    fn carries_field_flags_down_to_a_kid_declaring_none() {
+        let resolved = resolved_of_fixture(&fixture("form_flags.pdf"));
+
+        assert_eq!(resolved.flags("group.a", None), Some(0x8000));
+    }
+
+    #[test]
+    fn an_own_field_flags_overrides_an_inherited_one() {
+        let resolved = resolved_of_fixture(&fixture("form_flags.pdf"));
+
+        assert_eq!(resolved.flags("group.b", None), Some(0x10000));
+    }
+
+    #[test]
+    fn a_field_the_walk_did_not_reach_keeps_its_own_flags() {
+        let resolved = resolved_of_fixture(&fixture("sample.pdf"));
+
+        assert_eq!(resolved.flags("absent", Some(0x2)), Some(0x2));
+    }
+
     #[test]
     fn resolves_a_signature_typed_only_on_an_ancestor() {
-        let names = names_of(&fixture("form_signature_edge.pdf"));
+        let resolved = resolved_of_fixture(&fixture("form_signature_edge.pdf"));
 
-        assert!(names.contains("inherited.leaf"));
+        assert!(resolved.is_signature("inherited.leaf"));
         // The parent carries the `/FT` and no value, and is a field of its own
         // in upstream's output, so it is refused too.
-        assert!(names.contains("inherited"));
+        assert!(resolved.is_signature("inherited"));
     }
 
     #[test]
     fn an_own_field_type_overrides_an_inherited_signature() {
-        let names = names_of(&fixture("form_signature_edge.pdf"));
+        let resolved = resolved_of_fixture(&fixture("form_signature_edge.pdf"));
 
-        assert!(!names.contains("inherited.typed"));
+        assert!(!resolved.is_signature("inherited.typed"));
     }
 
     #[test]
     fn only_the_first_field_of_a_name_decides() {
-        let names = names_of(&fixture("form_signature_edge.pdf"));
+        let resolved = resolved_of_fixture(&fixture("form_signature_edge.pdf"));
 
-        assert!(!names.contains("shadowed"));
+        assert!(!resolved.is_signature("shadowed"));
     }
 
     #[test]
     fn finds_a_signature_typed_on_the_field_itself() {
-        let names = names_of(&fixture("form_signature.pdf"));
+        let resolved = resolved_of_fixture(&fixture("form_signature.pdf"));
 
-        assert!(names.contains("signature"));
-        assert!(!names.contains("signer_name"));
+        assert!(resolved.is_signature("signature"));
+        assert!(!resolved.is_signature("signer_name"));
     }
 
     #[test]
     fn a_form_with_no_signature_refuses_nothing() {
         for name in ["form.pdf", "form_hierarchical.pdf"] {
             let doc = fixture(name);
-            let names = names_of(&doc);
+            let resolved = resolved_of_fixture(&doc);
             let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
 
             assert!(!fields.is_empty(), "{name} has fields");
 
             for field in &fields {
-                assert!(!names.contains(&field.full_name), "{name}: {field:?}");
+                assert!(
+                    !resolved.is_signature(&field.full_name),
+                    "{name}: {field:?}"
+                );
             }
         }
     }
@@ -326,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_document_with_no_form_walks_to_nothing() {
-        assert_eq!(walk(&fixture("sample.pdf")), Ok(HashSet::new()));
+        assert_eq!(walk(&fixture("sample.pdf")), Ok(Walked::default()));
     }
 
     mod limits {
@@ -362,11 +447,11 @@ mod tests {
             let mut walker = Walker {
                 doc: &doc,
                 path: Vec::new(),
-                signatures: HashSet::new(),
+                walked: Walked::default(),
                 budget,
             };
 
-            walker.node(root, false, 0)
+            walker.node(root, Inherited::default(), 0)
         }
 
         #[test]
