@@ -1,8 +1,6 @@
 use pdf_oxide::layout::Color;
 use rustler::{NifStruct, NifUntaggedEnum};
 
-// A DeviceRGB color. The only shape text and path colors can take: `pdf_oxide`
-// resolves every colorspace to DeviceRGB during extraction.
 #[derive(NifStruct, Debug)]
 #[module = "PdfElixide.Color.RGB"]
 pub struct RgbNif {
@@ -11,7 +9,6 @@ pub struct RgbNif {
     b: f32,
 }
 
-// A DeviceCMYK color, from a four-component annotation color array.
 #[derive(NifStruct, Debug)]
 #[module = "PdfElixide.Color.CMYK"]
 pub struct CmykNif {
@@ -21,14 +18,12 @@ pub struct CmykNif {
     k: f64,
 }
 
-// A DeviceGray color, from a single-component annotation color array.
 #[derive(NifStruct, Debug)]
 #[module = "PdfElixide.Color.Gray"]
 pub struct GrayNif {
     gray: f64,
 }
 
-// Components whose colorspace we can't identify, preserved verbatim.
 #[derive(NifStruct, Debug)]
 #[module = "PdfElixide.Color.Unknown"]
 pub struct UnknownNif {

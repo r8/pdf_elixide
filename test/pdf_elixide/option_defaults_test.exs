@@ -1,37 +1,5 @@
 defmodule PdfElixide.OptionDefaultsTest do
-  @moduledoc """
-  The default *value* of every option, in one place.
-
-  A `NifMap` decode is total, so each `build_*_options/1` must emit every key
-  its Rust struct declares, with the default written inline as the third
-  argument of a `Keyword.get/3`. Those ~90 values are a public contract, and
-  they are the one kind of drift nothing else notices: a *missing* key is a
-  decode error the very next call raises, but a *changed* default is silent.
-
-  The obvious shape for catching it does not work. `f(doc, key: default) ==
-  f(doc)` cannot fail, because both sides go through the same builder and reach
-  the same map — and `f(doc, i, []) == f(doc, i)` is likewise a tautology
-  today, the no-option arity being defined as the option arity with a literal
-  `[]`. Roughly half the keys default to `nil` and are observable on no fixture
-  at all, so behavior cannot reach them either.
-
-  So this module compares the built maps directly, through the `@doc false`
-  `__option_defaults__/1` of each module, which calls the real builders with an
-  empty list. `lib` therefore spells each default once and cannot disagree with
-  itself; only the maps below can disagree with it, which is the point — they
-  are hand-written mirrors of the `@typedoc`s, and adding an option means
-  writing it down a third time (key list, typedoc, default).
-
-  Each assertion is a whole-map `==`, never a subset, so a renamed or added key
-  fails here too.
-
-  Nothing here asserts that a default *does* anything. That half lives with the
-  behavior it pins: `PdfElixide.ExtractionOptionsTest` for the extractor knobs,
-  `PdfElixide.DocumentTest` for `:detect_headings`, `:on_page_error` and the
-  image `:format`, `PdfElixide.UpstreamDriftTest` for `:include_artifacts` and
-  the table-detection preset, `PdfElixide.EditorTest` for `:incremental`. The
-  one default with no home elsewhere, `:compress`, is pinned at the bottom.
-  """
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
@@ -244,12 +212,6 @@ defmodule PdfElixide.OptionDefaultsTest do
   describe "the no-option arities go through the builders" do
     setup do: %{doc: open(@extraction_pdf)}
 
-    # These two are tautologies *today* — every no-option arity is defined as
-    # the option arity with a literal `[]`, so both sides are the same call —
-    # and they exist to keep it that way. An arity that stopped delegating and
-    # hand-built its own option map would quietly acquire a second set of
-    # defaults, which the describe above could not see. Neither test pins an
-    # individual value.
     test "an empty option list matches the no-option arity", %{doc: doc} do
       assert Document.text!(doc, @columns, []) == Document.text!(doc, @columns)
       assert Document.text!(doc, []) == Document.text!(doc)

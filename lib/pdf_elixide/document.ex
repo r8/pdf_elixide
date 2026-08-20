@@ -1066,8 +1066,8 @@ defmodule PdfElixide.Document do
       under it. Defaults to `false`.
 
       The result is **not** directly renderable and needs two corrections from
-      you. Upstream writes the PDF's own user-space coordinates verbatim, so
-      `top` is measured from the *bottom* of the page while CSS `top` measures
+      you. The generated CSS uses the PDF's own user-space coordinates
+      verbatim, so `top` is measured from the *bottom* of the page while CSS `top` measures
       from the top: flip it with `top = height - y`, taking the page height
       from `PdfElixide.Document.Page.height/1`. And the per-page wrapper
       `to_html/1` emits carries no styling, so it is not a positioned

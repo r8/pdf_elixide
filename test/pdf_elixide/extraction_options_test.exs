@@ -1,14 +1,5 @@
 defmodule PdfElixide.ExtractionOptionsTest do
-  @moduledoc """
-  Behavior of the options accepted by the six text-family extractors.
-
-  Every assertion here pins an *observable* difference rather than merely
-  checking that an option is accepted — an option that decodes but does
-  nothing is the failure mode worth catching. The upstream-deprecation
-  canaries live separately, in `PdfElixide.UpstreamDriftTest`, and the value
-  each option takes when it is *not* passed lives in
-  `PdfElixide.OptionDefaultsTest`.
-  """
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
@@ -18,16 +9,6 @@ defmodule PdfElixide.ExtractionOptionsTest do
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
-  # Purpose-built for the extraction options, one page per knob that no other
-  # fixture can express: page 0 is two columns sharing baselines, page 1 has an
-  # /Artifact-tagged running header, page 2 carries a U+FB01 ligature (via a
-  # /Differences encoding plus a /ToUnicode CMap — without the CMap the /fi
-  # glyph name resolves straight to "fi" and there is nothing to expand), a
-  # /Separation "SpotRed" ink and a "Watermark" OCG layer, page 3 is a
-  # column-aligned block with no ruling lines at all, and page 4 places its
-  # glyph groups with TJ kerning inside one text run rather than with separate
-  # Tm operators — the only shape on which the span merger's gap thresholds
-  # have anything to decide.
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
 
   # Page indices within @extraction_pdf.

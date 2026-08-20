@@ -390,12 +390,6 @@ defmodule PdfElixide.FormTest do
     test "raises ArgumentError for a value it cannot decode" do
       editor = Editor.open!(@form_pdf)
 
-      # The NIF cannot decode the value and raises :badarg. That is a caller
-      # bug, so it propagates rather than becoming an {:error, _} tuple.
-      #
-      # `{:name, "x"}` was once a write-side escape and is now rejected like any
-      # other tagged tuple: it wrote bytes byte-identical to a bare string, so
-      # nothing it could express is lost.
       for bad <- [42, :yes, ["a", 5], {:name, 5}, {:name, "Export1"}, {:nope, "x"}] do
         assert_raise ArgumentError, fn -> Form.put_value(editor, "full_name", bad) end
       end

@@ -9,9 +9,6 @@ use crate::{
     geometry::{rect_from_corners, RectNif},
 };
 
-// A single annotation, mirroring `pdf_oxide::Annotation` minus its `raw_dict`
-// (a recursive PDF object we don't surface). `annotation_type` is renamed to
-// `:type` on the Elixir side by `PdfElixide.Document.Annotation.from_nif/1`.
 #[derive(NifMap, Debug)]
 pub struct AnnotationNif {
     page: usize,
@@ -41,8 +38,6 @@ pub struct AnnotationNif {
     appearance_state: Option<String>,
 }
 
-// Parsed annotation subtype, encoded as a snake_case atom (`:text`, `:link`,
-// `:highlight`, `:widget`, `:three_d`, `:unknown`, …).
 #[derive(NifUnitEnum, Debug)]
 pub enum SubtypeNif {
     Text,
@@ -110,8 +105,6 @@ impl From<AnnotationSubtype> for SubtypeNif {
     }
 }
 
-// A link destination, encoded as a flat tagged tuple:
-// `{:named, name}` or `{:explicit, page, fit_type, params}`.
 #[derive(NifTaggedEnum, Debug)]
 pub enum LinkDestinationNif {
     Named(String),
@@ -135,9 +128,6 @@ impl From<LinkDestination> for LinkDestinationNif {
     }
 }
 
-// A link action, encoded as a flat tagged tuple: `{:uri, url}`,
-// `{:goto, destination}`, `{:goto_remote, file, destination | nil}`, or
-// `{:other, action_type}`.
 #[derive(NifTaggedEnum, Debug)]
 pub enum LinkActionNif {
     Uri(String),
@@ -159,9 +149,6 @@ impl From<LinkAction> for LinkActionNif {
     }
 }
 
-// A widget form field's type, encoded as an atom or a flat tagged tuple:
-// `:text`, `:button`, `:signature`, `:unknown`, `{:checkbox, checked?}`,
-// `{:radio, selected | nil}`, or `{:choice, options, selected | nil}`.
 #[derive(NifTaggedEnum, Debug, PartialEq)]
 pub enum WidgetFieldTypeNif {
     Text,
@@ -244,8 +231,6 @@ fn flags_to_nif(flags: AnnotationFlags) -> FlagsNif {
     }
 }
 
-// Converts a `pdf_oxide::Annotation` (and its zero-based page index) into its
-// NIF representation.
 pub fn annotation_to_nif(annotation: Annotation, page: usize) -> AnnotationNif {
     AnnotationNif {
         page,

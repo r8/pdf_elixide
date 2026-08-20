@@ -1,42 +1,5 @@
 defmodule PdfElixide.ConcurrencyTest do
-  @moduledoc """
-  One native handle, used from many processes at once.
-
-  Every read-only document NIF takes the handle's lock *shared*
-  (`Closable::with_read`), which is what the "Sharing a document across
-  processes" section of `PdfElixide.Document` promises callers. What is asserted
-  here is the half that can be asserted — that sharing a handle still returns the
-  *right* answers — and not the speedup: `RwLock` fairness, the size of the
-  dirty-CPU pool and upstream's own cold-load serialization would all make a
-  timing assertion flaky while pinning nothing. That reads really do overlap is
-  pinned deterministically in Rust instead, by `two_with_read_calls_overlap` in
-  `native/pdf_elixide_nif/src/resource.rs`.
-
-  Correctness is the risk the shared lock actually took on. Upstream's interior
-  mutability — a `Mutex` object cache, lazily built page and font caches, an
-  encryption handler initialized on first use — was previously reached by one
-  thread at a time no matter what the caller did. Interleaving *different*
-  extractors matters more than repeating one, since each drives a different
-  loader over the same caches, which is why the second test mixes them rather
-  than fanning one call out wider.
-
-  `authenticate/2` is deliberately not exercised concurrently: it is the one
-  document call that keeps an exclusive lock, and a test for it could only pass
-  vacuously — a reader that happens to run entirely before or entirely after the
-  transition proves nothing. `with_lock_excludes_a_concurrent_reader`, alongside
-  the overlap test above, carries that claim instead.
-
-  The same reasoning shapes the rest of the file. `PdfElixide.Document.Image`,
-  `.Font` and `.Table` handles read through `with_read` too, and their moduledocs
-  now promise callers as much, so each gets the same correctness-under-sharing
-  test. An editor gets one as well, but *only* that half: its calls are exclusive,
-  and showing that one excludes another is showing an absence, which needs a
-  wait — `with_lock_excludes_a_concurrent_reader` is where that claim lives. What
-  an editor test can show is that no write is lost and no read sees a
-  half-applied mutation. The close-race test is the one place a handle is used
-  while it is being released; what makes it non-vacuous is stated on the test
-  itself.
-  """
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document

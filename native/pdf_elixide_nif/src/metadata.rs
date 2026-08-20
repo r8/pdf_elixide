@@ -12,8 +12,6 @@ use rustler::{NifMap, NifResult, ResourceArc};
 
 use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource};
 
-// Info dictionary --------------------------------------------------------------------------------
-
 // Document Info dictionary metadata. Every field is optional; a document with
 // no `/Info` dictionary yields an all-`nil` map. Dates are the raw PDF date
 // strings (e.g. `D:20230101120000+00'00'`); `trapped` is the `/Trapped` name
@@ -81,8 +79,6 @@ fn document_info(resource: ResourceArc<DocumentResource>) -> NifResult<MetadataN
     resource.doc.with_read(|doc| Ok(read_metadata(doc)))
 }
 
-// XMP metadata -----------------------------------------------------------------------------------
-
 // XMP (Extensible Metadata Platform) metadata. Field names drop the upstream
 // namespace prefixes (`dc_` / `xmp_` / `pdf_` / `xmp_rights_`); `raw_xml`
 // carries the original XMP packet as an escape hatch.
@@ -145,8 +141,6 @@ fn document_xmp_metadata(
     })
 }
 
-// Permissions ------------------------------------------------------------------------------------
-
 // Decoded `/P` permission flags (ISO 32000-1 §7.6.3.2). Per spec these are
 // advisory. `raw` is the pre-decoded two's-complement `/P` integer.
 #[derive(NifMap, Debug)]
@@ -185,8 +179,6 @@ fn document_permissions(
         .with_read(|doc| Ok(doc.permissions().map(permissions_to_nif)))
 }
 
-// Page labels ------------------------------------------------------------------------------------
-
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<String>> {
     resource.doc.with_read(|doc| {
@@ -216,8 +208,6 @@ fn document_page_label(
         Ok(PageLabelExtractor::get_label(&ranges, page_index))
     })
 }
-
-// Tests ------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

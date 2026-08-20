@@ -19,8 +19,6 @@ use crate::{
     geometry::{rect_from_nif, RectNif},
 };
 
-// Shared value types -----------------------------------------------------------------------------
-
 // How a region filter decides whether an object is inside the region:
 // `:intersects`, `:fully_contained`, or `{:min_overlap, ratio}`.
 #[derive(NifTaggedEnum, Debug)]
@@ -136,8 +134,6 @@ impl From<SpanReadingOrderNif> for ReadingOrder {
     }
 }
 
-// Table detection --------------------------------------------------------------------------------
-
 // Which boundary evidence the spatial detector uses on one axis.
 #[derive(NifUnitEnum, Debug)]
 pub enum TableStrategyNif {
@@ -236,8 +232,6 @@ impl From<TableDetectionNif> for TableDetectionConfig {
         config
     }
 }
-
-// Span merging -----------------------------------------------------------------------------------
 
 // The base `SpanMergingConfig` an override map starts from.
 #[derive(NifUnitEnum, Debug)]
@@ -353,8 +347,6 @@ impl From<SpanMergingNif> for SpanMergingConfig {
         config
     }
 }
-
-// Per-extractor option maps ----------------------------------------------------------------------
 
 // Options for `PdfElixide.Document.text/2,3`.
 #[derive(NifMap, Debug)]

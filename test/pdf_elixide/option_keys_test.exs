@@ -1,25 +1,5 @@
 defmodule PdfElixide.OptionKeysTest do
-  @moduledoc """
-  The caller-error contract for options, in one place.
-
-  Every option-taking function validates its keyword list against a key list
-  written out beside its `@typedoc`. That list is the only thing standing
-  between a caller's typo and a silently ignored option, so this module pins
-  both halves of the contract:
-
-    * every key the typedoc *declares* is accepted, at a value of the declared
-      type — a key dropped from the list, or a builder that stopped reading
-      one, fails here rather than starting to reject working code;
-    * a key the typedoc does not declare is rejected, with a message naming it.
-
-  The key inventories below are hand-maintained mirrors of the `@typedoc`s on
-  purpose. A generated one would agree with a wrong list as readily as a right
-  one; the point is that adding an option means writing it down twice, and the
-  second spelling is what catches a rename.
-
-  The *behavior* of each option lives in `PdfElixide.ExtractionOptionsTest` and
-  `PdfElixide.DocumentTest`. Nothing here asserts an option does anything.
-  """
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document

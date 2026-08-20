@@ -72,14 +72,6 @@ defmodule PdfElixide.Native.WrapTest do
 
       assert raised == error
     end
-
-    # There is deliberately no test that a bare `:ok` has no clause. Elixir's
-    # type checker rejects `Wrap.unwrap!(:ok)` at compile time — CI runs
-    # `mix test --warnings-as-errors` — so the only way to assert it at runtime
-    # is `apply/3`, which credo then rejects in turn. Both gates are right: a
-    # caller who passes `:ok` is stopped where it matters, at their call site,
-    # which is stronger than anything this file could assert. The reason the
-    # function stays two-clause is on its `@doc`.
   end
 
   describe "call!/1" do

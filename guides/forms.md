@@ -11,10 +11,14 @@ alias PdfElixide.Form
 
 doc = Document.open!("path/to/form.pdf")
 
-Form.fields!(doc)
-#=> [%PdfElixide.Form.Field.Text{name: "full_name", kind: :single_line, value: "John Doe", …},
-#    %PdfElixide.Form.Field.Button{name: "subscribe", kind: :check_box, value: true, …},
-#    %PdfElixide.Form.Field.Choice{name: "country", kind: :list_box, value: nil, …}]
+try do
+  Form.fields!(doc)
+  #=> [%PdfElixide.Form.Field.Text{name: "full_name", kind: :single_line, value: "John Doe", …},
+  #    %PdfElixide.Form.Field.Button{name: "subscribe", kind: :check_box, value: true, …},
+  #    %PdfElixide.Form.Field.Choice{name: "country", kind: :list_box, value: nil, …}]
+after
+  Document.close(doc)
+end
 ```
 
 ## Fields and their values
@@ -110,12 +114,18 @@ Open the file as an editor, write values, then persist. Every call that changes
 an editor returns it, so the whole thing is one pipeline:
 
 ```elixir
-"path/to/form.pdf"
-|> Editor.open!()
-|> Form.put_value!("full_name", "Jane Doe")
-|> Form.put_value!("subscribe", true)
-|> Editor.save!("path/to/filled.pdf")
-|> Editor.close()
+editor = Editor.open!("path/to/form.pdf")
+
+try do
+  editor
+  |> Form.put_value!("full_name", "Jane Doe")
+  |> Form.put_value!("subscribe", true)
+  |> Editor.save!("path/to/filled.pdf")
+
+  :ok
+after
+  Editor.close(editor)
+end
 #=> :ok
 ```
 
@@ -131,19 +141,22 @@ The non-bang functions are uniform in the same way — each returns
 middle:
 
 ```elixir
-values = %{"full_name" => "Jane Doe", "subscribe" => true}
-
-with {:ok, editor} <- Editor.open("path/to/form.pdf"),
-     {:ok, editor} <- Form.put_values(editor, values),
-     {:ok, editor} <- Editor.save(editor, "path/to/filled.pdf") do
-  Editor.close(editor)
+with {:ok, editor} <- Editor.open("path/to/form.pdf") do
+  try do
+    with {:ok, editor} <- Form.put_values(editor, %{"full_name" => "Jane Doe"}),
+         {:ok, _editor} <- Editor.save(editor, "path/to/filled.pdf") do
+      :ok
+    end
+  after
+    Editor.close(editor)
+  end
 end
 #=> :ok
 ```
 
 `PdfElixide.Editor.to_binary/2` and `PdfElixide.Editor.close/1` are the two ways
-such a pipeline ends: one hands back bytes, the other `:ok`. Everything before
-them hands back the editor.
+such a mutating pipeline ends: one hands back bytes, the other `:ok`. Every
+mutating step before them hands back the editor.
 
 ## Several fields at once
 
@@ -192,10 +205,14 @@ write before you close.
 {:ok, bytes} = Editor.to_binary(editor)
 ```
 
-Both take the same options (`t:PdfElixide.Editor.save_opts/0`): `:incremental`,
-`:compress`, `:linearize` and `:garbage_collect`. For form filling against an
-existing PDF, an incremental save appends only the field-value updates and
-leaves the original AcroForm structure as it was:
+Both accept `t:PdfElixide.Editor.save_opts/0`: `:incremental`, `:compress`,
+`:linearize` and `:garbage_collect`. The exception is `to_binary/2` with
+`incremental: true`, which returns
+`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`: an incremental update must
+be appended to the original file, so use `save/3` for one.
+
+For form filling against an existing PDF, an incremental save appends only the
+field-value updates and leaves the original AcroForm structure as it was:
 
 ```elixir
 {:ok, editor} = Editor.save(editor, "path/to/filled.pdf", incremental: true)
@@ -204,6 +221,11 @@ leaves the original AcroForm structure as it was:
 One asymmetry worth knowing: `to_binary/2` clears
 `PdfElixide.Editor.modified?/1` even though it writes no file, while an
 incremental `save/3` leaves it set.
+
+`to_binary/2` builds the whole output in native memory before copying it into an
+Elixir binary, so peak usage includes both copies on top of the editor. For a
+very large document, prefer `save/3`, which writes to the file without that
+second full-size buffer.
 
 ## Flattening
 
@@ -241,25 +263,29 @@ gives you two flattened files.
 
 `Form.flatten/1` removes the document's AcroForm outright. `Form.flatten/2`
 keeps it, rebuilt to hold only the fields that still have a widget on a page you
-left alone — a field whose widgets do not say which page they are on is kept
-either way. **`Form.flatten/1` takes any signature field with the AcroForm**, so
-a signed document comes back unsigned — the signature dictionary is still in the
-file, but nothing points at it. `flatten/2` keeps a signature field whose widgets
-are not on a page you flattened. This is the one write the library does not
-protect a signature from, because removing the form is what you asked for; note
-that any non-incremental write invalidates a signature anyway.
+left alone. A field whose widgets do not say which page they are on is kept by a
+partial flatten regardless of the selected page. **`Form.flatten/1` takes any
+signature field with the AcroForm**, so a signed document comes back unsigned —
+the signature dictionary is still in the file, but nothing points at it.
+`flatten/2` keeps a signature field whose widgets are not on a page you flattened.
+This is the one write the library does not protect a signature from, because
+removing the form is what you asked for; note that any non-incremental write
+invalidates a signature anyway.
 
 Both remove the form field widgets from a page's annotations and leave notes,
 links and highlights as they were — with one exception worth knowing if you
 hand-build PDFs: an annotation written *inline* in `/Annots` rather than as an
 indirect reference is dropped whatever its type, silently.
 
-`Editor.flatten_annotations/1,2` is blunter: it removes **every** annotation from
-the pages it flattens, including form field widgets and including annotations it
-could not draw. An annotation carrying no appearance stream is deleted rather
-than rendered, and no warning is raised for it. For the same reason, do not mark
-both kinds of flattening on the same page — they are applied independently, and
-the fields end up drawn twice.
+`Editor.flatten_annotations/1,2` is blunter. On a page where at least one
+annotation appearance can be produced, it removes **every annotation entry**,
+including form field widgets and annotations it could not draw. A skipped
+annotation can therefore be deleted without being rendered or reported. If no
+annotation on the page produces an appearance, the write creates no flatten data
+for that page and draws or removes nothing.
+
+Do not mark both kinds of flattening on the same page: where appearances are
+produced, the two marks are applied independently and fields can be drawn twice.
 
 ### Check the warnings
 
@@ -283,14 +309,14 @@ because the list came back empty is the one thing not to do with it.
 
 Three things it does report:
 
-- **A value whose characters the field's own font cannot render** — non-Latin
-  text or emoji. This is the one to watch. The field is written with wrong
-  glyphs or none at all, the PDF is otherwise perfectly valid, and this warning
-  is the only sign it happened. It applies to values you set in this editing
-  session, which is to say the ordinary fill-then-flatten workflow, so check the
-  list whenever you fill a form with text outside Latin-1 and then flatten it.
-  A field whose appearance the document already carried is copied across
-  untouched and is unaffected.
+- **A newly set value containing non-Latin text or emoji that the shipped
+  appearance path cannot render faithfully.** This is the one to watch. The
+  field is written with wrong glyphs or none at all, the PDF is otherwise
+  perfectly valid, and this warning is the only sign it happened. It applies to
+  values you set in this editing session, which is to say the ordinary
+  fill-then-flatten workflow, so check the list whenever you fill a form with
+  text outside Latin-1 and then flatten it. A field whose appearance the
+  document already carried is copied across untouched and is unaffected.
 
   The warning text names a build-time option of the underlying Rust library and
   tells you to rebuild with it. That is not something you can act on: this
@@ -298,8 +324,10 @@ Three things it does report:
   the warning as "this field did not flatten legibly" and handle it in your own
   code — leave the form unflattened, substitute a value the field's font can
   render, or draw the text yourself before flattening.
-- **A field with no appearance stream that could not be given one** — it
-  flattens to a blank rectangle. The warning names the field.
+- **A field with no appearance stream that could not be given one.** The warning
+  names the field. If another appearance causes that page to be flattened, the
+  field is removed without being drawn; if the page produces no appearances at
+  all, nothing on it is drawn or removed.
 - **An XFA form left as it was** after a per-page flatten, whose XFA data may
   still reference widgets that are now gone.
 
@@ -312,6 +340,7 @@ that went in:
 editor = Editor.open!("path/to/form.pdf")
 filled = Form.put_value!(editor, "full_name", "Jane")
 # `editor` and `filled` are the same handle — the original is filled too.
+:ok = Editor.close(editor)
 ```
 
 So a pipeline *sequences effects* rather than threading a value: an earlier
@@ -372,12 +401,12 @@ Setting a button field writes `/Yes` for `true` and `/Off` for `false`, and thos
 are the only two states `put_value/3` can produce. That makes the read-then-write
 round trip lossy for some check boxes and radio groups, in two ways.
 
-**A box whose on-state is `/On` rather than `/Yes` comes back unchecked.** It
-reads as `true`, since both names mean "checked", but writing that `true` back
-emits `/Yes` — which is not the state the widget declares. Nothing in the value
-reveals this; the two spellings are indistinguishable once read. (`/No` collapses
-to `false` and writes `/Off` in the same way, but harmlessly: `/Off` is the off
-state for every check box.)
+**A box whose on-state is `/On` rather than `/Yes` becomes unchecked after a
+read-then-write round trip.** It reads as `true`, since both names mean
+"checked", but writing that `true` back emits `/Yes` — which is not the state
+the widget declares. Nothing in the value reveals this; the two spellings are
+indistinguishable once read. (`/No` collapses to `false` and writes `/Off` in the
+same way, but harmlessly: `/Off` is the off state for every check box.)
 
 **A box whose on-state is a *custom* name — `/Export1`, say — cannot be checked
 at all.** `true` writes `/Yes`, which matches no widget state, and no other value

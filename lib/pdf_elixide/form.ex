@@ -154,8 +154,6 @@ defmodule PdfElixide.Form do
   @spec put_value(Editor.t(), String.t(), Field.value()) ::
           {:ok, Editor.t()} | {:error, Error.t()}
   def put_value(%Editor{ref: ref} = editor, name, value) when is_binary(name) do
-    # `{:ok, _}`, never `{:ok, :ok}`: `Wrap.call/1` wraps any bare NIF return, so
-    # pinning the literal would not be exhaustive.
     case Wrap.call(fn -> Native.editor_set_form_field_value(ref, name, value) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -276,8 +274,6 @@ defmodule PdfElixide.Form do
   """
   @spec flatten(Editor.t()) :: {:ok, Editor.t()} | {:error, Error.t()}
   def flatten(%Editor{ref: ref} = editor) do
-    # `{:ok, _}`, never `{:ok, :ok}`: `Wrap.call/1` wraps any bare NIF return, so
-    # pinning the literal would not be exhaustive.
     case Wrap.call(fn -> Native.editor_flatten_forms(ref) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err

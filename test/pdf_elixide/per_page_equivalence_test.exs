@@ -1,42 +1,5 @@
 defmodule PdfElixide.PerPageEquivalenceTest do
-  @moduledoc """
-  The per-page recipe the docs recommend, pinned against the whole-document call.
-
-  The "Whole-document extraction and memory" section of `PdfElixide.Document`
-  tells callers that `f(doc)` builds every page's results at once and that
-  folding `PdfElixide.Document.Page.f/1` over `pages/1` is the bounded-memory
-  way to ask for the same thing. That advice is only safe while the two really
-  do agree, and nothing else in the suite compares them: `document_test.exs`
-  exercises each arity against fixture content, so both could drift the same way
-  and stay green.
-
-  What could break the equivalence is a change to how a whole-document NIF
-  *loops* — a sort, a dedup across pages, an added tolerance for a failed page,
-  a different page order — none of which the per-page arity would see. Each of
-  those is a legitimate thing to want; the point here is that it must not happen
-  silently, because the moduledoc would then be recommending something that
-  returns different data.
-
-  Three functions deliberately do **not** hold, and `text/1` is asserted not to
-  below rather than left out: it joins pages with a form feed and applies
-  `:on_page_error`. `to_markdown/1` (a `---` break) and `to_html/1` (a
-  `<div class="page">` wrapper) differ the same way, and the moduledoc says so.
-
-  `search/2` holds the same equivalence but cannot be generated here — the
-  helpers below call `f!(doc)` and `Page.f!(page)` with no further arguments,
-  and a search needs a pattern. Adding one would also defeat the vacuity guard
-  below, which has no pattern to make non-empty. It is asserted by hand in
-  `document_test.exs` instead.
-
-  `fonts/1`, `images/1` and `tables/1` return structs carrying a native handle,
-  and two extractions never mint the same one, so those compare with `:ref`
-  dropped — the same reasoning `document_test.exs` gives for comparing a
-  table's `:rows`.
-
-  The `@fixtures` list is checked for vacuity at the end: an extractor that
-  found nothing anywhere would pass every equivalence assertion trivially, so
-  each one must produce a non-empty result on at least one fixture.
-  """
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document

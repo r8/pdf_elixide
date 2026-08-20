@@ -1,48 +1,9 @@
 defmodule PdfElixide.NifSource do
-  @moduledoc """
-  The Rust NIF sources, parsed once for the source-level canaries.
-
-  Two tests read the NIF definitions rather than the running library —
-  `PdfElixide.Native.InventoryTest`, which pins the stub list in
-  `PdfElixide.Native` against what is registered, and
-  `PdfElixide.Native.SchedulingTest`, which pins that a lock-taking NIF runs on a
-  dirty scheduler. They asked the same question of the same files, so the parser
-  lives here and each test spells only its own invariant.
-
-  This is a `.exs` required from `test/test_helper.exs`, deliberately, rather
-  than a `.ex` under an `elixirc_paths(:test)` entry: a compiled `test/support`
-  module is part of the application in the test environment, so
-  `:application.get_key(:pdf_elixide, :modules)` would return it and
-  `PdfElixide.DocGroupsTest` — which derives its inventory from exactly that
-  call — would demand a HexDocs group for a test helper. A required script is
-  never in the application at all.
-
-  `nifs/0` returns one map per `#[rustler::nif…]` attribute found under
-  `native/pdf_elixide_nif/src`:
-
-      %{file: "document.rs", name: "document_open", arity: 2, scheduled?: true, body: "…"}
-
-  Three details decide whether `name` and `arity` describe the function *Elixir*
-  sees, which is the whole point of the inventory comparison:
-
-    * `name = "…"` in the attribute overrides the Rust function name as the
-      exported one. None of the NIFs use it today; reading it is what keeps the
-      mapping honest on the day one does.
-    * A leading `env: Env<…>` parameter is injected by rustler and is not an
-      Elixir argument, so it does not count toward the arity (`image_data` and
-      `font_data` are the two NIFs this affects).
-    * A lifetime generic between the name and the parameter list (`fn f<'a>(…)`)
-      is skipped, so the balanced scan starts at the real opening paren.
-
-  Nothing here validates the parse. A regression that finds no NIFs at all
-  surfaces in the inventory test, as every stub reported unbacked.
-  """
+  @moduledoc false
 
   @src Path.expand("../../native/pdf_elixide_nif/src", __DIR__)
 
-  @doc """
-  Every `#[rustler::nif…]` definition in the crate.
-  """
+  @doc false
   def nifs do
     @src
     |> Path.join("*.rs")
@@ -50,9 +11,7 @@ defmodule PdfElixide.NifSource do
     |> Enum.flat_map(&parse_file/1)
   end
 
-  @doc """
-  The directory the definitions are read from, so a test can assert it exists.
-  """
+  @doc false
   def src_dir, do: @src
 
   # Splits a source at each attribute: the chunk before the first one is

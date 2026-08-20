@@ -10,8 +10,6 @@ use rustler::{NifMap, NifResult, ResourceArc};
 
 use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource};
 
-// Layers -----------------------------------------------------------------------------------------
-
 // Use the filter's PDF text decoder so every listed layer name can also be
 // matched by `:exclude_layers`.
 fn read_layers(doc: &PdfDocument) -> Result<Vec<String>> {
@@ -63,8 +61,6 @@ fn document_layers(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<Str
         .doc
         .with_read(|doc| read_layers(doc).map_err(to_nif_err))
 }
-
-// Inks -------------------------------------------------------------------------------------------
 
 // Decode `deep` here so invalid values follow the common NifMap error contract.
 #[derive(NifMap, Debug)]

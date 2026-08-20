@@ -1,43 +1,5 @@
 defmodule PdfElixide.PathContractTest do
-  @moduledoc """
-  The file-path contract, in one place.
-
-  A path crosses into a NIF as a `Binary` and is turned into an `OsStr` from
-  those bytes unchanged, so on Unix the set of paths this library accepts is the
-  set the operating system accepts. Nothing about that is enforced in Elixir,
-  which is why it needs pinning rather than trusting. The "File paths" section of
-  `PdfElixide` is what these tests hold to account.
-
-  The inversion worth stating plainly: on Unix a path with no UTF-8 spelling
-  used to be an `ArgumentError` at argument decode, and is now an ordinary
-  filesystem question — `%Error{reason: :io}` when the file is not there.
-  Windows keeps the old answer, because it cannot name a file in arbitrary
-  bytes. Both halves are asserted, in a matched pair of blocks that skip on each
-  other's platform, so the suite always reports which contract it held to.
-
-  Two questions decide the gates, and they are **not the same question**. Which
-  answer a path gets is the *platform*, since the divergence is `fs_path.rs`'s
-  `#[cfg(not(unix))]` arm and nothing else. Whether a byte-named file can be
-  *stored* is the *filesystem*: macOS answers `:eilseq` because APFS rejects such
-  a name outright, while Linux runs the VM in `+fna` and passes the bytes
-  through. So the round-trip block has no coverage on a developer machine here,
-  only in CI.
-
-  `@byte_names_round_trip` folds the platform in ahead of the filesystem probe
-  rather than checking them side by side, and the order is load-bearing: on
-  Windows the probe answers *true*, because the VM translates the stray byte into
-  a legal NTFS name and writes it, while the NIF gets the raw binary and rejects
-  it. Probing first would run the block there and fail all of it.
-
-  Also pinned here: `:image_output_dir`, which is *not* a path — it is pasted
-  into the generated markup, so it stays UTF-8-only and rejects a bad value
-  through `PdfElixide.Native.Wrap.call/1`'s "Could not decode field" clause,
-  which names the key. That message is asserted, not just its type; losing it
-  would be a silent downgrade in diagnosability, and it is now the only
-  `ArgumentError` route left in the family. Plus the documented gap between the
-  `Path.t()` specs and the `is_binary/1` guards beneath them (a charlist raises
-  `FunctionClauseError`).
-  """
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document

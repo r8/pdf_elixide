@@ -14,8 +14,8 @@ defmodule PdfElixide.Document.Path do
     * `:close_path` — close the current subpath
 
   A path may be stroked, filled, or both: `:stroke_color` and `:fill_color` are
-  each a `PdfElixide.Color.RGB` or `nil`. Upstream resolves every colorspace to
-  DeviceRGB during extraction, so these are always RGB — never the other
+  each a `PdfElixide.Color.RGB` or `nil`. Extraction normalizes every colorspace
+  to DeviceRGB, so these are always RGB — never the other
   `PdfElixide.Color` structs.
 
   ## Rectangles and straight lines

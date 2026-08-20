@@ -1,31 +1,5 @@
 defmodule PdfElixide.DocGroupsTest do
-  @moduledoc """
-  The HexDocs sidebar inventory, pinned against `lib/`.
-
-  `mix.exs` sorts every public module into a named group so the sidebar reads
-  as the API is organised rather than as one flat alphabetical list. The
-  grouping is a hand-written list of module names, which is the whole reason
-  this file exists: ExDoc does not complain about a module no group claims, it
-  quietly appends it to a trailing "Modules" bucket, and nobody notices until
-  they look at published docs. So the failure this pins is a *silent* one.
-
-  Three things are asserted, each catching a different mistake:
-
-    * every module carrying a real `@moduledoc` appears in some group — a new
-      public module that nobody placed fails here;
-    * no module appears in two groups — a copy-paste while moving one between
-      groups fails here;
-    * no group names a module that is gone or has become `@moduledoc false` —
-      a rename or a module made private fails here.
-
-  Membership is derived from the compiled docs chunk rather than a hardcoded
-  skip list: `@moduledoc false` reports `:hidden` and a missing one `:none`, so
-  `PdfElixide.Native` and `PdfElixide.Native.Wrap` drop out on their own, and a
-  module that *becomes* internal stops being required here without an edit.
-
-  Nothing here asserts which group a module belongs in. That is an editorial
-  call, and pinning it would only mean writing the same list twice.
-  """
+  @moduledoc false
   use ExUnit.Case, async: true
 
   defp groups do

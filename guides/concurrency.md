@@ -4,8 +4,11 @@ A `%PdfElixide.Document{}` is safe to pass to another process. Native document
 reads use shared access, so workers extracting from one open document do not
 queue behind each other at the handle boundary. Values already cached on the
 Elixir struct — the version, source path, and usually the page count — need no
-native access. There is no reason to open the same file once per worker or keep
-a document inside the process that opened it.
+native access. You normally do not need to open the same file once per worker or
+keep a document inside the process that opened it. Separate handles remain an
+option when workers must isolate repeated extraction of the same page from the
+`/ActualText` behavior below, at the cost of loading and caching the document
+more than once.
 
 ```elixir
 alias PdfElixide.Document
@@ -15,8 +18,8 @@ doc = Document.open!("path/to/file.pdf")
 # One handle, one page per worker. Fanning out *by page* is the shape to prefer;
 # the /ActualText hazard below says why.
 pages =
-  0..(Document.page_count!(doc) - 1)
-  |> Task.async_stream(&Document.text!(doc, &1), ordered: true)
+  doc
+  |> Task.async_stream(&PdfElixide.Document.Page.text!/1, ordered: true)
   |> Enum.map(fn {:ok, text} -> text end)
 
 # Close once the workers are done. `close/1` waits for calls already in flight,

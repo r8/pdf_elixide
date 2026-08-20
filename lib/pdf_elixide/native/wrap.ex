@@ -3,19 +3,7 @@ defmodule PdfElixide.Native.Wrap do
 
   alias PdfElixide.Error
 
-  @doc """
-  Runs a NIF call and normalizes the result.
-
-  Returns `{:ok, value}` on success and `{:error, %PdfElixide.Error{}}` on
-  failure, whether the NIF returned a tagged `{:error, term}` or raised.
-
-  Two failures are *not* normalized, because they report a caller bug rather
-  than a condition of the document: the `:badarg` a NIF raises when it cannot
-  decode an argument (already an `ArgumentError`), and a Rustler options-map
-  field decode failure, which is re-raised as an `ArgumentError` naming the
-  offending field. See the "Errors versus exceptions" section of
-  `PdfElixide.Error`.
-  """
+  @doc false
   @spec call((-> term())) :: {:ok, term()} | {:error, Error.t()}
   def call(fun) do
     case fun.() do
@@ -27,16 +15,12 @@ defmodule PdfElixide.Native.Wrap do
     exception -> handle_rescue(exception, __STACKTRACE__)
   end
 
-  @doc """
-  Unwraps a normalized result, raising the `%PdfElixide.Error{}` on failure.
-  """
+  @doc false
   @spec unwrap!({:ok, value} | {:error, Error.t()}) :: value when value: var
   def unwrap!({:ok, value}), do: value
   def unwrap!({:error, error}), do: raise(error)
 
-  @doc """
-  Runs a NIF call and unwraps it, raising the `%PdfElixide.Error{}` on failure.
-  """
+  @doc false
   @spec call!((-> term())) :: term()
   def call!(fun), do: fun |> call() |> unwrap!()
 

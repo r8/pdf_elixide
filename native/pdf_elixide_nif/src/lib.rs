@@ -33,8 +33,6 @@ mod table;
 mod text_line;
 mod word;
 
-// Atoms ------------------------------------------------------------------------------------------
-
 pub(crate) mod atoms {
     rustler::atoms! {
         ok, error,
@@ -50,7 +48,6 @@ pub(crate) mod atoms {
     }
 }
 
-// Resources --------------------------------------------------------------------------------------
 //
 // Every resource wraps its value in a `Closable`, which owns the locking and
 // supports releasing the value early (see resource.rs and the `*_close` NIFs).
@@ -91,7 +88,5 @@ struct TableResource {
 
 #[rustler::resource_impl]
 impl rustler::Resource for TableResource {}
-
-// ------------------------------------------------------------------------------------------------
 
 rustler::init!("Elixir.PdfElixide.Native");

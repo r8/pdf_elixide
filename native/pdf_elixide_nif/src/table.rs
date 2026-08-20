@@ -51,7 +51,6 @@ pub struct TableCellNif {
 pub fn table_to_nif(table: Table, page: usize) -> TableNif {
     TableNif {
         page,
-        // `Rect` is `Copy`, so this reads `bbox` rather than moving it out.
         bbox: table.bbox.map(rect_to_nif),
         col_count: table.col_count,
         has_header: table.has_header,
@@ -94,9 +93,6 @@ fn table_cell_to_nif(cell: &TableCell, page: usize) -> TableCellNif {
     }
 }
 
-// The one conversion option a table renderer actually reads. Upstream's
-// Markdown table path consults `bold_marker_behavior` (through `is_bold_raw`)
-// and nothing else; its HTML table path reads no configuration at all.
 #[derive(NifMap, Debug)]
 pub struct TableMarkdownOptionsNif {
     pub bold_markers: BoldMarkersNif,
@@ -136,10 +132,7 @@ fn table_to_markdown(
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_to_html(resource: ResourceArc<TableResource>) -> NifResult<String> {
     resource.table.with_read(|table| {
-        // Defaults throughout: the HTML table renderer reads no configuration at
-        // all, and `preserve_layout` must stay false — upstream's HTML converter
-        // discards the tables entirely and emits positioned `<div>`s instead when it
-        // is set.
+        // Preserve-layout mode discards tables, so the default must stay false.
         render(
             &HtmlOutputConverter::new(),
             table,
@@ -153,11 +146,6 @@ fn table_to_text(resource: ResourceArc<TableResource>) -> NifResult<String> {
     resource.table.with_read(|table| Ok(table.render_text()))
 }
 
-// Releases the detected table now, rather than waiting for the BEAM to
-// garbage-collect the handle. Idempotent; the rendering NIFs above then fail
-// with `:closed`. Takes the handle's lock exclusively, so it waits for an
-// in-flight render on the same handle to return — see
-// [`Closable::close`](crate::resource::Closable::close).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn table_close(resource: ResourceArc<TableResource>) -> Atom {
     resource.table.close();
