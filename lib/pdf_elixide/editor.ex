@@ -14,7 +14,9 @@ defmodule PdfElixide.Editor do
 
   Nothing is written until `save/3` or `to_binary/2` runs, and neither consumes
   the editor — you can keep editing and write again. `close/1` **discards
-  unsaved edits**, so write before you close.
+  unsaved edits**, so write before you close. Flattening is deferred to that same
+  write: `flatten_annotations/1,2` and `PdfElixide.Form.flatten/1,2` mark what to
+  flatten and the drawing happens as the file is written.
 
   Every function that changes an editor returns the editor, as above, and the
   tuple-returning half is uniform in the same way, so both compose as one
@@ -27,9 +29,10 @@ defmodule PdfElixide.Editor do
 
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
-  a single editor serializes. Only `page_count/1` and `modified?/1` take the lock
-  shared. Give each process its own editor if you need them to work at once; see
-  the [Concurrency](guides/concurrency.md) guide.
+  a single editor serializes. Only `page_count/1`, `modified?/1` and
+  `flatten_warnings/1` take the lock shared. Give each process its own editor if
+  you need them to work at once; see the [Concurrency](guides/concurrency.md)
+  guide.
   """
 
   alias PdfElixide.Error
@@ -283,6 +286,102 @@ defmodule PdfElixide.Editor do
   @spec to_binary!(t(), save_opts()) :: binary()
   def to_binary!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
     to_binary(editor, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Marks every page's annotations for flattening.
+
+  Flattening draws each annotation's appearance into the page content. Nothing
+  happens until the next full write: `save/3` without `:incremental`, or
+  `to_binary/2`. An incremental save ignores the mark entirely. The mark cannot
+  be removed — reopen the source for an unflattened document.
+
+  **This removes every annotation from the flattened pages, including the ones it
+  could not draw.** An annotation carrying no appearance stream is deleted rather
+  than rendered, and form field widgets go with the rest — so do not flatten
+  annotations on a page whose form fields you also flatten with
+  `PdfElixide.Form.flatten/1,2`, which would draw those fields twice.
+
+  Returns the editor. See the "Flattening" section of the
+  [Forms](guides/forms.md) guide.
+  """
+  @spec flatten_annotations(t()) :: {:ok, t()} | {:error, Error.t()}
+  def flatten_annotations(%__MODULE__{ref: ref} = editor) do
+    # `{:ok, _}`, never `{:ok, :ok}`: `Wrap.call/1` wraps any bare NIF return, so
+    # pinning the literal would not be exhaustive.
+    case Wrap.call(fn -> Native.editor_flatten_all_annotations(ref) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Marks every page's annotations for flattening, raising an error if it fails.
+  """
+  @spec flatten_annotations!(t()) :: t()
+  def flatten_annotations!(%__MODULE__{} = editor) do
+    editor |> flatten_annotations() |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Marks the annotations of the page at the given zero-based index for flattening.
+
+  Deferred until the next full write, and removes every annotation from that
+  page, exactly as `flatten_annotations/1` does.
+
+  Returns the editor, or `{:error, %PdfElixide.Error{reason: :out_of_range}}` if
+  the page does not exist. See the "Flattening" section of the
+  [Forms](guides/forms.md) guide.
+  """
+  @spec flatten_annotations(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
+  def flatten_annotations(%__MODULE__{ref: ref} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    # Loosely bound for the same reason as `flatten_annotations/1`.
+    case Wrap.call(fn -> Native.editor_flatten_page_annotations(ref, page_index) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Marks the annotations of the page at the given zero-based index for flattening,
+  raising an error if it fails.
+  """
+  @spec flatten_annotations!(t(), non_neg_integer()) :: t()
+  def flatten_annotations!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> flatten_annotations(page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Lists the warnings collected while flattening.
+
+  Empty until a write has actually flattened something, since flattening is
+  deferred. Each entry describes a field this editor could not flatten faithfully
+  — most importantly a value whose characters the field's own font cannot render,
+  which is written with wrong glyphs or none while the PDF stays otherwise valid.
+  The warning is the only signal that happened.
+
+  Warnings accumulate for the life of the editor and are never cleared, so a
+  second write reports the first one's entries again. Read the list after the
+  write you care about.
+
+  **The list is a best effort, not an inventory.** Some losses are recorded
+  nowhere, so an empty list is not proof that the written document matches the
+  original. The "Flattening" section of the [Forms](guides/forms.md) guide says
+  which, and what each warning means.
+  """
+  @spec flatten_warnings(t()) :: {:ok, [String.t()]} | {:error, Error.t()}
+  def flatten_warnings(%__MODULE__{ref: ref}) do
+    Wrap.call(fn -> Native.editor_flatten_warnings(ref) end)
+  end
+
+  @doc """
+  Lists the warnings collected while flattening, raising an error if it fails.
+  """
+  @spec flatten_warnings!(t()) :: [String.t()]
+  def flatten_warnings!(%__MODULE__{} = editor) do
+    flatten_warnings(editor) |> Wrap.unwrap!()
   end
 
   defp build_save_options(opts) do

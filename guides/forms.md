@@ -205,6 +205,104 @@ One asymmetry worth knowing: `to_binary/2` clears
 `PdfElixide.Editor.modified?/1` even though it writes no file, while an
 incremental `save/3` leaves it set.
 
+## Flattening
+
+Flattening draws a field's appearance into the page content and takes the
+interactive field away, so the written PDF shows the filled values but can no
+longer be edited. `PdfElixide.Form.flatten/1` covers the whole document,
+`flatten/2` one page:
+
+```elixir
+editor
+|> Form.put_value!("full_name", "Jane Roe")
+|> Form.flatten!()
+|> Editor.to_binary!()
+```
+
+`PdfElixide.Editor.flatten_annotations/1,2` is the same idea for annotations —
+notes, highlights, stamps — and is a separate mark from the form one.
+
+**Nothing happens until the next full write.** Both calls only *mark* what to
+flatten; the drawing happens inside `PdfElixide.Editor.save/3` or
+`PdfElixide.Editor.to_binary/2`. Until then `Form.fields/1` still reports every
+field, because the editor is unchanged — what changes is the file you write.
+`PdfElixide.Editor.modified?/1` does go true at mark time.
+
+**An incremental save does not flatten.** `save(editor, path, incremental: true)`
+writes an unflattened file, reports no error and produces no warnings. An
+incremental update appends to the original, and the original's fields are still
+there. Write with `save/3` without `:incremental`, or with `to_binary/2`.
+
+**A mark cannot be removed, and it applies to every later write.** There is no
+unflatten; reopen the source if you need an unflattened document. Writing twice
+gives you two flattened files.
+
+### What each one leaves behind
+
+`Form.flatten/1` removes the document's AcroForm outright. `Form.flatten/2`
+keeps it, rebuilt to hold only the fields that still have a widget on a page you
+left alone — a field whose widgets do not say which page they are on is kept
+either way. **`Form.flatten/1` takes any signature field with the AcroForm**, so
+a signed document comes back unsigned — the signature dictionary is still in the
+file, but nothing points at it. `flatten/2` keeps a signature field whose widgets
+are not on a page you flattened. This is the one write the library does not
+protect a signature from, because removing the form is what you asked for; note
+that any non-incremental write invalidates a signature anyway.
+
+Both remove the form field widgets from a page's annotations and leave notes,
+links and highlights as they were — with one exception worth knowing if you
+hand-build PDFs: an annotation written *inline* in `/Annots` rather than as an
+indirect reference is dropped whatever its type, silently.
+
+`Editor.flatten_annotations/1,2` is blunter: it removes **every** annotation from
+the pages it flattens, including form field widgets and including annotations it
+could not draw. An annotation carrying no appearance stream is deleted rather
+than rendered, and no warning is raised for it. For the same reason, do not mark
+both kinds of flattening on the same page — they are applied independently, and
+the fields end up drawn twice.
+
+### Check the warnings
+
+`PdfElixide.Editor.flatten_warnings/1` lists what could not be flattened
+faithfully. It is empty until a write has happened, and it accumulates for the
+life of the editor rather than being cleared per write — so read it after the
+write you care about:
+
+```elixir
+{:ok, bytes} = editor |> Form.flatten!() |> Editor.to_binary()
+
+for warning <- Editor.flatten_warnings!(editor) do
+  Logger.warning("flatten: #{warning}")
+end
+```
+
+**Treat an empty list as "nothing was reported", not as "nothing was lost".** The
+list is a best effort: an inline annotation is dropped with no entry, and so is a
+widget whose appearance stream cannot be loaded. Deciding a flatten was faithful
+because the list came back empty is the one thing not to do with it.
+
+Three things it does report:
+
+- **A value whose characters the field's own font cannot render** — non-Latin
+  text or emoji. This is the one to watch. The field is written with wrong
+  glyphs or none at all, the PDF is otherwise perfectly valid, and this warning
+  is the only sign it happened. It applies to values you set in this editing
+  session, which is to say the ordinary fill-then-flatten workflow, so check the
+  list whenever you fill a form with text outside Latin-1 and then flatten it.
+  A field whose appearance the document already carried is copied across
+  untouched and is unaffected.
+
+  The warning text names a build-time option of the underlying Rust library and
+  tells you to rebuild with it. That is not something you can act on: this
+  package ships a precompiled binary, and the option is deliberately off. Read
+  the warning as "this field did not flatten legibly" and handle it in your own
+  code — leave the form unflattened, substitute a value the field's font can
+  render, or draw the text yourself before flattening.
+- **A field with no appearance stream that could not be given one** — it
+  flattens to a blank rectangle. The warning names the field.
+- **An XFA form left as it was** after a per-page flatten, whose XFA data may
+  still reference widgets that are now gone.
+
 ## An editor is a handle, not a value
 
 **Rebinding does not fork it.** The editor a mutating call returns is the one
@@ -232,6 +330,9 @@ way, from the `fields/1` read it validates against.
 `/V` is a signature dictionary rather than a value, and writing *any* value over
 it — `nil` included — replaces that dictionary, so a filled form would silently
 come back unsigned.
+
+Flattening is the exception: `PdfElixide.Form.flatten/1` removes the whole
+AcroForm and a signature field goes with it, as "Flattening" above describes.
 
 This holds for a field whose `/FT` is declared on an ancestor rather than on the
 field itself, which the PDF specification permits. Reading, verifying and

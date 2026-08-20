@@ -11,6 +11,7 @@ defmodule PdfElixide.EditorTest do
   @form_pdf Path.join(@fixtures, "form.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @invalid_pdf Path.join(@fixtures, "invalid.bin")
+  @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
   describe "open/1" do
     test "returns {:ok, %Editor{}} for a valid PDF file" do
@@ -460,6 +461,82 @@ defmodule PdfElixide.EditorTest do
       reopened = Document.open!(out_path)
       assert {:ok, "Jane Doe"} = Form.value(reopened, "full_name")
       assert {:ok, ["Canada"]} = Form.value(reopened, "country")
+    end
+  end
+
+  describe "flatten_annotations/1" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@flatten_pdf)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.flatten_annotations(editor)
+      assert Editor.modified?(editor)
+    end
+
+    test "draws the annotation appearances into the page and removes them all" do
+      editor = Editor.open!(@flatten_pdf)
+
+      {:ok, flattened} = editor |> Editor.flatten_annotations!() |> Editor.to_binary()
+      {:ok, doc} = Document.from_binary(flattened)
+
+      assert Document.text!(doc, 0) =~ "FLATTENED"
+      # Widgets go with the rest, so the form fields lose their widgets too.
+      assert Document.annotations!(doc, 0) == []
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@flatten_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.flatten_annotations(editor)
+    end
+  end
+
+  describe "flatten_annotations/2" do
+    test "leaves the other pages alone" do
+      editor = Editor.open!(@flatten_pdf)
+
+      {:ok, flattened} = editor |> Editor.flatten_annotations!(0) |> Editor.to_binary()
+      {:ok, doc} = Document.from_binary(flattened)
+
+      assert Document.annotations!(doc, 0) == []
+      assert length(Document.annotations!(doc, 1)) == 1
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@flatten_pdf)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.flatten_annotations(editor, 2)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@flatten_pdf)
+
+      assert_raise FunctionClauseError, fn -> Editor.flatten_annotations(editor, -1) end
+    end
+  end
+
+  describe "flatten_warnings/1" do
+    test "is empty before a write, since flattening is deferred" do
+      editor = Editor.open!(@flatten_pdf)
+      Form.flatten!(editor)
+
+      assert {:ok, []} = Editor.flatten_warnings(editor)
+    end
+
+    test "names the field that could not be given an appearance" do
+      editor = Editor.open!(@flatten_pdf)
+      {:ok, _} = editor |> Form.flatten!() |> Editor.to_binary()
+
+      assert [warning] = Editor.flatten_warnings!(editor)
+      assert warning =~ "orphan"
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@flatten_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.flatten_warnings(editor)
     end
   end
 end

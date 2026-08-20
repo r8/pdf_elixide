@@ -28,7 +28,7 @@ high-performance PDF library written in Rust. Built with
   fonts
 - Read annotations and AcroForm fields, with check boxes, radio groups, combo
   boxes and the rest classified from their field flags
-- Fill AcroForm fields and save edited PDFs to a file or binary
+- Fill AcroForm fields, flatten forms and annotations, and save edited PDFs to a file or binary
 - Restrict extraction by region and configure artifacts, layers, inks, reading
   order, table detection, and span merging
 - Share one open document across processes for concurrent native reads

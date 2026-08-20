@@ -102,6 +102,11 @@ defmodule PdfElixide.Native do
   def editor_set_form_field_value(_editor, _name, _value), do: err()
   def editor_to_bytes(_editor, _options), do: err()
   def editor_save(_editor, _path, _options), do: err()
+  def editor_flatten_forms(_editor), do: err()
+  def editor_flatten_forms_on_page(_editor, _page_index), do: err()
+  def editor_flatten_all_annotations(_editor), do: err()
+  def editor_flatten_page_annotations(_editor, _page_index), do: err()
+  def editor_flatten_warnings(_editor), do: err()
 
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

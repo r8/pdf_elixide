@@ -5,14 +5,18 @@ defmodule PdfElixide.Form do
   `fields/1`, `field/2` and `value/2` read from *either* source — a read-only
   `PdfElixide.Document` or a mutable `PdfElixide.Editor` (`t:source/0`) — so
   inspecting a form needs no editor. Writing needs one: `put_value/3`,
-  `put_values/2` and `update_value/3` take an `Editor` only, and each returns
-  it, so filling and saving compose as a pipeline.
+  `put_values/2`, `update_value/3` and `flatten/1,2` take an `Editor` only, and
+  each returns it, so filling and saving compose as a pipeline.
 
       "form.pdf"
       |> PdfElixide.Editor.open!()
       |> PdfElixide.Form.put_value!("full_name", "Jane Doe")
       |> PdfElixide.Editor.save!("filled.pdf")
       |> PdfElixide.Editor.close()
+
+  `flatten/1,2` is how a filled form stops being fillable: it draws the field
+  values into the page and takes the interactive fields away. Like every other
+  edit it takes effect when the editor is written.
 
   Fields come back as one struct per field type, listed in
   `PdfElixide.Form.Field`, each carrying the widget it is as a `:kind` and its
@@ -247,6 +251,79 @@ defmodule PdfElixide.Form do
   def update_value!(%Editor{} = editor, name, fun)
       when is_binary(name) and is_function(fun, 1) do
     editor |> update_value(name, fun) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Marks every page's form fields for flattening.
+
+  Flattening draws each field's appearance into the page content and removes the
+  interactive fields, so the written PDF is no longer fillable. Nothing happens
+  until the next full write: `PdfElixide.Editor.save/3` without `:incremental`,
+  or `PdfElixide.Editor.to_binary/2`. An incremental save ignores the mark
+  entirely.
+
+  This also removes the document's AcroForm, and any signature field goes with
+  it — the dictionary stays in the file, but nothing references it any more, so
+  the document comes back unsigned. `flatten/2` keeps the ones whose widgets
+  survive.
+
+  A document carrying no form is not an error. The mark cannot be removed —
+  reopen the source for an unflattened document.
+
+  Returns the editor. Check `PdfElixide.Editor.flatten_warnings/1` after the
+  write: a field value can be flattened wrongly and still produce a valid PDF.
+  See the "Flattening" section of the [Forms](guides/forms.md) guide.
+  """
+  @spec flatten(Editor.t()) :: {:ok, Editor.t()} | {:error, Error.t()}
+  def flatten(%Editor{ref: ref} = editor) do
+    # `{:ok, _}`, never `{:ok, :ok}`: `Wrap.call/1` wraps any bare NIF return, so
+    # pinning the literal would not be exhaustive.
+    case Wrap.call(fn -> Native.editor_flatten_forms(ref) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Marks every page's form fields for flattening, raising an error if it fails.
+  """
+  @spec flatten!(Editor.t()) :: Editor.t()
+  def flatten!(%Editor{} = editor) do
+    editor |> flatten() |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Marks the form fields of the page at the given zero-based index for flattening.
+
+  Deferred until the next full write, exactly as `flatten/1` is. Unlike
+  `flatten/1` the AcroForm is kept, rebuilt to hold only the fields that still
+  have a widget on a page left unflattened; a field whose widgets do not name a
+  page is kept as it was. A signature field is kept or dropped by that same rule,
+  so one whose widget is on a flattened page is lost as it would be by
+  `flatten/1`.
+
+  Returns the editor, or `{:error, %PdfElixide.Error{reason: :out_of_range}}` if
+  the page does not exist. See the "Flattening" section of the
+  [Forms](guides/forms.md) guide.
+  """
+  @spec flatten(Editor.t(), non_neg_integer()) :: {:ok, Editor.t()} | {:error, Error.t()}
+  def flatten(%Editor{ref: ref} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    # Loosely bound for the same reason as `flatten/1`.
+    case Wrap.call(fn -> Native.editor_flatten_forms_on_page(ref, page_index) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Marks the form fields of the page at the given zero-based index for flattening,
+  raising an error if it fails.
+  """
+  @spec flatten!(Editor.t(), non_neg_integer()) :: Editor.t()
+  def flatten!(%Editor{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> flatten(page_index) |> Wrap.unwrap!()
   end
 
   # Names are checked before duplicates because a pair has to be well-formed

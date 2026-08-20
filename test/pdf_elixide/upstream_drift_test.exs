@@ -52,6 +52,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
   @signature_pdf Path.join(@fixtures, "form_signature.pdf")
+  @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
   @columns 0
   @artifacts 1
@@ -964,6 +965,130 @@ defmodule PdfElixide.UpstreamDriftTest do
       Form.put_value!(editor, "subscribe", "Export1")
 
       assert Editor.to_binary!(editor, compress: false) =~ "/AS (Export1)"
+    end
+  end
+
+  describe "flattening" do
+    # The asymmetry both `Form.flatten/1` and `flatten/2` document. Upstream sets
+    # `remove_acroform` in the whole-document call only; the per-page one rebuilds
+    # an AcroForm from the fields whose widgets survive.
+    test "the whole-document flatten drops the AcroForm, the per-page one rebuilds it" do
+      whole = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(whole) end)
+
+      {:ok, doc} =
+        whole |> Form.flatten!() |> Editor.to_binary() |> elem(1) |> Document.from_binary()
+
+      assert Form.fields!(doc) == []
+
+      partial = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(partial) end)
+
+      {:ok, doc} =
+        partial |> Form.flatten!(0) |> Editor.to_binary() |> elem(1) |> Document.from_binary()
+
+      assert Enum.map(Form.fields!(doc), & &1.name) == ["comments"]
+    end
+
+    # Flattening is deferred to the write, so nothing upstream can report until
+    # one happens. Every `@doc` in the family says the list is empty until then.
+    test "warnings appear only after a write" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.flatten!(editor)
+      assert Editor.flatten_warnings!(editor) == []
+
+      Editor.to_binary!(editor)
+      assert [_ | _] = Editor.flatten_warnings!(editor)
+    end
+
+    # Nothing upstream clears the warning list, so a second write reports the
+    # first one's entries again. `Editor.flatten_warnings/1` documents this.
+    test "warnings accumulate across writes rather than being cleared" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.flatten!(editor)
+      Editor.to_binary!(editor)
+      first = Editor.flatten_warnings!(editor)
+
+      Editor.to_binary!(editor)
+
+      assert Editor.flatten_warnings!(editor) == first ++ first
+    end
+
+    # `write_incremental` never consults either flatten mark set, so an
+    # incremental save writes an unflattened file and reports nothing. The
+    # "Flattening" section of `guides/forms.md` tells callers to avoid it.
+    test "an incremental save ignores the flatten marks entirely" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(System.tmp_dir!(), "drift_incremental_flatten.pdf")
+      on_exit(fn -> File.rm(path) end)
+
+      editor |> Form.flatten!() |> Editor.save!(path, incremental: true)
+
+      doc = Document.open!(path)
+      assert Enum.map(Form.fields!(doc), & &1.name) == ["full_name", "comments"]
+      assert Editor.flatten_warnings!(editor) == []
+    end
+
+    # `remove_acroform` drops the catalog's `/AcroForm` outright (there is no
+    # per-field exemption), so the whole-document flatten unhooks a signature
+    # field while the per-page rebuild keeps one whose widgets it did not touch.
+    # Nothing is *destroyed* in either case — the dictionary survives collection —
+    # which is the half `Form.flatten/1` promises alongside the loss.
+    test "the whole-document flatten unhooks a signature field, the per-page one keeps it" do
+      whole = Editor.open!(@signature_pdf)
+      on_exit(fn -> Editor.close(whole) end)
+      bytes = whole |> Form.flatten!() |> Editor.to_binary!(compress: false)
+
+      assert bytes =~ "DEADBEEF"
+      refute bytes =~ "/AcroForm"
+
+      partial = Editor.open!(@signature_pdf)
+      on_exit(fn -> Editor.close(partial) end)
+      bytes = partial |> Form.flatten!(0) |> Editor.to_binary!(compress: false)
+
+      assert bytes =~ "DEADBEEF"
+      assert bytes =~ "/AcroForm"
+    end
+
+    # The write reaches `/Annots` entries through `as_reference()`, so an entry
+    # written inline is dropped whatever its subtype — and nothing records it.
+    # This is why `Editor.flatten_warnings/1` documents the list as a best effort
+    # rather than an inventory. The fixture's inline annotation is the only one
+    # `Document.annotations/2` does not report, hence the byte assertion.
+    test "an inline annotation is dropped by a flatten with no warning" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      inline = "72 550"
+
+      assert File.read!(@flatten_pdf) =~ inline
+      # The control: an ordinary write keeps it, so the loss is the flatten's.
+      assert Editor.to_binary!(editor, compress: false) =~ inline
+
+      bytes = editor |> Form.flatten!() |> Editor.to_binary!(compress: false)
+
+      refute bytes =~ inline
+      assert [only] = Editor.flatten_warnings!(editor)
+      assert only =~ "orphan"
+    end
+
+    # The annotation branch removes the page's whole `/Annots` array rather than
+    # filtering it, so an annotation it could not draw is deleted rather than
+    # rendered. `Editor.flatten_annotations/1` warns about exactly this, and
+    # upstream emits no warning for it.
+    test "flattening annotations removes even the ones it could not draw" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      {:ok, bytes} = editor |> Editor.flatten_annotations!(0) |> Editor.to_binary()
+      {:ok, doc} = Document.from_binary(bytes)
+
+      assert Document.annotations!(doc, 0) == []
+      assert Editor.flatten_warnings!(editor) == []
     end
   end
 end

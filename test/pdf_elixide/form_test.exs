@@ -15,6 +15,7 @@ defmodule PdfElixide.FormTest do
   @cyclic_pdf Path.join(@fixtures, "form_cyclic.pdf")
   @flags_pdf Path.join(@fixtures, "form_flags.pdf")
   @no_form_pdf Path.join(@fixtures, "sample.pdf")
+  @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
   # The three `form.pdf` fields, in file order — one per struct the fixture can
   # express, which is every struct but `Unknown`. No fixture yields a non-nil
@@ -816,6 +817,71 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@cyclic_pdf)
 
       assert {:ok, 1} = Document.page_count(doc)
+    end
+  end
+
+  describe "flatten/1" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@flatten_pdf)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Form.flatten(editor)
+      assert Editor.modified?(editor)
+    end
+
+    test "removes the AcroForm and the widgets from the written document" do
+      editor = Editor.open!(@flatten_pdf)
+      doc = Document.open!(@flatten_pdf)
+      assert length(Document.annotations!(doc, 0)) == 3
+
+      {:ok, flattened} = editor |> Form.flatten!() |> Editor.to_binary()
+      {:ok, doc} = Document.from_binary(flattened)
+
+      assert Form.fields!(doc) == []
+      # Only the widgets go: the fixture's non-widget annotation survives.
+      assert length(Document.annotations!(doc, 0)) == 1
+    end
+
+    test "is not an error for a document carrying no form" do
+      editor = Editor.open!(@no_form_pdf)
+      assert {:ok, ^editor} = Form.flatten(editor)
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@flatten_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Form.flatten(editor)
+    end
+
+    test "flatten!/1 raises for a closed editor" do
+      editor = Editor.open!(@flatten_pdf)
+      :ok = Editor.close(editor)
+
+      assert_raise Error, fn -> Form.flatten!(editor) end
+    end
+  end
+
+  describe "flatten/2" do
+    test "keeps the fields whose widgets are on an unflattened page" do
+      editor = Editor.open!(@flatten_pdf)
+
+      {:ok, flattened} = editor |> Form.flatten!(0) |> Editor.to_binary()
+      {:ok, doc} = Document.from_binary(flattened)
+
+      assert Enum.map(Form.fields!(doc), & &1.name) == ["comments"]
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@flatten_pdf)
+
+      assert {:error, %Error{reason: :out_of_range}} = Form.flatten(editor, 2)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@flatten_pdf)
+
+      assert_raise FunctionClauseError, fn -> Form.flatten(editor, -1) end
     end
   end
 end

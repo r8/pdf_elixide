@@ -198,3 +198,79 @@ fn editor_set_form_field_value(
         Ok(atoms::ok())
     })
 }
+
+// Upstream bounds-checks both per-page flattens but reports a bad index as a
+// generic `InvalidPdf`, so the check is repeated here to reach `:out_of_range`.
+// The editor's count is live rather than cached, so it must be read per call.
+fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> NifResult<()> {
+    let count = editor.current_page_count();
+    if page_index >= count {
+        return Err(tagged_err(
+            atoms::out_of_range(),
+            format!("Page index {page_index} out of range (editor has {count} pages)"),
+        ));
+    }
+
+    Ok(())
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_flatten_forms(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        editor.flatten_forms().map_err(to_nif_err)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_flatten_forms_on_page(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        // Inside the guard so the check and the mark cannot straddle a writer
+        // that changes the page count.
+        ensure_editor_page_in_range(editor, page_index)?;
+
+        editor
+            .flatten_forms_on_page(page_index)
+            .map_err(to_nif_err)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_flatten_all_annotations(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        editor.flatten_all_annotations().map_err(to_nif_err)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_flatten_page_annotations(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        ensure_editor_page_in_range(editor, page_index)?;
+
+        editor
+            .flatten_page_annotations(page_index)
+            .map_err(to_nif_err)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+// Shared because upstream's accessor takes `&self`; the slice must be cloned
+// since the guard drops at the closure boundary.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<Vec<String>> {
+    resource
+        .editor
+        .with_read(|editor| Ok(editor.flatten_warnings().to_vec()))
+}
