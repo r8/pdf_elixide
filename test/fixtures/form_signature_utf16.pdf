@@ -1,0 +1,42 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << >> >>
+endobj
+4 0 obj
+<< /Length 7 >>
+stream
+BT ET
+
+endstream
+endobj
+5 0 obj
+<< /Fields [6 0 R] /SigFlags 3 >>
+endobj
+6 0 obj
+<< /FT /Sig /T (signature) /V 7 0 R >>
+endobj
+7 0 obj
+<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 0 0 0] /Contents <DEADBEEF> /M (D:20240101000000Z) /Name <FEFF0410043D043D04300020041F043504420440043E04320430> /Reason <FEFF041F0440043E043204350440043A04300020043F043E0434043F043804410438> /Location <436166E9> >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000080 00000 n 
+0000000161 00000 n 
+0000000241 00000 n 
+0000000296 00000 n 
+0000000345 00000 n 
+0000000399 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+712
+%%EOF

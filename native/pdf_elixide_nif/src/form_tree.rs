@@ -1,5 +1,5 @@
 // Validates an AcroForm field tree and resolves the inheritable attributes
-// upstream reads off a field's own dictionary — `/FT` and `/Ff` — before
+// upstream reads off a field's own dictionary — `/FT`, `/Ff` and `/V` — before
 // extraction.
 
 use std::collections::{HashMap, HashSet};
@@ -33,6 +33,7 @@ enum Refused {
     Cycle,
     TooDeep,
     TooLarge,
+    Unreadable,
 }
 
 // Names, rather than object references, are the common key available to both
@@ -59,7 +60,7 @@ impl Resolved {
 // Return fields and their resolved attributes together to avoid repeating
 // extraction.
 pub fn extract_fields(doc: &PdfDocument) -> NifResult<(Vec<FormField>, Resolved)> {
-    let walked = walk(doc).map_err(refused_err)?;
+    let walked = walk(doc, Strictness::Tolerant).map_err(refused_err)?;
 
     let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
     let resolved = resolved_of(&fields, &walked);
@@ -101,6 +102,13 @@ fn resolved_of(fields: &[FormField], walked: &Walked) -> Resolved {
     resolved
 }
 
+// Do not let an unreadable object turn into a false "no signatures" result.
+pub fn signature_values(doc: &PdfDocument) -> NifResult<Vec<Object>> {
+    walk(doc, Strictness::Strict)
+        .map(|walked| walked.signature_values)
+        .map_err(refused_err)
+}
+
 fn refused_err(refused: Refused) -> rustler::Error {
     match refused {
         // A cycle is a malformed document; the caps are this binding declining.
@@ -116,7 +124,17 @@ fn refused_err(refused: Refused) -> rustler::Error {
             atoms::unsupported(),
             format!("AcroForm field tree exceeds the supported size of {MAX_FIELD_NODES} nodes"),
         ),
+        Refused::Unreadable => tagged_err(
+            atoms::invalid_pdf(),
+            "AcroForm field tree contains an unreadable object",
+        ),
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Strictness {
+    Strict,
+    Tolerant,
 }
 
 // What one walk of the field tree yields, keyed by object reference.
@@ -124,14 +142,18 @@ fn refused_err(refused: Refused) -> rustler::Error {
 struct Walked {
     // Every field object whose *effective* `/FT` is `/Sig`.
     signatures: HashSet<ObjectRef>,
+    // Effective `/V` values in the document order `Signature.list/1` reports.
+    signature_values: Vec<Object>,
+    // A field and its widget kids commonly share one signature dictionary.
+    signature_value_refs: HashSet<ObjectRef>,
     // Every field object's effective `/Ff`, absent where neither it nor any
     // ancestor declares one.
     flags: HashMap<ObjectRef, u32>,
 }
 
 // Resolves the inheritable attributes, validating the tree on the way.
-fn walk(doc: &PdfDocument) -> Result<Walked, Refused> {
-    let Some(fields) = root_fields(doc) else {
+fn walk(doc: &PdfDocument, strictness: Strictness) -> Result<Walked, Refused> {
+    let Some(fields) = root_fields(doc, strictness)? else {
         return Ok(Walked::default());
     };
 
@@ -140,6 +162,7 @@ fn walk(doc: &PdfDocument) -> Result<Walked, Refused> {
         path: Vec::new(),
         walked: Walked::default(),
         budget: MAX_FIELD_NODES,
+        strictness,
     };
 
     for field in &fields {
@@ -149,14 +172,42 @@ fn walk(doc: &PdfDocument) -> Result<Walked, Refused> {
     Ok(walker.walked)
 }
 
-// `/Root /AcroForm /Fields`, or `None` for a document with no form — which
-// includes every way of failing to read one, per the tolerance above.
-fn root_fields(doc: &PdfDocument) -> Option<Vec<Object>> {
-    let catalog = doc.catalog().ok()?;
-    let acroform = resolve(doc, catalog.as_dict()?.get("AcroForm")?)?;
-    let fields = resolve(doc, acroform.as_dict()?.get("Fields")?)?;
+// Missing `/AcroForm` or `/Fields` means no form; unreadable values follow the
+// requested strictness.
+fn root_fields(doc: &PdfDocument, strictness: Strictness) -> Result<Option<Vec<Object>>, Refused> {
+    let unreadable = || match strictness {
+        Strictness::Strict => Err(Refused::Unreadable),
+        Strictness::Tolerant => Ok(None),
+    };
 
-    fields.as_array().cloned()
+    let Ok(catalog) = doc.catalog() else {
+        return unreadable();
+    };
+    let Some(catalog) = catalog.as_dict() else {
+        return unreadable();
+    };
+
+    let Some(raw_acroform) = catalog.get("AcroForm") else {
+        return Ok(None);
+    };
+    let Some(acroform) = resolve(doc, raw_acroform) else {
+        return unreadable();
+    };
+    let Some(acroform) = acroform.as_dict() else {
+        return unreadable();
+    };
+
+    let Some(raw_fields) = acroform.get("Fields") else {
+        return Ok(None);
+    };
+    let Some(fields) = resolve(doc, raw_fields) else {
+        return unreadable();
+    };
+    let Some(fields) = fields.as_array() else {
+        return unreadable();
+    };
+
+    Ok(Some(fields.clone()))
 }
 
 fn resolve(doc: &PdfDocument, obj: &Object) -> Option<Object> {
@@ -173,6 +224,9 @@ fn resolve(doc: &PdfDocument, obj: &Object) -> Option<Object> {
 struct Inherited {
     signature: bool,
     flags: Option<u32>,
+    // Carry only references; copying a direct `/V` through the tree could
+    // multiply a large signature dictionary by the node budget.
+    value: Option<ObjectRef>,
 }
 
 struct Walker<'a> {
@@ -184,9 +238,27 @@ struct Walker<'a> {
     path: Vec<ObjectRef>,
     walked: Walked,
     budget: usize,
+    strictness: Strictness,
 }
 
 impl Walker<'_> {
+    fn resolve_or_refuse(&self, obj: &Object) -> Result<Option<Object>, Refused> {
+        match resolve(self.doc, obj) {
+            Some(resolved) => Ok(Some(resolved)),
+            None => match self.strictness {
+                Strictness::Strict => Err(Refused::Unreadable),
+                Strictness::Tolerant => Ok(None),
+            },
+        }
+    }
+
+    fn entry(&self, dict: &HashMap<String, Object>, key: &str) -> Result<Option<Object>, Refused> {
+        match dict.get(key) {
+            Some(raw) => self.resolve_or_refuse(raw),
+            None => Ok(None),
+        }
+    }
+
     fn node(&mut self, obj: &Object, inherited: Inherited, depth: usize) -> Result<(), Refused> {
         if depth >= MAX_FIELD_DEPTH {
             return Err(Refused::TooDeep);
@@ -224,26 +296,39 @@ impl Walker<'_> {
         inherited: Inherited,
         depth: usize,
     ) -> Result<(), Refused> {
-        let Some(field) = resolve(self.doc, obj) else {
+        let Some(field) = self.resolve_or_refuse(obj)? else {
             return Ok(());
         };
+        // Upstream resolves a dangling reference to null, so strictness must
+        // also apply when the resolved field is not a dictionary.
         let Some(dict) = field.as_dict() else {
-            return Ok(());
+            return match self.strictness {
+                Strictness::Strict => Err(Refused::Unreadable),
+                Strictness::Tolerant => Ok(()),
+            };
         };
 
         // An own declaration settles it in both directions: a `/Tx` leaf under a
         // `/Sig` parent is a text field, not an inherited signature.
-        let signature = match dict.get("FT").and_then(|ft| resolve(self.doc, ft)) {
+        let signature = match self.entry(dict, "FT")? {
             Some(field_type) => field_type.as_name() == Some(SIGNATURE_FIELD_TYPE),
             None => inherited.signature,
         };
 
-        let flags = match dict.get("Ff").and_then(|ff| resolve(self.doc, ff)) {
+        let flags = match self.entry(dict, "Ff")? {
             Some(Object::Integer(bits)) => u32::try_from(bits).ok(),
             // A non-integer `/Ff` is malformed; upstream drops it too, and this
             // walk does not decide whether a document is readable.
             Some(_) => None,
             None => inherited.flags,
+        };
+
+        // `/V` inherits by the same clause as `/FT` and `/Ff` (§12.7.3.1), so a
+        // leaf typed `/Sig` can take its signature dictionary from an ancestor.
+        let own_value = dict.get("V");
+        let value = match own_value {
+            Some(raw) => Some(raw.clone()),
+            None => inherited.value.map(Object::Reference),
         };
 
         if let Some(obj_ref) = obj_ref {
@@ -256,14 +341,35 @@ impl Walker<'_> {
             }
         }
 
-        let Some(kids) = dict.get("Kids").and_then(|kids| resolve(self.doc, kids)) else {
+        if signature {
+            if let Some(value) = value {
+                // Dedup on the reference, so a field and its widget `/Kids`
+                // contribute the signature they share exactly once.
+                let fresh = match value.as_reference() {
+                    Some(value_ref) => self.walked.signature_value_refs.insert(value_ref),
+                    None => true,
+                };
+
+                if fresh {
+                    self.walked.signature_values.push(value);
+                }
+            }
+        }
+
+        let Some(kids) = self.entry(dict, "Kids")? else {
             return Ok(());
         };
         let Some(kids) = kids.as_array() else {
             return Ok(());
         };
 
-        let inherited = Inherited { signature, flags };
+        let inherited = Inherited {
+            signature,
+            flags,
+            value: own_value
+                .and_then(|raw| raw.as_reference())
+                .or(inherited.value),
+        };
 
         for kid in kids {
             self.node(kid, inherited, depth + 1)?;
@@ -295,7 +401,7 @@ mod tests {
     }
 
     fn resolved_of_fixture(doc: &PdfDocument) -> Resolved {
-        let walked = walk(doc).expect("a well-formed tree");
+        let walked = walk(doc, Strictness::Tolerant).expect("a well-formed tree");
         let fields = FormExtractor::extract_fields(doc).expect("fields extract");
 
         resolved_of(&fields, &walked)
@@ -406,12 +512,18 @@ mod tests {
 
     #[test]
     fn refuses_a_cyclic_kids_chain() {
-        assert_eq!(walk(&fixture("form_cyclic.pdf")), Err(Refused::Cycle));
+        assert_eq!(
+            walk(&fixture("form_cyclic.pdf"), Strictness::Tolerant),
+            Err(Refused::Cycle)
+        );
     }
 
     #[test]
     fn a_document_with_no_form_walks_to_nothing() {
-        assert_eq!(walk(&fixture("sample.pdf")), Ok(Walked::default()));
+        assert_eq!(
+            walk(&fixture("sample.pdf"), Strictness::Tolerant),
+            Ok(Walked::default())
+        );
     }
 
     mod limits {
@@ -449,6 +561,7 @@ mod tests {
                 path: Vec::new(),
                 walked: Walked::default(),
                 budget,
+                strictness: Strictness::Tolerant,
             };
 
             walker.node(root, Inherited::default(), 0)

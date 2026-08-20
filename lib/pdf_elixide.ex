@@ -11,6 +11,8 @@ defmodule PdfElixide do
       save).
     * `PdfElixide.Form` — AcroForm field access for both documents
       and editors.
+    * `PdfElixide.Signature` — what a document's digital signatures
+      claim, on either.
 
   Reading a document is open, extract, close:
 

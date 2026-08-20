@@ -335,8 +335,33 @@ Flattening is the exception: `PdfElixide.Form.flatten/1` removes the whole
 AcroForm and a signature field goes with it, as "Flattening" above describes.
 
 This holds for a field whose `/FT` is declared on an ancestor rather than on the
-field itself, which the PDF specification permits. Reading, verifying and
-producing signatures is a separate capability, and not one this library offers.
+field itself, which the PDF specification permits.
+
+Reading the signatures themselves is a separate capability, and
+`PdfElixide.Signature` is where it lives: `PdfElixide.Signature.list/1` reports
+what each signature in a document claims — signer, time, reason, and the byte
+range it covers — from a document or an editor. It verifies nothing, and reading
+them does not go through a form write, so the refusal above stands either way.
+Producing signatures is not offered.
+
+### Reading signatures is stricter than reading fields
+
+The two disagree on a damaged document, deliberately. `fields/1` steps over a
+field it cannot read and returns the ones it reached, so a form whose `/Fields`
+names an object the file does not contain still answers `{:ok, []}`.
+`PdfElixide.Signature.list/1` refuses that same document as
+`%PdfElixide.Error{reason: :invalid_pdf}`: "no signatures" is an answer callers
+act on, and a damaged file must not be able to fake it.
+
+The same rule reaches the value a signature field points at. A `/V` that is not
+a signature dictionary is refused, including one naming an object the file does
+not contain. The single exception is a `/V` of `null`, which is how a cleared
+field is spelled — that field is unsigned, and it is skipped rather than
+reported.
+
+Both modules refuse, rather than read, a field hierarchy that is cyclic or
+nested far deeper than any real form: a cycle as `:invalid_pdf`, a hierarchy
+past the depth or size limit as `:unsupported`.
 
 ## Check boxes and radio groups
 

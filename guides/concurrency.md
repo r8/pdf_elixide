@@ -81,6 +81,10 @@ for the last one, since a save is what produces the warnings it reports.
 on a document, the editor's exclusive lock on an editor — so listing fields from
 an editor serializes even though it only reads.
 
+`PdfElixide.Signature.list/1` is a shared read on *both* sources. Given an editor
+it reads the document that editor was opened from, which needs no exclusive lock,
+so listing signatures does not serialize the way listing fields does.
+
 `PdfElixide.Form.put_values/2` validates values together but does not make their
 writes atomic. `PdfElixide.Form.update_value/3` is likewise a read followed by a
 write, so another process holding the same editor can write in between.

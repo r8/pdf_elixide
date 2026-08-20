@@ -149,7 +149,8 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Form.Field.Button.Flags,
         PdfElixide.Form.Field.Choice,
         PdfElixide.Form.Field.Choice.Flags,
-        PdfElixide.Form.Field.Unknown
+        PdfElixide.Form.Field.Unknown,
+        PdfElixide.Signature
       ]
     ]
   end

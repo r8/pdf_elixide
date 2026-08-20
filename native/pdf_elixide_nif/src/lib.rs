@@ -27,6 +27,7 @@ mod outline;
 mod paths;
 mod resource;
 mod search;
+mod signatures;
 mod span;
 mod table;
 mod text_line;

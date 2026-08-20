@@ -25,13 +25,12 @@ defmodule PdfElixide.Form do
   a name that is not in the form is
   `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and
   `value/2` as much as from `put_value/3`. Signature fields are not fillable and
-  are not reported at all, and writing a check box or radio group back is not
-  always faithful.
+  are not reported at all — `PdfElixide.Signature` reads those — and writing a
+  check box or radio group back is not always faithful.
 
   A form whose field hierarchy is cyclic, or nested far deeper than any real
-  form, is reported as an error by every function here rather than read — a
-  cycle as `:invalid_pdf`, a hierarchy past the depth or size limit as
-  `:unsupported`.
+  form, is reported as an error by every function here rather than read; the
+  [Forms](guides/forms.md) guide gives the reason atoms.
 
   Which lock a call takes follows its source: a shared read on a
   `PdfElixide.Document`, and the editor's exclusive lock on a
@@ -59,7 +58,8 @@ defmodule PdfElixide.Form do
   declares no fields.
 
   Signature fields are not reported; this API covers fillable form fields only.
-  See the [Forms](guides/forms.md) guide.
+  Use `PdfElixide.Signature.list/1` for those. See the
+  [Forms](guides/forms.md) guide.
   """
   @spec fields(source()) :: {:ok, [Field.t()]} | {:error, Error.t()}
   def fields(%Document{ref: ref}) do
