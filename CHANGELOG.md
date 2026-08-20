@@ -5,6 +5,17 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.14.0](https://github.com/r8/pdf_elixide/compare/v0.13.0...v0.14.0) (2026-08-20)
+
+
+
+
+### Features:
+
+* add digital signature reading by [@r8](https://github.com/r8)
+
+* add form and annotation flattening by [@r8](https://github.com/r8)
+
 ## [v0.13.0](https://github.com/r8/pdf_elixide/compare/v0.12.0...v0.13.0) (2026-08-10)
 
 

@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_elixide_nif"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "image",
  "pdf_oxide",
