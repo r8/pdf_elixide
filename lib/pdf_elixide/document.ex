@@ -52,6 +52,31 @@ defmodule PdfElixide.Document do
   applies `:on_page_error` (see `t:text_opts/0`), `to_markdown/1` joins with a
   `---` break, and `to_html/1` wraps each page in a `<div class="page">`.
 
+  ## Choosing an extractor for search and matching
+
+  `text/1` infers word breaks from where glyphs sit, and can fuse neighbouring
+  runs. In a generated report whose table cells are positioned independently, a
+  row like
+
+      Age  0.042  0.011  0.001
+
+  is joined into one token, `"Age0.0420.0110.001"`.
+
+  Whether the values survive that depends on `:extract_tables`, which defaults
+  to `true`. A table the detector **recognises** is additionally rendered from
+  its own cells, so the page text carries the values a second time, separated —
+  they stay matchable, at the cost of appearing twice. Detection on this path
+  keys on the table's ruling lines, so a table aligned only by whitespace is not
+  recognised and its values appear in the fused form alone. Turning
+  `:extract_tables` off removes the separated copy from every table, recognised
+  or not, which is why it yields strictly less (see `t:text_opts/0`).
+
+  **To find or match tokens rather than read the page, use `words/2`.** It is
+  unaffected by either of those: it clusters characters by their own advance
+  widths, so it returns `"Age"`, `"0.042"`, `"0.011"` and `"0.001"` separately
+  and exactly once, each `PdfElixide.Document.Word` carrying the `bbox` to
+  locate the hit. Prefer `search/2` when the query is known in advance.
+
   ## Page boxes and the coordinate origin
 
   Every coordinate this library reports — an extracted `bbox`, a path operation,
@@ -672,7 +697,14 @@ defmodule PdfElixide.Document do
   Options accepted by the `text` and `text!` functions.
 
     * `:extract_tables` — detect tables and render them inline as
-      space-padded, column-aligned rows. Defaults to `true`.
+      space-padded, column-aligned rows. Defaults to `true`. The rendered rows
+      *replace* the page's own text for the regions recognised as tables, and
+      the padding is collapsed to single spaces before the text is returned, so
+      this reads as a separator change rather than a layout one. Keep it on:
+      because it re-emits cells individually it is what keeps a table's values
+      separately searchable — see "Choosing an extractor for search and
+      matching" in `PdfElixide.Document`, which also covers when to reach for
+      `words/2` instead.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
       Unlike in `t:markdown_opts/0`, it is live here.

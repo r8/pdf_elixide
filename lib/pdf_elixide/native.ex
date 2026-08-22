@@ -110,5 +110,10 @@ defmodule PdfElixide.Native do
   def editor_flatten_page_annotations(_editor, _page_index), do: err()
   def editor_flatten_warnings(_editor), do: err()
 
+  def log_set_level(_level), do: err()
+  def log_drain, do: err()
+  def log_pending, do: err()
+  def log_enabled, do: err()
+
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

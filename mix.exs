@@ -107,7 +107,8 @@ defmodule PdfElixide.MixProject do
         PdfElixide,
         PdfElixide.Document,
         PdfElixide.Document.Page,
-        PdfElixide.Error
+        PdfElixide.Error,
+        PdfElixide.Logging
       ],
       "Document metadata": [
         PdfElixide.Document.Metadata,

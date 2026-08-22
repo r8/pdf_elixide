@@ -209,6 +209,54 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
+  describe "absolutely-positioned cells fuse into one token" do
+    setup do: %{doc: open(@table_pdf)}
+
+    # These pin what `PdfElixide.Document`'s "Choosing an extractor for search
+    # and matching" claims; if any flips, that section is what needs rewriting.
+    #
+    # `table.pdf` draws three horizontal rules, so its table *is* recognised —
+    # which is the only reason the two `:extract_tables` cases below differ.
+
+    test "text/1 joins a row's cells with no separator", %{doc: doc} do
+      assert Document.text!(doc, 0) =~ "Age0.0420.0110.001"
+    end
+
+    test "without table rendering the fused form is the only one", %{doc: doc} do
+      text = Document.text!(doc, 0, extract_tables: false)
+
+      assert text =~ "Age0.0420.0110.001"
+      # Absent, not merely joined differently — that is what "unreachable" means.
+      refute text =~ ~r/\b0\.042\b/
+    end
+
+    test "table rendering adds a separated copy without removing the fused one",
+         %{doc: doc} do
+      text = Document.text!(doc, 0)
+
+      assert text =~ ~r/\b0\.042\b/
+      assert text =~ "Age0.0420.0110.001"
+    end
+
+    test "words/2 keeps every cell separate", %{doc: doc} do
+      words = texts(Document.words!(doc, 0))
+
+      for cell <- ["Age", "0.042", "0.011", "0.001"] do
+        assert cell in words
+      end
+    end
+
+    test "the fusion is upstream of assembly, and its own flag still undoes it", %{doc: doc} do
+      # Not reachable from `text/2`: `extract_text_with_options` takes only a
+      # `ConversionOptions`, which carries no span-merging field. Pinned here
+      # because it is the evidence that the joining happens in the extractor
+      # rather than in the text assembler.
+      assert "Age0.0420.0110.001" in texts(Document.spans!(doc, 0))
+
+      assert "Age" in texts(Document.spans!(doc, 0, span_merging: [merge_tm_tj_runs: false]))
+    end
+  end
+
   describe "whole-document text on a page that fails" do
     test "a failed page still costs only its own slot" do
       doc = open(@broken_page_pdf)

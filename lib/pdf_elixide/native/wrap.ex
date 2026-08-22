@@ -2,6 +2,7 @@ defmodule PdfElixide.Native.Wrap do
   @moduledoc false
 
   alias PdfElixide.Error
+  alias PdfElixide.Logging
 
   @doc false
   @spec call((-> term())) :: {:ok, term()} | {:error, Error.t()}
@@ -13,6 +14,10 @@ defmodule PdfElixide.Native.Wrap do
     end
   rescue
     exception -> handle_rescue(exception, __STACKTRACE__)
+  after
+    # `after` rather than the success path so a raising call still forwards
+    # what it captured before failing.
+    Logging.flush_pending()
   end
 
   @doc false

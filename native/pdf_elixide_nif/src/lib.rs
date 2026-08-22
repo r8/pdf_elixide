@@ -21,6 +21,7 @@ mod form_tree;
 mod fs_path;
 mod geometry;
 mod images;
+mod logging;
 mod metadata;
 mod optional_content;
 mod outline;
@@ -36,6 +37,8 @@ mod word;
 pub(crate) mod atoms {
     rustler::atoms! {
         ok, error,
+        // Log levels (see logging.rs / PdfElixide.Logging)
+        off, warn, info, debug, trace,
         // Path operation tags (see paths.rs / PdfElixide.Document.Path)
         move_to, line_to, curve_to, rectangle, close_path,
         // Raw image data tags (see images.rs / PdfElixide.Document.Image.data/1)

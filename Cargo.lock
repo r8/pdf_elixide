@@ -1425,6 +1425,7 @@ name = "pdf_elixide_nif"
 version = "0.14.0"
 dependencies = [
  "image",
+ "log",
  "pdf_oxide",
  "rustler",
 ]
