@@ -1922,7 +1922,33 @@ defmodule PdfElixide.DocumentTest do
       embedded =
         Document.open!(@fonts_pdf) |> Document.fonts!(0) |> Enum.find(& &1.embedded?)
 
-      assert inspect(embedded) == "#PdfElixide.Document.Font<p0 Arial (Type0)>"
+      assert inspect(embedded) == "#PdfElixide.Document.Font<p0 \"Arial\" (\"Type0\")>"
+    end
+
+    # /BaseFont is a PDF name, whose #XX escapes decode to any byte, so a
+    # document could otherwise write a newline or a terminal escape straight
+    # into a log line.
+    test "escapes a base font name the document controls" do
+      font = %Document.Font{
+        page: 0,
+        resource_name: "F1",
+        base_font: "SAFE\nINJECTED\e[31m",
+        subtype: "Type1",
+        encoding: :custom,
+        embedded?: false,
+        subset?: false,
+        weight: nil,
+        bold?: false,
+        italic?: false,
+        ref: make_ref()
+      }
+
+      rendered = inspect(font)
+
+      refute rendered =~ "\n"
+      refute rendered =~ "\e"
+      assert rendered =~ "SAFE"
+      assert rendered =~ "INJECTED"
     end
   end
 

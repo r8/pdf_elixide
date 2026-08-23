@@ -142,9 +142,9 @@ defmodule PdfElixide.Document.Font do
         "#PdfElixide.Document.Font<p",
         to_string(page),
         " ",
-        base_font,
+        Kernel.inspect(base_font),
         " (",
-        subtype,
+        Kernel.inspect(subtype),
         ")>"
       ])
     end
