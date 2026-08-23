@@ -375,12 +375,15 @@ one form can be told apart — from a document or an editor,
 waiting for a signature, so that call and `list/1` between them account for
 every signature field a form has,
 `PdfElixide.Signature.verify/2` checks one against the bytes that range covers,
-`PdfElixide.Signature.certificate/1` hands back the certificate embedded in
-the signature as DER for `:public_key` to decode,
+`PdfElixide.Signature.certificate/1` hands back the certificate the signature
+names as its signer, as DER for `:public_key` to decode,
 `PdfElixide.Signature.pades_level/2` reports which PAdES baseline level a
-signature reaches, `PdfElixide.Signature.timestamp/1` opens the RFC 3161
+signature reaches and `PdfElixide.Signature.pades_level/3` adds the archival
+level, which `PdfElixide.Signature.document_timestamp?/1` answers on its own,
+`PdfElixide.Signature.timestamp/1` opens the RFC 3161
 timestamp a signature carries so a third party's account of when it existed can
-be weighed against the signer's own claimed time, and
+be weighed against the signer's own claimed time —
+`PdfElixide.Signature.signing_time_utc/1` being what parses that claim — and
 `PdfElixide.Signature.dss/1` reads the certificates, CRLs
 and OCSP responses a document carries so its signatures can still be judged once
 those expire. What a verdict does and does not prove is in that module's

@@ -9,6 +9,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form
+  alias PdfElixide.Signature
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
@@ -26,6 +27,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
   @signature_pdf Path.join(@fixtures, "form_signature.pdf")
+  @pades_lta_pdf Path.join(@fixtures, "form_signature_pades_lta.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
   @columns 0
@@ -687,6 +689,28 @@ defmodule PdfElixide.UpstreamDriftTest do
       Form.put_value!(editor, "subscribe", "Export1")
 
       assert Editor.to_binary!(editor, compress: false) =~ "/AS (Export1)"
+    end
+  end
+
+  describe "how upstream detects an archival timestamp" do
+    test "two literal strings anywhere in a file are enough" do
+      refute Signature.document_timestamp?("nothing here")
+      refute Signature.document_timestamp?("/DocTimeStamp on its own")
+      refute Signature.document_timestamp?("/ETSI.RFC3161 on its own")
+
+      assert Signature.document_timestamp?("/DocTimeStamp /ETSI.RFC3161")
+      assert Signature.document_timestamp?("/ETSI.RFC3161 comes first here /DocTimeStamp")
+
+      assert Signature.document_timestamp?("(/DocTimeStamp) Tj (/ETSI.RFC3161) Tj")
+    end
+
+    test "the archival timestamp it finds is not one the listing reports" do
+      doc = Document.open!(@pades_lta_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [signature] = Signature.list!(doc)
+      assert signature.sub_filter == :cades_detached
+      assert Signature.document_timestamp?(File.read!(@pades_lta_pdf))
     end
   end
 

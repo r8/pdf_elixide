@@ -2,15 +2,19 @@
 
 use std::collections::HashMap;
 
-use cms::{content_info::ContentInfo, signed_data::SignedData};
+use cms::{
+    cert::{x509::Certificate, CertificateChoices},
+    content_info::ContentInfo,
+    signed_data::{SignedData, SignerIdentifier},
+};
 use der::{oid::ObjectIdentifier, Decode, Encode, SliceReader};
 use pdf_oxide::{
     object::Object,
     signatures::{
-        classify_pades_level, extract_signer_certificate_der, read_dss, verify_signer,
-        verify_signer_detached, ByteRangeCalculator, DocumentSecurityStore, HashAlgorithm,
-        PadesLevel, SignatureInfo, SignatureSubFilter, SignatureVerifier, SignerVerify, Timestamp,
-        VriEntry,
+        classify_pades_level, has_document_timestamp, parse_pdf_date_to_epoch, read_dss,
+        verify_signer, verify_signer_detached, ByteRangeCalculator, DocumentSecurityStore,
+        HashAlgorithm, PadesLevel, SignatureInfo, SignatureSubFilter, SignatureVerifier,
+        SignerVerify, Timestamp, VriEntry,
     },
     PdfDocument,
 };
@@ -445,9 +449,160 @@ fn signature_verify_signer(contents: Option<Binary>) -> NifResult<Atom> {
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_certificate<'a>(env: Env<'a>, contents: Option<Binary>) -> NifResult<Term<'a>> {
     let blob = cms_blob(contents.as_deref())?;
-    let der = extract_signer_certificate_der(blob).map_err(to_nif_err)?;
+    let der = signer_certificate(blob)
+        .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
 
     binary_term(env, &der, "signer certificate")
+}
+
+// A short, lock-free parse does not warrant dirty scheduling. Invalid and
+// unrepresentable dates follow upstream's unparseable `None` result.
+#[rustler::nif]
+fn signature_signing_time(signing_time: Option<String>) -> Option<i64> {
+    signing_time
+        .as_deref()
+        .filter(|date| well_formed_pdf_date(date))
+        .and_then(parse_pdf_date_to_epoch)
+        .filter(|secs| representable_epoch(*secs))
+}
+
+// Reject values upstream would normalize into a different date while preserving
+// its accepted PDF date spellings.
+fn well_formed_pdf_date(date: &str) -> bool {
+    let bytes = date.strip_prefix("D:").unwrap_or(date).as_bytes();
+
+    // Every field after the year is optional (ISO 32000-1 §7.9.4).
+    let field = |start: usize, absent: u32| match bytes.len() {
+        len if len <= start => Some(absent),
+        len if len < start + 2 => None,
+        _ => two_digits(&bytes[start..start + 2]),
+    };
+
+    let (Some(year), Some(month), Some(day)) = (
+        bytes.get(..4).and_then(four_digits),
+        field(4, 1),
+        field(6, 1),
+    ) else {
+        return false;
+    };
+    let (Some(hour), Some(minute), Some(second)) = (field(8, 0), field(10, 0), field(12, 0)) else {
+        return false;
+    };
+
+    (1..=12).contains(&month)
+        && (1..=days_in_month(year, month)).contains(&day)
+        && hour <= 23
+        && minute <= 59
+        && second <= 59
+        && well_formed_offset(bytes)
+}
+
+// Do not let an unknown marker silently become UTC.
+fn well_formed_offset(bytes: &[u8]) -> bool {
+    let Some(marker) = bytes.get(14) else {
+        return true;
+    };
+
+    match marker {
+        b'Z' => true,
+        b'+' | b'-' => {
+            let Some(hours) = bytes.get(15..17).and_then(two_digits) else {
+                return false;
+            };
+            // The apostrophe is optional in the wild, and so are the minutes.
+            let minutes_at = if bytes.get(17) == Some(&b'\'') {
+                18
+            } else {
+                17
+            };
+            let minutes = match bytes.get(minutes_at..minutes_at + 2) {
+                Some(field) => two_digits(field),
+                None => Some(0),
+            };
+
+            hours <= 23 && minutes.is_some_and(|minutes| minutes <= 59)
+        }
+        _ => false,
+    }
+}
+
+fn two_digits(bytes: &[u8]) -> Option<u32> {
+    match bytes {
+        [tens, ones] if tens.is_ascii_digit() && ones.is_ascii_digit() => {
+            Some(u32::from((tens - b'0') * 10 + (ones - b'0')))
+        }
+        _ => None,
+    }
+}
+
+fn four_digits(bytes: &[u8]) -> Option<u32> {
+    let (high, low) = (two_digits(bytes.get(..2)?)?, two_digits(bytes.get(2..)?)?);
+
+    Some(high * 100 + low)
+}
+
+// Proleptic Gregorian, matching upstream's `days_from_civil`.
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
+        2 => 28,
+        _ => 0,
+    }
+}
+
+// Match upstream verification's private signer selection. Its
+// `SubjectKeyIdentifier` path falls back to the first certificate.
+fn signer_certificate(cms: &[u8]) -> Result<Vec<u8>, MalformedCms> {
+    let content = ContentInfo::from_der(cms)
+        .map_err(|_| MalformedCms("signature /Contents is not a CMS blob"))?;
+    let der = content
+        .content
+        .to_der()
+        .map_err(|_| MalformedCms("signature /Contents holds unencodable CMS content"))?;
+    let signed = SignedData::from_der(&der)
+        .map_err(|_| MalformedCms("signature /Contents is not CMS SignedData"))?;
+
+    let signer = signed
+        .signer_infos
+        .0
+        .iter()
+        .next()
+        .ok_or(MalformedCms("signature /Contents carries no SignerInfo"))?;
+    let certificates = signed
+        .certificates
+        .as_ref()
+        .ok_or(MalformedCms("signature /Contents carries no certificates"))?;
+
+    let named = certificates
+        .0
+        .iter()
+        .filter_map(as_certificate)
+        .find(|cert| match &signer.sid {
+            SignerIdentifier::IssuerAndSerialNumber(issuer_and_serial) => {
+                cert.tbs_certificate.issuer == issuer_and_serial.issuer
+                    && cert.tbs_certificate.serial_number == issuer_and_serial.serial_number
+            }
+            SignerIdentifier::SubjectKeyIdentifier(_) => true,
+        });
+
+    named
+        .or_else(|| certificates.0.iter().filter_map(as_certificate).next())
+        .ok_or(MalformedCms(
+            "signature /Contents carries no X.509 signer certificate",
+        ))?
+        .to_der()
+        .map_err(|_| MalformedCms("signature /Contents holds an unencodable certificate"))
+}
+
+fn as_certificate(choice: &CertificateChoices) -> Option<&Certificate> {
+    match choice {
+        CertificateChoices::Certificate(cert) => Some(cert),
+        _ => None,
+    }
 }
 
 // Dirty for the same reason as the three verify/certificate NIFs above.
@@ -478,6 +633,14 @@ fn signature_pades_level(contents: Option<Binary>, dss: Option<DssNif>) -> NifRe
             format!("pdf_oxide reported an unmapped PAdES level: {other:?}"),
         )),
     }
+}
+
+// Dirty for its own work rather than for a lock — it takes no resource at all.
+// Upstream scans the whole file for two literal byte strings, so the cost scales
+// with the document rather than with the signature.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn signature_has_document_timestamp(pdf_data: Binary) -> bool {
+    has_document_timestamp(&pdf_data)
 }
 
 // `id-aa-signatureTimeStampToken` — the RFC 3161 token a PAdES B-T signature
@@ -556,15 +719,17 @@ fn hash_algorithm_atom(algorithm: HashAlgorithm) -> Atom {
     }
 }
 
-// The window `DateTime.from_unix/1` accepts. `Timestamp::time` casts an unsigned
-// duration to `i64`, so a token outside it is refused here, which is what lets
-// `Timestamp.from_nif/1` call `DateTime.from_unix!/1` rather than the fallible one.
-const MIN_GEN_TIME: i64 = -62_167_219_200;
-const MAX_GEN_TIME: i64 = 253_402_300_799;
+// The `Calendar.ISO` range accepted by `DateTime.from_unix/1`.
+const MIN_EPOCH: i64 = -377_705_116_800;
+const MAX_EPOCH: i64 = 253_402_300_799;
+
+fn representable_epoch(secs: i64) -> bool {
+    (MIN_EPOCH..=MAX_EPOCH).contains(&secs)
+}
 
 fn timestamp_to_nif<'a>(env: Env<'a>, timestamp: &Timestamp) -> NifResult<TimestampNif<'a>> {
     let time = timestamp.time();
-    if !(MIN_GEN_TIME..=MAX_GEN_TIME).contains(&time) {
+    if !representable_epoch(time) {
         return Err(tagged_err(
             atoms::invalid_pdf(),
             format!("timestamp generation time {time} is not a representable date"),
@@ -635,6 +800,10 @@ fn signature_timestamp<'a>(
 
 #[cfg(test)]
 mod tests {
+    // Only the canaries reach upstream's picker now; `signer_certificate` is what
+    // the NIF calls.
+    use pdf_oxide::signatures::extract_signer_certificate_der;
+
     use super::*;
 
     fn fixture(name: &str) -> PdfDocument {
@@ -651,6 +820,141 @@ mod tests {
 
     fn infos_of(doc: &PdfDocument) -> NifResult<Vec<SignatureInfo>> {
         signature_infos(doc).map(|out| out.into_iter().map(|(info, _name)| info).collect())
+    }
+
+    fn signature_blob(name: &str) -> Vec<u8> {
+        let doc = fixture(name);
+        let contents = infos_of(&doc).expect("listing")[0]
+            .contents
+            .clone()
+            .expect("/Contents");
+
+        trim_der_padding(&contents).to_vec()
+    }
+
+    // Canary for the upstream mismatch that requires local signer selection.
+    #[test]
+    fn upstream_still_returns_the_first_certificate_rather_than_the_signer() {
+        let blob = signature_blob("form_signature_chain.pdf");
+
+        let theirs = extract_signer_certificate_der(&blob).expect("upstream picks one");
+        let ours = signer_certificate(&blob).expect("the SID names one");
+
+        assert_ne!(
+            theirs, ours,
+            "upstream now matches the signer; delete signer_certificate, not this assertion"
+        );
+    }
+
+    // Canary for the upstream normalization that requires local validation.
+    #[test]
+    fn upstream_still_normalizes_an_out_of_range_pdf_date() {
+        for (claim, normalizes_to) in [
+            // February 31st lands on March 2nd.
+            ("D:20240231000000Z", "D:20240302000000Z"),
+            // An hour of 99 adds four days and three hours.
+            ("D:20240101990000Z", "D:20240105030000Z"),
+            // An offset of 99 hours subtracts them.
+            ("D:20240101000000+99'00'", "D:20231227210000Z"),
+            // A field that is present but not digits reads as an absent one.
+            ("D:2024AB", "D:20240101000000Z"),
+        ] {
+            assert_eq!(
+                parse_pdf_date_to_epoch(claim),
+                parse_pdf_date_to_epoch(normalizes_to),
+                "upstream now refuses {claim}; delete well_formed_pdf_date, not this assertion"
+            );
+        }
+    }
+
+    // No fixture carries a malformed `/M`: a signer writes the date from a clock.
+    #[test]
+    fn accepts_the_date_shapes_the_grammar_allows() {
+        for date in [
+            // Every truncation, since each field after the year is optional.
+            "D:2024",
+            "D:202404",
+            "D:20240421",
+            "D:2024042112",
+            "D:202404211200",
+            "D:20240421120000",
+            // The `D:` prefix is optional in the wild, as upstream allows.
+            "20240421120000Z",
+            // Every offset spelling, including the trailing bytes after a `Z`
+            // that upstream ignores and real producers emit.
+            "D:20240421120000Z",
+            "D:20240421120000Z00'00'",
+            "D:20240421120000+03",
+            "D:20240421120000+03'",
+            "D:20240421120000+03'00",
+            "D:20240421120000+03'00'",
+            "D:20240421120000-04'30'",
+            // The boundaries of each field.
+            "D:20240421235959Z",
+            "D:20241231000000Z",
+            "D:20240421120000+23'59'",
+        ] {
+            assert!(well_formed_pdf_date(date), "{date}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_date_no_clock_or_calendar_produces() {
+        for date in [
+            // The four shapes upstream normalizes instead of refusing.
+            "D:20240231000000Z",
+            "D:20240101990000Z",
+            "D:20240101000000+99'00'",
+            "D:2024AB",
+            // A year that is not four digits at all.
+            "D:20",
+            "D:not-a-date",
+            "",
+            // Half a field, which is neither present nor absent.
+            "D:202404211",
+            // Out of range, one field at a time.
+            "D:20241301000000Z",
+            "D:20240001000000Z",
+            "D:20240400000000Z",
+            "D:20240421126000Z",
+            "D:20240421120060Z",
+            // An offset upstream would read as UTC.
+            "D:20240421120000X",
+            "D:20240421120000+24'00'",
+            "D:20240421120000+03'60'",
+            "D:20240421120000+3'00'",
+            "D:20240421120000+",
+        ] {
+            assert!(!well_formed_pdf_date(date), "{date}");
+        }
+    }
+
+    #[test]
+    fn counts_february_by_the_proleptic_gregorian_rule() {
+        assert_eq!(days_in_month(2024, 2), 29);
+        assert_eq!(days_in_month(2000, 2), 29);
+        assert_eq!(days_in_month(0, 2), 29);
+        assert_eq!(days_in_month(1900, 2), 28);
+        assert_eq!(days_in_month(2023, 2), 28);
+
+        assert!(well_formed_pdf_date("D:20240229000000Z"));
+        assert!(!well_formed_pdf_date("D:20230229000000Z"));
+        assert!(!well_formed_pdf_date("D:19000229000000Z"));
+    }
+
+    // The complement: with one certificate the first *is* the signer, so the
+    // change must be a no-op for every fixture that predates it.
+    #[test]
+    fn signer_certificate_matches_upstream_on_a_single_certificate_blob() {
+        for name in ["form_signature_cms.pdf", "form_signature_pades.pdf"] {
+            let blob = signature_blob(name);
+
+            assert_eq!(
+                signer_certificate(&blob).expect("ours"),
+                extract_signer_certificate_der(&blob).expect("theirs"),
+                "{name}"
+            );
+        }
     }
 
     // Compare only values this binding still takes from upstream.

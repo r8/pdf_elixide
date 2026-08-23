@@ -29,6 +29,8 @@ defmodule PdfElixide.SignatureTest do
   @pades_pdf Path.join(@fixtures, "form_signature_pades.pdf")
   @pades_t_pdf Path.join(@fixtures, "form_signature_pades_t.pdf")
   @pades_lt_pdf Path.join(@fixtures, "form_signature_pades_lt.pdf")
+  @pades_lta_pdf Path.join(@fixtures, "form_signature_pades_lta.pdf")
+  @chain_pdf Path.join(@fixtures, "form_signature_chain.pdf")
   @dss_pdf Path.join(@fixtures, "signature_dss.pdf")
   @dss_empty_pdf Path.join(@fixtures, "signature_dss_empty.pdf")
   @doctimestamp_pdf Path.join(@fixtures, "signature_doctimestamp.pdf")
@@ -496,6 +498,20 @@ defmodule PdfElixide.SignatureTest do
       assert :public_key.pkix_is_self_signed(der)
     end
 
+    # Encoding order varies, so assert membership rather than identity.
+    test "reads one certificate out of a blob carrying a chain", %{signature: signature} do
+      {:ok, [chained]} = Signature.list(open!(@chain_pdf))
+      {:ok, [%Signature{} = b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, timestamp} = Signature.timestamp(b_t)
+
+      signer = Signature.certificate!(signature)
+      authority = Signature.certificate!(%{b_t | contents: timestamp.token})
+
+      assert {:ok, der} = Signature.certificate(chained)
+      assert :OTPCertificate = elem(:public_key.pkix_decode_cert(der, :otp), 0)
+      assert der in [signer, authority]
+    end
+
     test "reads the same certificate out of a document altered after signing", %{
       signature: signature
     } do
@@ -697,6 +713,181 @@ defmodule PdfElixide.SignatureTest do
       assert Signature.pades_level!(b_lt, dss) == :b_lt
 
       assert_raise Error, fn -> Signature.pades_level!(%{b_lt | contents: nil}, dss) end
+    end
+  end
+
+  describe "pades_level/3" do
+    setup do
+      doc = open!(@pades_lta_pdf)
+      {:ok, [signature]} = Signature.list(doc)
+      {:ok, dss} = Signature.dss(doc)
+
+      %{signature: signature, dss: dss, bytes: File.read!(@pades_lta_pdf)}
+    end
+
+    test "reaches :b_lta with the store and the file's own bytes", ctx do
+      assert Signature.pades_level(ctx.signature, ctx.dss, ctx.bytes) == {:ok, :b_lta}
+    end
+
+    test "adds nothing without the store", ctx do
+      assert Signature.pades_level(ctx.signature, nil, ctx.bytes) == {:ok, :b_t}
+      assert Signature.pades_level(ctx.signature, ctx.dss) == {:ok, :b_lt}
+    end
+
+    test "a signature that does not reach :b_lt cannot reach :b_lta", ctx do
+      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+
+      assert Signature.pades_level(b_t, ctx.dss, ctx.bytes) == {:ok, :b_t}
+    end
+
+    test "stays :b_lt for bytes carrying no archival timestamp", ctx do
+      assert Signature.pades_level(ctx.signature, ctx.dss, File.read!(@pades_lt_pdf)) ==
+               {:ok, :b_lt}
+    end
+
+    test "the bytes cannot raise a signature the levels do not describe", ctx do
+      {:ok, [pkcs7]} = Signature.list(open!(@cms_pdf))
+
+      assert Signature.pades_level(pkcs7, ctx.dss, ctx.bytes) == {:ok, nil}
+    end
+
+    test "keeps answering after the document is closed" do
+      doc = Document.open!(@pades_lta_pdf)
+      {:ok, [signature]} = Signature.list(doc)
+      {:ok, dss} = Signature.dss(doc)
+      :ok = Document.close(doc)
+
+      assert Signature.pades_level(signature, dss, File.read!(@pades_lta_pdf)) == {:ok, :b_lta}
+    end
+
+    test "refuses a PAdES signature carrying no contents", ctx do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.pades_level(%{ctx.signature | contents: nil}, ctx.dss, ctx.bytes)
+    end
+
+    test "raises on bytes that are not a binary", ctx do
+      assert_raise FunctionClauseError, fn ->
+        Signature.pades_level(ctx.signature, ctx.dss, 42)
+      end
+    end
+
+    test "pades_level!/3 unwraps or raises", ctx do
+      assert Signature.pades_level!(ctx.signature, ctx.dss, ctx.bytes) == :b_lta
+
+      assert_raise Error, fn ->
+        Signature.pades_level!(%{ctx.signature | contents: nil}, ctx.dss, ctx.bytes)
+      end
+    end
+  end
+
+  describe "document_timestamp?/1" do
+    test "finds the archival timestamp an archived document carries" do
+      assert Signature.document_timestamp?(File.read!(@pades_lta_pdf))
+    end
+
+    test "answers false for a document carrying none" do
+      refute Signature.document_timestamp?(File.read!(@pades_lt_pdf))
+      refute Signature.document_timestamp?(File.read!(@no_form_pdf))
+      refute Signature.document_timestamp?(<<>>)
+    end
+
+    test "does not come from the signatures the document lists" do
+      doc = open!(@pades_lta_pdf)
+
+      assert {:ok, [signature]} = Signature.list(doc)
+      assert signature.sub_filter == :cades_detached
+      assert Signature.document_timestamp?(File.read!(@pades_lta_pdf))
+    end
+
+    test "raises on bytes that are not a binary" do
+      assert_raise FunctionClauseError, fn -> Signature.document_timestamp?(42) end
+    end
+  end
+
+  describe "signing_time_utc/1" do
+    setup do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+
+      %{signature: signature}
+    end
+
+    test "parses the time the signer claimed", %{signature: signature} do
+      assert {:ok, %DateTime{} = signed_at} = Signature.signing_time_utc(signature)
+
+      assert signed_at.time_zone == "Etc/UTC"
+
+      assert String.starts_with?(
+               signature.signing_time,
+               "D:" <> Calendar.strftime(signed_at, "%Y%m%d")
+             )
+    end
+
+    test "answers nil for a signature claiming no time", %{signature: signature} do
+      assert Signature.signing_time_utc(%{signature | signing_time: nil}) == {:ok, nil}
+    end
+
+    test "answers nil for a claim it cannot read", %{signature: signature} do
+      assert Signature.signing_time_utc(%{signature | signing_time: "not a date"}) == {:ok, nil}
+      assert Signature.signing_time_utc(%{signature | signing_time: ""}) == {:ok, nil}
+    end
+
+    test "answers nil rather than the date a bad claim is nearest to", %{signature: signature} do
+      for claim <- [
+            "D:20240231000000Z",
+            "D:20240101990000Z",
+            "D:20240101000000+99'00'",
+            "D:2024AB",
+            "D:20241301000000Z",
+            "D:20240421126000Z",
+            "D:20240421120060Z",
+            "D:20230229000000Z"
+          ] do
+        assert Signature.signing_time_utc(%{signature | signing_time: claim}) == {:ok, nil}, claim
+      end
+    end
+
+    test "keeps reading every shape the grammar allows", %{signature: signature} do
+      read = fn claim ->
+        {:ok, at} = Signature.signing_time_utc(%{signature | signing_time: claim})
+        at
+      end
+
+      assert read.("D:20240421") == ~U[2024-04-21 00:00:00Z]
+      assert read.("D:20240421120000Z") == ~U[2024-04-21 12:00:00Z]
+      assert read.("D:20240421120000Z00'00'") == ~U[2024-04-21 12:00:00Z]
+      assert read.("D:20240421140000+02'00'") == ~U[2024-04-21 12:00:00Z]
+      assert read.("D:20240421140000+02") == ~U[2024-04-21 12:00:00Z]
+      assert read.("D:20240421080000-04'00'") == ~U[2024-04-21 12:00:00Z]
+      assert read.("D:20240229235959Z") == ~U[2024-02-29 23:59:59Z]
+    end
+
+    test "does not require the D: prefix", %{signature: signature} do
+      assert {:ok, bare} =
+               Signature.signing_time_utc(%{signature | signing_time: "20240102030405Z"})
+
+      assert {:ok, prefixed} =
+               Signature.signing_time_utc(%{signature | signing_time: "D:20240102030405Z"})
+
+      assert bare == prefixed
+    end
+
+    test "keeps answering after the document is closed" do
+      doc = Document.open!(@cms_pdf)
+      {:ok, [signature]} = Signature.list(doc)
+      :ok = Document.close(doc)
+
+      assert {:ok, %DateTime{}} = Signature.signing_time_utc(signature)
+    end
+
+    test "raises on a value the NIF cannot decode", %{signature: signature} do
+      assert_raise ArgumentError, fn ->
+        Signature.signing_time_utc(%{signature | signing_time: 42})
+      end
+    end
+
+    test "signing_time_utc!/1 unwraps", %{signature: signature} do
+      assert %DateTime{} = Signature.signing_time_utc!(signature)
+      assert Signature.signing_time_utc!(%{signature | signing_time: nil}) == nil
     end
   end
 

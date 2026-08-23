@@ -9,8 +9,8 @@ defmodule PdfElixide.Signature do
   waiting for a signature, so the two together account for every one a form has.
   `verify/2` checks one of those signatures against the bytes it covers,
   `pades_level/2` says what kind of signature it is, `timestamp/1` opens the
-  timestamp one carries, and `dss/1` reads the material the document carries for
-  validating them later.
+  timestamp one carries, `signing_time_utc/1` parses the time one claims, and
+  `dss/1` reads the material the document carries for validating them later.
 
       {:ok, doc} = PdfElixide.Document.open("signed.pdf")
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
@@ -82,8 +82,9 @@ defmodule PdfElixide.Signature do
 
   `list/1`, `unsigned_fields/1`, `count/1` and `dss/1` take a *shared* read on
   either source;
-  `verify/2`, `verify_signer/1`, `certificate/1`, `timestamp/1` and both arities
-  of `pades_level` take no handle at all, so they take no lock. See the
+  `verify/2`, `verify_signer/1`, `certificate/1`, `timestamp/1`,
+  `signing_time_utc/1`, `document_timestamp?/1` and every arity of `pades_level`
+  take no handle at all, so they take no lock. See the
   [Concurrency](guides/concurrency.md) guide.
   """
 
@@ -117,26 +118,30 @@ defmodule PdfElixide.Signature do
   @type verdict :: :valid | :invalid | :unknown
 
   @typedoc """
-  The PAdES baseline level a signature reaches, as `pades_level/2` reports it.
+  The PAdES baseline level a signature reaches. Each value below names the
+  arity that can report it.
 
     * `:b_b` — a CAdES baseline signature.
     * `:b_t` — `:b_b` and the unsigned attribute that carries an RFC 3161
       timestamp token, present beside the signature. The level reports its
       presence and nothing more; `timestamp/1` opens it.
     * `:b_lt` — `:b_t` and an entry filed under this signature in the document's
-      security store: the entry's presence, whatever it holds. Only
-      `pades_level/2` reports it, having been given that store; `pades_level/1`
-      answers `:b_t` for the same signature.
+      security store: the entry's presence, whatever it holds. Reported by
+      `pades_level/2` and `pades_level/3`, having been given that store;
+      `pades_level/1` answers `:b_t` for the same signature.
+    * `:b_lta` — `:b_lt` and an archival timestamp over the whole file. Only
+      `pades_level/3` reports it, having been given the document's bytes;
+      `pades_level/1` and `pades_level/2` answer `:b_lt` for the same signature.
+      See `document_timestamp?/1` for how loosely that timestamp is detected.
     * `nil` — not a PAdES signature at all. The levels are defined for
       `:cades_detached` and describe nothing else.
 
   These levels are structural, not verification results. A damaged signature
-  whose timestamp cannot be found still reaches `:b_b`, and a `:b_lt` store
-  entry may itself be empty. The highest level, B-LTA, is not reported because
-  neither argument carries the archival timestamp over the whole file; a B-LTA
-  signature therefore answers `:b_lt`.
+  whose timestamp cannot be found still reaches `:b_b`, a `:b_lt` store entry
+  may itself be empty, and a `:b_lta` archival timestamp is neither read nor
+  checked against the signature it is supposed to cover.
   """
-  @type pades_level :: :b_b | :b_t | :b_lt | nil
+  @type pades_level :: :b_b | :b_t | :b_lt | :b_lta | nil
 
   @enforce_keys [
     :field_name,
@@ -407,10 +412,9 @@ defmodule PdfElixide.Signature do
       {:ok, der} = PdfElixide.Signature.certificate(signature)
       :public_key.pkix_decode_cert(der, :otp)
 
-  This is the *first* X.509 certificate the blob carries, which for the usual
-  single-certificate blob is the signer's. Nothing matches it against the signer
-  the blob names, so where a whole chain is embedded the certificate you get
-  back need not be the one that signed.
+  This is the certificate selected for `verify/2` and `verify_signer/1`. For an
+  embedded chain, it matches the signer's issuer and serial number; signatures
+  using another identifier fall back to the first certificate.
 
   Nothing about the certificate is checked; it is the material for a trust
   decision rather than a trust decision. See "What verification proves" in the
@@ -420,8 +424,8 @@ defmodule PdfElixide.Signature do
   is the timestamp authority's rather than a document signer's.
 
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` when the signature has no
-  `:contents`, when `:contents` is not a CMS blob, and when the blob carries no
-  X.509 certificate.
+  `:contents`, when `:contents` is not a CMS blob, when the blob names no signer
+  at all, and when it carries no X.509 certificate.
   """
   @spec certificate(t()) :: {:ok, binary()} | {:error, Error.t()}
   def certificate(%__MODULE__{contents: contents}) do
@@ -516,6 +520,9 @@ defmodule PdfElixide.Signature do
   Pass `nil` for `dss` — what `pades_level/1` does — when there is no store, or
   when the distinction does not matter.
 
+  Capped at `:b_lt`: reach for `pades_level/3` when the document's bytes are at
+  hand and `:b_lta` matters.
+
   Nothing here is verified. See `t:pades_level/0` for the exact meaning and
   limitations of each answer, `timestamp/1` to read and verify the timestamp,
   and `PdfElixide.Signature.DSS` for the store material.
@@ -540,6 +547,52 @@ defmodule PdfElixide.Signature do
   """
   @spec pades_level!(t(), DSS.t() | nil) :: pades_level()
   def pades_level!(signature, dss), do: signature |> pades_level(dss) |> Wrap.unwrap!()
+
+  @doc """
+  The PAdES baseline level the signature reaches, given the document's security
+  store and the document's own bytes.
+
+      {:ok, [signature]} = PdfElixide.Signature.list(doc)
+      {:ok, dss} = PdfElixide.Signature.dss(doc)
+      PdfElixide.Signature.pades_level(signature, dss, File.read!("signed.pdf"))
+      #=> {:ok, :b_lta}
+
+  Same as `pades_level/2`, but reports `:b_lta` when a `:b_lt` signature's
+  document carries an archival timestamp.
+
+  `pdf_bytes` must be the bytes from which the signature was read. Timestamp
+  detection is structural and does not verify the timestamp; see
+  `document_timestamp?/1` and `t:pades_level/0`.
+  """
+  @spec pades_level(t(), DSS.t() | nil, binary()) :: {:ok, pades_level()} | {:error, Error.t()}
+  def pades_level(%__MODULE__{} = signature, dss, pdf_bytes) when is_binary(pdf_bytes) do
+    with {:ok, level} <- pades_level(signature, dss) do
+      {:ok, if(level == :b_lt and document_timestamp?(pdf_bytes), do: :b_lta, else: level)}
+    end
+  end
+
+  @doc """
+  Same as `pades_level/3`, but raises `PdfElixide.Error` on failure.
+  """
+  @spec pades_level!(t(), DSS.t() | nil, binary()) :: pades_level()
+  def pades_level!(signature, dss, pdf_bytes),
+    do: signature |> pades_level(dss, pdf_bytes) |> Wrap.unwrap!()
+
+  @doc """
+  Whether the document carries an archival timestamp over the whole file.
+
+      PdfElixide.Signature.document_timestamp?(File.read!("archived.pdf"))
+      #=> true
+
+  This scans the raw bytes for `/DocTimeStamp` and `/ETSI.RFC3161`; it does not
+  parse or verify a timestamp, relate the markers to one object, or check what
+  it covers. Treat `true` only as evidence that the file has the shape of an
+  archived document. `pades_level/3` uses this result for the `:b_lta` level.
+  """
+  @spec document_timestamp?(binary()) :: boolean()
+  def document_timestamp?(pdf_bytes) when is_binary(pdf_bytes) do
+    Wrap.call!(fn -> Native.signature_has_document_timestamp(pdf_bytes) end)
+  end
 
   @doc """
   Whether the signature covers the whole of a file `size` bytes long.
@@ -572,6 +625,34 @@ defmodule PdfElixide.Signature do
 
   def covers_whole_document?(%__MODULE__{}, size) when is_integer(size) and size >= 0,
     do: false
+
+  @doc """
+  The claimed signing time as a `DateTime`, or `nil` when there is none to read.
+
+      {:ok, [signature]} = PdfElixide.Signature.list(doc)
+      PdfElixide.Signature.signing_time_utc(signature)
+      #=> {:ok, ~U[2026-08-23 07:50:03Z]}
+
+  This parses `:signing_time`, applies its UTC offset, and returns the resulting
+  instant in UTC. `{:ok, nil}` means the claim is absent, unreadable, invalid, or
+  outside `DateTime`'s range; inspect `:signing_time` to distinguish absence.
+
+  Like `:signing_time` itself, this is the signer's own claim and is compared to
+  nothing. `timestamp/1` reaches a third party's account of when the signature
+  existed, which is the thing to weigh it against.
+  """
+  @spec signing_time_utc(t()) :: {:ok, DateTime.t() | nil} | {:error, Error.t()}
+  def signing_time_utc(%__MODULE__{signing_time: signing_time}) do
+    with {:ok, seconds} <- Wrap.call(fn -> Native.signature_signing_time(signing_time) end) do
+      {:ok, seconds && DateTime.from_unix!(seconds)}
+    end
+  end
+
+  @doc """
+  Same as `signing_time_utc/1`, but raises `PdfElixide.Error` on failure.
+  """
+  @spec signing_time_utc!(t()) :: DateTime.t() | nil
+  def signing_time_utc!(signature), do: signature |> signing_time_utc() |> Wrap.unwrap!()
 
   @doc """
   Counts the signatures in the given PDF document or editor.
