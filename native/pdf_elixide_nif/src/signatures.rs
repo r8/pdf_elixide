@@ -809,9 +809,6 @@ mod tests {
         );
     }
 
-    // The Elixir side cannot see this: both cases reach it as `{:ok, nil}`, which
-    // is what `Signature.dss/1` documents. If upstream ever starts telling an
-    // empty store from an absent one, that documentation is what goes stale.
     #[test]
     fn upstream_still_conflates_an_empty_dss_with_an_absent_one() {
         let present_but_unreadable = fixture("signature_dss_empty.pdf");
@@ -826,8 +823,6 @@ mod tests {
         assert!(read_dss(&absent).expect("read_dss succeeds").is_none());
     }
 
-    // Why `signature_pades_level` passes `/Contents` untrimmed: the key is over
-    // the padded bytes, so trimming would silently cost every B-LT its lookup.
     #[test]
     fn upstream_still_keys_vri_on_the_padded_contents() {
         let doc = fixture("form_signature_pades_lt.pdf");
@@ -853,13 +848,8 @@ mod tests {
         );
     }
 
-    // The extraction transcribes upstream's private `has_bt_timestamp`, so what
-    // pins it is that the two still agree about which signatures carry the
-    // attribute — observed through the classifier, the only public view of it.
-    //
-    // Well-formed CMS only, and deliberately: upstream answers `false` for a
-    // blob it cannot decode where this answers `Err`. That divergence is the
-    // point rather than a drift, and driving it here would build an atom.
+    // Compare only well-formed CMS; malformed blobs intentionally differ because
+    // this parser reports an error where the upstream classifier returns false.
     #[test]
     fn bt_timestamp_matches_upstreams_classification() {
         for (name, expected) in [
@@ -898,9 +888,6 @@ mod tests {
         }
     }
 
-    // The fourth independent path into `ContentInfo::from_der`, after the two
-    // verify calls and the certificate read. If upstream ever accepts the
-    // padded token, drop the trim rather than let it shadow the fix.
     #[test]
     fn upstream_still_rejects_a_zero_padded_timestamp_token() {
         let doc = fixture("signature_doctimestamp.pdf");

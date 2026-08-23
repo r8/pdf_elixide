@@ -1,4 +1,6 @@
 defmodule PdfElixide.FormTest do
+  @moduledoc false
+
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
@@ -18,8 +20,7 @@ defmodule PdfElixide.FormTest do
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
   # The three `form.pdf` fields, in file order — one per struct the fixture can
-  # express, which is every struct but `Unknown`. No fixture yields a non-nil
-  # `:raw_type`, which the `#[cfg(test)]` tests in form.rs pin.
+  # express, which is every struct but `Unknown`.
   @form_pdf_kinds [Field.Text, Field.Button, Field.Choice]
 
   defp kinds(fields), do: Enum.map(fields, & &1.__struct__)
@@ -242,8 +243,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@flags_pdf)
       editor = Editor.open!(@flags_pdf)
 
-      # The whole point of resolving `/Ff` in one place: upstream reads it from
-      # two different structs on the two paths, and neither resolves inheritance.
+      # Both paths must use the same resolved, inherited `/Ff` bits.
       assert Form.fields!(doc) == Form.fields!(editor)
     end
 
@@ -329,10 +329,8 @@ defmodule PdfElixide.FormTest do
     test "reports an unknown field name as :not_found" do
       editor = Editor.open!(@form_pdf)
 
-      # The native layer reports the same reason `field/2` does; what that
-      # depends on upstream is pinned in upstream_drift_test.exs. The
-      # signature-field guard runs ahead of the write and must stay transparent
-      # to a name that is in no form at all.
+      # The signature-field guard runs before the write but must preserve the
+      # ordinary missing-field result.
       assert {:error, %Error{reason: :not_found}} =
                Form.put_value(editor, "no_such_field", "x")
     end
@@ -395,14 +393,11 @@ defmodule PdfElixide.FormTest do
       end
     end
 
-    test "raises ArgumentError for the old tagged-tuple shapes" do
+    test "raises ArgumentError for tagged-tuple values" do
       editor = Editor.open!(@form_pdf)
 
-      # Values are plain terms now. The tags this library used to require are
-      # rejected rather than silently written as something else, so a caller
-      # that missed the breaking change fails loudly.
-      for old <- [{:text, "x"}, {:boolean, true}, {:array, ["a"]}] do
-        assert_raise ArgumentError, fn -> Form.put_value(editor, "full_name", old) end
+      for value <- [{:text, "x"}, {:boolean, true}, {:array, ["a"]}] do
+        assert_raise ArgumentError, fn -> Form.put_value(editor, "full_name", value) end
       end
     end
   end

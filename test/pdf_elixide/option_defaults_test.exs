@@ -236,10 +236,8 @@ defmodule PdfElixide.OptionDefaultsTest do
 
   describe "a default that only behavior can pin" do
     test ":compress true still compresses" do
-      # The map above pins the value; this pins that `true` still reaches
-      # upstream and means what it says. Sizes rather than bytes: upstream's
-      # writer happens to be deterministic — no clock, no `/ID`, sorted keys —
-      # but that is its business, not a contract this library should assert.
+      # Compare sizes rather than exact bytes; deterministic serialization is
+      # not part of this library's contract.
       editor = Editor.open!(@fonts_pdf)
       on_exit(fn -> Editor.close(editor) end)
 

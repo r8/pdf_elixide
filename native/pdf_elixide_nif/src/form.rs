@@ -218,7 +218,7 @@ fn choice_kind_nif(bits: u32) -> ChoiceKindNif {
 
 // One AcroForm field. Untagged so each variant encodes as the bare struct —
 // Elixir sees `%PdfElixide.Form.Field.Text{}` and friends directly, with no
-// wrapping tuple. The `AnnotationColorNif` shape (see color.rs).
+// wrapping tuple, like `AnnotationColorNif` in color.rs.
 #[derive(NifUntaggedEnum, Debug)]
 pub enum FieldNif {
     Text(TextFieldNif),

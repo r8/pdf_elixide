@@ -19,8 +19,6 @@ use crate::{
     geometry::{rect_from_nif, RectNif},
 };
 
-// How a region filter decides whether an object is inside the region:
-// `:intersects`, `:fully_contained`, or `{:min_overlap, ratio}`.
 #[derive(NifTaggedEnum, Debug)]
 pub enum RectFilterModeNif {
     Intersects,
@@ -65,8 +63,6 @@ pub enum OnPageErrorNif {
     Halt,
 }
 
-// A region filter: the rectangle plus the mode it is applied under. Absent
-// when the caller passed no `:region`.
 pub struct RegionFilter {
     pub rect: Rect,
     pub mode: RectFilterMode,
@@ -134,7 +130,6 @@ impl From<SpanReadingOrderNif> for ReadingOrder {
     }
 }
 
-// Which boundary evidence the spatial detector uses on one axis.
 #[derive(NifUnitEnum, Debug)]
 pub enum TableStrategyNif {
     Lines,
@@ -152,7 +147,6 @@ impl From<TableStrategyNif> for TableStrategy {
     }
 }
 
-// The base `TableDetectionConfig` an override map starts from.
 #[derive(NifUnitEnum, Debug)]
 pub enum TablePresetNif {
     Default,
@@ -170,9 +164,6 @@ impl From<TablePresetNif> for TableDetectionConfig {
     }
 }
 
-// Every field of upstream's `TableDetectionConfig`, each `nil` unless the
-// caller overrode it. Python's `table_settings` dict reaches only five of
-// these.
 #[derive(NifMap, Debug)]
 pub struct TableDetectionNif {
     pub preset: TablePresetNif,
@@ -233,7 +224,6 @@ impl From<TableDetectionNif> for TableDetectionConfig {
     }
 }
 
-// The base `SpanMergingConfig` an override map starts from.
 #[derive(NifUnitEnum, Debug)]
 pub enum SpanPresetNif {
     Default,
@@ -290,8 +280,6 @@ impl AdaptiveThresholdNif {
     }
 }
 
-// Every field of upstream's `SpanMergingConfig`. The Python bindings expose
-// none of this.
 #[derive(NifMap, Debug)]
 pub struct SpanMergingNif {
     pub preset: SpanPresetNif,
@@ -364,7 +352,6 @@ pub struct TextOptionsNif {
 }
 
 impl TextOptionsNif {
-    // The only option map with two filter modes to check.
     pub fn validate(&self) -> NifResult<()> {
         validate_mode("region_mode", &self.region_mode)?;
         validate_mode("exclude_regions_mode", &self.exclude_regions_mode)
@@ -385,8 +372,6 @@ pub struct TextOptions {
 }
 
 impl TextOptions {
-    // True when the caller asked for layer or ink filtering, which upstream
-    // can only serve through the filtered entry points.
     pub fn filtered(&self) -> bool {
         !self.exclude_layers.is_empty() || !self.exclude_inks.is_empty()
     }

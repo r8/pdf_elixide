@@ -130,7 +130,11 @@ defmodule PdfElixide.Signature do
     * `nil` — not a PAdES signature at all. The levels are defined for
       `:cades_detached` and describe nothing else.
 
-  The highest level, B-LTA, is not reported; `pades_level/2` says why.
+  These levels are structural, not verification results. A damaged signature
+  whose timestamp cannot be found still reaches `:b_b`, and a `:b_lt` store
+  entry may itself be empty. The highest level, B-LTA, is not reported because
+  neither argument carries the archival timestamp over the whole file; a B-LTA
+  signature therefore answers `:b_lt`.
   """
   @type pades_level :: :b_b | :b_t | :b_lt | nil
 
@@ -512,34 +516,9 @@ defmodule PdfElixide.Signature do
   Pass `nil` for `dss` — what `pades_level/1` does — when there is no store, or
   when the distinction does not matter.
 
-  Nothing here is verified. The answer is structural: the timestamp token is
-  found by its identifier and never opened, `:b_t` makes no claim about the time
-  it carries, and nothing in the store is validated against anything. Reading
-  that token, and checking the authority signed it, is `timestamp/1`. See "What
-  verification proves" in the module documentation, and
-  `PdfElixide.Signature.DSS`.
-
-  ## What the answers rule out
-
-  `nil` is a signature that is not PAdES — one whose `:sub_filter` is anything
-  other than `:cades_detached`, which the common `:pkcs7_detached` signature is.
-  The baseline levels are defined for that format alone, so reporting a level for
-  the rest would say something about them that is not true.
-
-  `:b_b` is the floor, and a blob that cannot be read reaches it too: the answer
-  is that no timestamp token was found, which is not the same as finding that
-  none is there. A signature whose `:contents` are damaged answers `:b_b` rather
-  than failing. `:b_lt` is refused on the same terms — a store whose entry is
-  filed under any key but the uppercase hexadecimal SHA-1 of this signature's raw
-  `:contents` is not found, and the answer stays `:b_t`. It rules out nothing
-  about what that entry holds, though: one carrying no certificates, no CRLs and
-  no OCSP responses answers `:b_lt` as a full one does, so read the level as "a
-  store names this signature" and `PdfElixide.Signature.DSS` for the material.
-
-  The highest level, B-LTA, is never reported. It is `:b_lt` plus an archival
-  timestamp over the whole file, which neither argument here carries. A B-LTA
-  signature therefore answers `:b_lt`: the answer is never higher than the
-  truth, but it can be lower.
+  Nothing here is verified. See `t:pades_level/0` for the exact meaning and
+  limitations of each answer, `timestamp/1` to read and verify the timestamp,
+  and `PdfElixide.Signature.DSS` for the store material.
 
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` when a `:cades_detached`
   signature carries no `:contents`.

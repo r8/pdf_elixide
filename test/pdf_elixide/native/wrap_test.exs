@@ -1,4 +1,6 @@
 defmodule PdfElixide.Native.WrapTest do
+  @moduledoc false
+
   use ExUnit.Case, async: true
 
   alias PdfElixide.Error
@@ -109,8 +111,7 @@ defmodule PdfElixide.Native.WrapTest do
   describe "call/1 with an exception it must not swallow" do
     test "re-raises :badarg as ArgumentError rather than mangling it" do
       # A NIF raises :badarg when it cannot decode its arguments. Elixir
-      # normalizes that to an ArgumentError, which carries no :original key —
-      # reading one used to raise a KeyError from inside call/1.
+      # normalizes that to an ArgumentError.
       assert_raise ArgumentError, fn -> Wrap.call(fn -> :erlang.error(:badarg) end) end
     end
 

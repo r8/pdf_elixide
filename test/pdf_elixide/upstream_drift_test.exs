@@ -108,11 +108,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test ":include_artifacts still filters, and still defaults to keeping them", %{doc: doc} do
-      # Upstream's Python binding carries a stale comment claiming
-      # `include_artifacts=False` is the default while its signature says
-      # `true`, which reads like an intended flip. This library is insulated —
-      # its default routes explicitly to the artifact-keeping variant — but if
-      # the meaning of the *option* ever inverts, this fails.
       assert "Running" in texts(Document.words!(doc, @artifacts))
       refute "Running" in texts(Document.words!(doc, @artifacts, include_artifacts: false))
     end
@@ -129,11 +124,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       # Precondition: the option does something when it is not being dropped.
       assert without_tables != plain
 
-      # `extract_text_filtered` builds its own conversion options, so
-      # `:extract_tables` never reaches upstream and the output matches the
-      # default rather than the tables-off one. If this flips, upstream has
-      # made the filtered path configurable and the `t:text_opts/0` caveat can
-      # go.
       assert filtered == plain
     end
 
@@ -186,9 +176,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test "every preset name still resolves", %{doc: doc} do
-      # The presets differ in fields no fixture this small can separate, so
-      # this pins that each name still maps to a real upstream constructor —
-      # a removed preset would fail to decode rather than quietly fall back.
       for preset <- [:default, :aggressive, :conservative, :adaptive, :legacy] do
         assert is_list(Document.spans!(doc, @kerned, span_merging: [preset: preset]))
       end
@@ -212,9 +199,6 @@ defmodule PdfElixide.UpstreamDriftTest do
   describe "absolutely-positioned cells fuse into one token" do
     setup do: %{doc: open(@table_pdf)}
 
-    # These pin what `PdfElixide.Document`'s "Choosing an extractor for search
-    # and matching" claims; if any flips, that section is what needs rewriting.
-    #
     # `table.pdf` draws three horizontal rules, so its table *is* recognised —
     # which is the only reason the two `:extract_tables` cases below differ.
 
@@ -247,10 +231,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test "the fusion is upstream of assembly, and its own flag still undoes it", %{doc: doc} do
-      # Not reachable from `text/2`: `extract_text_with_options` takes only a
-      # `ConversionOptions`, which carries no span-merging field. Pinned here
-      # because it is the evidence that the joining happens in the extractor
-      # rather than in the text assembler.
       assert "Age0.0420.0110.001" in texts(Document.spans!(doc, 0))
 
       assert "Age" in texts(Document.spans!(doc, 0, span_merging: [merge_tm_tj_runs: false]))
@@ -415,10 +395,6 @@ defmodule PdfElixide.UpstreamDriftTest do
 
     test "a search match is mapped, like words, and unlike the span it sits in",
          %{doc: doc} do
-      # `search` reaches its spans through `PdfDocument::search_page_index`,
-      # which calls the plain `extract_spans` — so it is on the mapped side of
-      # the split above, even though `spans/2` is not. Nothing in either
-      # signature shows that, which is why it is pinned rather than assumed.
       assert [%{bbox: %{x: 72.0, y: 720.0}} = span] = Document.spans!(doc, @rotate_180)
       assert [match] = Document.search!(doc, span.text, @rotate_180)
 
@@ -434,10 +410,6 @@ defmodule PdfElixide.UpstreamDriftTest do
   end
 
   describe "text search" do
-    # Everything here is upstream's rule, not this binding's, and none of it is
-    # visible from `TextSearcher::search`'s signature. `guides/search.md` is
-    # what tells callers about each one; a failure here means that guide has
-    # gone wrong, so fix the guide rather than the assertion.
     setup do: %{doc: open(@search_pdf)}
 
     test "a match's boxes cover whole spans, not the matched characters",
@@ -576,8 +548,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     test "a rectangle drawn back to its starting corner is classified as neither" do
       doc = open(@vector_shapes_pdf)
 
-      # Both paths are extracted; neither is classified. If upstream starts
-      # accepting the six-operation form, drop that bullet from the docs.
       assert length(Document.paths!(doc, @near_misses)) == 2
       assert Document.rects!(doc, @near_misses) == []
       assert Document.lines!(doc, @near_misses) == []

@@ -1,4 +1,6 @@
 defmodule PdfElixide.Document.PageTest do
+  @moduledoc false
+
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
@@ -47,10 +49,7 @@ defmodule PdfElixide.Document.PageTest do
                Page.media_box(Document.page!(doc, 0))
     end
 
-    # Also the guard against upstream reinterpreting `get_page_media_box`'s
-    # tuple: it returns raw corners `(llx, lly, urx, ury)`, and this page's box
-    # is `[10 20 622 812]`, so a switch to x/y/width/height semantics would
-    # report a width of 622 rather than 612.
+    # The fixture stores raw corners `[10 20 622 812]`, not x/y/width/height.
     test "reports a non-zero origin and measures between the corners" do
       doc = Document.open!(@media_box_pdf)
 
@@ -70,9 +69,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "inherits the box from an ancestor /Pages node" do
       # This page carries no /MediaBox; the intermediate /Pages above it has
-      # `[0 0 300 500]`. Which ancestor wins when two of them declare one is
-      # upstream's, and unstable — see `inherited_boxes.pdf` in
-      # `upstream_drift_test.exs`.
+      # `[0 0 300 500]`.
       doc = Document.open!(@media_box_pdf)
       assert {:ok, %Rect{width: 300.0, height: 500.0}} = Page.media_box(Document.page!(doc, 2))
     end
@@ -83,8 +80,6 @@ defmodule PdfElixide.Document.PageTest do
     end
 
     test "resolves an indirect reference in each element of the array" do
-      # An unresolved element reads as 0.0 upstream, collapsing the page to a
-      # zero-area box that clips every extraction — silent, hence the pin.
       doc = Document.open!(@media_box_pdf)
       assert {:ok, %Rect{width: 300.0, height: 400.0}} = Page.media_box(Document.page!(doc, 4))
     end
@@ -285,8 +280,7 @@ defmodule PdfElixide.Document.PageTest do
     end
 
     test "agrees with what text/1 can actually extract" do
-      # The whole point of the predicate: `text/1` returns "" for a page with no
-      # text layer *and* for a blank one, so an empty string is not a signal.
+      # `text/1` returns "" both for a page with no text layer and for a blank one.
       doc = Document.open!(@text_layer_pdf)
 
       layers = Enum.map(doc, &Page.has_text_layer?/1)

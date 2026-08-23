@@ -1,4 +1,6 @@
 defmodule PdfElixide.EditorTest do
+  @moduledoc false
+
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
@@ -120,9 +122,6 @@ defmodule PdfElixide.EditorTest do
       assert {:ok, 0} = Editor.page_count(editor)
     end
 
-    # No binding mutates the page order yet, so the count an editor reports can
-    # only be the source document's — this pins that an ordinary edit is not
-    # mistaken for one that adds or removes a page.
     test "is unchanged by an edit that does not touch the page tree" do
       editor = Editor.open!(@form_pdf)
       before = Editor.page_count!(editor)
@@ -431,8 +430,6 @@ defmodule PdfElixide.EditorTest do
     end
 
     test "open, fill, save and close compose as one expression", %{out_path: out_path} do
-      # The shape the whole return-the-editor change exists for. Every mutating
-      # function hands the editor back, so only `close/1` terminates it.
       assert :ok =
                @form_pdf
                |> Editor.open!()

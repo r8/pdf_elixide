@@ -1,4 +1,6 @@
 defmodule PdfElixide.DocumentTest do
+  @moduledoc false
+
   use ExUnit.Case, async: true
 
   alias PdfElixide.Color
@@ -89,9 +91,6 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "arrives together with the version and the handle, from one native call" do
-      # Both openers destructure a single `{ref, version, page_count}` payload, so
-      # this is where that payload's shape is pinned: a change to its arity or
-      # field order fails here rather than in whichever accessor noticed first.
       assert %Document{version: {1, 4}, page_count: 3} = Document.open!(@valid_pdf)
 
       assert %Document{version: {1, 4}, page_count: 3} =
@@ -674,11 +673,8 @@ defmodule PdfElixide.DocumentTest do
       page = Document.page!(doc, 0)
       assert {:ok, html} = Document.to_html(doc, 0, preserve_layout: true)
 
-      # Upstream writes the span's PDF user-space y — measured from the bottom
-      # of the page — straight into CSS `top`, which measures from the top. The
-      # text sits at y=720 on a 792pt page, so a converter that flipped it
-      # would emit top:72pt. Pinned because `html_opts` documents the flip as
-      # the caller's job; if upstream ever fixes it, this test says so.
+      # The text sits at PDF y=720 on a 792pt page; a flipped CSS coordinate
+      # would be 72pt.
       assert Page.height!(page) == 792.0
       assert html =~ "top:720pt;"
       refute html =~ "top:72pt;"
@@ -790,9 +786,7 @@ defmodule PdfElixide.DocumentTest do
     test "an image_output_dir is not attribute-escaped in src", %{tmp_dir: tmp_dir} do
       doc = Document.open!(@markdown_pdf)
       # A double quote is a legal filename character, and upstream interpolates
-      # the path into src="…" unescaped, so it closes the attribute. Pinned
-      # because :image_output_dir documents this as a reason never to build the
-      # path from untrusted input.
+      # the path into src="…" unescaped, so it closes the attribute.
       quoted = Elixir.Path.join(tmp_dir, ~s(img"dir))
 
       assert {:ok, html} =
@@ -1668,9 +1662,6 @@ defmodule PdfElixide.DocumentTest do
       assert {:error, %Error{reason: :invalid_pattern}} =
                Document.search(doc, "(", literal: false)
 
-      # `[]` rather than an error is what the branch exists for — the sibling
-      # whole-document extractors answer the same way, and the per-page arity
-      # still has no page to reach.
       assert {:ok, []} = Document.search(doc, "x")
       assert {:ok, ""} = Document.text(doc)
       assert {:ok, []} = Document.chars(doc)
@@ -2793,11 +2784,8 @@ defmodule PdfElixide.DocumentTest do
       assert Document.has_structure_tree(doc) == {:ok, true}
     end
 
-    # The point of the strict variant: the tolerant one collapses every failure
-    # into `false`, so a caller who needs to tell "untagged" from "unreadable"
-    # has this. No fixture reaches the error branch through the document itself
-    # — an encrypted document's catalog still parses — so the closed handle is
-    # what pins that the error survives to Elixir at all.
+    # No fixture reaches the strict error branch through document contents, so
+    # a closed handle supplies the failure without conflating it with `false`.
     test "reports a failure the predicate would have swallowed" do
       doc = Document.open!(@tagged_pdf)
       :ok = Document.close(doc)
@@ -2947,9 +2935,7 @@ defmodule PdfElixide.DocumentTest do
 
   # `open/2`'s `:password` and `authenticate/2` reach the same upstream call,
   # which hashes raw bytes and never validates UTF-8, so they must accept and
-  # reject exactly the same values. The open option used to decode as a Rust
-  # `String`, which rejected a non-UTF-8 password as a `NifMap` field-decode
-  # failure — `%Error{reason: :other}` — while `authenticate/2` accepted it.
+  # reject exactly the same values.
   describe "non-UTF-8 passwords" do
     test "open/2 accepts a PDFDocEncoded password that is not valid UTF-8" do
       refute String.valid?(@latin1_password)
@@ -3179,10 +3165,6 @@ defmodule PdfElixide.DocumentTest do
       assert annotation.color == %Color.Unknown{components: [0.25, 0.75]}
     end
 
-    # Upstream pdf_oxide collapses an empty /C array to "no entry"
-    # (parse_number_array in its src/annotations.rs), so an explicitly empty
-    # color is indistinguishable from an absent one. This pins that behavior; if
-    # upstream changes, this test is the tripwire.
     test "surfaces an empty color array as nil" do
       annotation = annotation_with_contents("Explicitly not painted")
 
@@ -3454,8 +3436,7 @@ defmodule PdfElixide.DocumentTest do
     test "deep: true adds the inks of the Form XObjects the page invokes" do
       doc = Document.open!(@layers_and_inks_pdf)
 
-      # NestedInk is declared two forms down, so this also pins that the walk
-      # recurses rather than reading only the page's direct `Do`s.
+      # NestedInk is declared two forms down rather than directly on the page.
       assert {:ok, shallow} = Document.inks(doc, 0)
       assert {:ok, deep} = Document.inks(doc, 0, deep: true)
       assert deep == ["FormInk", "NestedInk", "PageInk"]
@@ -3539,8 +3520,7 @@ defmodule PdfElixide.DocumentTest do
       assert {:error, %Error{reason: :closed}} = Document.metadata(doc)
       assert {:error, %Error{reason: :closed}} = PdfElixide.Form.fields(doc)
 
-      # Not page_count/1: it is cached on the struct at open, so it answers
-      # without the handle. Pinned in "struct-backed accessors keep working".
+      # `page_count/1` is cached on the struct and needs no live handle.
       assert {:ok, 3} = Document.page_count(doc)
     end
 

@@ -421,10 +421,7 @@ defmodule PdfElixide.ExtractionOptionsTest do
     end
 
     test "{:min_overlap, 0.0} matches objects that do not touch the region", %{doc: doc} do
-      # Upstream compares `overlap >= ratio` and a non-overlapping object
-      # scores 0.0, so a zero ratio takes everything. It is in range and stays
-      # accepted; the typedoc warns about it, and this pins the surprise so it
-      # cannot change unnoticed.
+      # A non-overlapping object scores 0.0, which satisfies a 0.0 threshold.
       far_away = %Rect{x: 0.0, y: 0.0, width: 1.0, height: 1.0}
       all = Document.words!(doc, @ruleless)
 
@@ -455,11 +452,8 @@ defmodule PdfElixide.ExtractionOptionsTest do
     end
 
     test "a wrong-typed nested option value raises, naming the outer key", %{doc: doc} do
-      # These three keys take a keyword list, but a value of any other shape
-      # must still reach the NIF's decoder rather than blowing up in a private
-      # builder — the whole point of the rule is that the message names the
-      # option the caller got wrong, which a `FunctionClauseError` on a private
-      # builder could not.
+      # Wrong shapes must reach the decoder so the error names the public option,
+      # not a private builder.
       for {call, field} <- [
             {fn -> Document.text(doc, 0, table_detection: :bad) end, ":table_detection"},
             {fn -> Document.spans(doc, 0, span_merging: :bad) end, ":span_merging"},

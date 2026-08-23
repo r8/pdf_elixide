@@ -94,7 +94,7 @@ mod tests {
     fn converts_an_outline_exactly_at_the_depth_cap() {
         let converted = outline_item_to_nif(chain(MAX_OUTLINE_DEPTH), 0).expect("at the cap");
 
-        // Pins the off-by-one: 256 means 256 levels are usable, not 255.
+        // The cap is inclusive.
         assert_eq!(depth_of(&converted), MAX_OUTLINE_DEPTH);
     }
 

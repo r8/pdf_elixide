@@ -1,11 +1,6 @@
-// Capture of `pdf_oxide`'s `log` output for `PdfElixide.Logging`.
-//
-// Records are buffered, never sent: `OwnedEnv::send_and_clear` panics on a
-// scheduler thread and every record here is emitted on a dirty one.
-// `PdfElixide.Native.Wrap.call/1` drains the buffer after each call.
-//
-// This module is the sole authority on capture state; an Elixir-side mirror
-// races `set_level` and cannot be made atomic with it.
+// Buffers `pdf_oxide` log records until `PdfElixide.Native.Wrap.call/1` drains
+// them. Sending directly would panic because records are emitted on dirty
+// scheduler threads.
 
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},

@@ -1,4 +1,6 @@
 defmodule PdfElixide.SignatureTest do
+  @moduledoc false
+
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document

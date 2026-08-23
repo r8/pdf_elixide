@@ -142,8 +142,7 @@ defmodule PdfElixide.OptionKeysTest do
 
   # Asserts the call did not reject its options. The result itself is
   # irrelevant — a `{:error, %PdfElixide.Error{}}` means the options were
-  # accepted and something about the *document* failed, which is exactly the
-  # split this module exists to pin.
+  # accepted and something about the *document* failed.
   defp accepts!(key, fun) do
     fun.()
     :ok
@@ -300,9 +299,6 @@ defmodule PdfElixide.OptionKeysTest do
 
   describe "a duplicated key is rejected" do
     test "rather than resolved to the first occurrence" do
-      # `Keyword.get` used to take the first silently, which quietly discards
-      # the intent of `defaults ++ user_opts`. Rejecting it is what pushes
-      # callers to `Keyword.merge/2`.
       doc = doc()
 
       assert_raise ArgumentError, ~r/duplicate keys \[:detect_headings\]/, fn ->

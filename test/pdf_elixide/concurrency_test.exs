@@ -130,9 +130,8 @@ defmodule PdfElixide.ConcurrencyTest do
       # first read was issued before the close was even called, and every
       # reader looped until it observed the close — so each reader's sequence
       # provably spans it. Neither half can degrade into "close always won" or
-      # "close never happened". What is *not* claimed is that a read was in
-      # flight at the instant `close` took the write lock; that is an overlap
-      # claim, and `resource.rs` is where overlap is pinned.
+      # "close never happened". This does not claim a read was in flight at the
+      # instant `close` took the write lock.
       assert Enum.all?(results, &(&1.first == {:ok, expected}))
 
       assert Enum.all?(results, &(&1.stopped == :saw_closed)),
@@ -337,9 +336,6 @@ defmodule PdfElixide.ConcurrencyTest do
   end
 
   describe "open and close cycles" do
-    # A shape, not a load — this is not a benchmark, and raising the counts is
-    # not how to make it stronger. If it starts to dominate the suite's runtime,
-    # halve `@cycles`.
     @workers 8
     @cycles 25
 

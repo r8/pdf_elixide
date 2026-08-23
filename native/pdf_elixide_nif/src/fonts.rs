@@ -191,15 +191,11 @@ mod tests {
 
     #[test]
     fn keeps_a_name_whose_plus_is_not_a_subset_prefix() {
-        // Wrong length: five and seven letters.
         assert_split("ABCDE+Arial", (false, "ABCDE+Arial"));
         assert_split("ABCDEFG+Arial", (false, "ABCDEFG+Arial"));
-        // Right length, wrong character class.
         assert_split("abcdef+Arial", (false, "abcdef+Arial"));
         assert_split("ABC123+Arial", (false, "ABC123+Arial"));
-        // A `+` that is simply part of the name.
         assert_split("Helvetica+Bold", (false, "Helvetica+Bold"));
-        // No `+` at all — the other case `fonts.pdf` covers.
         assert_split("Helvetica", (false, "Helvetica"));
     }
 

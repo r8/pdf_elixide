@@ -668,7 +668,7 @@ mod tests {
 
         #[test]
         fn accepts_a_tree_exactly_at_the_depth_cap() {
-            // Pins the off-by-one: 256 means 256 levels are usable, not 255.
+            // The cap is inclusive.
             assert_eq!(
                 walk_detached(&chain(MAX_FIELD_DEPTH), MAX_FIELD_NODES),
                 Ok(())

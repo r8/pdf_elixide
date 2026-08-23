@@ -106,8 +106,6 @@ fn classify(e: &PdfError) -> Atom {
         | PdfError::UnsupportedFilter(_) => atoms::unsupported(),
         PdfError::ObjectNotFound(_, _) => atoms::not_found(),
         PdfError::Io(_) => atoms::io(),
-        // Also where a future upstream wrong-password variant would land —
-        // see the deliberate gap described above.
         _ => atoms::other(),
     }
 }

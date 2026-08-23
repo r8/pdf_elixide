@@ -11,8 +11,7 @@ defmodule PdfElixide.LoggingTest do
   alias PdfElixide.Logging
 
   # `broken_page.pdf`'s third page does not resolve through the page tree. It is
-  # the only fixture here that makes upstream log while still returning `:ok`,
-  # which is the whole case this module exists for.
+  # the only fixture here that makes upstream log while still returning `:ok`.
   @broken "test/fixtures/broken_page.pdf"
   @clean "test/fixtures/sample.pdf"
 
@@ -74,9 +73,6 @@ defmodule PdfElixide.LoggingTest do
     end
 
     test "records reach Logger without an explicit flush" do
-      # `Wrap.call/1` drains on a pending-record count rather than on the enable
-      # flag, so this is what pins that the automatic path still fires at all —
-      # the test above would pass on its explicit `flush/0` alone.
       Logging.set_level(:warning)
 
       log = capture_log(fn -> assert {:ok, _} = extract(@broken) end)
