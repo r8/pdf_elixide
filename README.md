@@ -30,8 +30,10 @@ high-performance PDF library written in Rust. Built with
   boxes and the rest classified from their field flags
 - Fill AcroForm fields, flatten forms and annotations, and save edited PDFs to a file or binary
 - Read what a document's digital signatures claim — signer, time, reason and the
-  byte range each covers — verify one against the bytes it covers, and read out
-  the certificate embedded in one
+  byte range each covers — verify one against the bytes it covers, read out the
+  certificate embedded in one, report the PAdES baseline level it reaches, open
+  the RFC 3161 timestamp it carries, and read the security store a document
+  carries for validating them later
 - Restrict extraction by region and configure artifacts, layers, inks, reading
   order, table detection, and span merging
 - Capture diagnostics for content a damaged page drops without failing, and

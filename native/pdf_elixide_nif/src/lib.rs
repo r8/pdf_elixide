@@ -47,6 +47,10 @@ pub(crate) mod atoms {
         standard, custom, identity,
         // Signature verdict tags (see signatures.rs / PdfElixide.Signature.verify/2)
         valid, invalid, unknown,
+        // PAdES baseline levels (see signatures.rs / PdfElixide.Signature.pades_level/2)
+        b_b, b_t, b_lt,
+        // Timestamp hash algorithms (see signatures.rs / PdfElixide.Signature.Timestamp)
+        sha1, sha256, sha384, sha512,
         // Error reason tags (see error.rs / PdfElixide.Error)
         encrypted, wrong_password, invalid_pdf, invalid_pattern, unsupported,
         not_found, out_of_range, io, lock_poisoned, panic, closed, other

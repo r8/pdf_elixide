@@ -1,0 +1,72 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /DSS 6 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << >> >>
+endobj
+4 0 obj
+<< /Length 8 >>
+stream
+DOC-CERT
+endstream
+endobj
+5 0 obj
+<< /Length 7 >>
+stream
+DOC-CRL
+endstream
+endobj
+6 0 obj
+<< /Type /DSS /Certs [4 0 R 99 0 R] /CRLs [5 0 R] /OCSPs [7 0 R] /VRI << /Type /VRI /D78F8BB992A56A597F6C7A1FB918BB78271367EB 8 0 R >> >>
+endobj
+7 0 obj
+<< /Length 8 >>
+stream
+DOC-OCSP
+endstream
+endobj
+8 0 obj
+<< /Type /VRI /Cert [9 0 R] /CRL [10 0 R] /OCSP [11 0 R] /TU (D:20240102030405+02'00') >>
+endobj
+9 0 obj
+<< /Length 8 >>
+stream
+VRI-CERT
+endstream
+endobj
+10 0 obj
+<< /Length 7 >>
+stream
+VRI-CRL
+endstream
+endobj
+11 0 obj
+<< /Length 8 >>
+stream
+VRI-OCSP
+endstream
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000015 00000 n 
+0000000075 00000 n 
+0000000156 00000 n 
+0000000220 00000 n 
+0000000277 00000 n 
+0000000333 00000 n 
+0000000486 00000 n 
+0000000543 00000 n 
+0000000648 00000 n 
+0000000705 00000 n 
+0000000762 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R >>
+startxref
+820
+%%EOF

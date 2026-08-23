@@ -13,6 +13,11 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+# Reaching the timestamp token in a signature's CMS unsigned attributes, which
+# `pdf_oxide` finds but never hands back. Pinned as upstream pins them so Cargo
+# unifies on one copy.
+cms = "0.2"
+der = "0.7"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 log = "0.4"
 pdf_oxide = { version = "0.3.77", features = ["signatures"] }

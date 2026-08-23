@@ -371,10 +371,17 @@ Reading the signatures themselves is a separate capability, and
 what each signature in a document claims — signer, time, reason, and the byte
 range it covers — from a document or an editor,
 `PdfElixide.Signature.verify/2` checks one against the bytes that range covers,
-and `PdfElixide.Signature.certificate/1` hands back the certificate embedded in
-the signature as DER for `:public_key` to decode. What a verdict does and does
-not prove is in that module's documentation.
-Neither goes through a form write, so the refusal above stands either way.
+`PdfElixide.Signature.certificate/1` hands back the certificate embedded in
+the signature as DER for `:public_key` to decode,
+`PdfElixide.Signature.pades_level/2` reports which PAdES baseline level a
+signature reaches, `PdfElixide.Signature.timestamp/1` opens the RFC 3161
+timestamp a signature carries so a third party's account of when it existed can
+be weighed against the signer's own claimed time, and
+`PdfElixide.Signature.dss/1` reads the certificates, CRLs
+and OCSP responses a document carries so its signatures can still be judged once
+those expire. What a verdict does and does not prove is in that module's
+documentation, as is the fact that nothing in the store is validated.
+None of them goes through a form write, so the refusal above stands either way.
 Producing signatures is not offered.
 
 ### Reading signatures is stricter than reading fields

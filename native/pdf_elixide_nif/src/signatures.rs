@@ -2,11 +2,15 @@
 
 use std::collections::HashMap;
 
+use cms::{content_info::ContentInfo, signed_data::SignedData};
+use der::{oid::ObjectIdentifier, Decode, Encode, SliceReader};
 use pdf_oxide::{
     object::Object,
     signatures::{
-        extract_signer_certificate_der, verify_signer, verify_signer_detached, ByteRangeCalculator,
-        SignatureInfo, SignatureSubFilter, SignatureVerifier, SignerVerify,
+        classify_pades_level, extract_signer_certificate_der, read_dss, verify_signer,
+        verify_signer_detached, ByteRangeCalculator, DocumentSecurityStore, HashAlgorithm,
+        PadesLevel, SignatureInfo, SignatureSubFilter, SignatureVerifier, SignerVerify, Timestamp,
+        VriEntry,
     },
     PdfDocument,
 };
@@ -14,7 +18,7 @@ use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, ResourceArc, Te
 
 use crate::{
     atoms,
-    binary::binary_term,
+    binary::{binary_term, owned_binary},
     error::{tagged_err, to_nif_err},
     form_tree,
     metadata::decode_pdf_text_string,
@@ -67,6 +71,89 @@ fn signature_to_nif<'a>(env: Env<'a>, info: SignatureInfo) -> NifResult<Signatur
         byte_range: info.byte_range,
         contents,
     })
+}
+
+// One struct per direction is avoidable here: `NifMap` derives both `Encoder`
+// and `Decoder`, and a `Binary` satisfies each, so `dss/1` encodes through the
+// same shape `pades_level/2` decodes back.
+#[derive(NifMap)]
+pub struct VriNif<'a> {
+    signature_digest: String,
+    certificates: Vec<Binary<'a>>,
+    crls: Vec<Binary<'a>>,
+    ocsp_responses: Vec<Binary<'a>>,
+    timestamp: Option<String>,
+}
+
+#[derive(NifMap)]
+pub struct DssNif<'a> {
+    certificates: Vec<Binary<'a>>,
+    crls: Vec<Binary<'a>>,
+    ocsp_responses: Vec<Binary<'a>>,
+    vri: Vec<VriNif<'a>>,
+}
+
+fn der_binaries<'a>(env: Env<'a>, blobs: &[Vec<u8>]) -> NifResult<Vec<Binary<'a>>> {
+    blobs
+        .iter()
+        .map(|blob| Ok(owned_binary(blob, "security store entry")?.release(env)))
+        .collect()
+}
+
+fn vri_to_nif<'a>(env: Env<'a>, entry: VriEntry) -> NifResult<VriNif<'a>> {
+    Ok(VriNif {
+        signature_digest: entry.signature_digest,
+        certificates: der_binaries(env, &entry.certificates)?,
+        crls: der_binaries(env, &entry.crls)?,
+        ocsp_responses: der_binaries(env, &entry.ocsp_responses)?,
+        timestamp: entry.timestamp,
+    })
+}
+
+fn dss_to_nif<'a>(env: Env<'a>, store: DocumentSecurityStore) -> NifResult<DssNif<'a>> {
+    Ok(DssNif {
+        certificates: der_binaries(env, &store.certificates)?,
+        crls: der_binaries(env, &store.crls)?,
+        ocsp_responses: der_binaries(env, &store.ocsp_responses)?,
+        vri: store
+            .vri
+            .into_iter()
+            .map(|entry| vri_to_nif(env, entry))
+            .collect::<NifResult<_>>()?,
+    })
+}
+
+// `DocumentSecurityStore` and `VriEntry` are `#[non_exhaustive]`, so a literal
+// is unavailable and an upstream field added later keeps compiling as its
+// default.
+#[allow(clippy::field_reassign_with_default)]
+fn dss_from_nif(dss: DssNif) -> DocumentSecurityStore {
+    let mut store = DocumentSecurityStore::default();
+    store.certificates = dss.certificates.iter().map(|b| b.to_vec()).collect();
+    store.crls = dss.crls.iter().map(|b| b.to_vec()).collect();
+    store.ocsp_responses = dss.ocsp_responses.iter().map(|b| b.to_vec()).collect();
+    store.vri = dss
+        .vri
+        .into_iter()
+        .map(|entry| {
+            let mut out = VriEntry::default();
+            out.signature_digest = entry.signature_digest;
+            out.certificates = entry.certificates.iter().map(|b| b.to_vec()).collect();
+            out.crls = entry.crls.iter().map(|b| b.to_vec()).collect();
+            out.ocsp_responses = entry.ocsp_responses.iter().map(|b| b.to_vec()).collect();
+            out.timestamp = entry.timestamp;
+            out
+        })
+        .collect();
+
+    store
+}
+
+fn dss_of<'a>(env: Env<'a>, doc: &PdfDocument) -> NifResult<Option<DssNif<'a>>> {
+    read_dss(doc)
+        .map_err(to_nif_err)?
+        .map(|store| dss_to_nif(env, store))
+        .transpose()
 }
 
 // Signature reads must not turn an unreadable object into "no signatures".
@@ -150,6 +237,27 @@ fn editor_signatures<'a>(
         .with_read(|editor| signatures_of(env, editor.source()))
 }
 
+// Shared, like the two above: `read_dss` takes `&PdfDocument` and its walk over
+// the catalog is one level deep, with nothing of the `/Kids` recursion that
+// `form_tree` exists to bound.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_dss<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<DocumentResource>,
+) -> NifResult<Option<DssNif<'a>>> {
+    resource.doc.with_read(|doc| dss_of(env, doc))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_dss<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<EditorResource>,
+) -> NifResult<Option<DssNif<'a>>> {
+    resource
+        .editor
+        .with_read(|editor| dss_of(env, editor.source()))
+}
+
 // Bound zero-padded `/Contents` by its outer DER length before verification.
 // Pass an unreadable header through so the verifier remains the validator.
 fn trim_der_padding(contents: &[u8]) -> &[u8] {
@@ -185,15 +293,17 @@ fn der_tlv_len(bytes: &[u8]) -> Option<usize> {
     (total <= bytes.len()).then_some(total)
 }
 
-fn cms_blob(contents: Option<&[u8]>) -> NifResult<&[u8]> {
-    let contents = contents.ok_or_else(|| {
+fn contents_of(contents: Option<&[u8]>) -> NifResult<&[u8]> {
+    contents.ok_or_else(|| {
         tagged_err(
             atoms::invalid_pdf(),
-            "signature dictionary has no /Contents to verify",
+            "signature dictionary has no /Contents",
         )
-    })?;
+    })
+}
 
-    Ok(trim_der_padding(contents))
+fn cms_blob(contents: Option<&[u8]>) -> NifResult<&[u8]> {
+    Ok(trim_der_padding(contents_of(contents)?))
 }
 
 fn signed_bytes(pdf_data: &[u8], byte_range: &[i64]) -> NifResult<Vec<u8>> {
@@ -276,6 +386,189 @@ fn signature_certificate<'a>(env: Env<'a>, contents: Option<Binary>) -> NifResul
     let der = extract_signer_certificate_der(blob).map_err(to_nif_err)?;
 
     binary_term(env, &der, "signer certificate")
+}
+
+// Dirty for the same reason as the three verify/certificate NIFs above.
+//
+// The blob goes in untrimmed: the classifier decodes through a reader that
+// tolerates the signer's zero padding, and upstream keys a DSS `/VRI` entry on
+// the digest of the *padded* bytes, so trimming would break the B-LT lookup.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn signature_pades_level(contents: Option<Binary>, dss: Option<DssNif>) -> NifResult<Atom> {
+    // Only `contents` is read, and `Default` keeps an added upstream field from
+    // breaking the build.
+    let info = SignatureInfo {
+        contents: Some(contents_of(contents.as_deref())?.to_vec()),
+        ..Default::default()
+    };
+    let store = dss.map(dss_from_nif);
+
+    match classify_pades_level(&info, store.as_ref()) {
+        PadesLevel::BB => Ok(atoms::b_b()),
+        PadesLevel::BT => Ok(atoms::b_t()),
+        PadesLevel::BLt => Ok(atoms::b_lt()),
+        // `PadesLevel` is `#[non_exhaustive]`, and upstream documents that this
+        // classifier never returns `BLta`. This arm is what reports either of
+        // those changing rather than mapping it to a level the caller was not
+        // told about.
+        other => Err(tagged_err(
+            atoms::unsupported(),
+            format!("pdf_oxide reported an unmapped PAdES level: {other:?}"),
+        )),
+    }
+}
+
+// `id-aa-signatureTimeStampToken` — the RFC 3161 token a PAdES B-T signature
+// carries as a CMS *unsigned* attribute.
+const OID_SIGNATURE_TIME_STAMP: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
+
+// Carries the reason without building the atom, so `cargo test` can drive the
+// walk's failures: an atom without a BEAM aborts the process. `outline.rs`'s
+// `TooDeep` is the same move for the same reason.
+#[derive(Debug, PartialEq)]
+struct MalformedCms(&'static str);
+
+// Transcribed from upstream's `has_bt_timestamp`, which finds this attribute and
+// then answers only a `bool`. Untrimmed and decoded without `finish()`, so the
+// signer's zero padding is tolerated.
+//
+// `Ok(None)` means the blob parsed as CMS `SignedData` and carries no such
+// attribute — the only point at which "no timestamp" is a finding rather than a
+// failure to look, so anything earlier is an error. A `SignedData` with no
+// `SignerInfo` stays on that side deliberately; the missing signer is
+// `signature_verify_signer`'s to report.
+fn signature_timestamp_token(cms: &[u8]) -> Result<Option<Vec<u8>>, MalformedCms> {
+    let mut reader =
+        SliceReader::new(cms).map_err(|_| MalformedCms("signature /Contents is empty"))?;
+    let content = ContentInfo::decode(&mut reader)
+        .map_err(|_| MalformedCms("signature /Contents is not a CMS blob"))?;
+    let der = content
+        .content
+        .to_der()
+        .map_err(|_| MalformedCms("signature /Contents holds unencodable CMS content"))?;
+    let signed = SignedData::from_der(&der)
+        .map_err(|_| MalformedCms("signature /Contents is not CMS SignedData"))?;
+
+    let Some(signer) = signed.signer_infos.0.iter().next() else {
+        return Ok(None);
+    };
+    let Some(attributes) = signer.unsigned_attrs.as_ref() else {
+        return Ok(None);
+    };
+    let Some(attribute) = attributes
+        .iter()
+        .find(|attr| attr.oid == OID_SIGNATURE_TIME_STAMP)
+    else {
+        return Ok(None);
+    };
+
+    let value = attribute.values.iter().next().ok_or(MalformedCms(
+        "signature timestamp attribute carries no value",
+    ))?;
+
+    value
+        .to_der()
+        .map(Some)
+        .map_err(|_| MalformedCms("signature timestamp attribute holds an unencodable value"))
+}
+
+#[derive(NifMap)]
+pub struct TimestampNif<'a> {
+    token: Binary<'a>,
+    time: i64,
+    serial: String,
+    policy_oid: String,
+    tsa_name: Option<String>,
+    hash_algorithm: Atom,
+    message_imprint: Binary<'a>,
+}
+
+fn hash_algorithm_atom(algorithm: HashAlgorithm) -> Atom {
+    match algorithm {
+        HashAlgorithm::Sha1 => atoms::sha1(),
+        HashAlgorithm::Sha256 => atoms::sha256(),
+        HashAlgorithm::Sha384 => atoms::sha384(),
+        HashAlgorithm::Sha512 => atoms::sha512(),
+        HashAlgorithm::Unknown => atoms::unknown(),
+    }
+}
+
+// The window `DateTime.from_unix/1` accepts. `Timestamp::time` casts an unsigned
+// duration to `i64`, so a token outside it is refused here, which is what lets
+// `Timestamp.from_nif/1` call `DateTime.from_unix!/1` rather than the fallible one.
+const MIN_GEN_TIME: i64 = -62_167_219_200;
+const MAX_GEN_TIME: i64 = 253_402_300_799;
+
+fn timestamp_to_nif<'a>(env: Env<'a>, timestamp: &Timestamp) -> NifResult<TimestampNif<'a>> {
+    let time = timestamp.time();
+    if !(MIN_GEN_TIME..=MAX_GEN_TIME).contains(&time) {
+        return Err(tagged_err(
+            atoms::invalid_pdf(),
+            format!("timestamp generation time {time} is not a representable date"),
+        ));
+    }
+
+    let tsa_name = timestamp.tsa_name();
+
+    Ok(TimestampNif {
+        token: owned_binary(timestamp.token_bytes(), "timestamp token")?.release(env),
+        time,
+        serial: timestamp.serial(),
+        policy_oid: timestamp.policy_oid(),
+        // Upstream reports an absent TSA name as an empty string rather than an
+        // `Option`, and "the TSA did not name itself" is not a name.
+        tsa_name: (!tsa_name.is_empty()).then_some(tsa_name),
+        hash_algorithm: hash_algorithm_atom(timestamp.hash_algorithm()),
+        message_imprint: owned_binary(timestamp.message_imprint_ref(), "message imprint")?
+            .release(env),
+    })
+}
+
+fn parse_timestamp(token: &[u8]) -> NifResult<Timestamp> {
+    Timestamp::from_der(trim_der_padding(token)).map_err(to_nif_err)
+}
+
+// Dirty for the same reason as the four verify/certificate/level NIFs above.
+// Trimmed, unlike `signature_pades_level`: a `/DocTimeStamp` hands its padded
+// `/Contents` straight here, and `der`'s `from_der` reports the tail as
+// `TrailingData`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn timestamp_parse<'a>(env: Env<'a>, token: Binary) -> NifResult<TimestampNif<'a>> {
+    timestamp_to_nif(env, &parse_timestamp(&token)?)
+}
+
+// Dirty for the same reason, and trimmed for the same reason.
+//
+// Two atoms rather than the three `verdict_atom` builds: upstream's `verify`
+// folds `SignerVerify::Unknown` into an error, and so does a token that is not
+// CMS-wrapped, both of which reach the caller as `:invalid_pdf`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn timestamp_verify(token: Binary) -> NifResult<Atom> {
+    let verified = parse_timestamp(&token)?.verify().map_err(to_nif_err)?;
+
+    Ok(if verified {
+        atoms::valid()
+    } else {
+        atoms::invalid()
+    })
+}
+
+// Dirty for the same reason as the NIFs above. `contents_of` rather than
+// `cms_blob`, because the extraction tolerates the padding itself.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn signature_timestamp<'a>(
+    env: Env<'a>,
+    contents: Option<Binary>,
+) -> NifResult<Option<TimestampNif<'a>>> {
+    let found = signature_timestamp_token(contents_of(contents.as_deref())?)
+        .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
+
+    let Some(token) = found else {
+        return Ok(None);
+    };
+
+    timestamp_to_nif(env, &parse_timestamp(&token)?).map(Some)
 }
 
 #[cfg(test)]
@@ -447,6 +740,120 @@ mod tests {
         assert!(
             signer.contains('\u{FFFD}'),
             "upstream now decodes /Name as a text string: {signer:?}"
+        );
+    }
+
+    // The Elixir side cannot see this: both cases reach it as `{:ok, nil}`, which
+    // is what `Signature.dss/1` documents. If upstream ever starts telling an
+    // empty store from an absent one, that documentation is what goes stale.
+    #[test]
+    fn upstream_still_conflates_an_empty_dss_with_an_absent_one() {
+        let present_but_unreadable = fixture("signature_dss_empty.pdf");
+        let absent = fixture("sample.pdf");
+
+        assert!(
+            read_dss(&present_but_unreadable)
+                .expect("read_dss succeeds")
+                .is_none(),
+            "upstream now distinguishes a /DSS that yielded nothing"
+        );
+        assert!(read_dss(&absent).expect("read_dss succeeds").is_none());
+    }
+
+    // Why `signature_pades_level` passes `/Contents` untrimmed: the key is over
+    // the padded bytes, so trimming would silently cost every B-LT its lookup.
+    #[test]
+    fn upstream_still_keys_vri_on_the_padded_contents() {
+        let doc = fixture("form_signature_pades_lt.pdf");
+        let store = read_dss(&doc).expect("read_dss").expect("/DSS present");
+
+        let contents = signature_infos(&doc)
+            .expect("signatures read")
+            .into_iter()
+            .next()
+            .and_then(|info| info.contents)
+            .expect("a signature with /Contents");
+
+        let key = pdf_oxide::signatures::pades::vri_key(&contents).expect("SHA-1 available");
+        assert!(
+            store.vri_for(&key).is_some(),
+            "no /VRI entry keyed on the padded /Contents"
+        );
+        assert!(
+            pdf_oxide::signatures::pades::vri_key(trim_der_padding(&contents))
+                .is_some_and(|trimmed| store.vri_for(&trimmed).is_none()),
+            "the trimmed blob now keys the same entry; the untrimmed pass-through \
+             is no longer load-bearing"
+        );
+    }
+
+    // The extraction transcribes upstream's private `has_bt_timestamp`, so what
+    // pins it is that the two still agree about which signatures carry the
+    // attribute — observed through the classifier, the only public view of it.
+    //
+    // Well-formed CMS only, and deliberately: upstream answers `false` for a
+    // blob it cannot decode where this answers `Err`. That divergence is the
+    // point rather than a drift, and driving it here would build an atom.
+    #[test]
+    fn bt_timestamp_matches_upstreams_classification() {
+        for (name, expected) in [
+            ("form_signature_pades.pdf", PadesLevel::BB),
+            ("form_signature_pades_t.pdf", PadesLevel::BT),
+        ] {
+            let doc = fixture(name);
+            let info = signature_infos(&doc)
+                .expect("local enumeration")
+                .pop()
+                .expect("one signature");
+            let contents = info.contents.clone().expect("contents");
+
+            assert_eq!(
+                classify_pades_level(&info, None),
+                expected,
+                "upstream now classifies {name} differently"
+            );
+            assert_eq!(
+                signature_timestamp_token(&contents)
+                    .expect("both fixtures carry well-formed CMS")
+                    .is_some(),
+                expected == PadesLevel::BT,
+                "upstream no longer agrees with the transcribed walk on {name}"
+            );
+        }
+    }
+
+    // Shapes no fixture carries: a `/Contents` of no bytes at all, and a DER
+    // header promising more than it holds. Neither may read as carrying no
+    // timestamp. The marker blob is Elixir's, reaching the same answer.
+    #[test]
+    fn refuses_contents_that_are_not_a_cms_blob() {
+        for blob in [b"".as_slice(), b"\x30\x82\x01\x00".as_slice()] {
+            assert!(signature_timestamp_token(blob).is_err());
+        }
+    }
+
+    // The fourth independent path into `ContentInfo::from_der`, after the two
+    // verify calls and the certificate read. If upstream ever accepts the
+    // padded token, drop the trim rather than let it shadow the fix.
+    #[test]
+    fn upstream_still_rejects_a_zero_padded_timestamp_token() {
+        let doc = fixture("signature_doctimestamp.pdf");
+        let padded = signature_infos(&doc)
+            .expect("local enumeration")
+            .pop()
+            .expect("one signature")
+            .contents
+            .expect("contents");
+        let trimmed = trim_der_padding(&padded);
+
+        assert!(trimmed.len() < padded.len(), "fixture must carry padding");
+        assert!(
+            Timestamp::from_der(&padded).is_err(),
+            "upstream now tolerates a zero-padded timestamp token"
+        );
+        assert!(
+            Timestamp::from_der(trimmed).is_ok(),
+            "the trimmed token must still parse"
         );
     }
 }
