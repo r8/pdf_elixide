@@ -18,10 +18,11 @@ defmodule PdfElixide.SignatureTest do
   @bad_value_pdf Path.join(@fixtures, "form_signature_value_not_a_dict.pdf")
   @dangling_value_pdf Path.join(@fixtures, "form_signature_value_dangling.pdf")
   @null_value_pdf Path.join(@fixtures, "form_signature_value_null.pdf")
+  @cms_pdf Path.join(@fixtures, "form_signature_cms.pdf")
+  @cms_tampered_pdf Path.join(@fixtures, "form_signature_cms_tampered.pdf")
 
-  # No fixture's `/Contents` is a real CMS blob; each is a marker chosen so a
-  # test can tell the signature dictionaries apart. Nothing here decodes them,
-  # which is why a cryptographically real fixture is not needed.
+  # Every fixture but the two CMS ones carries a marker rather than a signature,
+  # chosen so a test can tell the dictionaries apart. Nothing decodes a marker.
   @deadbeef <<0xDE, 0xAD, 0xBE, 0xEF>>
   @cafebabe <<0xCA, 0xFE, 0xBA, 0xBE>>
   @coffee <<0xC0, 0xFF, 0xEE, 0x11>>
@@ -129,6 +130,267 @@ defmodule PdfElixide.SignatureTest do
       doc = open!(@cyclic_pdf)
 
       assert_raise Error, fn -> Signature.list!(doc) end
+    end
+  end
+
+  describe "a genuinely signed document" do
+    setup do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      %{signature: signature}
+    end
+
+    test "reports the dictionary the signer wrote", %{signature: signature} do
+      assert signature.sub_filter == :pkcs7_detached
+      assert signature.signer_name == "Alice Example"
+      assert signature.reason == "Approval"
+      assert signature.location == "Kyiv"
+      assert signature.contact_info == nil
+
+      # `/M` is the moment the fixture was generated, so only its shape is fixed.
+      assert signature.signing_time =~ ~r/\AD:\d{14}Z\z/
+      assert [0, _, _, _] = signature.byte_range
+    end
+
+    test "carries a CMS blob bounded by its own DER length", %{signature: signature} do
+      assert <<0x30, 0x82, der_length::16, _::binary>> = signature.contents
+
+      padding = byte_size(signature.contents) - (4 + der_length)
+      assert padding > 0
+      assert binary_part(signature.contents, 4 + der_length, padding) == <<0::size(padding * 8)>>
+    end
+
+    test "covers every byte of the file", %{signature: signature} do
+      assert Signature.covers_whole_document?(signature, File.stat!(@cms_pdf).size)
+    end
+
+    test "reports the same claims for a document altered after signing", %{signature: signature} do
+      assert {:ok, [tampered]} = Signature.list(open!(@cms_tampered_pdf))
+      assert tampered == signature
+
+      # The altered byte is a form value inside the signed range, so what the
+      # signature claims is unmoved while what it covers is not.
+      assert {:ok, [%{value: "Alice"}]} = PdfElixide.Form.fields(open!(@cms_pdf))
+      assert {:ok, [%{value: "Alicf"}]} = PdfElixide.Form.fields(open!(@cms_tampered_pdf))
+    end
+  end
+
+  describe "verify/2 and verify_signer/1" do
+    setup do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [tampered]} = Signature.list(open!(@cms_tampered_pdf))
+
+      %{
+        signature: signature,
+        tampered: tampered,
+        bytes: File.read!(@cms_pdf),
+        tampered_bytes: File.read!(@cms_tampered_pdf)
+      }
+    end
+
+    test "accepts the bytes it was signed over", %{signature: signature, bytes: bytes} do
+      assert Signature.verify(signature, bytes) == {:ok, :valid}
+    end
+
+    test "follows the bytes it is handed, not the struct", %{
+      signature: signature,
+      tampered_bytes: tampered_bytes
+    } do
+      assert Signature.verify(signature, tampered_bytes) == {:ok, :invalid}
+    end
+
+    test "separates a claim from a finding", %{
+      signature: signature,
+      tampered: tampered,
+      bytes: bytes,
+      tampered_bytes: tampered_bytes
+    } do
+      assert tampered == signature
+
+      assert Signature.verify(signature, bytes) == {:ok, :valid}
+      assert Signature.verify(tampered, tampered_bytes) == {:ok, :invalid}
+    end
+
+    test "reports the blob alone as valid either way", %{
+      signature: signature,
+      tampered: tampered
+    } do
+      assert Signature.verify_signer(signature) == {:ok, :valid}
+      assert Signature.verify_signer(tampered) == {:ok, :valid}
+    end
+
+    test "keeps answering after the document is closed", %{bytes: bytes} do
+      doc = Document.open!(@cms_pdf)
+      {:ok, [signature]} = Signature.list(doc)
+      :ok = Document.close(doc)
+
+      assert Signature.verify(signature, bytes) == {:ok, :valid}
+      assert Signature.verify_signer(signature) == {:ok, :valid}
+    end
+
+    test "refuses a signature carrying no contents", %{signature: signature, bytes: bytes} do
+      signature = %{signature | contents: nil}
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify(signature, bytes)
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify_signer(signature)
+    end
+
+    test "refuses contents that are not a CMS blob", %{signature: signature, bytes: bytes} do
+      signature = %{signature | contents: <<0, 1, 2>>}
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify(signature, bytes)
+    end
+
+    test "refuses a marker fixture's contents", %{bytes: bytes} do
+      {:ok, [signature]} = Signature.list(open!(@signature_pdf))
+      assert signature.contents == @deadbeef
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify_signer(signature)
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify(signature, bytes)
+    end
+
+    test "refuses a byte range that is not four entries", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      signature = %{signature | byte_range: [0, 10]}
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify(signature, bytes)
+    end
+
+    test "refuses a negative byte range", %{signature: signature, bytes: bytes} do
+      signature = %{signature | byte_range: [0, 0, -1, 2]}
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify(signature, bytes)
+    end
+
+    test "refuses a byte range reaching past the bytes given", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.verify(signature, binary_part(bytes, 0, 100))
+    end
+
+    # No fixture uses an encapsulated sub-filter, so override the signed one.
+    test "declines a sub-filter whose signed content is not the byte range", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert Signature.verify(%{signature | sub_filter: :pkcs7_sha1}, bytes) == {:ok, :unknown}
+      assert Signature.verify(%{signature | sub_filter: :rfc3161}, bytes) == {:ok, :unknown}
+    end
+
+    test "still checks the sub-filters that are detached", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert Signature.verify(%{signature | sub_filter: :cades_detached}, bytes) == {:ok, :valid}
+      assert Signature.verify(%{signature | sub_filter: nil}, bytes) == {:ok, :valid}
+    end
+
+    test "declines before looking at what it would have checked", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      signature = %{signature | sub_filter: :rfc3161, contents: nil}
+
+      assert Signature.verify(signature, bytes) == {:ok, :unknown}
+    end
+
+    test "verifies the blob alone whatever the sub-filter says", %{signature: signature} do
+      assert Signature.verify_signer(%{signature | sub_filter: :rfc3161}) == {:ok, :valid}
+    end
+
+    test "raises on a value the NIF cannot decode", %{signature: signature, bytes: bytes} do
+      assert_raise ArgumentError, fn ->
+        Signature.verify(%{signature | byte_range: [0, "x", 0, 0]}, bytes)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Signature.verify(%{signature | contents: 42}, bytes)
+      end
+    end
+
+    test "raises on bytes that are not a binary", %{signature: signature} do
+      assert_raise FunctionClauseError, fn -> Signature.verify(signature, :not_bytes) end
+    end
+
+    test "verify!/2 and verify_signer!/1 unwrap or raise", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert Signature.verify!(signature, bytes) == :valid
+      assert Signature.verify_signer!(signature) == :valid
+
+      unsigned = %{signature | contents: nil}
+
+      assert_raise Error, fn -> Signature.verify!(unsigned, bytes) end
+      assert_raise Error, fn -> Signature.verify_signer!(unsigned) end
+    end
+  end
+
+  describe "certificate/1" do
+    setup do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      %{signature: signature}
+    end
+
+    test "hands back DER that :public_key decodes", %{signature: signature} do
+      assert {:ok, der} = Signature.certificate(signature)
+
+      assert :OTPCertificate = elem(:public_key.pkix_decode_cert(der, :otp), 0)
+
+      # The fixture's signer certificate is self-signed, which is a property of
+      # the certificate rather than of its regenerable subject name.
+      assert :public_key.pkix_is_self_signed(der)
+    end
+
+    test "reads the same certificate out of a document altered after signing", %{
+      signature: signature
+    } do
+      {:ok, [tampered]} = Signature.list(open!(@cms_tampered_pdf))
+
+      assert Signature.certificate(tampered) == Signature.certificate(signature)
+    end
+
+    test "keeps answering after the document is closed" do
+      doc = Document.open!(@cms_pdf)
+      {:ok, [signature]} = Signature.list(doc)
+      :ok = Document.close(doc)
+
+      assert {:ok, <<0x30, _::binary>>} = Signature.certificate(signature)
+    end
+
+    test "reads the blob whatever the sub-filter says", %{signature: signature} do
+      assert Signature.certificate(%{signature | sub_filter: :rfc3161}) ==
+               Signature.certificate(signature)
+    end
+
+    test "refuses a signature carrying no contents", %{signature: signature} do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.certificate(%{signature | contents: nil})
+    end
+
+    test "refuses contents that are not a CMS blob", %{signature: signature} do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.certificate(%{signature | contents: <<0, 1, 2>>})
+    end
+
+    test "refuses a marker fixture's contents" do
+      {:ok, [signature]} = Signature.list(open!(@signature_pdf))
+      assert signature.contents == @deadbeef
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.certificate(signature)
+    end
+
+    test "raises on a value the NIF cannot decode", %{signature: signature} do
+      assert_raise ArgumentError, fn -> Signature.certificate(%{signature | contents: 42}) end
+    end
+
+    test "certificate!/1 unwraps or raises", %{signature: signature} do
+      assert <<0x30, _::binary>> = Signature.certificate!(signature)
+
+      assert_raise Error, fn -> Signature.certificate!(%{signature | contents: nil}) end
     end
   end
 

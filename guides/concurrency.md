@@ -88,6 +88,11 @@ an editor serializes even though it only reads.
 it reads the document that editor was opened from, which needs no exclusive lock,
 so listing signatures does not serialize the way listing fields does.
 
+`PdfElixide.Signature.verify/2`, `PdfElixide.Signature.verify_signer/1` and
+`PdfElixide.Signature.certificate/1` take the signature struct rather than a
+handle, so they take no lock at all: nothing else running on the document they
+came from can delay them, and closing it does not stop them answering.
+
 `PdfElixide.Form.put_values/2` validates values together but does not make their
 writes atomic. `PdfElixide.Form.update_value/3` is likewise a read followed by a
 write, so another process holding the same editor can write in between.

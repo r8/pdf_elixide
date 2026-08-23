@@ -45,6 +45,8 @@ pub(crate) mod atoms {
         jpeg, raw,
         // Font encoding tags (see fonts.rs / PdfElixide.Document.Font)
         standard, custom, identity,
+        // Signature verdict tags (see signatures.rs / PdfElixide.Signature.verify/2)
+        valid, invalid, unknown,
         // Error reason tags (see error.rs / PdfElixide.Error)
         encrypted, wrong_password, invalid_pdf, invalid_pattern, unsupported,
         not_found, out_of_range, io, lock_poisoned, panic, closed, other

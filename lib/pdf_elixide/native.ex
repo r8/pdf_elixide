@@ -110,6 +110,10 @@ defmodule PdfElixide.Native do
   def editor_flatten_page_annotations(_editor, _page_index), do: err()
   def editor_flatten_warnings(_editor), do: err()
 
+  def signature_verify_detached(_contents, _byte_range, _pdf_data), do: err()
+  def signature_verify_signer(_contents), do: err()
+  def signature_certificate(_contents), do: err()
+
   def log_set_level(_level), do: err()
   def log_drain, do: err()
   def log_pending, do: err()

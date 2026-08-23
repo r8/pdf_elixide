@@ -369,8 +369,12 @@ field itself, which the PDF specification permits.
 Reading the signatures themselves is a separate capability, and
 `PdfElixide.Signature` is where it lives: `PdfElixide.Signature.list/1` reports
 what each signature in a document claims — signer, time, reason, and the byte
-range it covers — from a document or an editor. It verifies nothing, and reading
-them does not go through a form write, so the refusal above stands either way.
+range it covers — from a document or an editor,
+`PdfElixide.Signature.verify/2` checks one against the bytes that range covers,
+and `PdfElixide.Signature.certificate/1` hands back the certificate embedded in
+the signature as DER for `:public_key` to decode. What a verdict does and does
+not prove is in that module's documentation.
+Neither goes through a form write, so the refusal above stands either way.
 Producing signatures is not offered.
 
 ### Reading signatures is stricter than reading fields
