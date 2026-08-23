@@ -105,8 +105,80 @@ fn resolved_of(fields: &[FormField], walked: &Walked) -> Resolved {
 // Do not let an unreadable object turn into a false "no signatures" result.
 pub fn signature_values(doc: &PdfDocument) -> NifResult<Vec<Object>> {
     walk(doc, Strictness::Strict)
-        .map(|walked| walked.signature_values)
+        .map(|walked| {
+            walked
+                .signature_values
+                .into_iter()
+                .map(|(value, _obj_ref)| value)
+                .collect()
+        })
         .map_err(refused_err)
+}
+
+#[derive(Debug, Default)]
+pub struct Signatures {
+    // Effective `/V` values paired with their full field names.
+    pub values: Vec<(Object, Option<String>)>,
+    // Full names of terminal signature fields carrying no signature.
+    pub unsigned: Vec<String>,
+}
+
+pub fn signatures(doc: &PdfDocument) -> NifResult<Signatures> {
+    let walked = walk(doc, Strictness::Strict).map_err(refused_err)?;
+
+    if walked.signature_values.is_empty() && walked.signatures.is_empty() {
+        return Ok(Signatures::default());
+    }
+
+    let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
+
+    let mut names: HashMap<ObjectRef, String> = HashMap::new();
+    let mut seen = HashSet::new();
+    let mut unsigned = Vec::new();
+
+    for field in &fields {
+        // Upstream represents a field with no `/T` as an empty full name.
+        let named = !field.full_name.is_empty();
+
+        if let (Some(obj_ref), true) = (field.object_ref, named) {
+            names
+                .entry(obj_ref)
+                .or_insert_with(|| field.full_name.clone());
+        }
+
+        // Claim the name before filtering so duplicates match `resolved_of`.
+        if !seen.insert(&field.full_name) {
+            continue;
+        }
+
+        // The walk cannot establish vacancy for an inline, unreferenced field.
+        let Some(obj_ref) = field.object_ref else {
+            continue;
+        };
+
+        let is_signature =
+            field.field_type == FieldType::Signature || walked.signatures.contains(&obj_ref);
+
+        // A terminal field can inherit a signature from an ancestor, so both
+        // structure and signing state determine whether it is vacant.
+        let vacant = !walked.grouping.contains(&obj_ref) && !walked.signed.contains(&obj_ref);
+
+        if is_signature && named && vacant {
+            unsigned.push(field.full_name.clone());
+        }
+    }
+
+    let values = walked
+        .signature_values
+        .into_iter()
+        .map(|(value, obj_ref)| {
+            let name = obj_ref.and_then(|obj_ref| names.get(&obj_ref).cloned());
+
+            (value, name)
+        })
+        .collect();
+
+    Ok(Signatures { values, unsigned })
 }
 
 fn refused_err(refused: Refused) -> rustler::Error {
@@ -142,10 +214,15 @@ enum Strictness {
 struct Walked {
     // Every field object whose *effective* `/FT` is `/Sig`.
     signatures: HashSet<ObjectRef>,
-    // Effective `/V` values in the document order `Signature.list/1` reports.
-    signature_values: Vec<Object>,
+    // Effective `/V` values in the document order `Signature.list/1` reports,
+    // each with the field object that carried it.
+    signature_values: Vec<(Object, Option<ObjectRef>)>,
     // A field and its widget kids commonly share one signature dictionary.
     signature_value_refs: HashSet<ObjectRef>,
+    // Field objects with a field kid rather than only widget kids.
+    grouping: HashSet<ObjectRef>,
+    // Signature fields carrying a signature, and every ancestor of one.
+    signed: HashSet<ObjectRef>,
     // Every field object's effective `/Ff`, absent where neither it nor any
     // ancestor declares one.
     flags: HashMap<ObjectRef, u32>,
@@ -227,6 +304,8 @@ struct Inherited {
     // Carry only references; copying a direct `/V` through the tree could
     // multiply a large signature dictionary by the node budget.
     value: Option<ObjectRef>,
+    // Immediate parent; unlike the attributes above, this is not inherited.
+    parent: Option<ObjectRef>,
 }
 
 struct Walker<'a> {
@@ -331,6 +410,18 @@ impl Walker<'_> {
             None => inherited.value.map(Object::Reference),
         };
 
+        // Under §12.7.4.2 only a field kid carries `/T`; widget kids do not.
+        if let Some(parent) = inherited.parent {
+            let named = dict
+                .get("T")
+                .and_then(Object::as_string)
+                .is_some_and(|name| !name.is_empty());
+
+            if named {
+                self.walked.grouping.insert(parent);
+            }
+        }
+
         if let Some(obj_ref) = obj_ref {
             if signature {
                 self.walked.signatures.insert(obj_ref);
@@ -343,6 +434,13 @@ impl Walker<'_> {
 
         if signature {
             if let Some(value) = value {
+                // A literal null clears the field and must not mark it taken.
+                if !matches!(value, Object::Null) {
+                    // Mark before dedup: a widget re-reaching the value still
+                    // marks itself and its ancestors as signed.
+                    self.walked.signed.extend(self.path.iter().copied());
+                }
+
                 // Dedup on the reference, so a field and its widget `/Kids`
                 // contribute the signature they share exactly once.
                 let fresh = match value.as_reference() {
@@ -351,7 +449,7 @@ impl Walker<'_> {
                 };
 
                 if fresh {
-                    self.walked.signature_values.push(value);
+                    self.walked.signature_values.push((value, obj_ref));
                 }
             }
         }
@@ -369,6 +467,7 @@ impl Walker<'_> {
             value: own_value
                 .and_then(|raw| raw.as_reference())
                 .or(inherited.value),
+            parent: obj_ref,
         };
 
         for kid in kids {

@@ -368,8 +368,12 @@ field itself, which the PDF specification permits.
 
 Reading the signatures themselves is a separate capability, and
 `PdfElixide.Signature` is where it lives: `PdfElixide.Signature.list/1` reports
-what each signature in a document claims — signer, time, reason, and the byte
-range it covers — from a document or an editor,
+what each signature in a document claims — signer, time, reason, the byte range
+it covers, and the full name of the field it sits in, so several signatures on
+one form can be told apart — from a document or an editor,
+`PdfElixide.Signature.unsigned_fields/1` names the signature fields still
+waiting for a signature, so that call and `list/1` between them account for
+every signature field a form has,
 `PdfElixide.Signature.verify/2` checks one against the bytes that range covers,
 `PdfElixide.Signature.certificate/1` hands back the certificate embedded in
 the signature as DER for `:public_key` to decode,
@@ -381,8 +385,15 @@ be weighed against the signer's own claimed time, and
 and OCSP responses a document carries so its signatures can still be judged once
 those expire. What a verdict does and does not prove is in that module's
 documentation, as is the fact that nothing in the store is validated.
-None of them goes through a form write, so the refusal above stands either way.
-Producing signatures is not offered.
+None of them goes through a form write, so the write refusal above stands
+either way.
+
+Producing signatures is not offered, and that is a decision rather than
+something not yet reached. A signature this library could produce would not be
+attached to a form field, so `PdfElixide.Signature.list/1` would not find it
+afterwards — being able to sign a document but not to read back what you signed
+is not a contract worth offering. Sign with an external tool instead and open
+the result here: every call named above reads a document signed elsewhere.
 
 ### Reading signatures is stricter than reading fields
 
@@ -396,10 +407,15 @@ act on, and a damaged file must not be able to fake it.
 The same rule reaches the value a signature field points at. A `/V` that is not
 a signature dictionary is refused, including one naming an object the file does
 not contain. The single exception is a `/V` of `null`, which is how a cleared
-field is spelled — that field is unsigned, and it is skipped rather than
-reported.
+field is spelled — that field is unsigned, so `list/1` skips it and
+`PdfElixide.Signature.unsigned_fields/1` names it.
 
-Both modules refuse, rather than read, a field hierarchy that is cyclic or
+`PdfElixide.Signature.unsigned_fields/1` reads no signature at all, so that
+value-level strictness does not reach it: a field pointing at something that is
+not a signature dictionary is not a place left to sign, and is simply not
+listed. Ask `list/1` about the value itself.
+
+All three refuse, rather than read, a field hierarchy that is cyclic or
 nested far deeper than any real form: a cycle as `:invalid_pdf`, a hierarchy
 past the depth or size limit as `:unsupported`.
 

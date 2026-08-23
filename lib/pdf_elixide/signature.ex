@@ -3,8 +3,10 @@ defmodule PdfElixide.Signature do
   Digital signatures present in a PDF document.
 
   `list/1` reports what each signature in a document *claims* — who signed, when,
-  why, and which bytes the signature covers. It reads from either source
-  (`t:source/0`), a read-only `PdfElixide.Document` or a `PdfElixide.Editor`.
+  why, which bytes the signature covers, and which field it sits in. It reads
+  from either source (`t:source/0`), a read-only `PdfElixide.Document` or a
+  `PdfElixide.Editor`. `unsigned_fields/1` reports the signature fields still
+  waiting for a signature, so the two together account for every one a form has.
   `verify/2` checks one of those signatures against the bytes it covers,
   `pades_level/2` says what kind of signature it is, `timestamp/1` opens the
   timestamp one carries, and `dss/1` reads the material the document carries for
@@ -67,14 +69,19 @@ defmodule PdfElixide.Signature do
   and what is — and is not — done with them.
 
   Signature *fields* are a different thing from the signatures reported here: an
-  unsigned field is a placeholder with no dictionary behind it, and is not
-  listed. `PdfElixide.Form` omits signature fields entirely and refuses to write
-  to one; the [Forms](guides/forms.md) guide explains why.
+  unsigned field is a placeholder with no dictionary behind it, so `list/1` has
+  nothing to report for one and `unsigned_fields/1` names it instead.
+  `PdfElixide.Form` omits signature fields entirely, signed or not, and refuses
+  to write to one; the [Forms](guides/forms.md) guide explains why.
 
   Signature reads reject some damaged documents that form reads tolerate. The
   [Forms](guides/forms.md) guide describes those cases.
 
-  `list/1`, `count/1` and `dss/1` take a *shared* read on either source;
+  Signatures are read here and never produced: nothing in this library signs a
+  document. The [Forms](guides/forms.md) guide says why, and what to do instead.
+
+  `list/1`, `unsigned_fields/1`, `count/1` and `dss/1` take a *shared* read on
+  either source;
   `verify/2`, `verify_signer/1`, `certificate/1`, `timestamp/1` and both arities
   of `pades_level` take no handle at all, so they take no lock. See the
   [Concurrency](guides/concurrency.md) guide.
@@ -128,6 +135,7 @@ defmodule PdfElixide.Signature do
   @type pades_level :: :b_b | :b_t | :b_lt | nil
 
   @enforce_keys [
+    :field_name,
     :signer_name,
     :signing_time,
     :reason,
@@ -146,6 +154,10 @@ defmodule PdfElixide.Signature do
   Every field is optional, because a signature dictionary need only carry
   `/ByteRange` and `/Contents`.
 
+  * `:field_name` — the full dotted name of the field this signature sits in,
+    such as `"applicant.signature"`. It is `nil` when a malformed form leaves
+    the field unnamed or writes it directly into the form rather than by
+    reference; the signature is still reported.
   * `:signer_name` — the name the signer claimed (`/Name`). It is the signer's
     own claim rather than the subject of the certificate the signature carries;
     `certificate/1` is what reaches that.
@@ -169,6 +181,7 @@ defmodule PdfElixide.Signature do
     already do.
   """
   @type t :: %__MODULE__{
+          field_name: String.t() | nil,
           signer_name: String.t() | nil,
           signing_time: String.t() | nil,
           reason: String.t() | nil,
@@ -182,6 +195,7 @@ defmodule PdfElixide.Signature do
   @doc false
   @spec from_nif(map()) :: t()
   def from_nif(%{
+        field_name: field_name,
         signer_name: signer_name,
         signing_time: signing_time,
         reason: reason,
@@ -192,6 +206,7 @@ defmodule PdfElixide.Signature do
         contents: contents
       }) do
     %__MODULE__{
+      field_name: field_name,
       signer_name: signer_name,
       signing_time: signing_time,
       reason: reason,
@@ -206,8 +221,9 @@ defmodule PdfElixide.Signature do
   @doc """
   Lists the signatures in the given PDF document or editor.
 
-  Signatures come back in document order. A document with no AcroForm, no
-  signature fields, or only unsigned ones answers `{:ok, []}`.
+  Signatures come back in document order, each naming the field it sits in. A
+  document with no AcroForm, no signature fields, or only unsigned ones answers
+  `{:ok, []}`; `unsigned_fields/1` is what reports the last of those.
 
   Reading from an editor reads the document as it was opened.
 
@@ -232,6 +248,39 @@ defmodule PdfElixide.Signature do
   """
   @spec list!(source()) :: [t()]
   def list!(source), do: source |> list() |> Wrap.unwrap!()
+
+  @doc """
+  Lists the signature fields that carry no signature — the places left to sign.
+
+      {:ok, doc} = PdfElixide.Document.open("half_signed.pdf")
+      PdfElixide.Signature.unsigned_fields(doc)
+      #=> {:ok, ["witness.signature"]}
+
+  Names are the full dotted ones `list/1` reports in `:field_name`, in document
+  order. On a well-formed form, the two calls account for every named place to
+  sign; a cleared value counts as unsigned.
+
+  Grouping and unnamed fields are omitted, as are fields holding something
+  other than a signature dictionary. The [Forms](guides/forms.md) guide covers
+  malformed fields and the damaged hierarchies this call refuses.
+
+  Reading from an editor reads the document as it was opened; nothing this
+  library does adds or fills a signature field.
+  """
+  @spec unsigned_fields(source()) :: {:ok, [String.t()]} | {:error, Error.t()}
+  def unsigned_fields(%Document{ref: ref}) do
+    Wrap.call(fn -> Native.document_unsigned_signature_fields(ref) end)
+  end
+
+  def unsigned_fields(%Editor{ref: ref}) do
+    Wrap.call(fn -> Native.editor_unsigned_signature_fields(ref) end)
+  end
+
+  @doc """
+  Same as `unsigned_fields/1`, but raises `PdfElixide.Error` on failure.
+  """
+  @spec unsigned_fields!(source()) :: [String.t()]
+  def unsigned_fields!(source), do: source |> unsigned_fields() |> Wrap.unwrap!()
 
   @doc """
   Reads the document security store, the material a document carries for
@@ -548,14 +597,17 @@ defmodule PdfElixide.Signature do
   @doc """
   Counts the signatures in the given PDF document or editor.
 
-  Answers `0` for a document with no signatures. This reads the signatures to
-  count them, so prefer `list/1` when the details are wanted too.
+  Answers `0` for a document with no signatures and counts exactly what
+  `list/1` lists, without materializing the signature metadata. Use `list/1`
+  when those details are needed too.
   """
   @spec count(source()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
-  def count(source) do
-    with {:ok, signatures} <- list(source) do
-      {:ok, length(signatures)}
-    end
+  def count(%Document{ref: ref}) do
+    Wrap.call(fn -> Native.document_signature_count(ref) end)
+  end
+
+  def count(%Editor{ref: ref}) do
+    Wrap.call(fn -> Native.editor_signature_count(ref) end)
   end
 
   @doc """

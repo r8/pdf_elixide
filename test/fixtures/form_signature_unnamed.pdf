@@ -1,0 +1,58 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << >> >>
+endobj
+4 0 obj
+<< /Length 7 >>
+stream
+BT ET
+
+endstream
+endobj
+5 0 obj
+<< /Fields [6 0 R 7 0 R 9 0 R 10 0 R] /SigFlags 3 >>
+endobj
+6 0 obj
+<< /FT /Sig >>
+endobj
+7 0 obj
+<< /FT /Sig /T (countersign) >>
+endobj
+8 0 obj
+<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 0 0 0] /Contents <FACADE01> /M (D:20240101000000Z) >>
+endobj
+9 0 obj
+<< /FT /Sig /T (signature) /V 8 0 R >>
+endobj
+10 0 obj
+<< /FT /Sig /V 11 0 R >>
+endobj
+11 0 obj
+<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 0 0 0] /Contents <FACADE02> /M (D:20240101000000Z) >>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000015 00000 n 
+0000000080 00000 n 
+0000000161 00000 n 
+0000000241 00000 n 
+0000000296 00000 n 
+0000000364 00000 n 
+0000000394 00000 n 
+0000000441 00000 n 
+0000000593 00000 n 
+0000000647 00000 n 
+0000000688 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R >>
+startxref
+841
+%%EOF

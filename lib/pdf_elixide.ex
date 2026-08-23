@@ -11,9 +11,11 @@ defmodule PdfElixide do
       save).
     * `PdfElixide.Form` — AcroForm field access for both documents
       and editors.
-    * `PdfElixide.Signature` — what a document's digital signatures
-      claim, whether one verifies against the bytes it covers, and the
-      certificate embedded in one, on either.
+    * `PdfElixide.Signature` — read-only: what a document's digital
+      signatures claim, whether one verifies against the bytes it covers,
+      the certificate and timestamp in one, which fields are still
+      unsigned, and the security store. Producing signatures is not
+      offered.
 
   Reading a document is open, extract, close:
 

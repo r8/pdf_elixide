@@ -20,6 +20,8 @@ defmodule PdfElixide.SignatureTest do
   @bad_value_pdf Path.join(@fixtures, "form_signature_value_not_a_dict.pdf")
   @dangling_value_pdf Path.join(@fixtures, "form_signature_value_dangling.pdf")
   @null_value_pdf Path.join(@fixtures, "form_signature_value_null.pdf")
+  @unsigned_pdf Path.join(@fixtures, "form_signature_unsigned.pdf")
+  @unnamed_pdf Path.join(@fixtures, "form_signature_unnamed.pdf")
   @cms_pdf Path.join(@fixtures, "form_signature_cms.pdf")
   @cms_tampered_pdf Path.join(@fixtures, "form_signature_cms_tampered.pdf")
   @pades_pdf Path.join(@fixtures, "form_signature_pades.pdf")
@@ -69,6 +71,7 @@ defmodule PdfElixide.SignatureTest do
     test "reports the signature dictionary a signed field points at" do
       assert {:ok, [signature]} = Signature.list(open!(@signature_pdf))
 
+      assert signature.field_name == "signature"
       assert signature.sub_filter == :pkcs7_detached
       assert signature.signing_time == "D:20240101000000Z"
       assert signature.contents == @deadbeef
@@ -91,6 +94,8 @@ defmodule PdfElixide.SignatureTest do
                <<0xBA, 0xAD, 0xF0, 0x0D>>,
                <<0xF0, 0x0D, 0xCA, 0xFE>>
              ]
+
+      assert Enum.map(signatures, & &1.field_name) == ["signature", "inherited_value.sig"]
     end
 
     test "refuses a field it cannot read, where reading fields tolerates it" do
@@ -120,10 +125,19 @@ defmodule PdfElixide.SignatureTest do
       assert signature.contents == @coffee
     end
 
+    test "answers nil for a signature on a field the document does not name" do
+      assert {:ok, [named, unnamed]} = Signature.list(open!(@unnamed_pdf))
+
+      assert named.field_name == "signature"
+      assert unnamed.field_name == nil
+      assert unnamed.contents == <<0xFA, 0xCA, 0xDE, 0x02>>
+    end
+
     test "finds a signature whose /FT is typed on an ancestor" do
       assert {:ok, [signature]} = Signature.list(open!(@signature_edge_pdf))
 
       assert signature.contents == @cafebabe
+      assert signature.field_name == "inherited.leaf"
     end
 
     test "answers [] for a form with only fillable fields" do
@@ -150,6 +164,109 @@ defmodule PdfElixide.SignatureTest do
       on_exit(fn -> Editor.close(editor) end)
 
       assert Signature.list(editor) == Signature.list(open!(@signature_pdf))
+    end
+  end
+
+  describe "unsigned_fields/1" do
+    test "reports the places left to sign, however the field is shaped" do
+      doc = open!(@unsigned_pdf)
+
+      assert {:ok, ["countersign", "witness", "group.slot"]} = Signature.unsigned_fields(doc)
+    end
+
+    test "does not report a field whose kids are fields of their own" do
+      doc = open!(@unsigned_pdf)
+
+      assert {:ok, unsigned} = Signature.unsigned_fields(doc)
+      assert "group.slot" in unsigned
+      refute "group" in unsigned
+
+      assert {:ok, [%{field_name: "signature"}]} = Signature.list(doc)
+    end
+
+    test "does not report a field the document does not name" do
+      doc = open!(@unnamed_pdf)
+
+      assert {:ok, ["countersign"]} = Signature.unsigned_fields(doc)
+    end
+
+    test "partitions a form's signature fields with list/1" do
+      doc = open!(@unsigned_pdf)
+
+      assert {:ok, [signature]} = Signature.list(doc)
+      assert signature.field_name == "signature"
+      assert {:ok, unsigned} = Signature.unsigned_fields(doc)
+      refute signature.field_name in unsigned
+    end
+
+    test "reports a field whose value was cleared" do
+      doc = open!(@null_value_pdf)
+
+      assert {:ok, ["unsigned"]} = Signature.unsigned_fields(doc)
+      assert {:ok, [%{field_name: "signature"}]} = Signature.list(doc)
+    end
+
+    test "does not report a grouping field whose kid is signed" do
+      doc = open!(@signature_edge_pdf)
+
+      assert {:ok, []} = Signature.unsigned_fields(doc)
+      assert {:ok, [%{field_name: "inherited.leaf"}]} = Signature.list(doc)
+    end
+
+    test "does not report a field whose widgets merely share its signature" do
+      assert {:ok, []} = Signature.unsigned_fields(open!(@values_pdf))
+    end
+
+    test "answers [] for a form with only fillable fields" do
+      assert {:ok, []} = Signature.unsigned_fields(open!(@form_pdf))
+    end
+
+    test "answers [] for a document with no AcroForm" do
+      assert {:ok, []} = Signature.unsigned_fields(open!(@no_form_pdf))
+    end
+
+    test "counts a field carrying an unreadable value as signed, where list/1 refuses" do
+      for path <- [@bad_value_pdf, @dangling_value_pdf] do
+        doc = open!(path)
+
+        assert {:ok, []} = Signature.unsigned_fields(doc)
+        assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(doc)
+      end
+    end
+
+    test "refuses a field it cannot read" do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.unsigned_fields(open!(@unreadable_pdf))
+    end
+
+    test "refuses a cyclic field tree instead of walking it" do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.unsigned_fields(open!(@cyclic_pdf))
+    end
+
+    test "reports a closed document" do
+      doc = Document.open!(@unsigned_pdf)
+      Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Signature.unsigned_fields(doc)
+    end
+
+    test "reads from an editor and agrees with the document" do
+      editor = Editor.open!(@unsigned_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert Signature.unsigned_fields(editor) == Signature.unsigned_fields(open!(@unsigned_pdf))
+    end
+  end
+
+  describe "unsigned_fields!/1" do
+    test "returns the field names" do
+      assert ["countersign", "witness", "group.slot"] =
+               Signature.unsigned_fields!(open!(@unsigned_pdf))
+    end
+
+    test "raises on a cyclic field tree" do
+      assert_raise Error, fn -> Signature.unsigned_fields!(open!(@cyclic_pdf)) end
     end
   end
 
@@ -961,8 +1078,45 @@ defmodule PdfElixide.SignatureTest do
       assert {:ok, 0} = Signature.count(open!(@form_pdf))
     end
 
-    test "propagates a read failure" do
-      assert {:error, %Error{reason: :invalid_pdf}} = Signature.count(open!(@cyclic_pdf))
+    test "counts exactly what list/1 lists" do
+      for path <- [
+            @signature_pdf,
+            @values_pdf,
+            @signature_edge_pdf,
+            @unsigned_pdf,
+            @unnamed_pdf,
+            @null_value_pdf,
+            @form_pdf,
+            @no_form_pdf
+          ] do
+        doc = open!(path)
+
+        assert {:ok, signatures} = Signature.list(doc)
+        assert Signature.count(doc) == {:ok, length(signatures)}
+      end
+    end
+
+    test "refuses what list/1 refuses" do
+      for path <- [@cyclic_pdf, @unreadable_pdf, @bad_value_pdf, @dangling_value_pdf] do
+        doc = open!(path)
+
+        assert {:error, %Error{reason: :invalid_pdf}} = Signature.count(doc)
+        assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(doc)
+      end
+    end
+
+    test "reports a closed document" do
+      doc = Document.open!(@signature_pdf)
+      Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Signature.count(doc)
+    end
+
+    test "reads from an editor" do
+      editor = Editor.open!(@values_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, 2} = Signature.count(editor)
     end
 
     test "count!/1 returns the bare count" do

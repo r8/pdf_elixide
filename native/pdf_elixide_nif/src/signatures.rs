@@ -35,6 +35,7 @@ pub enum SubFilterNif {
 
 #[derive(NifMap, Debug)]
 pub struct SignatureNif<'a> {
+    field_name: Option<String>,
     signer_name: Option<String>,
     signing_time: Option<String>,
     reason: Option<String>,
@@ -54,7 +55,11 @@ fn sub_filter_to_nif(sub_filter: SignatureSubFilter) -> SubFilterNif {
     }
 }
 
-fn signature_to_nif<'a>(env: Env<'a>, info: SignatureInfo) -> NifResult<SignatureNif<'a>> {
+fn signature_to_nif<'a>(
+    env: Env<'a>,
+    info: SignatureInfo,
+    field_name: Option<String>,
+) -> NifResult<SignatureNif<'a>> {
     let contents = info
         .contents
         .as_deref()
@@ -62,6 +67,7 @@ fn signature_to_nif<'a>(env: Env<'a>, info: SignatureInfo) -> NifResult<Signatur
         .transpose()?;
 
     Ok(SignatureNif {
+        field_name,
         signer_name: info.signer_name,
         signing_time: info.signing_time,
         reason: info.reason,
@@ -180,32 +186,46 @@ fn redecode_text(dict: &HashMap<String, Object>, info: &mut SignatureInfo) {
     info.contact_info = text("ContactInfo");
 }
 
-fn signature_infos(doc: &PdfDocument) -> NifResult<Vec<SignatureInfo>> {
+// Keep listing and counting on the same per-value classification rule.
+fn signature_dict(doc: &PdfDocument, value: &Object) -> NifResult<Option<Object>> {
+    let sig_dict = resolve(doc, value)?;
+
+    if sig_dict.as_dict().is_none() {
+        // Match the unresolved value: upstream also resolves a dangling
+        // reference to null, but only a literal null means "cleared".
+        if matches!(value, Object::Null) {
+            return Ok(None);
+        }
+
+        return Err(tagged_err(
+            atoms::invalid_pdf(),
+            "signature field /V is not a signature dictionary",
+        ));
+    }
+
+    Ok(Some(sig_dict))
+}
+
+fn signature_infos(doc: &PdfDocument) -> NifResult<Vec<(SignatureInfo, Option<String>)>> {
     let verifier = SignatureVerifier::new();
+    let signatures = form_tree::signatures(doc)?;
     let mut out = Vec::new();
 
-    for value in form_tree::signature_values(doc)? {
-        let sig_dict = resolve(doc, &value)?;
-
-        let Some(dict) = sig_dict.as_dict() else {
-            // Match the unresolved value: upstream also resolves a dangling
-            // reference to null, but only a literal null means "cleared".
-            if matches!(value, Object::Null) {
-                continue;
-            }
-
-            return Err(tagged_err(
-                atoms::invalid_pdf(),
-                "signature field /V is not a signature dictionary",
-            ));
+    for (value, field_name) in signatures.values {
+        let Some(sig_dict) = signature_dict(doc, &value)? else {
+            continue;
         };
 
         let mut info = verifier
             .extract_signature_info(&sig_dict)
             .map_err(to_nif_err)?;
-        redecode_text(dict, &mut info);
 
-        out.push(info);
+        // Avoid panicking in the NIF even though `signature_dict` checked this.
+        if let Some(dict) = sig_dict.as_dict() {
+            redecode_text(dict, &mut info);
+        }
+
+        out.push((info, field_name));
     }
 
     Ok(out)
@@ -214,8 +234,20 @@ fn signature_infos(doc: &PdfDocument) -> NifResult<Vec<SignatureInfo>> {
 fn signatures_of<'a>(env: Env<'a>, doc: &PdfDocument) -> NifResult<Vec<SignatureNif<'a>>> {
     signature_infos(doc)?
         .into_iter()
-        .map(|info| signature_to_nif(env, info))
+        .map(|(info, field_name)| signature_to_nif(env, info, field_name))
         .collect()
+}
+
+fn signature_count(doc: &PdfDocument) -> NifResult<usize> {
+    let mut count = 0;
+
+    for value in form_tree::signature_values(doc)? {
+        if signature_dict(doc, &value)?.is_some() {
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -237,7 +269,37 @@ fn editor_signatures<'a>(
         .with_read(|editor| signatures_of(env, editor.source()))
 }
 
-// Shared, like the two above: `read_dss` takes `&PdfDocument` and its walk over
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_unsigned_signature_fields(
+    resource: ResourceArc<DocumentResource>,
+) -> NifResult<Vec<String>> {
+    resource
+        .doc
+        .with_read(|doc| Ok(form_tree::signatures(doc)?.unsigned))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_unsigned_signature_fields(
+    resource: ResourceArc<EditorResource>,
+) -> NifResult<Vec<String>> {
+    resource
+        .editor
+        .with_read(|editor| Ok(form_tree::signatures(editor.source())?.unsigned))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_signature_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
+    resource.doc.with_read(signature_count)
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_signature_count(resource: ResourceArc<EditorResource>) -> NifResult<usize> {
+    resource
+        .editor
+        .with_read(|editor| signature_count(editor.source()))
+}
+
+// Shared, like every signature read above: `read_dss` takes `&PdfDocument` and its walk over
 // the catalog is one level deep, with nothing of the `/Kids` recursion that
 // `form_tree` exists to bound.
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -587,13 +649,17 @@ mod tests {
 
     // Never pass the cyclic fixture to upstream's enumerator; it aborts.
 
+    fn infos_of(doc: &PdfDocument) -> NifResult<Vec<SignatureInfo>> {
+        signature_infos(doc).map(|out| out.into_iter().map(|(info, _name)| info).collect())
+    }
+
     // Compare only values this binding still takes from upstream.
     #[test]
     fn signatures_match_upstream_enumerate() {
         let doc = fixture("form_signature.pdf");
         let mut upstream_doc = fixture("form_signature.pdf");
 
-        let ours = signature_infos(&doc).expect("local enumeration");
+        let ours = infos_of(&doc).expect("local enumeration");
         let theirs = pdf_oxide::signatures::enumerate_signatures(&mut upstream_doc)
             .expect("upstream enumeration");
 
@@ -613,7 +679,7 @@ mod tests {
         let doc = fixture("form_signature_edge.pdf");
         let mut upstream_doc = fixture("form_signature_edge.pdf");
 
-        let ours = signature_infos(&doc).expect("local enumeration");
+        let ours = infos_of(&doc).expect("local enumeration");
         let theirs = pdf_oxide::signatures::enumerate_signatures(&mut upstream_doc)
             .expect("upstream enumeration");
 
@@ -688,7 +754,7 @@ mod tests {
     #[test]
     fn upstream_still_rejects_a_zero_padded_contents() {
         let doc = fixture("form_signature_cms.pdf");
-        let infos = signature_infos(&doc).expect("local enumeration");
+        let infos = infos_of(&doc).expect("local enumeration");
         let padded = infos[0]
             .contents
             .as_deref()
@@ -709,7 +775,7 @@ mod tests {
     #[test]
     fn upstream_still_rejects_a_zero_padded_certificate_blob() {
         let doc = fixture("form_signature_cms.pdf");
-        let infos = signature_infos(&doc).expect("local enumeration");
+        let infos = infos_of(&doc).expect("local enumeration");
         let padded = infos[0]
             .contents
             .as_deref()
@@ -767,7 +833,7 @@ mod tests {
         let doc = fixture("form_signature_pades_lt.pdf");
         let store = read_dss(&doc).expect("read_dss").expect("/DSS present");
 
-        let contents = signature_infos(&doc)
+        let contents = infos_of(&doc)
             .expect("signatures read")
             .into_iter()
             .next()
@@ -801,7 +867,7 @@ mod tests {
             ("form_signature_pades_t.pdf", PadesLevel::BT),
         ] {
             let doc = fixture(name);
-            let info = signature_infos(&doc)
+            let info = infos_of(&doc)
                 .expect("local enumeration")
                 .pop()
                 .expect("one signature");
@@ -838,7 +904,7 @@ mod tests {
     #[test]
     fn upstream_still_rejects_a_zero_padded_timestamp_token() {
         let doc = fixture("signature_doctimestamp.pdf");
-        let padded = signature_infos(&doc)
+        let padded = infos_of(&doc)
             .expect("local enumeration")
             .pop()
             .expect("one signature")
