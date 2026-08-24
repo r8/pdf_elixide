@@ -58,7 +58,8 @@ defmodule PdfElixide.Form do
   declares no fields.
 
   Signature fields are not reported; this API covers fillable form fields only.
-  Use `PdfElixide.Signature.list/1` for those. See the
+  `PdfElixide.Signature.list/1` reads the signed ones and
+  `PdfElixide.Signature.unsigned_fields/1` names the rest. See the
   [Forms](guides/forms.md) guide.
   """
   @spec fields(source()) :: {:ok, [Field.t()]} | {:error, Error.t()}

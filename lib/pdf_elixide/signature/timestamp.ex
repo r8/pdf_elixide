@@ -102,8 +102,11 @@ defmodule PdfElixide.Signature.Timestamp do
       URI, DNS or email value. `nil` covers two cases that cannot be told apart
       here: a token naming no authority at all, and one naming it in a form this
       library does not render — an `otherName`, an `ediPartyName`, an IP address
-      or a registered identifier. `PdfElixide.Signature.certificate/1` reaches
-      the certificate that actually signed the token, whatever this says.
+      or a registered identifier. Reaching the certificate that actually signed
+      the token is possible only for a document timestamp, whose blob *is* the
+      token: `PdfElixide.Signature.certificate/1` returns it for an `:rfc3161`
+      signature, and for one carried in a signature's unsigned attributes
+      returns that signature's signer instead.
     * `:hash_algorithm`, `:message_imprint` — the digest that was timestamped and
       the algorithm that produced it. `verify/1` does not compare it to content;
       see "What a verdict proves".

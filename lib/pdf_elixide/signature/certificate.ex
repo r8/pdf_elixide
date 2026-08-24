@@ -117,9 +117,12 @@ defmodule PdfElixide.Signature.Certificate do
 
   For a signature, compare against its claimed signing time from
   `PdfElixide.Signature.signing_time_utc/1`, or against the `:time` of a
-  `PdfElixide.Signature.Timestamp` confirmed by
-  `PdfElixide.Signature.verify_timestamp/2`. Only the latter is evidence rather
-  than a claim. A `true` result does not establish trust or rule out revocation.
+  `PdfElixide.Signature.Timestamp` whose attachment was confirmed by
+  `PdfElixide.Signature.verify_timestamp/2` and whose authenticity was checked
+  by `PdfElixide.Signature.Timestamp.verify/1`. Only the latter is evidence
+  rather than the signer's claim, and it is still only as trustworthy as the
+  timestamp authority. A `true` result does not establish trust or rule out
+  revocation.
   """
   @spec valid_at?(t(), DateTime.t()) :: boolean()
   def valid_at?(%__MODULE__{not_before: not_before, not_after: not_after}, %DateTime{} = instant) do

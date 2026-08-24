@@ -3,8 +3,9 @@ defmodule PdfElixide.Document.Permissions do
   Decoded `/P` permission flags from a PDF's standard encryption dictionary
   (ISO 32000-1 §7.6.3.2, Table 22).
 
-  Obtain it with `PdfElixide.Document.permissions/1`, which returns `nil` for a
-  document that is not encrypted (and therefore has no permission dictionary).
+  Obtain it with `PdfElixide.Document.permissions/1`, which answers `{:ok, nil}`
+  for a document that is not encrypted (and therefore has no permission
+  dictionary).
 
   Per the PDF specification these flags are **advisory** — conforming readers are
   not required to enforce them. They are surfaced so that callers who wish to

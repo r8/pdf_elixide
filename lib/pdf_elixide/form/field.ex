@@ -20,7 +20,9 @@ defmodule PdfElixide.Form.Field do
   decoded `/Ff` bits its type can carry.
 
   The first three also carry a `:kind`, naming the widget the type covers —
-  each struct's `t:kind/0` lists its own. `Unknown` has none, having no type
+  `t:PdfElixide.Form.Field.Text.kind/0`,
+  `t:PdfElixide.Form.Field.Button.kind/0` and
+  `t:PdfElixide.Form.Field.Choice.kind/0` each list their own. `Unknown` has none, having no type
   whose bits would say.
 
   A parent that carries a name but declares no type is itself reported as a

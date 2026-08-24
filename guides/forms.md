@@ -384,7 +384,13 @@ level, which `PdfElixide.Signature.document_timestamp?/1` answers on its own,
 `PdfElixide.Signature.timestamp/1` opens a signature's RFC 3161 timestamp,
 `PdfElixide.Signature.signing_time_utc/1` parses the signer's claimed time, and
 `PdfElixide.Signature.verify_timestamp/2` checks the token belongs to that
-signature, `PdfElixide.Signature.document_timestamp/1` reaches the archival
+signature while `PdfElixide.Signature.Timestamp.verify/1` checks the authority
+issued it — two separate questions with separate answers —
+`PdfElixide.Signature.verify_signer/1` checks a signature blob on its own when
+the covered bytes are not at hand,
+`PdfElixide.Signature.covers_whole_document?/2` says whether anything was
+appended after signing,
+`PdfElixide.Signature.document_timestamp/1` reaches the archival
 timestamp that sits outside the form fields, and
 `PdfElixide.Signature.dss/1` reads the certificates, CRLs
 and OCSP responses a document carries so its signatures can still be judged once

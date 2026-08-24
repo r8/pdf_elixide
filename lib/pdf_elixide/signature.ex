@@ -6,7 +6,8 @@ defmodule PdfElixide.Signature do
   why, which bytes the signature covers, and which field it sits in. It reads
   from either source (`t:source/0`), a read-only `PdfElixide.Document` or a
   `PdfElixide.Editor`. `unsigned_fields/1` reports the signature fields still
-  waiting for a signature, so the two together account for every one a form has.
+  waiting for a signature, so on a well-formed form the two together account for
+  every named one.
   `verify/2` checks one of those signatures against the bytes it covers,
   `pades_level/2` says what kind of signature it is, `timestamp/1` opens the
   timestamp one carries, `signing_time_utc/1` parses the time one claims, and
@@ -137,9 +138,10 @@ defmodule PdfElixide.Signature do
   documentation says what each one does and does not establish.
 
   `:unknown` is always "the check could not run" rather than a doubt about the
-  document, but what stopped it differs by call: for `verify/2` and
-  `verify_signer/1` a signature algorithm or digest this library cannot handle,
-  and for `verify_timestamp/2` a timestamp naming a digest algorithm it cannot
+  document, but what stopped it differs by call: `verify/2` has four causes,
+  listed under "What verification proves" in the module documentation;
+  `verify_signer/1` a signature algorithm or digest this library cannot handle;
+  and `verify_timestamp/2` a timestamp naming a digest algorithm it cannot
   compute. Treat it as unverified either way.
   """
   @type verdict :: :valid | :invalid | :unknown
@@ -158,7 +160,8 @@ defmodule PdfElixide.Signature do
       `pades_level/1` answers `:b_t` for the same signature.
     * `:b_lta` — `:b_lt` and an archival timestamp over the whole file. Only
       `pades_level/3` reports it, having been given the document's bytes;
-      `pades_level/1` and `pades_level/2` answer `:b_lt` for the same signature.
+      `pades_level/2` answers `:b_lt` for the same signature, and
+      `pades_level/1` `:b_t`.
       `document_timestamp?/1` says what has to hold for that timestamp to count,
       and `document_timestamp/1` hands it back to be verified.
     * `nil` — not a PAdES signature at all. The levels are defined for
@@ -207,6 +210,8 @@ defmodule PdfElixide.Signature do
     such as `"D:20230101120000+00'00'"`. Not parsed into a `DateTime`, matching
     `PdfElixide.Document.Metadata`.
   * `:reason`, `:location`, `:contact_info` — free text supplied by the signer.
+  * `:sub_filter` — the signature format, from `/SubFilter`. `t:sub_filter/0`
+    says what each value means and what `nil` covers.
   * `:byte_range` — the byte offsets and lengths the signature covers, as
     `[start, length, start, length]`: everything except the hole holding
     `:contents` itself. Normally four integers, but a malformed document can
@@ -370,7 +375,8 @@ defmodule PdfElixide.Signature do
 
   `pdf_bytes` must be the exact bytes of the file the signature came from —
   `File.read!/1` for a document opened from a path, or the binary given to
-  `PdfElixide.Document.from_binary/2`. A handle does not carry them.
+  `PdfElixide.Document.from_binary/2` or `PdfElixide.Editor.from_binary/1`. A
+  handle does not carry them.
 
       doc = PdfElixide.Document.open!("signed.pdf")
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
@@ -625,8 +631,10 @@ defmodule PdfElixide.Signature do
   hand and `:b_lta` matters.
 
   Nothing here is verified. See `t:pades_level/0` for the exact meaning and
-  limitations of each answer, `timestamp/1` to read and verify the timestamp,
-  and `PdfElixide.Signature.DSS` for the store material.
+  limitations of each answer, `timestamp/1` to read the timestamp,
+  `verify_timestamp/2` to check its attachment,
+  `PdfElixide.Signature.Timestamp.verify/1` to check its authenticity, and
+  `PdfElixide.Signature.DSS` for the store material.
 
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` when a `:cades_detached`
   signature carries no `:contents`.
@@ -731,8 +739,9 @@ defmodule PdfElixide.Signature do
   about a signature — reaches the timestamp *inside* a signature instead.
 
   Returns `{:ok, %PdfElixide.Signature.Timestamp{}}` for a document carrying one
-  and `{:ok, nil}` when the criteria in `document_timestamp?/1` are not met. Only
-  bytes that will not parse as a PDF reach `{:error, %PdfElixide.Error{}}`.
+  and `{:ok, nil}` when the criteria in `document_timestamp?/1` are not met.
+  Only bytes that will not parse as a PDF, or a matching token stating a
+  generation time no date can represent, reach `{:error, %PdfElixide.Error{}}`.
 
   `PdfElixide.Signature.Timestamp` says what verifying that token does and does
   not prove.

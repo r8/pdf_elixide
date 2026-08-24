@@ -687,11 +687,11 @@ defmodule PdfElixide.Document do
 
     * `:extract_tables` — detect tables and render them inline as
       space-padded, column-aligned rows. Defaults to `true`. The rendered rows
-      *replace* the page's own text for the regions recognised as tables, and
-      the padding is collapsed to single spaces before the text is returned, so
-      this reads as a separator change rather than a layout one. Keep it on:
-      because it re-emits cells individually it is what keeps a table's values
-      separately searchable — see "Choosing an extractor for search and
+      are emitted *in addition to* the page's own text for those regions, so a
+      recognised table's values appear twice — once fused, once separated — and
+      the padding is collapsed to single spaces before the text is returned.
+      Keep it on: that separated copy is what keeps a table's values
+      searchable — see "Choosing an extractor for search and
       matching" in `PdfElixide.Document`, which also covers when to reach for
       `words/2` instead.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their

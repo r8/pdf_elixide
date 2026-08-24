@@ -16,25 +16,31 @@ defmodule PdfElixide.Error do
 
     * `:encrypted` — the PDF is encrypted and needs a password first.
     * `:wrong_password` — the supplied password was rejected. Comes only from
-      the `:password` option of `open/2`, `open!/2`, `from_binary/2` and
-      `from_binary!/2`; `PdfElixide.Document.authenticate/2` reports a wrong
-      password as `{:ok, false}` instead.
+      the `:password` option of `PdfElixide.Document.open/2`,
+      `PdfElixide.Document.open!/2`, `PdfElixide.Document.from_binary/2` and
+      `PdfElixide.Document.from_binary!/2`;
+      `PdfElixide.Document.authenticate/2` reports a wrong password as
+      `{:ok, false}` instead.
     * `:invalid_pdf` — malformed or unparseable PDF data.
     * `:invalid_pattern` — the search pattern could not be parsed. Comes only
       from `PdfElixide.Document.search/2` and friends under `literal: false`.
     * `:unsupported` — an unsupported PDF version, feature, or filter.
-    * `:not_found` — a referenced object was not found, or no form field carries
-      the name given to `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2` or
-      `PdfElixide.Form.put_value/3`.
-    * `:out_of_range` — the page index is outside the document.
+    * `:not_found` — a referenced object was not found; no form field carries
+      the name given to `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2`,
+      `PdfElixide.Form.put_value/3`, `PdfElixide.Form.put_values/2` or
+      `PdfElixide.Form.update_value/3`; or what a call asks for is absent, as a
+      signature carrying no timestamp is to
+      `PdfElixide.Signature.verify_timestamp/2`.
+    * `:out_of_range` — the page index is outside the document or editor.
     * `:io` — an underlying IO error.
     * `:panic` — the native library panicked on this input, i.e. hit a bug
       rather than a condition it reports. The handle stays usable, but a panic
       partway through an operation can leave it holding partially updated
-      state, so `close/1` it and reopen if the error recurs.
+      state, so close and reopen it if the error recurs.
     * `:lock_poisoned` — the internal resource lock was poisoned. Should not
       occur; a native panic is contained and reported as `:panic` instead.
-    * `:closed` — the handle was released with `close/1`.
+    * `:closed` — the handle was released with `PdfElixide.Document.close/1`,
+      or with the counterpart on whichever handle it is.
     * `:other` — any error not covered above; `message` is preserved verbatim.
 
   `:message` is a human-readable description. `:details` is reserved for future
@@ -69,10 +75,15 @@ defmodule PdfElixide.Error do
   and `PdfElixide.Document.has_xfa?/1` answer `false` for a feature that cannot
   be read, so only a failure of the *handle* raises — their strict counterparts
   `PdfElixide.Document.has_structure_tree/1` and `PdfElixide.Document.has_xfa/1`
-  return the error instead. `PdfElixide.Document.Page.has_text_layer?/1` raises
+  return the error instead. `PdfElixide.Signature.document_timestamp?/1`
+  degrades the same way and takes bytes rather than a handle, so nothing can
+  raise from it at all; its strict counterpart
+  `PdfElixide.Signature.document_timestamp/1` reports bytes that are not a PDF.
+  `PdfElixide.Document.Page.has_text_layer?/1` raises
   for *everything*, since answering `false` would invert the meaning callers act
   on. `PdfElixide.Document.encrypted?/1` asks something that cannot fail, so
-  only the handle can raise, and `closed?/1` never raises at all.
+  only the handle can raise, and `PdfElixide.Document.closed?/1` never raises
+  at all.
   """
 
   @type reason ::

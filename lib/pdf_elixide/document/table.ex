@@ -13,10 +13,9 @@ defmodule PdfElixide.Document.Table do
 
       Enum.filter(tables, & &1.real_grid?)
 
-  The detector is tunable through
-  `t:PdfElixide.Document.table_detection_opts/0`, passed to
-  `PdfElixide.Document.tables/3` — reach for those when a page yields no table,
-  or too many. `:bbox` is `nil` when the extent could not be determined.
+  The detector is tunable through `t:PdfElixide.Document.tables_opts/0`, passed
+  to `PdfElixide.Document.tables/3` — reach for those when a page yields no
+  table, or too many. `:bbox` is `nil` when the extent could not be determined.
 
   ## Reading cells
 
@@ -43,7 +42,7 @@ defmodule PdfElixide.Document.Table do
 
   A single table renders on its own with `to_markdown/2`, `to_html/1` or
   `to_text/1` — the same output `PdfElixide.Document.to_markdown/2` and
-  `to_html/2` produce for that table within its page:
+  `PdfElixide.Document.to_html/2` produce for that table within its page:
 
       Table.to_markdown(table)
       #=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\\n|---|---|---|---|\\n..."}

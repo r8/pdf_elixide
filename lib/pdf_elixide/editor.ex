@@ -29,10 +29,11 @@ defmodule PdfElixide.Editor do
 
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
-  a single editor serializes. Only `page_count/1`, `modified?/1` and
-  `flatten_warnings/1` take the lock shared. Give each process its own editor if
-  you need them to work at once; see the [Concurrency](guides/concurrency.md)
-  guide.
+  a single editor serializes. `page_count/1`, `modified?/1`,
+  `flatten_warnings/1` and `closed?/1` take the lock shared, as do the
+  `PdfElixide.Signature` reads given an editor, which reach the document it was
+  opened from. Give each process its own editor if you need them to work at
+  once; see the [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Error

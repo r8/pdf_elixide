@@ -84,14 +84,18 @@ for the last one, since a save is what produces the warnings it reports.
 on a document, the editor's exclusive lock on an editor — so listing fields from
 an editor serializes even though it only reads.
 
-`PdfElixide.Signature.list/1` is a shared read on *both* sources. Given an editor
-it reads the document that editor was opened from, which needs no exclusive lock,
-so listing signatures does not serialize the way listing fields does.
+`PdfElixide.Signature.list/1`, `PdfElixide.Signature.unsigned_fields/1`,
+`PdfElixide.Signature.count/1` and `PdfElixide.Signature.dss/1` are shared reads
+on *both* sources. Given an editor they read the document that editor was opened
+from, which needs no exclusive lock, so listing signatures does not serialize the
+way listing fields does.
 
-`PdfElixide.Signature.verify/2`, `PdfElixide.Signature.verify_signer/1` and
-`PdfElixide.Signature.certificate/1` take the signature struct rather than a
-handle, so they take no lock at all: nothing else running on the document they
-came from can delay them, and closing it does not stop them answering. The
+The rest take the signature struct, or the document's own bytes, rather than a
+handle, so they take no lock at all: `verify/2`, `verify_signer/1`,
+`certificate/1`, `timestamp/1`, `verify_timestamp/2`, `signing_time_utc/1`,
+`covers_whole_document?/2`, the `document_timestamp` pair and every arity of
+`pades_level`. Nothing else running on the document they came from can delay
+them, and closing it does not stop them answering. The
 `PdfElixide.Signature.Certificate` and `PdfElixide.Signature.Timestamp` a
 signature leads to are plain values too, so everything reached through them is
 lock-free for the same reason.

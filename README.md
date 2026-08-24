@@ -34,8 +34,10 @@ high-performance PDF library written in Rust. Built with
   still waiting for a signature, verify one against the bytes it covers, read
   the subject, issuer, serial and validity window out of the certificate
   embedded in one, report the PAdES baseline level it
-  reaches, open the RFC 3161 timestamp it carries, and read the security store a
-  document carries for validating them later
+  reaches, open the RFC 3161 timestamp it carries and check both that the
+  authority issued it and that it covers that signature, reach a document's
+  archival timestamp, and read the security store a document carries for
+  validating them later
 - Restrict extraction by region and configure artifacts, layers, inks, reading
   order, table detection, and span merging
 - Capture diagnostics for content a damaged page drops without failing, and

@@ -4,8 +4,8 @@ defmodule PdfElixide.Document.XmpMetadata do
   PDF may carry in addition to, or instead of, the `/Info` dictionary
   (`PdfElixide.Document.Metadata`).
 
-  Obtain it with `PdfElixide.Document.xmp_metadata/1`, which returns `nil` when
-  the document has no XMP packet. Field names drop the XMP namespace prefixes
+  Obtain it with `PdfElixide.Document.xmp_metadata/1`, which answers
+  `{:ok, nil}` when the document has no XMP packet. Field names drop the XMP namespace prefixes
   (`dc:` / `xmp:` / `pdf:` / `xmpRights:`).
 
   ## Fields

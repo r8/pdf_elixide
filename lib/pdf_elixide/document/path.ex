@@ -31,7 +31,7 @@ defmodule PdfElixide.Document.Path do
 
   (Those are vector graphics; `PdfElixide.Document.text_lines/2` is the
   unrelated text extractor.) The two sets are therefore disjoint subsets of
-  `paths/2`, with four consequences:
+  `PdfElixide.Document.paths/2`, with four consequences:
 
     * **A rectangle drawn back to its starting corner is classified as
       neither** — one `{:line_to, …}` too many. Boxes drawn with the `re`
