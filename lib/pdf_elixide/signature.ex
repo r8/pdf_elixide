@@ -27,9 +27,9 @@ defmodule PdfElixide.Signature do
 
   The certificate's own subject, issuer and validity window are not fields
   here: they live in the certificate inside the signature blob rather than in
-  the dictionary. `certificate/1` hands that certificate back as DER for
-  `:public_key` to decode, and `:contents` carries the whole blob; `t:t/0` says
-  what it includes.
+  the dictionary. `certificate/1` reads that certificate out as a
+  `PdfElixide.Signature.Certificate`, and `:contents` carries the whole blob;
+  `t:t/0` says what it includes.
 
   Whether a signature covers the whole file is likewise not a field. Use
   `covers_whole_document?/2`.
@@ -51,7 +51,9 @@ defmodule PdfElixide.Signature do
       made: the certificate is not chained to any root, not checked against a
       revocation list, and its validity dates are compared to nothing. An
       expired or self-signed certificate verifies exactly like a trusted one.
-      `certificate/1` is how you reach the certificate to decide for yourself.
+      `certificate/1` is how you reach the certificate to decide for yourself,
+      and `PdfElixide.Signature.Certificate.valid_at?/2` is how you ask about
+      its window.
     * **That the claimed signing time is true.** `:signing_time` is the signer's
       own claim, and verification compares it to nothing. Where a signature
       carries a timestamp, `timestamp/1` reaches a third party's account of when
@@ -113,6 +115,7 @@ defmodule PdfElixide.Signature do
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
   alias PdfElixide.Predicate
+  alias PdfElixide.Signature.Certificate
   alias PdfElixide.Signature.DSS
   alias PdfElixide.Signature.Timestamp
 
@@ -443,38 +446,40 @@ defmodule PdfElixide.Signature do
   def verify_signer!(signature), do: signature |> verify_signer() |> Wrap.unwrap!()
 
   @doc """
-  The certificate embedded in the signature blob, as DER-encoded X.509 bytes.
+  The certificate the signature names as its signer.
 
-  Decode it with OTP's `:public_key` to reach the subject, the issuer, the
-  serial and the validity window:
+  Returns a `PdfElixide.Signature.Certificate`; its `:der` field carries the
+  original certificate bytes for `:public_key` or another library:
 
-      {:ok, der} = PdfElixide.Signature.certificate(signature)
-      :public_key.pkix_decode_cert(der, :otp)
+      {:ok, certificate} = PdfElixide.Signature.certificate(signature)
+      certificate.subject_common_name
+      #=> "pdf_elixide test signer"
 
   This is the certificate selected for `verify/2` and `verify_signer/1`. For an
   embedded chain, it matches the signer's issuer and serial number; signatures
   using another identifier fall back to the first certificate.
 
-  Nothing about the certificate is checked; it is the material for a trust
-  decision rather than a trust decision. See "What verification proves" in the
-  module documentation.
+  Nothing about the certificate is trusted by this call. See "What verification
+  proves" in the module documentation.
 
   For an `:rfc3161` signature the blob is a timestamp token, so the certificate
   is the timestamp authority's rather than a document signer's.
 
-  Reports `%PdfElixide.Error{reason: :invalid_pdf}` when the signature has no
-  `:contents`, when `:contents` is not a CMS blob, when the blob names no signer
-  at all, and when it carries no X.509 certificate.
+  Reports `%PdfElixide.Error{reason: :invalid_pdf}` when `:contents` is absent or
+  malformed, the blob names no signer or X.509 certificate, or the certificate
+  cannot be parsed.
   """
-  @spec certificate(t()) :: {:ok, binary()} | {:error, Error.t()}
+  @spec certificate(t()) :: {:ok, Certificate.t()} | {:error, Error.t()}
   def certificate(%__MODULE__{contents: contents}) do
-    Wrap.call(fn -> Native.signature_certificate(contents) end)
+    with {:ok, certificate} <- Wrap.call(fn -> Native.signature_certificate(contents) end) do
+      {:ok, Certificate.from_nif(certificate)}
+    end
   end
 
   @doc """
   Same as `certificate/1`, but raises `PdfElixide.Error` on failure.
   """
-  @spec certificate!(t()) :: binary()
+  @spec certificate!(t()) :: Certificate.t()
   def certificate!(signature), do: signature |> certificate() |> Wrap.unwrap!()
 
   @doc """

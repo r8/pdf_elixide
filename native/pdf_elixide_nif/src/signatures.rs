@@ -3,11 +3,18 @@
 use std::collections::HashMap;
 
 use cms::{
-    cert::{x509::Certificate, CertificateChoices},
+    cert::{
+        x509::{name::Name, time::Time, Certificate},
+        CertificateChoices,
+    },
     content_info::ContentInfo,
     signed_data::{SignedData, SignerIdentifier},
 };
-use der::{oid::ObjectIdentifier, Decode, Encode, SliceReader, Tag, Tagged};
+use der::{
+    asn1::{BmpString, Ia5StringRef, PrintableStringRef, TeletexStringRef, Utf8StringRef},
+    oid::ObjectIdentifier,
+    Any, Decode, Encode, SliceReader, Tag, Tagged,
+};
 use pdf_oxide::{
     object::{Object, ObjectRef},
     signatures::{
@@ -335,6 +342,16 @@ fn trim_der_padding(contents: &[u8]) -> &[u8] {
     }
 }
 
+// Caller-supplied DER accepts zero padding but rejects any other readable tail.
+// Pass an unreadable header through so the parser remains the validator.
+fn der_value_only(bytes: &[u8]) -> Option<&[u8]> {
+    match der_tlv_len(bytes) {
+        Some(len) if bytes[len..].iter().all(|&byte| byte == 0) => Some(&bytes[..len]),
+        Some(_) => None,
+        None => Some(bytes),
+    }
+}
+
 fn der_tlv_len(bytes: &[u8]) -> Option<usize> {
     let [_tag, first, rest @ ..] = bytes else {
         return None;
@@ -502,12 +519,32 @@ fn signature_verify_signer(contents: Option<Binary>) -> NifResult<Atom> {
 
 // Dirty for the same reason as the two verify NIFs above.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn signature_certificate<'a>(env: Env<'a>, contents: Option<Binary>) -> NifResult<Term<'a>> {
+fn signature_certificate<'a>(
+    env: Env<'a>,
+    contents: Option<Binary>,
+) -> NifResult<CertificateNif<'a>> {
     let blob = cms_blob(contents.as_deref())?;
-    let der = signer_certificate(blob)
+    let certificate = signer_certificate(blob)
         .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
 
-    binary_term(env, &der, "signer certificate")
+    certificate_to_nif(env, &certificate)
+}
+
+// Takes no resource and no lock, and is dirty because decoding a certificate
+// and rendering two distinguished names out of it is CPU-bound.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn certificate_parse<'a>(env: Env<'a>, der: Binary) -> NifResult<CertificateNif<'a>> {
+    let unpadded = || {
+        tagged_err(
+            atoms::invalid_pdf(),
+            "not a DER-encoded X.509 certificate".to_string(),
+        )
+    };
+    let certificate = der_value_only(&der)
+        .ok_or_else(unpadded)
+        .and_then(|der| Certificate::from_der(der).map_err(|_| unpadded()))?;
+
+    certificate_to_nif(env, &certificate)
 }
 
 // A short, lock-free parse does not warrant dirty scheduling. Invalid and
@@ -611,7 +648,7 @@ fn days_in_month(year: u32, month: u32) -> u32 {
 
 // Match upstream verification's private signer selection. Its
 // `SubjectKeyIdentifier` path falls back to the first certificate.
-fn signer_certificate(cms: &[u8]) -> Result<Vec<u8>, MalformedCms> {
+fn signer_certificate(cms: &[u8]) -> Result<Certificate, MalformedCms> {
     let signed = signed_data_of(cms)?;
 
     let signer = signed
@@ -639,11 +676,10 @@ fn signer_certificate(cms: &[u8]) -> Result<Vec<u8>, MalformedCms> {
 
     named
         .or_else(|| certificates.0.iter().filter_map(as_certificate).next())
+        .cloned()
         .ok_or(MalformedCms(
             "signature /Contents carries no X.509 signer certificate",
-        ))?
-        .to_der()
-        .map_err(|_| MalformedCms("signature /Contents holds an unencodable certificate"))
+        ))
 }
 
 fn as_certificate(choice: &CertificateChoices) -> Option<&Certificate> {
@@ -651,6 +687,97 @@ fn as_certificate(choice: &CertificateChoices) -> Option<&Certificate> {
         CertificateChoices::Certificate(cert) => Some(cert),
         _ => None,
     }
+}
+
+#[derive(NifMap)]
+pub struct CertificateNif<'a> {
+    der: Binary<'a>,
+    subject: Option<String>,
+    subject_common_name: Option<String>,
+    issuer: Option<String>,
+    serial: String,
+    not_before: i64,
+    not_after: i64,
+}
+
+fn certificate_to_nif<'a>(
+    env: Env<'a>,
+    certificate: &Certificate,
+) -> NifResult<CertificateNif<'a>> {
+    let der = certificate.to_der().map_err(|_| {
+        tagged_err(
+            atoms::invalid_pdf(),
+            "certificate cannot be re-encoded".to_string(),
+        )
+    })?;
+    let tbs = &certificate.tbs_certificate;
+
+    Ok(CertificateNif {
+        der: owned_binary(&der, "certificate")?.release(env),
+        subject: render_name(&tbs.subject),
+        subject_common_name: common_name(&tbs.subject),
+        issuer: render_name(&tbs.issuer),
+        serial: hex_upper(tbs.serial_number.as_bytes()),
+        not_before: validity_epoch(tbs.validity.not_before)?,
+        not_after: validity_epoch(tbs.validity.not_after)?,
+    })
+}
+
+// `der` decodes no certificate date outside 1970..=9999, so this cannot fire;
+// it is what keeps `DateTime.from_unix!/1` on the Elixir side total anyway.
+fn validity_epoch(time: Time) -> NifResult<i64> {
+    i64::try_from(time.to_unix_duration().as_secs())
+        .ok()
+        .filter(|secs| representable_epoch(*secs))
+        .ok_or_else(|| {
+            tagged_err(
+                atoms::invalid_pdf(),
+                "certificate validity date is not a representable date".to_string(),
+            )
+        })
+}
+
+// `Name` renders RFC 4514 leaf-first and preserves unreadable values as `oid=#hex`.
+fn render_name(name: &Name) -> Option<String> {
+    let rendered = name.to_string();
+
+    (!rendered.is_empty()).then_some(rendered)
+}
+
+// `id-at-commonName` (RFC 4519 §2.3).
+const OID_COMMON_NAME: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.3");
+
+// The common name nearest the leaf, which is last in encoded order and so the
+// first element of the rendered name.
+fn common_name(name: &Name) -> Option<String> {
+    name.0
+        .iter()
+        .rev()
+        .flat_map(|rdn| rdn.0.iter())
+        .find(|attribute| attribute.oid == OID_COMMON_NAME)
+        .and_then(|attribute| attribute_string(&attribute.value))
+}
+
+// Include BMPString even though `Name` renders that string form as hexadecimal.
+fn attribute_string(value: &Any) -> Option<String> {
+    let text = match value.tag() {
+        Tag::PrintableString => PrintableStringRef::try_from(value)
+            .ok()?
+            .as_str()
+            .to_owned(),
+        Tag::Utf8String => Utf8StringRef::try_from(value).ok()?.as_str().to_owned(),
+        Tag::Ia5String => Ia5StringRef::try_from(value).ok()?.as_str().to_owned(),
+        Tag::TeletexString => TeletexStringRef::try_from(value).ok()?.as_str().to_owned(),
+        // `BmpString` has no borrowed `*Ref`; `from_ucs2` validates its octets.
+        Tag::BmpString => BmpString::from_ucs2(value.value()).ok()?.to_string(),
+        _ => return None,
+    };
+
+    Some(text)
+}
+
+fn hex_upper(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
 }
 
 // Dirty for the same reason as the three verify/certificate NIFs above.
@@ -1014,7 +1141,14 @@ fn timestamp_to_nif<'a>(env: Env<'a>, timestamp: &Timestamp) -> NifResult<Timest
 }
 
 fn parse_timestamp(token: &[u8]) -> NifResult<Timestamp> {
-    Timestamp::from_der(trim_der_padding(token)).map_err(to_nif_err)
+    let token = der_value_only(token).ok_or_else(|| {
+        tagged_err(
+            atoms::invalid_pdf(),
+            "trailing data after the timestamp token".to_string(),
+        )
+    })?;
+
+    Timestamp::from_der(token).map_err(to_nif_err)
 }
 
 // Dirty for the same reason as the four verify/certificate/level NIFs above.
@@ -1063,11 +1197,21 @@ fn signature_timestamp<'a>(
 
 #[cfg(test)]
 mod tests {
-    use cms::signed_data::SignerInfos;
-    use der::{Any, Tag};
+    use core::str::FromStr;
+
+    use cms::{
+        cert::x509::{
+            attr::AttributeTypeAndValue,
+            certificate::Rfc5280,
+            name::{RdnSequence, RelativeDistinguishedName},
+            serial_number::SerialNumber,
+        },
+        signed_data::SignerInfos,
+    };
+    use der::{asn1::SetOfVec, Any, Tag};
     // Only the canaries reach upstream's picker now; `signer_certificate` is what
     // the NIF calls.
-    use pdf_oxide::signatures::extract_signer_certificate_der;
+    use pdf_oxide::signatures::{extract_signer_certificate_der, SigningCredentials};
 
     use super::*;
 
@@ -1168,7 +1312,10 @@ mod tests {
         let blob = signature_blob("form_signature_chain.pdf");
 
         let theirs = extract_signer_certificate_der(&blob).expect("upstream picks one");
-        let ours = signer_certificate(&blob).expect("the SID names one");
+        let ours = signer_certificate(&blob)
+            .expect("the SID names one")
+            .to_der()
+            .expect("ours re-encodes");
 
         assert_ne!(
             theirs, ours,
@@ -1280,11 +1427,142 @@ mod tests {
             let blob = signature_blob(name);
 
             assert_eq!(
-                signer_certificate(&blob).expect("ours"),
+                signer_certificate(&blob)
+                    .expect("ours")
+                    .to_der()
+                    .expect("ours re-encodes"),
                 extract_signer_certificate_der(&blob).expect("theirs"),
                 "{name}"
             );
         }
+    }
+
+    fn name_of(rendered: &str) -> Name {
+        Name::from_str(rendered).expect("a distinguished name")
+    }
+
+    // Signing fixtures do not cover these synthetic name shapes.
+    #[test]
+    fn renders_a_name_leaf_first_and_reads_the_leaf_common_name() {
+        let name = name_of("CN=leaf,O=Org,C=UA");
+
+        assert_eq!(render_name(&name).as_deref(), Some("CN=leaf,O=Org,C=UA"));
+        assert_eq!(common_name(&name).as_deref(), Some("leaf"));
+    }
+
+    #[test]
+    fn reads_the_common_name_nearest_the_leaf() {
+        let name = name_of("CN=leaf,CN=root,C=UA");
+
+        assert!(render_name(&name)
+            .expect("rendered")
+            .starts_with("CN=leaf,"));
+        assert_eq!(common_name(&name).as_deref(), Some("leaf"));
+    }
+
+    // A multi-valued RDN returns its attributes in DER encoding order.
+    #[test]
+    fn keeps_a_multi_valued_rdn_together() {
+        let name = name_of("CN=leaf+O=Org,C=UA");
+
+        assert_eq!(render_name(&name).as_deref(), Some("O=Org+CN=leaf,C=UA"));
+        assert_eq!(common_name(&name).as_deref(), Some("leaf"));
+    }
+
+    #[test]
+    fn reports_a_name_that_names_nothing_as_absent() {
+        let empty = Name::default();
+
+        assert_eq!(render_name(&empty), None);
+        assert_eq!(common_name(&empty), None);
+    }
+
+    #[test]
+    fn reports_a_common_name_in_a_non_string_tag_as_absent() {
+        let name = name_of("O=Org");
+
+        assert_eq!(common_name(&name), None);
+        assert_eq!(common_name(&non_string_common_name()), None);
+        assert!(render_name(&non_string_common_name())
+            .expect("rendered")
+            .contains('#'));
+    }
+
+    fn non_string_common_name() -> Name {
+        let attribute = AttributeTypeAndValue {
+            oid: OID_COMMON_NAME,
+            value: Any::new(Tag::Integer, vec![1]).expect("an integer"),
+        };
+
+        RdnSequence(vec![RelativeDistinguishedName::from(
+            SetOfVec::try_from(vec![attribute]).expect("a set"),
+        )])
+    }
+
+    #[test]
+    fn reads_a_common_name_held_in_a_bmp_string() {
+        assert_eq!(
+            common_name(&bmp_string_common_name()).as_deref(),
+            Some("Kü")
+        );
+    }
+
+    #[test]
+    fn x509_cert_still_renders_a_bmp_string_attribute_as_hex() {
+        assert_eq!(
+            render_name(&bmp_string_common_name()).as_deref(),
+            Some("2.5.4.3=#1e04004b00fc")
+        );
+    }
+
+    // "Kü" as big-endian UCS-2.
+    fn bmp_string_common_name() -> Name {
+        let attribute = AttributeTypeAndValue {
+            oid: OID_COMMON_NAME,
+            value: Any::new(Tag::BmpString, vec![0x00, 0x4B, 0x00, 0xFC]).expect("a BMPString"),
+        };
+
+        RdnSequence(vec![RelativeDistinguishedName::from(
+            SetOfVec::try_from(vec![attribute]).expect("a set"),
+        )])
+    }
+
+    #[test]
+    fn keeps_the_sign_byte_on_a_high_bit_serial() {
+        let positive = SerialNumber::<Rfc5280>::from_der(&[0x02, 0x02, 0x00, 0x80])
+            .expect("a serial whose leading bit is set");
+
+        assert_eq!(hex_upper(positive.as_bytes()), "0080");
+    }
+
+    #[test]
+    fn upstream_still_renders_an_unreadable_name_as_a_placeholder() {
+        let blob = signature_blob("form_signature_cms.pdf");
+        let mut certificate = signer_certificate(&blob).expect("the fixture's signer");
+
+        // A T.61 string containing non-UTF-8.
+        let attribute = AttributeTypeAndValue {
+            oid: OID_COMMON_NAME,
+            value: Any::new(Tag::TeletexString, vec![0xE9]).expect("a T.61 string"),
+        };
+        certificate.tbs_certificate.subject = RdnSequence(vec![RelativeDistinguishedName::from(
+            SetOfVec::try_from(vec![attribute]).expect("a set"),
+        )]);
+
+        let der = certificate.to_der().expect("re-encodes");
+        let theirs = SigningCredentials::from_der(der)
+            .expect("upstream reads the certificate")
+            .subject()
+            .expect("upstream renders a subject");
+
+        assert_eq!(
+            theirs, "<X509Error: Invalid X.509 name>",
+            "upstream now renders the name; delete render_name, not this assertion"
+        );
+        assert_eq!(
+            render_name(&certificate.tbs_certificate.subject).as_deref(),
+            Some("2.5.4.3=#1401e9")
+        );
     }
 
     // Compare only values this binding still takes from upstream.
@@ -1368,6 +1646,20 @@ mod tests {
         let blob = [0x30, 0x80, 1, 2];
 
         assert_eq!(trim_der_padding(&blob), &blob);
+        assert_eq!(der_value_only(&blob), Some(&blob[..]));
+    }
+
+    #[test]
+    fn accepts_only_a_zero_tail_after_a_caller_supplied_value() {
+        let value = [0x30, 0x03, 1, 2, 3];
+
+        assert_eq!(der_value_only(&value), Some(&value[..]));
+        assert_eq!(
+            der_value_only(&[0x30, 0x03, 1, 2, 3, 0, 0]),
+            Some(&value[..])
+        );
+        assert_eq!(der_value_only(&[0x30, 0x03, 1, 2, 3, 1]), None);
+        assert_eq!(der_value_only(&[0x30, 0x03, 1, 2, 3, 0, 1, 0]), None);
     }
 
     #[test]

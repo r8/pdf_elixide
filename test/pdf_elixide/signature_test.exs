@@ -7,10 +7,17 @@ defmodule PdfElixide.SignatureTest do
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Signature
+  alias PdfElixide.Signature.Certificate
   alias PdfElixide.Signature.DSS
   alias PdfElixide.Signature.Timestamp
 
   require Record
+
+  Record.defrecordp(
+    :otp_certificate,
+    :OTPCertificate,
+    Record.extract(:OTPCertificate, from_lib: "public_key/include/public_key.hrl")
+  )
 
   Record.defrecordp(
     :otp_tbs_certificate,
@@ -157,6 +164,18 @@ defmodule PdfElixide.SignatureTest do
     {0x30, signer, <<>>} = tlv(signer_infos)
 
     children(signer)
+  end
+
+  # Preserve the sign octet when reproducing the certificate's DER serial.
+  defp der_serial(der) do
+    otp_certificate(tbsCertificate: tbs) = :public_key.pkix_decode_cert(der, :otp)
+    otp_tbs_certificate(serialNumber: serial) = tbs
+    bytes = :binary.encode_unsigned(serial)
+
+    case bytes do
+      <<leading, _::binary>> when leading >= 0x80 -> Base.encode16(<<0>> <> bytes)
+      _ -> Base.encode16(bytes)
+    end
   end
 
   defp rsa_public_key(certificate) do
@@ -617,7 +636,7 @@ defmodule PdfElixide.SignatureTest do
     test "separates the blob from the bytes it covers", %{signature: signature, bytes: bytes} do
       assert Signature.verify_signer(signature) == {:ok, :valid}
       assert Signature.covers_whole_document?(signature, byte_size(bytes))
-      assert is_binary(Signature.certificate!(signature))
+      assert %Certificate{} = Signature.certificate!(signature)
     end
 
     test "refuses a signature with no contents", %{signature: signature, bytes: bytes} do
@@ -770,7 +789,7 @@ defmodule PdfElixide.SignatureTest do
       {0x04, signature_value, _raw} = List.keyfind(fields, 0x04, 0)
       signed_attributes = <<0x31, attributes_der::binary>>
 
-      key = rsa_public_key(Signature.certificate!(signature))
+      key = rsa_public_key(Signature.certificate!(signature).der)
       pss = [{:rsa_padding, :rsa_pkcs1_pss_padding}, {:rsa_mgf1_md, :sha256}]
 
       assert :public_key.verify(signed_attributes, :sha256, signature_value, key, [
@@ -789,7 +808,7 @@ defmodule PdfElixide.SignatureTest do
 
     test "hands back the signer certificate whether or not the check ran", %{signed: signed} do
       for {_field, {signature, _bytes, _der}} <- signed do
-        assert is_binary(Signature.certificate!(signature))
+        assert %Certificate{} = Signature.certificate!(signature)
       end
     end
   end
@@ -800,14 +819,18 @@ defmodule PdfElixide.SignatureTest do
       %{signature: signature}
     end
 
-    test "hands back DER that :public_key decodes", %{signature: signature} do
-      assert {:ok, der} = Signature.certificate(signature)
+    test "reads the signer out of the blob", %{signature: signature} do
+      assert {:ok, certificate} = Signature.certificate(signature)
 
-      assert :OTPCertificate = elem(:public_key.pkix_decode_cert(der, :otp), 0)
+      assert :OTPCertificate = elem(:public_key.pkix_decode_cert(certificate.der, :otp), 0)
 
-      # The fixture's signer certificate is self-signed, which is a property of
-      # the certificate rather than of its regenerable subject name.
-      assert :public_key.pkix_is_self_signed(der)
+      # Self-signing is independent of the certificate's rendered name.
+      assert :public_key.pkix_is_self_signed(certificate.der)
+      assert certificate.subject == certificate.issuer
+
+      assert String.contains?(certificate.subject, "CN=" <> certificate.subject_common_name)
+      assert certificate.serial == der_serial(certificate.der)
+      assert DateTime.compare(certificate.not_before, certificate.not_after) == :lt
     end
 
     # Encoding order varies, so assert membership rather than identity.
@@ -819,9 +842,9 @@ defmodule PdfElixide.SignatureTest do
       signer = Signature.certificate!(signature)
       authority = Signature.certificate!(%{b_t | contents: timestamp.token})
 
-      assert {:ok, der} = Signature.certificate(chained)
-      assert :OTPCertificate = elem(:public_key.pkix_decode_cert(der, :otp), 0)
-      assert der in [signer, authority]
+      assert {:ok, certificate} = Signature.certificate(chained)
+      assert :OTPCertificate = elem(:public_key.pkix_decode_cert(certificate.der, :otp), 0)
+      assert certificate in [signer, authority]
     end
 
     test "reads the same certificate out of a document altered after signing", %{
@@ -837,7 +860,7 @@ defmodule PdfElixide.SignatureTest do
       {:ok, [signature]} = Signature.list(doc)
       :ok = Document.close(doc)
 
-      assert {:ok, <<0x30, _::binary>>} = Signature.certificate(signature)
+      assert {:ok, %Certificate{der: <<0x30, _::binary>>}} = Signature.certificate(signature)
     end
 
     test "reads the blob whatever the sub-filter says", %{signature: signature} do
@@ -867,9 +890,107 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "certificate!/1 unwraps or raises", %{signature: signature} do
-      assert <<0x30, _::binary>> = Signature.certificate!(signature)
+      assert %Certificate{der: <<0x30, _::binary>>} = Signature.certificate!(signature)
 
       assert_raise Error, fn -> Signature.certificate!(%{signature | contents: nil}) end
+    end
+  end
+
+  describe "Certificate.parse/1" do
+    setup do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, certificate} = Signature.certificate(signature)
+      %{certificate: certificate}
+    end
+
+    test "round-trips the certificate a signature carries", %{certificate: certificate} do
+      assert Certificate.parse(certificate.der) == {:ok, certificate}
+    end
+
+    test "reads a certificate out of a document security store" do
+      {:ok, dss} = Signature.dss(open!(@pades_lt_pdf))
+      assert [der] = dss.certificates
+
+      assert {:ok, certificate} = Certificate.parse(der)
+      assert is_binary(certificate.subject_common_name)
+      assert certificate.serial == der_serial(der)
+    end
+
+    test "tolerates the padding a stored certificate carries", %{certificate: certificate} do
+      assert Certificate.parse(certificate.der <> <<0, 0, 0, 0>>) == {:ok, certificate}
+    end
+
+    test "refuses a tail that is not padding", %{certificate: certificate} do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Certificate.parse(certificate.der <> <<1, 2, 3>>)
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Certificate.parse(certificate.der <> certificate.der)
+    end
+
+    test "refuses bytes that are not a certificate" do
+      assert {:error, %Error{reason: :invalid_pdf}} = Certificate.parse(<<0, 1, 2>>)
+      assert {:error, %Error{reason: :invalid_pdf}} = Certificate.parse(<<>>)
+    end
+
+    test "refuses a signature blob rather than reading the certificate inside it", %{
+      certificate: certificate
+    } do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Certificate.parse(signature.contents)
+      assert {:ok, ^certificate} = Signature.certificate(signature)
+    end
+
+    test "raises on a value that is not a binary" do
+      assert_raise FunctionClauseError, fn -> Certificate.parse(42) end
+    end
+
+    test "parse!/1 unwraps or raises", %{certificate: certificate} do
+      assert Certificate.parse!(certificate.der) == certificate
+
+      assert_raise Error, fn -> Certificate.parse!(<<0, 1, 2>>) end
+    end
+  end
+
+  describe "Certificate.valid_at?/2" do
+    setup do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, certificate} = Signature.certificate(signature)
+      %{certificate: certificate}
+    end
+
+    test "covers both ends of the window", %{certificate: certificate} do
+      assert Certificate.valid_at?(certificate, certificate.not_before)
+      assert Certificate.valid_at?(certificate, certificate.not_after)
+    end
+
+    test "excludes a second outside either end", %{certificate: certificate} do
+      refute Certificate.valid_at?(certificate, DateTime.add(certificate.not_before, -1))
+      refute Certificate.valid_at?(certificate, DateTime.add(certificate.not_after, 1))
+    end
+
+    test "keeps answering after the document is closed" do
+      doc = Document.open!(@cms_pdf)
+      {:ok, [signature]} = Signature.list(doc)
+      {:ok, certificate} = Signature.certificate(signature)
+      :ok = Document.close(doc)
+
+      assert Certificate.valid_at?(certificate, certificate.not_before)
+    end
+  end
+
+  describe "inspecting a certificate" do
+    test "renders the common name and the serial" do
+      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, certificate} = Signature.certificate(signature)
+
+      rendered = inspect(certificate)
+
+      assert String.starts_with?(rendered, "#PdfElixide.Signature.Certificate<")
+      assert rendered =~ certificate.subject_common_name
+      assert rendered =~ certificate.serial
+      refute rendered =~ "der:"
     end
   end
 
@@ -1631,6 +1752,11 @@ defmodule PdfElixide.SignatureTest do
 
       assert {:ok, parsed} = Timestamp.parse(signature.contents)
       assert byte_size(parsed.token) < byte_size(signature.contents)
+    end
+
+    test "refuses a tail that is not padding", %{timestamp: timestamp} do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Timestamp.parse(timestamp.token <> <<1, 2, 3>>)
     end
 
     test "refuses bytes that are not a token" do

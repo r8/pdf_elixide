@@ -29,10 +29,14 @@ defmodule PdfElixide.Signature.DSS do
 
   ## Decoding a blob
 
-  Certificates and CRLs decode through OTP's `:public_key`:
+  A certificate reads through `PdfElixide.Signature.Certificate.parse/1`, which
+  is the same value `PdfElixide.Signature.certificate/1` returns:
 
       [der | _] = dss.certificates
-      :public_key.pkix_decode_cert(der, :otp)
+      {:ok, certificate} = PdfElixide.Signature.Certificate.parse(der)
+      certificate.subject_common_name
+
+  CRLs decode through OTP's `:public_key`:
 
       [der | _] = dss.crls
       :public_key.der_decode(:CertificateList, der)

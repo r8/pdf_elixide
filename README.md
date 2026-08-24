@@ -32,7 +32,8 @@ high-performance PDF library written in Rust. Built with
 - Read what a document's digital signatures claim — signer, time, reason, the
   byte range each covers and the field each sits in — list the signature fields
   still waiting for a signature, verify one against the bytes it covers, read
-  out the certificate embedded in one, report the PAdES baseline level it
+  the subject, issuer, serial and validity window out of the certificate
+  embedded in one, report the PAdES baseline level it
   reaches, open the RFC 3161 timestamp it carries, and read the security store a
   document carries for validating them later
 - Restrict extraction by region and configure artifacts, layers, inks, reading

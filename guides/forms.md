@@ -375,8 +375,9 @@ one form can be told apart — from a document or an editor,
 waiting for a signature, so that call and `list/1` between them account for
 every signature field a form has,
 `PdfElixide.Signature.verify/2` checks one against the bytes that range covers,
-`PdfElixide.Signature.certificate/1` hands back the certificate the signature
-names as its signer, as DER for `:public_key` to decode,
+`PdfElixide.Signature.certificate/1` reads out the certificate the signature
+names as its signer — its subject, issuer, serial and validity window, and the
+DER behind them,
 `PdfElixide.Signature.pades_level/2` reports which PAdES baseline level a
 signature reaches and `PdfElixide.Signature.pades_level/3` adds the archival
 level, which `PdfElixide.Signature.document_timestamp?/1` answers on its own,

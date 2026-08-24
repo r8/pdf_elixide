@@ -152,6 +152,7 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Form.Field.Choice.Flags,
         PdfElixide.Form.Field.Unknown,
         PdfElixide.Signature,
+        PdfElixide.Signature.Certificate,
         PdfElixide.Signature.DSS,
         PdfElixide.Signature.DSS.VRI,
         PdfElixide.Signature.Timestamp

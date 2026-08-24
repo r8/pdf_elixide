@@ -131,7 +131,8 @@ defmodule PdfElixide.Signature.Timestamp do
       #=> ~U[2026-08-23 07:50:03Z]
 
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` when the bytes are neither
-  shape, and when the token states a generation time no date can represent.
+  shape, carry trailing bytes other than zero padding, or state a generation
+  time no date can represent.
   """
   @spec parse(binary()) :: {:ok, t()} | {:error, Error.t()}
   def parse(token) when is_binary(token) do

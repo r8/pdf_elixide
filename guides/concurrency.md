@@ -91,7 +91,10 @@ so listing signatures does not serialize the way listing fields does.
 `PdfElixide.Signature.verify/2`, `PdfElixide.Signature.verify_signer/1` and
 `PdfElixide.Signature.certificate/1` take the signature struct rather than a
 handle, so they take no lock at all: nothing else running on the document they
-came from can delay them, and closing it does not stop them answering.
+came from can delay them, and closing it does not stop them answering. The
+`PdfElixide.Signature.Certificate` and `PdfElixide.Signature.Timestamp` a
+signature leads to are plain values too, so everything reached through them is
+lock-free for the same reason.
 
 `PdfElixide.Form.put_values/2` validates values together but does not make their
 writes atomic. `PdfElixide.Form.update_value/3` is likewise a read followed by a
