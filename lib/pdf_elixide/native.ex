@@ -117,6 +117,7 @@ defmodule PdfElixide.Native do
   def editor_flatten_warnings(_editor), do: err()
 
   def signature_verify_detached(_contents, _byte_range, _pdf_data), do: err()
+  def signature_verify_pkcs7_sha1(_contents, _byte_range, _pdf_data), do: err()
   def signature_verify_signer(_contents), do: err()
   def signature_certificate(_contents), do: err()
   def signature_signing_time(_signing_time), do: err()

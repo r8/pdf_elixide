@@ -7,7 +7,7 @@ use cms::{
     content_info::ContentInfo,
     signed_data::{SignedData, SignerIdentifier},
 };
-use der::{oid::ObjectIdentifier, Decode, Encode, SliceReader};
+use der::{oid::ObjectIdentifier, Decode, Encode, SliceReader, Tag, Tagged};
 use pdf_oxide::{
     object::{Object, ObjectRef},
     signatures::{
@@ -422,6 +422,30 @@ fn verdict_atom(verify: SignerVerify) -> Atom {
     }
 }
 
+// `id-data` — the CMS content type an `adbe.pkcs7.sha1` signature encapsulates
+// its digest in (ISO 32000-1 §12.8.3.3, "ContentInfo of type Data").
+const OID_ID_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
+
+const SHA1_DIGEST_LEN: usize = 20;
+
+// Accept only the id-data OCTET STRING containing a SHA-1-sized digest.
+fn encapsulated_sha1_digest(signed: &SignedData) -> Option<&[u8]> {
+    if signed.encap_content_info.econtent_type != OID_ID_DATA {
+        return None;
+    }
+
+    let econtent = signed.encap_content_info.econtent.as_ref()?;
+
+    // `cms` represents eContent as `Any`, so enforce the specified tag here.
+    if econtent.tag() != Tag::OctetString {
+        return None;
+    }
+
+    let digest = econtent.value();
+
+    (digest.len() == SHA1_DIGEST_LEN).then_some(digest)
+}
+
 // Dirty for its own work rather than for a lock — it takes no resource at all.
 // Parsing the CMS blob and verifying a public-key signature over it, plus
 // hashing the covered range here, can outrun a normal scheduler's budget.
@@ -437,6 +461,35 @@ fn signature_verify_detached(
     verify_signer_detached(blob, &signed)
         .map(verdict_atom)
         .map_err(to_nif_err)
+}
+
+// Dirty for the same reason as `signature_verify_detached` above.
+//
+// Verify the signer against the encapsulated digest, then compare that digest
+// with SHA-1 of the covered PDF bytes. Checking the signer against those bytes
+// directly reports a sound signature as an altered document.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn signature_verify_pkcs7_sha1(
+    contents: Option<Binary>,
+    byte_range: Vec<i64>,
+    pdf_data: Binary,
+) -> NifResult<Atom> {
+    let blob = cms_blob(contents.as_deref())?;
+    let covered = signed_bytes(&pdf_data, &byte_range)?;
+    let signed = signed_data_of(blob)
+        .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
+
+    let Some(digest) = encapsulated_sha1_digest(&signed) else {
+        return Ok(atoms::unknown());
+    };
+
+    match verify_signer_detached(blob, digest).map_err(to_nif_err)? {
+        SignerVerify::Valid if digest_matches(HashAlgorithm::Sha1, &covered, digest) => {
+            Ok(atoms::valid())
+        }
+        SignerVerify::Valid => Ok(atoms::invalid()),
+        other => Ok(verdict_atom(other)),
+    }
 }
 
 // Dirty for the same reason as `signature_verify_detached` above.
@@ -1011,7 +1064,7 @@ fn signature_timestamp<'a>(
 #[cfg(test)]
 mod tests {
     use cms::signed_data::SignerInfos;
-    use der::Any;
+    use der::{Any, Tag};
     // Only the canaries reach upstream's picker now; `signer_certificate` is what
     // the NIF calls.
     use pdf_oxide::signatures::extract_signer_certificate_der;
@@ -1052,6 +1105,61 @@ mod tests {
             .expect("/Contents");
 
         trim_der_padding(&contents).to_vec()
+    }
+
+    // Pins the upstream detached treatment that requires the local path.
+    #[test]
+    fn upstream_still_verifies_a_pkcs7_sha1_signature_as_detached() {
+        let name = "form_signature_pkcs7_sha1.pdf";
+        let pdf = fixture_bytes(name);
+        let blob = signature_blob(name);
+        let doc = fixture(name);
+        let range = <[i64; 4]>::try_from(infos_of(&doc).expect("listing")[0].byte_range())
+            .expect("four entries");
+        let covered = ByteRangeCalculator::extract_signed_bytes(&pdf, &range).expect("covered");
+
+        assert_eq!(
+            verify_signer_detached(&blob, &covered).expect("upstream reads the blob"),
+            SignerVerify::Invalid,
+            "upstream now reads the encapsulated digest; delete the local path, not this assertion"
+        );
+
+        let signed = signed_data_of(&blob).expect("CMS SignedData");
+        let digest = encapsulated_sha1_digest(&signed).expect("an encapsulated digest");
+
+        assert_eq!(
+            verify_signer_detached(&blob, digest).expect("upstream reads the blob"),
+            SignerVerify::Valid
+        );
+        assert!(digest_matches(HashAlgorithm::Sha1, &covered, digest));
+    }
+
+    #[test]
+    fn reads_only_an_id_data_octet_string_of_the_right_width() {
+        let blob = signature_blob("form_signature_pkcs7_sha1.pdf");
+        let signed = signed_data_of(&blob).expect("CMS SignedData");
+
+        assert_eq!(
+            encapsulated_sha1_digest(&signed).map(<[u8]>::len),
+            Some(SHA1_DIGEST_LEN)
+        );
+
+        let detached = signed_data_of(&signature_blob("form_signature_cms.pdf")).expect("CMS");
+        assert_eq!(encapsulated_sha1_digest(&detached), None);
+
+        let mut mistyped = signed_data_of(&blob).expect("CMS SignedData");
+        mistyped.encap_content_info.econtent_type = OID_CT_TSTINFO;
+        assert_eq!(encapsulated_sha1_digest(&mistyped), None);
+
+        let mut narrow = signed_data_of(&blob).expect("CMS SignedData");
+        narrow.encap_content_info.econtent =
+            Some(Any::new(Tag::OctetString, vec![0u8; SHA1_DIGEST_LEN - 1]).expect("octets"));
+        assert_eq!(encapsulated_sha1_digest(&narrow), None);
+
+        let mut retagged = signed_data_of(&blob).expect("CMS SignedData");
+        retagged.encap_content_info.econtent =
+            Some(Any::new(Tag::Utf8String, vec![b'a'; SHA1_DIGEST_LEN]).expect("a string"));
+        assert_eq!(encapsulated_sha1_digest(&retagged), None);
     }
 
     // Canary for the upstream mismatch that requires local signer selection.

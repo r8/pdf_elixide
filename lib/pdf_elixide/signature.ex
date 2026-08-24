@@ -39,8 +39,9 @@ defmodule PdfElixide.Signature do
   `verify/2` answers about the bytes `:byte_range` covers, and about nothing
   else. `{:ok, :valid}` means the signed attributes carry an authentic signature
   from the certificate embedded in the blob, and the content digest those
-  attributes carry matches those covered bytes. Three claims it deliberately
-  does not make:
+  attributes carry matches those covered bytes. An `adbe.pkcs7.sha1` signature
+  reaches that conclusion in two steps instead; `verify/2` says how. Three claims
+  it deliberately does not make:
 
     * **That the file is intact.** A byte range need not reach the end of the
       file, and whatever lies outside it — an appended incremental update, a
@@ -111,14 +112,10 @@ defmodule PdfElixide.Signature do
   `nil` covers two cases that cannot be told apart here: no `/SubFilter` at all,
   and one naming a format this library does not recognize.
 
-  Two of these sign something other than the bytes `:byte_range` covers, so
-  `verify/2` cannot check them and says so rather than guessing. `:rfc3161` is
-  the one with an answer elsewhere: it is a document timestamp, so
-  `verify_timestamp/2` is what checks it against the bytes it covers.
+  `verify/2` supports `:pkcs7_sha1` but declines `:rfc3161`, and says why in
+  both cases.
   """
   @type sub_filter :: :pkcs7_detached | :pkcs7_sha1 | :cades_detached | :rfc3161 | nil
-
-  @encapsulated [:pkcs7_sha1, :rfc3161]
 
   @typedoc """
   What a verification call concluded. "What verification proves" in the module
@@ -370,10 +367,12 @@ defmodule PdfElixide.Signature do
   `covers_whole_document?/2`. See "What verification proves" in the module
   documentation.
 
-  A `:pkcs7_sha1` or `:rfc3161` signature answers `{:ok, :unknown}` without being
-  checked: both sign content held inside the blob rather than the byte range, so
-  the comparison this makes would not be about them. An `:rfc3161` signature is
-  a document timestamp, and `timestamp/1` is what reads and checks one.
+  For `:pkcs7_sha1`, `{:ok, :valid}` means both that the signer signed the
+  encapsulated SHA-1 digest and that it matches the covered bytes. A blob with no
+  such digest answers `{:ok, :unknown}`.
+
+  An `:rfc3161` signature answers `{:ok, :unknown}` without being checked;
+  `timestamp/1` reads it and `verify_timestamp/2` checks its attachment.
 
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` rather than a verdict when
   the signature has no `:contents`, its `:byte_range` is not four non-negative
@@ -381,12 +380,19 @@ defmodule PdfElixide.Signature do
   blob.
   """
   @spec verify(t(), binary()) :: {:ok, verdict()} | {:error, Error.t()}
-  # These two carry the bytes they sign inside the CMS blob, so its digest covers
-  # that content rather than the byte range. Checking it against the range would
-  # report a sound signature as an altered document.
-  def verify(%__MODULE__{sub_filter: sub_filter}, pdf_bytes)
-      when is_binary(pdf_bytes) and sub_filter in @encapsulated,
-      do: {:ok, :unknown}
+  # A timestamp signs its own token rather than the byte range, so the digest in
+  # the blob covers that token. Checking it against the range would report a
+  # sound signature as an altered document.
+  def verify(%__MODULE__{sub_filter: :rfc3161}, pdf_bytes) when is_binary(pdf_bytes),
+    do: {:ok, :unknown}
+
+  def verify(
+        %__MODULE__{sub_filter: :pkcs7_sha1, contents: contents, byte_range: byte_range},
+        pdf_bytes
+      )
+      when is_binary(pdf_bytes) do
+    Wrap.call(fn -> Native.signature_verify_pkcs7_sha1(contents, byte_range, pdf_bytes) end)
+  end
 
   def verify(%__MODULE__{contents: contents, byte_range: byte_range}, pdf_bytes)
       when is_binary(pdf_bytes) do
@@ -408,7 +414,7 @@ defmodule PdfElixide.Signature do
   after signing answers `{:ok, :valid}` here while `verify/2` answers
   `{:ok, :invalid}` for the same signature.
 
-  It is meaningful for every `t:sub_filter/0`, including the two `verify/2`
+  It is meaningful for every `t:sub_filter/0`, including the one `verify/2`
   declines to check. Prefer `verify/2` when the covered bytes are available.
   Neither function makes a trust claim about the certificate; see "What
   verification proves" in the module documentation.

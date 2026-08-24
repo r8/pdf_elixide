@@ -26,6 +26,7 @@ defmodule PdfElixide.SignatureTest do
   @unnamed_pdf Path.join(@fixtures, "form_signature_unnamed.pdf")
   @cms_pdf Path.join(@fixtures, "form_signature_cms.pdf")
   @cms_tampered_pdf Path.join(@fixtures, "form_signature_cms_tampered.pdf")
+  @pkcs7_sha1_pdf Path.join(@fixtures, "form_signature_pkcs7_sha1.pdf")
   @pades_pdf Path.join(@fixtures, "form_signature_pades.pdf")
   @pades_t_pdf Path.join(@fixtures, "form_signature_pades_t.pdf")
   @pades_lt_pdf Path.join(@fixtures, "form_signature_pades_lt.pdf")
@@ -430,13 +431,18 @@ defmodule PdfElixide.SignatureTest do
                Signature.verify(signature, binary_part(bytes, 0, 100))
     end
 
-    # No fixture uses an encapsulated sub-filter, so override the signed one.
     test "declines a sub-filter whose signed content is not the byte range", %{
       signature: signature,
       bytes: bytes
     } do
-      assert Signature.verify(%{signature | sub_filter: :pkcs7_sha1}, bytes) == {:ok, :unknown}
       assert Signature.verify(%{signature | sub_filter: :rfc3161}, bytes) == {:ok, :unknown}
+    end
+
+    test "declines a legacy signature whose blob holds no encapsulated digest", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert Signature.verify(%{signature | sub_filter: :pkcs7_sha1}, bytes) == {:ok, :unknown}
     end
 
     test "still checks the sub-filters that are detached", %{
@@ -485,6 +491,69 @@ defmodule PdfElixide.SignatureTest do
 
       assert_raise Error, fn -> Signature.verify!(unsigned, bytes) end
       assert_raise Error, fn -> Signature.verify_signer!(unsigned) end
+    end
+  end
+
+  describe "verify/2 on adbe.pkcs7.sha1" do
+    setup do
+      {:ok, [signature]} = Signature.list(open!(@pkcs7_sha1_pdf))
+
+      %{signature: signature, bytes: File.read!(@pkcs7_sha1_pdf)}
+    end
+
+    test "reads the format it declares", %{signature: signature} do
+      assert signature.sub_filter == :pkcs7_sha1
+      assert signature.field_name == "legacy"
+      assert signature.signer_name == "Alice Example"
+    end
+
+    test "accepts the bytes the encapsulated digest was taken over", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert Signature.verify(signature, bytes) == {:ok, :valid}
+      assert Signature.verify!(signature, bytes) == :valid
+    end
+
+    # One byte inside byte_range[0..1], so every offset and the range itself
+    # stay valid and only the digest moves.
+    test "follows the bytes rather than the claim", %{signature: signature, bytes: bytes} do
+      <<head::binary-size(100), byte::8, tail::binary>> = bytes
+      altered = <<head::binary, Bitwise.bxor(byte, 1)::8, tail::binary>>
+
+      assert Signature.verify(signature, altered) == {:ok, :invalid}
+    end
+
+    test "separates the blob from the bytes it covers", %{signature: signature, bytes: bytes} do
+      assert Signature.verify_signer(signature) == {:ok, :valid}
+      assert Signature.covers_whole_document?(signature, byte_size(bytes))
+      assert is_binary(Signature.certificate!(signature))
+    end
+
+    test "refuses a signature with no contents", %{signature: signature, bytes: bytes} do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.verify(%{signature | contents: nil}, bytes)
+    end
+
+    test "refuses a byte range that is not four entries", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.verify(%{signature | byte_range: [0, 10]}, bytes)
+    end
+
+    test "refuses a byte range reaching past the bytes given", %{
+      signature: signature,
+      bytes: bytes
+    } do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.verify(signature, binary_part(bytes, 0, 100))
+    end
+
+    test "refuses contents that are not a CMS blob", %{signature: signature, bytes: bytes} do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.verify(%{signature | contents: @deadbeef}, bytes)
     end
   end
 
