@@ -97,10 +97,16 @@ defmodule PdfElixide.Signature do
   to write to one; the [Forms](guides/forms.md) guide explains why.
 
   Signature reads reject some damaged documents that form reads tolerate. The
-  [Forms](guides/forms.md) guide describes those cases.
+  "Damaged documents are refused, not stepped over" section of the
+  [Signatures](guides/signatures.md) guide describes those cases.
 
   Signatures are read here and never produced: nothing in this library signs a
-  document. The [Forms](guides/forms.md) guide says why, and what to do instead.
+  document. The "Producing signatures is not offered" section of the
+  [Signatures](guides/signatures.md) guide says why, and what to do instead.
+
+  The [Signatures](guides/signatures.md) guide is the end-to-end account —
+  listing, verifying, coverage, the certificate and timestamp, PAdES levels and
+  the security store.
 
   `list/1`, `unsigned_fields/1`, `count/1` and `dss/1` take a *shared* read on
   either source;
@@ -308,7 +314,8 @@ defmodule PdfElixide.Signature do
   sign; a cleared value counts as unsigned.
 
   Grouping and unnamed fields are omitted, as are fields holding something
-  other than a signature dictionary. The [Forms](guides/forms.md) guide covers
+  other than a signature dictionary. The "Damaged documents are refused, not
+  stepped over" section of the [Signatures](guides/signatures.md) guide covers
   malformed fields and the damaged hierarchies this call refuses.
 
   Reading from an editor reads the document as it was opened; nothing this

@@ -14,6 +14,10 @@ defmodule PdfElixide.Signature.DSS do
       length(dss.certificates)
       #=> 1
 
+  The "Material for validating later" section of the
+  [Signatures](guides/signatures.md) guide puts this in sequence with the
+  PAdES levels it lifts.
+
   ## Nothing here is validated
 
   Every blob is opaque bytes, checked against nothing. No certificate is chained

@@ -30,14 +30,14 @@ high-performance PDF library written in Rust. Built with
   boxes and the rest classified from their field flags
 - Fill AcroForm fields, flatten forms and annotations, and save edited PDFs to a file or binary
 - Read what a document's digital signatures claim — signer, time, reason, the
-  byte range each covers and the field each sits in — list the signature fields
-  still waiting for a signature, verify one against the bytes it covers, read
-  the subject, issuer, serial and validity window out of the certificate
-  embedded in one, report the PAdES baseline level it
-  reaches, open the RFC 3161 timestamp it carries and check both that the
-  authority issued it and that it covers that signature, reach a document's
-  archival timestamp, and read the security store a document carries for
-  validating them later
+  byte range each covers and the field each sits in — and list the fields still
+  waiting for a signature
+- Verify a signature against the bytes it covers, check whether those bytes are
+  the whole file, and read the signer's certificate
+- Read the RFC 3161 timestamp a signature carries, checking both that the
+  authority issued it and that it covers that signature
+- Report a signature's PAdES baseline level, reach a document's archival
+  timestamp, and read the security store kept for validating them later
 - Restrict extraction by region and configure artifacts, layers, inks, reading
   order, table detection, and span merging
 - Capture diagnostics for content a damaged page drops without failing, and
@@ -194,7 +194,29 @@ alias PdfElixide.Form
 Editing functions return the same mutable editor handle, so rebinding does not
 fork its state. `Editor.to_binary/2` returns a PDF binary instead of writing a
 file. See the [Forms](guides/forms.md) guide for field kinds and flags, bulk
-updates, save behavior, signature fields, and button-field limitations.
+updates, save behavior, and button-field limitations.
+
+### Read a signature
+
+Signatures are read, never produced — open a document signed elsewhere:
+
+```elixir
+alias PdfElixide.Signature
+
+path = "path/to/signed.pdf"
+[signature] = Signature.list!(Document.open!(path))
+
+signature.signer_name
+#=> "Alice Example"
+
+Signature.verify!(signature, File.read!(path))
+#=> :valid
+```
+
+What `list/1` reports are the signer's claims; `verify/2` is what checks one
+against the bytes it covers. The [Signatures](guides/signatures.md) guide covers
+verification, coverage, certificates, timestamps, PAdES levels, and the security
+store.
 
 ### Release native resources
 

@@ -367,68 +367,10 @@ This holds for a field whose `/FT` is declared on an ancestor rather than on the
 field itself, which the PDF specification permits.
 
 Reading the signatures themselves is a separate capability, and
-`PdfElixide.Signature` is where it lives: `PdfElixide.Signature.list/1` reports
-what each signature in a document claims — signer, time, reason, the byte range
-it covers, and the full name of the field it sits in, so several signatures on
-one form can be told apart — from a document or an editor,
-`PdfElixide.Signature.unsigned_fields/1` names the signature fields still
-waiting for a signature, so that call and `list/1` between them account for
-every signature field a form has,
-`PdfElixide.Signature.verify/2` checks one against the bytes that range covers,
-`PdfElixide.Signature.certificate/1` reads out the certificate the signature
-names as its signer — its subject, issuer, serial and validity window, and the
-DER behind them,
-`PdfElixide.Signature.pades_level/2` reports which PAdES baseline level a
-signature reaches and `PdfElixide.Signature.pades_level/3` adds the archival
-level, which `PdfElixide.Signature.document_timestamp?/1` answers on its own,
-`PdfElixide.Signature.timestamp/1` opens a signature's RFC 3161 timestamp,
-`PdfElixide.Signature.signing_time_utc/1` parses the signer's claimed time, and
-`PdfElixide.Signature.verify_timestamp/2` checks the token belongs to that
-signature while `PdfElixide.Signature.Timestamp.verify/1` checks the authority
-issued it — two separate questions with separate answers —
-`PdfElixide.Signature.verify_signer/1` checks a signature blob on its own when
-the covered bytes are not at hand,
-`PdfElixide.Signature.covers_whole_document?/2` says whether anything was
-appended after signing,
-`PdfElixide.Signature.document_timestamp/1` reaches the archival
-timestamp that sits outside the form fields, and
-`PdfElixide.Signature.dss/1` reads the certificates, CRLs
-and OCSP responses a document carries so its signatures can still be judged once
-those expire. What a verdict does and does not prove is in that module's
-documentation, as is the fact that nothing in the store is validated.
-None of them goes through a form write, so the write refusal above stands
-either way.
-
-Producing signatures is not offered, and that is a decision rather than
-something not yet reached. A signature this library could produce would not be
-attached to a form field, so `PdfElixide.Signature.list/1` would not find it
-afterwards — being able to sign a document but not to read back what you signed
-is not a contract worth offering. Sign with an external tool instead and open
-the result here: every call named above reads a document signed elsewhere.
-
-### Reading signatures is stricter than reading fields
-
-The two disagree on a damaged document, deliberately. `fields/1` steps over a
-field it cannot read and returns the ones it reached, so a form whose `/Fields`
-names an object the file does not contain still answers `{:ok, []}`.
-`PdfElixide.Signature.list/1` refuses that same document as
-`%PdfElixide.Error{reason: :invalid_pdf}`: "no signatures" is an answer callers
-act on, and a damaged file must not be able to fake it.
-
-The same rule reaches the value a signature field points at. A `/V` that is not
-a signature dictionary is refused, including one naming an object the file does
-not contain. The single exception is a `/V` of `null`, which is how a cleared
-field is spelled — that field is unsigned, so `list/1` skips it and
-`PdfElixide.Signature.unsigned_fields/1` names it.
-
-`PdfElixide.Signature.unsigned_fields/1` reads no signature at all, so that
-value-level strictness does not reach it: a field pointing at something that is
-not a signature dictionary is not a place left to sign, and is simply not
-listed. Ask `list/1` about the value itself.
-
-All three refuse, rather than read, a field hierarchy that is cyclic or
-nested far deeper than any real form: a cycle as `:invalid_pdf`, a hierarchy
-past the depth or size limit as `:unsupported`.
+`PdfElixide.Signature` is where it lives. The [Signatures](signatures.md)
+guide is the account of it — listing them, verifying one against the bytes it
+covers, the certificate and timestamp behind it, and the damaged documents a
+signature read refuses where a field read tolerates them.
 
 ## Check boxes and radio groups
 

@@ -77,6 +77,7 @@ defmodule PdfElixide.MixProject do
         "README.md": [title: "Overview"],
         "guides/concurrency.md": [],
         "guides/forms.md": [],
+        "guides/signatures.md": [],
         # `filename:` because ExDoc reserves `search.html` for its own search
         # page and refuses an extra that would generate it.
         "guides/search.md": [filename: "text-search"],
@@ -150,12 +151,14 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Form.Field.Button.Flags,
         PdfElixide.Form.Field.Choice,
         PdfElixide.Form.Field.Choice.Flags,
-        PdfElixide.Form.Field.Unknown,
+        PdfElixide.Form.Field.Unknown
+      ],
+      Signatures: [
         PdfElixide.Signature,
         PdfElixide.Signature.Certificate,
+        PdfElixide.Signature.Timestamp,
         PdfElixide.Signature.DSS,
-        PdfElixide.Signature.DSS.VRI,
-        PdfElixide.Signature.Timestamp
+        PdfElixide.Signature.DSS.VRI
       ]
     ]
   end

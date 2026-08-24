@@ -15,6 +15,9 @@ defmodule PdfElixide.Signature.Timestamp do
       PdfElixide.Signature.Timestamp.verify(timestamp)
       #=> {:ok, :valid}
 
+  The "Timestamps ask three separate questions" section of the
+  [Signatures](guides/signatures.md) guide sets out which call answers which.
+
   ## What a verdict proves
 
   `verify/1` checks one thing: that the token carries an authentic signature
