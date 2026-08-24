@@ -69,6 +69,18 @@ defmodule PdfElixide.Signature do
   signed content is something other than the bytes `:byte_range` covers. Treat
   it as unverified.
 
+  These are the algorithms a signature can be verified with:
+
+    * RSA PKCS#1 v1.5, over SHA-1, SHA-256, SHA-384 or SHA-512.
+    * RSA-PSS, over SHA-256, SHA-384 or SHA-512.
+    * ECDSA, over P-256 with SHA-256 or P-384 with SHA-384. The curve and the
+      digest go together; either paired otherwise is not verified.
+
+  A signature made with anything else — another curve, an Ed25519 key, RSA-PSS
+  over SHA-1 — is `:unknown`. One case reads as a finding without being one:
+  RSA-PSS is verified with a salt as long as its digest, so a signature salted
+  to a different length, which is unusual but permitted, is reported `:invalid`.
+
   Deciding whether to *trust* a verified signature needs more than the signature:
   the certificate chain, revocation lists and OCSP responses that were current
   when it was signed. A document built for long-term validation carries them,

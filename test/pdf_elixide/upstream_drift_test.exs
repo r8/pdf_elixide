@@ -28,6 +28,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @form_pdf Path.join(@fixtures, "form.pdf")
   @signature_pdf Path.join(@fixtures, "form_signature.pdf")
   @pades_lta_pdf Path.join(@fixtures, "form_signature_pades_lta.pdf")
+  @ecdsa_p521_pdf Path.join(@fixtures, "form_signature_ecdsa_p521.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
   @columns 0
@@ -700,6 +701,18 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [signature] = Signature.list!(doc)
       assert signature.sub_filter == :cades_detached
       assert Signature.document_timestamp?(File.read!(@pades_lta_pdf))
+    end
+  end
+
+  describe "which signature algorithms upstream verifies" do
+    # P-521/SHA-512 enters upstream's ECDSA dispatch but has no curve verifier.
+    test "a curve it has no verifier for is unknown rather than invalid" do
+      doc = Document.open!(@ecdsa_p521_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [signature] = Signature.list!(doc)
+      assert Signature.verify(signature, File.read!(@ecdsa_p521_pdf)) == {:ok, :unknown}
+      assert Signature.verify_signer(signature) == {:ok, :unknown}
     end
   end
 

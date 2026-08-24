@@ -10,6 +10,14 @@ defmodule PdfElixide.SignatureTest do
   alias PdfElixide.Signature.DSS
   alias PdfElixide.Signature.Timestamp
 
+  require Record
+
+  Record.defrecordp(
+    :otp_tbs_certificate,
+    :OTPTBSCertificate,
+    Record.extract(:OTPTBSCertificate, from_lib: "public_key/include/public_key.hrl")
+  )
+
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @signature_pdf Path.join(@fixtures, "form_signature.pdf")
   @signature_edge_pdf Path.join(@fixtures, "form_signature_edge.pdf")
@@ -41,6 +49,40 @@ defmodule PdfElixide.SignatureTest do
   @doctimestamp_gapped_pdf Path.join(@fixtures, "signature_doctimestamp_gapped.pdf")
   @doctimestamp_covering_pdf Path.join(@fixtures, "signature_doctimestamp_covering.pdf")
   @doctimestamp_mistyped_pdf Path.join(@fixtures, "signature_doctimestamp_mistyped.pdf")
+  @rsa_pss_sha256_pdf Path.join(@fixtures, "form_signature_rsa_pss_sha256.pdf")
+  @rsa_pss_sha384_pdf Path.join(@fixtures, "form_signature_rsa_pss_sha384.pdf")
+  @rsa_pss_sha512_pdf Path.join(@fixtures, "form_signature_rsa_pss_sha512.pdf")
+  @rsa_pss_saltlen_pdf Path.join(@fixtures, "form_signature_rsa_pss_saltlen.pdf")
+  @rsa_pkcs1_sha384_pdf Path.join(@fixtures, "form_signature_rsa_pkcs1_sha384.pdf")
+  @rsa_pkcs1_sha512_pdf Path.join(@fixtures, "form_signature_rsa_pkcs1_sha512.pdf")
+  @ecdsa_p256_pdf Path.join(@fixtures, "form_signature_ecdsa_p256.pdf")
+  @ecdsa_p384_pdf Path.join(@fixtures, "form_signature_ecdsa_p384.pdf")
+  @ecdsa_p521_pdf Path.join(@fixtures, "form_signature_ecdsa_p521.pdf")
+
+  # Matched inside a fixture's CMS blob. Every certificate in the family is signed
+  # with SHA-256, so a SHA-384 or SHA-512 OID can only have come from the SignerInfo.
+  @oid_rsa Base.decode16!("06092A864886F70D010101")
+  @oid_pss Base.decode16!("06092A864886F70D01010A")
+  @oid_ecdsa_sha256 Base.decode16!("06082A8648CE3D040302")
+  @oid_ecdsa_sha384 Base.decode16!("06082A8648CE3D040303")
+  @oid_ecdsa_sha512 Base.decode16!("06082A8648CE3D040304")
+  @oid_p256 Base.decode16!("06082A8648CE3D030107")
+  @oid_p384 Base.decode16!("06052B81040022")
+  @oid_p521 Base.decode16!("06052B81040023")
+  @oid_sha256 Base.decode16!("0609608648016503040201")
+  @oid_sha384 Base.decode16!("0609608648016503040202")
+  @oid_sha512 Base.decode16!("0609608648016503040203")
+
+  # The explicitly tagged [2] saltLength in the signature algorithm parameters.
+  # Neither the OIDs nor the verdicts separate the three PSS fixtures that verify
+  # from the mis-salted one, both being equally satisfied by a broken blob.
+  @pss_salt_sha256 Base.decode16!("A203020120")
+  @pss_salt_sha384 Base.decode16!("A203020130")
+  @pss_salt_sha512 Base.decode16!("A203020140")
+  @pss_salt_max Base.decode16!("A204020200DE")
+
+  # Must match the 222 encoded by @pss_salt_max.
+  @pss_salt_max_length 222
 
   # Outside the CMS and PAdES sets, every fixture carries a marker rather than a
   # signature, chosen so a test can tell the dictionaries apart. Nothing decodes
@@ -76,6 +118,54 @@ defmodule PdfElixide.SignatureTest do
     <<head::binary-size(offset), byte, rest::binary>> = token
 
     head <> <<rem(byte + 1, 256)>> <> rest
+  end
+
+  # Walked by tag rather than decoded: `:public_key`'s decoded CMS shape is not
+  # stable across the OTP releases CI runs, so a test written against either
+  # shape passes on one leg and fails on the other. The tags did not move.
+  defp tlv(<<tag, len, rest::binary>>) when len < 0x80 do
+    <<value::binary-size(len), tail::binary>> = rest
+
+    {tag, value, tail}
+  end
+
+  defp tlv(<<tag, header, rest::binary>>) when header > 0x80 do
+    size = header - 0x80
+    <<len::binary-size(size), body::binary>> = rest
+    len = :binary.decode_unsigned(len)
+    <<value::binary-size(len), tail::binary>> = body
+
+    {tag, value, tail}
+  end
+
+  # Preserve each raw TLV so signed attributes can be re-tagged without re-encoding.
+  defp children(<<>>), do: []
+
+  defp children(der) do
+    {tag, value, rest} = tlv(der)
+
+    [{tag, value, binary_part(der, 0, byte_size(der) - byte_size(rest))} | children(rest)]
+  end
+
+  defp signer_fields(contents) do
+    {0x30, content_info, _padding} = tlv(contents)
+    [{0x06, _content_type, _}, {0xA0, wrapped, _}] = children(content_info)
+    {0x30, signed_data, <<>>} = tlv(wrapped)
+
+    # signerInfos is SignedData's last field, whichever optionals precede it.
+    {0x31, signer_infos, _} = signed_data |> children() |> List.last()
+    {0x30, signer, <<>>} = tlv(signer_infos)
+
+    children(signer)
+  end
+
+  defp rsa_public_key(certificate) do
+    {:OTPCertificate, tbs, _algorithm, _signature} =
+      :public_key.pkix_decode_cert(certificate, :otp)
+
+    otp_tbs_certificate(subjectPublicKeyInfo: {:OTPSubjectPublicKeyInfo, _algorithm, key}) = tbs
+
+    key
   end
 
   describe "list/1" do
@@ -554,6 +644,153 @@ defmodule PdfElixide.SignatureTest do
     test "refuses contents that are not a CMS blob", %{signature: signature, bytes: bytes} do
       assert {:error, %Error{reason: :invalid_pdf}} =
                Signature.verify(%{signature | contents: @deadbeef}, bytes)
+    end
+  end
+
+  describe "verify/2 across the algorithms" do
+    setup do
+      signed =
+        Map.new(
+          [
+            {@rsa_pss_sha256_pdf, "rsa_pss_sha256", [@oid_pss, @oid_sha256, @pss_salt_sha256],
+             []},
+            {@rsa_pss_sha384_pdf, "rsa_pss_sha384", [@oid_pss, @oid_sha384, @pss_salt_sha384],
+             []},
+            {@rsa_pss_sha512_pdf, "rsa_pss_sha512", [@oid_pss, @oid_sha512, @pss_salt_sha512],
+             []},
+            {@rsa_pss_saltlen_pdf, "rsa_pss_saltlen", [@oid_pss, @oid_sha256, @pss_salt_max],
+             [@pss_salt_sha256]},
+            {@rsa_pkcs1_sha384_pdf, "rsa_pkcs1_sha384", [@oid_rsa, @oid_sha384], [@oid_pss]},
+            {@rsa_pkcs1_sha512_pdf, "rsa_pkcs1_sha512", [@oid_rsa, @oid_sha512], [@oid_pss]},
+            {@ecdsa_p256_pdf, "ecdsa_p256", [@oid_ecdsa_sha256, @oid_p256], []},
+            {@ecdsa_p384_pdf, "ecdsa_p384", [@oid_ecdsa_sha384, @oid_p384], []},
+            {@ecdsa_p521_pdf, "ecdsa_p521", [@oid_ecdsa_sha512, @oid_p521], []}
+          ],
+          fn {path, field, present, absent} ->
+            {:ok, [signature]} = Signature.list(open!(path))
+
+            {field, {signature, File.read!(path), {present, absent}}}
+          end
+        )
+
+      %{signed: signed}
+    end
+
+    # A fixture's own text says nothing about what signed it, so the DER is what
+    # keeps a regeneration onto another algorithm from covering a branch it no
+    # longer reaches. `rsaEncryption` sits in the shared certificate's SPKI, so
+    # only the *absence* of `id-RSASSA-PSS` attributes the padding mode.
+    test "each fixture carries the algorithm it is named for", %{signed: signed} do
+      for {field, {signature, _bytes, {present, absent}}} <- signed do
+        assert signature.sub_filter == :pkcs7_detached
+        assert signature.field_name == field
+        assert signature.signer_name == "Alice Example"
+
+        for der <- present do
+          assert :binary.match(signature.contents, der) != :nomatch,
+                 "#{field} does not carry #{Base.encode16(der)}"
+        end
+
+        for der <- absent do
+          assert :binary.match(signature.contents, der) == :nomatch,
+                 "#{field} carries #{Base.encode16(der)}"
+        end
+      end
+    end
+
+    test "accepts the bytes each signature was made over", %{signed: signed} do
+      verdicts =
+        Map.new(signed, fn {field, {signature, bytes, _der}} ->
+          {field, Signature.verify(signature, bytes)}
+        end)
+
+      assert verdicts == %{
+               "rsa_pss_sha256" => {:ok, :valid},
+               "rsa_pss_sha384" => {:ok, :valid},
+               "rsa_pss_sha512" => {:ok, :valid},
+               "rsa_pss_saltlen" => {:ok, :invalid},
+               "rsa_pkcs1_sha384" => {:ok, :valid},
+               "rsa_pkcs1_sha512" => {:ok, :valid},
+               "ecdsa_p256" => {:ok, :valid},
+               "ecdsa_p384" => {:ok, :valid},
+               "ecdsa_p521" => {:ok, :unknown}
+             }
+    end
+
+    test "reads the blob alone the same way", %{signed: signed} do
+      verdicts =
+        Map.new(signed, fn {field, {signature, _bytes, _der}} ->
+          {field, Signature.verify_signer(signature)}
+        end)
+
+      assert verdicts == %{
+               "rsa_pss_sha256" => {:ok, :valid},
+               "rsa_pss_sha384" => {:ok, :valid},
+               "rsa_pss_sha512" => {:ok, :valid},
+               "rsa_pss_saltlen" => {:ok, :invalid},
+               "rsa_pkcs1_sha384" => {:ok, :valid},
+               "rsa_pkcs1_sha512" => {:ok, :valid},
+               "ecdsa_p256" => {:ok, :valid},
+               "ecdsa_p384" => {:ok, :valid},
+               "ecdsa_p521" => {:ok, :unknown}
+             }
+    end
+
+    # Byte 100 lies within every fixture's signed range.
+    test "follows the bytes rather than the claim", %{signed: signed} do
+      verdicts =
+        Map.new(signed, fn {field, {signature, bytes, _der}} ->
+          <<head::binary-size(100), byte::8, tail::binary>> = bytes
+          altered = <<head::binary, Bitwise.bxor(byte, 1)::8, tail::binary>>
+
+          {field, Signature.verify(signature, altered)}
+        end)
+
+      assert verdicts == %{
+               "rsa_pss_sha256" => {:ok, :invalid},
+               "rsa_pss_sha384" => {:ok, :invalid},
+               "rsa_pss_sha512" => {:ok, :invalid},
+               "rsa_pss_saltlen" => {:ok, :invalid},
+               "rsa_pkcs1_sha384" => {:ok, :invalid},
+               "rsa_pkcs1_sha512" => {:ok, :invalid},
+               "ecdsa_p256" => {:ok, :invalid},
+               "ecdsa_p384" => {:ok, :invalid},
+               "ecdsa_p521" => {:ok, :unknown}
+             }
+    end
+
+    # Prove that :invalid comes from the unsupported salt length, not a corrupt fixture.
+    test "the mis-salted signature is sound at the salt it carries", %{signed: signed} do
+      {signature, bytes, _der} = Map.fetch!(signed, "rsa_pss_saltlen")
+      fields = signer_fields(signature.contents)
+
+      # RFC 5652 signs the signed attributes re-tagged from the implicit [0] to
+      # SET OF, which is the first byte and nothing else.
+      {0xA0, attributes, <<_implicit, attributes_der::binary>>} = List.keyfind(fields, 0xA0, 0)
+      {0x04, signature_value, _raw} = List.keyfind(fields, 0x04, 0)
+      signed_attributes = <<0x31, attributes_der::binary>>
+
+      key = rsa_public_key(Signature.certificate!(signature))
+      pss = [{:rsa_padding, :rsa_pkcs1_pss_padding}, {:rsa_mgf1_md, :sha256}]
+
+      assert :public_key.verify(signed_attributes, :sha256, signature_value, key, [
+               {:rsa_pss_saltlen, @pss_salt_max_length} | pss
+             ])
+
+      refute :public_key.verify(signed_attributes, :sha256, signature_value, key, [
+               {:rsa_pss_saltlen, 32} | pss
+             ])
+
+      [start, length, resume, remainder] = signature.byte_range
+      covered = binary_part(bytes, start, length) <> binary_part(bytes, resume, remainder)
+
+      assert :binary.match(attributes, :crypto.hash(:sha256, covered)) != :nomatch
+    end
+
+    test "hands back the signer certificate whether or not the check ran", %{signed: signed} do
+      for {_field, {signature, _bytes, _der}} <- signed do
+        assert is_binary(Signature.certificate!(signature))
+      end
     end
   end
 
