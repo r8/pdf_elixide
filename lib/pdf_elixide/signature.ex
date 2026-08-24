@@ -56,6 +56,12 @@ defmodule PdfElixide.Signature do
       carries a timestamp, `timestamp/1` reaches a third party's account of when
       the signature existed, which is the thing to weigh it against.
 
+  A timestamp is itself three separate questions, and answering one answers
+  neither of the others: `PdfElixide.Signature.Timestamp.verify/1` asks whether
+  the authority issued the token, `verify_timestamp/2` whether the token was made
+  over *this* signature rather than something else, and nothing here asks whether
+  the authority is one to trust.
+
   `:unknown` is the absence of a finding: the blob parsed, but the check could
   not run — a signature algorithm this library cannot verify, an unrecognized
   digest, no content digest to compare against, or a signature format whose
@@ -83,9 +89,9 @@ defmodule PdfElixide.Signature do
   `list/1`, `unsigned_fields/1`, `count/1` and `dss/1` take a *shared* read on
   either source;
   `verify/2`, `verify_signer/1`, `certificate/1`, `timestamp/1`,
-  `signing_time_utc/1`, `document_timestamp?/1` and every arity of `pades_level`
-  take no handle at all, so they take no lock. See the
-  [Concurrency](guides/concurrency.md) guide.
+  `verify_timestamp/2`, `signing_time_utc/1`, `document_timestamp?/1`,
+  `document_timestamp/1` and every arity of `pades_level` take no handle at all,
+  so they take no lock. See the [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Document
@@ -93,6 +99,7 @@ defmodule PdfElixide.Signature do
   alias PdfElixide.Error
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
+  alias PdfElixide.Predicate
   alias PdfElixide.Signature.DSS
   alias PdfElixide.Signature.Timestamp
 
@@ -105,7 +112,9 @@ defmodule PdfElixide.Signature do
   and one naming a format this library does not recognize.
 
   Two of these sign something other than the bytes `:byte_range` covers, so
-  `verify/2` cannot check them and says so rather than guessing.
+  `verify/2` cannot check them and says so rather than guessing. `:rfc3161` is
+  the one with an answer elsewhere: it is a document timestamp, so
+  `verify_timestamp/2` is what checks it against the bytes it covers.
   """
   @type sub_filter :: :pkcs7_detached | :pkcs7_sha1 | :cades_detached | :rfc3161 | nil
 
@@ -114,6 +123,12 @@ defmodule PdfElixide.Signature do
   @typedoc """
   What a verification call concluded. "What verification proves" in the module
   documentation says what each one does and does not establish.
+
+  `:unknown` is always "the check could not run" rather than a doubt about the
+  document, but what stopped it differs by call: for `verify/2` and
+  `verify_signer/1` a signature algorithm or digest this library cannot handle,
+  and for `verify_timestamp/2` a timestamp naming a digest algorithm it cannot
+  compute. Treat it as unverified either way.
   """
   @type verdict :: :valid | :invalid | :unknown
 
@@ -132,14 +147,20 @@ defmodule PdfElixide.Signature do
     * `:b_lta` — `:b_lt` and an archival timestamp over the whole file. Only
       `pades_level/3` reports it, having been given the document's bytes;
       `pades_level/1` and `pades_level/2` answer `:b_lt` for the same signature.
-      See `document_timestamp?/1` for how loosely that timestamp is detected.
+      `document_timestamp?/1` says what has to hold for that timestamp to count,
+      and `document_timestamp/1` hands it back to be verified.
     * `nil` — not a PAdES signature at all. The levels are defined for
       `:cades_detached` and describe nothing else.
 
-  These levels are structural, not verification results. A damaged signature
-  whose timestamp cannot be found still reaches `:b_b`, a `:b_lt` store entry
-  may itself be empty, and a `:b_lta` archival timestamp is neither read nor
-  checked against the signature it is supposed to cover.
+  The first three levels are structural rather than verification results: a
+  damaged signature whose timestamp cannot be found still reaches `:b_b`, a
+  `:b_t` timestamp attribute is reported present without being opened, and a
+  `:b_lt` store entry may itself be empty. `:b_lta` is the exception — the
+  archival timestamp is parsed, and its imprint is checked against the bytes it
+  covers — but even there the token's own signature is not verified and its
+  authority is trusted rather than established; `document_timestamp/1` is what
+  reaches it. `verify/2` is what checks the signature itself, and no level
+  implies anything about it.
   """
   @type pades_level :: :b_b | :b_t | :b_lt | :b_lta | nil
 
@@ -462,6 +483,9 @@ defmodule PdfElixide.Signature do
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` when the signature has no
   `:contents`, when `:contents` is not a CMS blob, and when the timestamp
   attribute is present but holds no token or one that will not parse.
+
+  Reading does not verify attachment or authenticity. Use `verify_timestamp/2`
+  for the former and `PdfElixide.Signature.Timestamp.verify/1` for the latter.
   """
   @spec timestamp(t()) :: {:ok, Timestamp.t() | nil} | {:error, Error.t()}
   # A document timestamp signs a `TSTInfo` rather than the byte range, so its
@@ -481,6 +505,60 @@ defmodule PdfElixide.Signature do
   """
   @spec timestamp!(t()) :: Timestamp.t() | nil
   def timestamp!(signature), do: signature |> timestamp() |> Wrap.unwrap!()
+
+  @doc """
+  Verifies that the signature's timestamp was made over that signature.
+
+  A timestamp token names a digest of whatever was timestamped, and until that
+  digest is compared to something the token is a valid timestamp over unknown
+  bytes. This is the comparison. What it is made against depends on which shape
+  the signature is:
+
+    * a **B-T** signature — `:cades_detached` or `:pkcs7_detached` carrying a
+      timestamp in its CMS unsigned attributes — is timestamped over its own
+      signature value, the bytes inside the blob that the signer's key produced;
+    * an **`:rfc3161`** signature is a document timestamp, and its token is made
+      over the bytes its `:byte_range` covers.
+
+  `pdf_bytes` is used only for an `:rfc3161` signature. A B-T signature carries
+  everything the check needs, so the argument is ignored for that shape.
+
+      {:ok, [signature]} = PdfElixide.Signature.list(doc)
+      PdfElixide.Signature.verify_timestamp(signature, File.read!("signed.pdf"))
+      #=> {:ok, :valid}
+
+  Attachment is one of the three questions a timestamp raises; the module
+  documentation says what the other two are and which call answers each.
+
+  Reports `%PdfElixide.Error{reason: :not_found}` when the signature carries no
+  timestamp at all — `timestamp/1` is what asks that — and
+  `%PdfElixide.Error{reason: :invalid_pdf}` when the signature has no
+  `:contents`, when `:contents` is not a CMS blob or holds a token that will not
+  parse, or when `:byte_range` does not lie within `pdf_bytes`.
+  """
+  @spec verify_timestamp(t(), binary()) :: {:ok, verdict()} | {:error, Error.t()}
+  # A document timestamp's `/Contents` is the token itself, so the value it was
+  # made over is the covered bytes rather than anything inside the blob.
+  def verify_timestamp(
+        %__MODULE__{sub_filter: :rfc3161, contents: contents, byte_range: byte_range},
+        pdf_bytes
+      )
+      when is_binary(pdf_bytes) do
+    Wrap.call(fn ->
+      Native.signature_verify_document_timestamp(contents, byte_range, pdf_bytes)
+    end)
+  end
+
+  def verify_timestamp(%__MODULE__{contents: contents}, pdf_bytes) when is_binary(pdf_bytes) do
+    Wrap.call(fn -> Native.signature_verify_timestamp(contents) end)
+  end
+
+  @doc """
+  Same as `verify_timestamp/2`, but raises `PdfElixide.Error` on failure.
+  """
+  @spec verify_timestamp!(t(), binary()) :: verdict()
+  def verify_timestamp!(signature, pdf_bytes),
+    do: signature |> verify_timestamp(pdf_bytes) |> Wrap.unwrap!()
 
   @doc """
   The PAdES baseline level the signature reaches, judged from the signature
@@ -558,11 +636,12 @@ defmodule PdfElixide.Signature do
       #=> {:ok, :b_lta}
 
   Same as `pades_level/2`, but reports `:b_lta` when a `:b_lt` signature's
-  document carries an archival timestamp.
+  document carries an archival timestamp over the whole file.
 
-  `pdf_bytes` must be the bytes from which the signature was read. Timestamp
-  detection is structural and does not verify the timestamp; see
-  `document_timestamp?/1` and `t:pades_level/0`.
+  `pdf_bytes` must be the bytes from which the signature was read. What makes an
+  archival timestamp count — and what it is still not evidence of — is in
+  `document_timestamp?/1`; bytes that do not parse as a PDF leave the answer at
+  `:b_lt` rather than failing, as that predicate does.
   """
   @spec pades_level(t(), DSS.t() | nil, binary()) :: {:ok, pades_level()} | {:error, Error.t()}
   def pades_level(%__MODULE__{} = signature, dss, pdf_bytes) when is_binary(pdf_bytes) do
@@ -584,15 +663,69 @@ defmodule PdfElixide.Signature do
       PdfElixide.Signature.document_timestamp?(File.read!("archived.pdf"))
       #=> true
 
-  This scans the raw bytes for `/DocTimeStamp` and `/ETSI.RFC3161`; it does not
-  parse or verify a timestamp, relate the markers to one object, or check what
-  it covers. Treat `true` only as evidence that the file has the shape of an
-  archived document. `pades_level/3` uses this result for the `:b_lta` level.
+  `true` means the document carries a `/Type /DocTimeStamp` object whose
+  `/SubFilter` is `/ETSI.RFC3161` and which satisfies all three of:
+
+    * its byte range starts at byte zero and ends at the last byte of the file,
+      and the only bytes it excludes are its own `/Contents`;
+    * its `/Contents` is a CMS-wrapped RFC 3161 token that declares itself one
+      and carries a signer — a blob that merely decodes as a timestamp is
+      refused;
+    * that token's message imprint is the digest of the bytes the range covers.
+
+  Changing a covered byte is enough to lose it. `true` also means the timestamp
+  covers whatever signatures the document already carried, and `pades_level/3`
+  uses this result for the `:b_lta` level.
+
+  The token's own signature is not checked here; `document_timestamp/1` hands it
+  back so `PdfElixide.Signature.Timestamp.verify/1` can, and that module says
+  what a verdict still does not prove.
+
+  `pdf_bytes` must be the document's own bytes. Bytes that do not parse as a PDF
+  answer `false`, as a document carrying no archival timestamp does;
+  `document_timestamp/1` keeps the two apart. Establishing an absence reads the
+  whole file, so the cost scales with the document rather than with one object.
   """
   @spec document_timestamp?(binary()) :: boolean()
   def document_timestamp?(pdf_bytes) when is_binary(pdf_bytes) do
-    Wrap.call!(fn -> Native.signature_has_document_timestamp(pdf_bytes) end)
+    Predicate.tolerant!(
+      fn -> Native.signature_document_timestamp(pdf_bytes) end,
+      &(&1 != nil)
+    )
   end
+
+  @doc """
+  The archival timestamp the document carries over the whole file.
+
+      {:ok, timestamp} = PdfElixide.Signature.document_timestamp(File.read!("archived.pdf"))
+      PdfElixide.Signature.Timestamp.verify(timestamp)
+      #=> {:ok, :valid}
+
+  What has to hold for a timestamp to be reported is in `document_timestamp?/1`.
+  This is the same answer with the token attached, and it is how the token is
+  reached at all: an archival timestamp is a document-level object rather than a
+  form field, so `list/1` does not report one and `timestamp/1` — which answers
+  about a signature — reaches the timestamp *inside* a signature instead.
+
+  Returns `{:ok, %PdfElixide.Signature.Timestamp{}}` for a document carrying one
+  and `{:ok, nil}` when the criteria in `document_timestamp?/1` are not met. Only
+  bytes that will not parse as a PDF reach `{:error, %PdfElixide.Error{}}`.
+
+  `PdfElixide.Signature.Timestamp` says what verifying that token does and does
+  not prove.
+  """
+  @spec document_timestamp(binary()) :: {:ok, Timestamp.t() | nil} | {:error, Error.t()}
+  def document_timestamp(pdf_bytes) when is_binary(pdf_bytes) do
+    with {:ok, timestamp} <- Wrap.call(fn -> Native.signature_document_timestamp(pdf_bytes) end) do
+      {:ok, timestamp && Timestamp.from_nif(timestamp)}
+    end
+  end
+
+  @doc """
+  Same as `document_timestamp/1`, but raises `PdfElixide.Error` on failure.
+  """
+  @spec document_timestamp!(binary()) :: Timestamp.t() | nil
+  def document_timestamp!(pdf_bytes), do: pdf_bytes |> document_timestamp() |> Wrap.unwrap!()
 
   @doc """
   Whether the signature covers the whole of a file `size` bytes long.

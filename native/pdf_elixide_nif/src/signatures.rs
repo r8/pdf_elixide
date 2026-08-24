@@ -9,16 +9,18 @@ use cms::{
 };
 use der::{oid::ObjectIdentifier, Decode, Encode, SliceReader};
 use pdf_oxide::{
-    object::Object,
+    object::{Object, ObjectRef},
     signatures::{
-        classify_pades_level, has_document_timestamp, parse_pdf_date_to_epoch, read_dss,
-        verify_signer, verify_signer_detached, ByteRangeCalculator, DocumentSecurityStore,
-        HashAlgorithm, PadesLevel, SignatureInfo, SignatureSubFilter, SignatureVerifier,
-        SignerVerify, Timestamp, VriEntry,
+        classify_pades_level, parse_pdf_date_to_epoch, read_dss, verify_signer,
+        verify_signer_detached, ByteRangeCalculator, DocumentSecurityStore, HashAlgorithm,
+        PadesLevel, SignatureInfo, SignatureSubFilter, SignatureVerifier, SignerVerify, Timestamp,
+        VriEntry,
     },
     PdfDocument,
 };
 use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, ResourceArc, Term};
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::{
     atoms,
@@ -557,14 +559,7 @@ fn days_in_month(year: u32, month: u32) -> u32 {
 // Match upstream verification's private signer selection. Its
 // `SubjectKeyIdentifier` path falls back to the first certificate.
 fn signer_certificate(cms: &[u8]) -> Result<Vec<u8>, MalformedCms> {
-    let content = ContentInfo::from_der(cms)
-        .map_err(|_| MalformedCms("signature /Contents is not a CMS blob"))?;
-    let der = content
-        .content
-        .to_der()
-        .map_err(|_| MalformedCms("signature /Contents holds unencodable CMS content"))?;
-    let signed = SignedData::from_der(&der)
-        .map_err(|_| MalformedCms("signature /Contents is not CMS SignedData"))?;
+    let signed = signed_data_of(cms)?;
 
     let signer = signed
         .signer_infos
@@ -635,12 +630,153 @@ fn signature_pades_level(contents: Option<Binary>, dss: Option<DssNif>) -> NifRe
     }
 }
 
+// The `/Type` and `/SubFilter` an archival timestamp carries (ETSI EN 319 142-1
+// §5, ISO 32000-2 §12.8.5).
+const DOC_TIMESTAMP_TYPE: &str = "DocTimeStamp";
+const DOC_TIMESTAMP_SUB_FILTER: &str = "ETSI.RFC3161";
+
+// `id-signedData` — the only CMS content type an RFC 3161 token is wrapped in.
+const OID_SIGNED_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
+
+// `id-ct-TSTInfo` — what a TimeStampToken's `SignedData` must encapsulate
+// (RFC 3161 §2.4.2).
+const OID_CT_TSTINFO: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
+
+fn is_doctimestamp_dict(dict: &HashMap<String, Object>) -> bool {
+    let name = |key: &str| dict.get(key).and_then(Object::as_name);
+
+    name("Type") == Some(DOC_TIMESTAMP_TYPE) && name("SubFilter") == Some(DOC_TIMESTAMP_SUB_FILTER)
+}
+
+// Every entry must be an integer. Filtering the others out instead would read
+// `[0 100 /Junk 200 50]` as a well-formed four-entry range.
+fn byte_range_of(dict: &HashMap<String, Object>) -> Option<[i64; 4]> {
+    let array = dict.get("ByteRange")?.as_array()?;
+    let values: Option<Vec<i64>> = array.iter().map(Object::as_integer).collect();
+
+    <[i64; 4]>::try_from(values?.as_slice()).ok()
+}
+
+// An archival timestamp must cover the whole file except for its own `/Contents`,
+// represented by the exact `<hex>` hole that `contents` occupies.
+fn covers_whole_file(range: &[i64; 4], contents: &[u8], pdf_data: &[u8]) -> bool {
+    if !byte_range_fits(range, pdf_data.len()) {
+        return false;
+    }
+
+    let [offset1, length1, offset2, length2] = *range;
+    let Ok(size) = i64::try_from(pdf_data.len()) else {
+        return false;
+    };
+
+    // `byte_range_fits` proved both spans are non-negative and end within the
+    // file, so neither sum here can overflow.
+    if offset1 != 0 || offset2 + length2 != size {
+        return false;
+    }
+
+    let Some(hole) = contents.len().checked_mul(2).and_then(|n| n.checked_add(2)) else {
+        return false;
+    };
+    let (Ok(start), Ok(end)) = (usize::try_from(length1), usize::try_from(offset2)) else {
+        return false;
+    };
+
+    // `hole` is at least two, so the `end - 1` below cannot underflow once the
+    // first comparison has held.
+    end.checked_sub(start) == Some(hole)
+        && pdf_data.get(start) == Some(&b'<')
+        && pdf_data.get(end - 1) == Some(&b'>')
+}
+
+// Require the RFC 3161 CMS shape: SignedData containing `id-ct-TSTInfo` and at
+// least one signer. This does not verify the signer or establish trust.
+fn cms_wrapped_timestamp(contents: &[u8]) -> Option<Timestamp> {
+    let token = trim_der_padding(contents);
+    let signed = signed_data_of(token).ok()?;
+
+    if signed.encap_content_info.econtent_type != OID_CT_TSTINFO {
+        return None;
+    }
+    if signed.signer_infos.0.is_empty() {
+        return None;
+    }
+
+    Timestamp::from_der(token).ok()
+}
+
+fn digest_matches(algorithm: HashAlgorithm, bytes: &[u8], imprint: &[u8]) -> bool {
+    match algorithm {
+        HashAlgorithm::Sha1 => Sha1::digest(bytes).as_slice() == imprint,
+        HashAlgorithm::Sha256 => Sha256::digest(bytes).as_slice() == imprint,
+        HashAlgorithm::Sha384 => Sha384::digest(bytes).as_slice() == imprint,
+        HashAlgorithm::Sha512 => Sha512::digest(bytes).as_slice() == imprint,
+        // An OID upstream does not recognize. Nothing can be compared, so this
+        // is not a match rather than a match taken on trust.
+        HashAlgorithm::Unknown => false,
+    }
+}
+
+// A damaged candidate is an absence, not a document error, so a decoy cannot
+// hide a valid archival timestamp elsewhere. Only an unreadable PDF is an error.
+fn document_timestamp(pdf_data: &[u8]) -> NifResult<Option<Timestamp>> {
+    let doc = PdfDocument::from_bytes(pdf_data.to_vec()).map_err(to_nif_err)?;
+
+    // Try likely later objects first, but inspect the entire object inventory.
+    for id in doc.all_object_ids().into_iter().rev() {
+        // A free entry fails to load and the sweep moves on.
+        let Ok(object) = doc.load_object(ObjectRef { id, gen: 0 }) else {
+            continue;
+        };
+        let Some(dict) = object.as_dict() else {
+            continue;
+        };
+
+        // Cheapest gates first, so the parse and the digest run at most once per
+        // genuine candidate.
+        if !is_doctimestamp_dict(dict) {
+            continue;
+        }
+        let Some(range) = byte_range_of(dict) else {
+            continue;
+        };
+        let Some(contents) = dict.get("Contents").and_then(Object::as_string) else {
+            continue;
+        };
+        if !covers_whole_file(&range, contents, pdf_data) {
+            continue;
+        }
+        let Some(timestamp) = cms_wrapped_timestamp(contents) else {
+            continue;
+        };
+        let Ok(covered) = ByteRangeCalculator::extract_signed_bytes(pdf_data, &range) else {
+            continue;
+        };
+
+        if digest_matches(
+            timestamp.hash_algorithm(),
+            &covered,
+            timestamp.message_imprint_ref(),
+        ) {
+            return Ok(Some(timestamp));
+        }
+    }
+
+    Ok(None)
+}
+
 // Dirty for its own work rather than for a lock — it takes no resource at all.
-// Upstream scans the whole file for two literal byte strings, so the cost scales
-// with the document rather than with the signature.
+// It parses the whole document and digests the bytes a candidate covers, both of
+// which scale with the file.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn signature_has_document_timestamp(pdf_data: Binary) -> bool {
-    has_document_timestamp(&pdf_data)
+fn signature_document_timestamp<'a>(
+    env: Env<'a>,
+    pdf_data: Binary,
+) -> NifResult<Option<TimestampNif<'a>>> {
+    document_timestamp(&pdf_data)?
+        .as_ref()
+        .map(|timestamp| timestamp_to_nif(env, timestamp))
+        .transpose()
 }
 
 // `id-aa-signatureTimeStampToken` — the RFC 3161 token a PAdES B-T signature
@@ -654,27 +790,33 @@ const OID_SIGNATURE_TIME_STAMP: ObjectIdentifier =
 #[derive(Debug, PartialEq)]
 struct MalformedCms(&'static str);
 
-// Transcribed from upstream's `has_bt_timestamp`, which finds this attribute and
-// then answers only a `bool`. Untrimmed and decoded without `finish()`, so the
-// signer's zero padding is tolerated.
-//
-// `Ok(None)` means the blob parsed as CMS `SignedData` and carries no such
-// attribute — the only point at which "no timestamp" is a finding rather than a
-// failure to look, so anything earlier is an error. A `SignedData` with no
-// `SignerInfo` stays on that side deliberately; the missing signer is
-// `signature_verify_signer`'s to report.
-fn signature_timestamp_token(cms: &[u8]) -> Result<Option<Vec<u8>>, MalformedCms> {
+// Decode without `finish()` so PDF signature padding is tolerated.
+fn signed_data_of(cms: &[u8]) -> Result<SignedData, MalformedCms> {
     let mut reader =
         SliceReader::new(cms).map_err(|_| MalformedCms("signature /Contents is empty"))?;
     let content = ContentInfo::decode(&mut reader)
         .map_err(|_| MalformedCms("signature /Contents is not a CMS blob"))?;
+
+    // Believe the blob is a `SignedData` because it says so, not because its
+    // payload happens to decode as one. ISO 32000-2 §12.8.3.3 requires this type,
+    // and without the check a `ContentInfo` declaring any other one is accepted
+    // whenever its content parses.
+    if content.content_type != OID_SIGNED_DATA {
+        return Err(MalformedCms("signature /Contents is not CMS SignedData"));
+    }
+
     let der = content
         .content
         .to_der()
         .map_err(|_| MalformedCms("signature /Contents holds unencodable CMS content"))?;
-    let signed = SignedData::from_der(&der)
-        .map_err(|_| MalformedCms("signature /Contents is not CMS SignedData"))?;
 
+    SignedData::from_der(&der)
+        .map_err(|_| MalformedCms("signature /Contents is not CMS SignedData"))
+}
+
+// `Ok(None)` means the blob parsed as CMS `SignedData` and carries no such
+// attribute; malformed CMS or an empty attribute value is an error.
+fn signature_timestamp_token(signed: &SignedData) -> Result<Option<Vec<u8>>, MalformedCms> {
     let Some(signer) = signed.signer_infos.0.iter().next() else {
         return Ok(None);
     };
@@ -696,6 +838,72 @@ fn signature_timestamp_token(cms: &[u8]) -> Result<Option<Vec<u8>>, MalformedCms
         .to_der()
         .map(Some)
         .map_err(|_| MalformedCms("signature timestamp attribute holds an unencodable value"))
+}
+
+// A B-T timestamp covers the signature octets of the same `SignerInfo` that
+// carries the timestamp attribute (RFC 5126 §6.1.1), not their DER wrapper.
+fn signer_signature_value(signed: &SignedData) -> Option<&[u8]> {
+    signed
+        .signer_infos
+        .0
+        .iter()
+        .next()
+        .map(|signer| signer.signature.as_bytes())
+}
+
+// Attachment and token authenticity are independent verdicts.
+fn attachment_verdict(timestamp: &Timestamp, value: &[u8]) -> Atom {
+    let algorithm = timestamp.hash_algorithm();
+
+    if algorithm == HashAlgorithm::Unknown {
+        atoms::unknown()
+    } else if digest_matches(algorithm, value, timestamp.message_imprint_ref()) {
+        atoms::valid()
+    } else {
+        atoms::invalid()
+    }
+}
+
+fn no_timestamp() -> rustler::Error {
+    tagged_err(
+        atoms::not_found(),
+        "signature carries no timestamp to check",
+    )
+}
+
+// Dirty for the same reason as the verify NIFs above: a CMS parse and a digest,
+// no resource and no lock.
+//
+// Use the same permissive token parser as `timestamp/1`; this call judges
+// attachment, not token authenticity.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn signature_verify_timestamp(contents: Option<Binary>) -> NifResult<Atom> {
+    let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
+
+    let signed = signed_data_of(cms_blob(contents.as_deref())?).map_err(malformed)?;
+    let token = signature_timestamp_token(&signed)
+        .map_err(malformed)?
+        .ok_or_else(no_timestamp)?;
+    let value = signer_signature_value(&signed).ok_or_else(no_timestamp)?;
+
+    Ok(attachment_verdict(&parse_timestamp(&token)?, value))
+}
+
+// Dirty for the same reason, and the same argument shape as
+// `signature_verify_detached`. A document timestamp's `/Contents` is the token
+// itself, and the value it is made over is the bytes its `/ByteRange` covers.
+//
+// Coverage extent is a separate question; this checks only the declared range.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn signature_verify_document_timestamp(
+    contents: Option<Binary>,
+    byte_range: Vec<i64>,
+    pdf_data: Binary,
+) -> NifResult<Atom> {
+    let timestamp = parse_timestamp(contents_of(contents.as_deref())?)?;
+    let covered = signed_bytes(&pdf_data, &byte_range)?;
+
+    Ok(attachment_verdict(&timestamp, &covered))
 }
 
 #[derive(NifMap)]
@@ -788,8 +996,10 @@ fn signature_timestamp<'a>(
     env: Env<'a>,
     contents: Option<Binary>,
 ) -> NifResult<Option<TimestampNif<'a>>> {
-    let found = signature_timestamp_token(contents_of(contents.as_deref())?)
-        .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
+    let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
+
+    let signed = signed_data_of(contents_of(contents.as_deref())?).map_err(malformed)?;
+    let found = signature_timestamp_token(&signed).map_err(malformed)?;
 
     let Some(token) = found else {
         return Ok(None);
@@ -800,6 +1010,8 @@ fn signature_timestamp<'a>(
 
 #[cfg(test)]
 mod tests {
+    use cms::signed_data::SignerInfos;
+    use der::Any;
     // Only the canaries reach upstream's picker now; `signer_certificate` is what
     // the NIF calls.
     use pdf_oxide::signatures::extract_signer_certificate_der;
@@ -814,6 +1026,16 @@ mod tests {
         );
 
         PdfDocument::open(path).expect("fixture opens")
+    }
+
+    fn fixture_bytes(name: &str) -> Vec<u8> {
+        let path = format!(
+            "{}/../../test/fixtures/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        );
+
+        std::fs::read(path).expect("fixture reads")
     }
 
     // Never pass the cyclic fixture to upstream's enumerator; it aborts.
@@ -1056,6 +1278,271 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_only_a_dictionary_typed_as_an_archival_timestamp() {
+        let dict = |entries: &[(&str, &str)]| {
+            entries
+                .iter()
+                .map(|(key, name)| ((*key).to_string(), Object::Name((*name).to_string())))
+                .collect::<HashMap<_, _>>()
+        };
+
+        assert!(is_doctimestamp_dict(&dict(&[
+            ("Type", "DocTimeStamp"),
+            ("SubFilter", "ETSI.RFC3161"),
+        ])));
+
+        // An ordinary document timestamp field's sub-filter on a signature: the
+        // pair the byte scan cannot tell from the real thing.
+        assert!(!is_doctimestamp_dict(&dict(&[
+            ("Type", "Sig"),
+            ("SubFilter", "ETSI.RFC3161"),
+        ])));
+        assert!(!is_doctimestamp_dict(&dict(&[
+            ("Type", "DocTimeStamp"),
+            ("SubFilter", "ETSI.CAdES.detached"),
+        ])));
+        assert!(!is_doctimestamp_dict(&dict(&[("Type", "DocTimeStamp")])));
+        assert!(!is_doctimestamp_dict(&HashMap::new()));
+    }
+
+    // A file whose bytes 100..200 are a well-formed hex string for `contents`,
+    // which is the hole a genuine `/ByteRange` excludes.
+    fn file_with_hex_hole(contents: &[u8], size: usize) -> Vec<u8> {
+        let mut pdf = vec![b'x'; size];
+        let hex = contents
+            .iter()
+            .flat_map(|b| format!("{b:02X}").into_bytes());
+
+        pdf[100] = b'<';
+        for (at, byte) in hex.enumerate() {
+            pdf[101 + at] = byte;
+        }
+        pdf[100 + contents.len() * 2 + 1] = b'>';
+        pdf
+    }
+
+    #[test]
+    fn accepts_only_a_byte_range_reaching_both_ends_of_the_file() {
+        // 49 bytes of `/Contents` fill a 100-byte hole from 100 to 200.
+        let contents = vec![0xAB; 49];
+        let pdf = file_with_hex_hole(&contents, 300);
+
+        assert!(covers_whole_file(&[0, 100, 200, 100], &contents, &pdf));
+
+        // One byte short of the end — an earlier revision's timestamp.
+        assert!(!covers_whole_file(&[0, 100, 200, 99], &contents, &pdf));
+        // Starts past byte zero.
+        assert!(!covers_whole_file(&[1, 99, 200, 100], &contents, &pdf));
+        // The spans overlap rather than straddling a hole.
+        assert!(!covers_whole_file(&[0, 250, 200, 100], &contents, &pdf));
+        // Wrap-around inputs `byte_range_fits` is what refuses.
+        assert!(!covers_whole_file(&[0, -1, 0, 300], &contents, &pdf));
+        assert!(!covers_whole_file(&[0, 0, 0, i64::MAX], &contents, &pdf));
+    }
+
+    // Reach both ends while excluding a hole wider than `/Contents`.
+    #[test]
+    fn refuses_a_hole_wider_than_its_own_contents() {
+        let contents = vec![0xAB; 49];
+        let pdf = file_with_hex_hole(&contents, 300);
+
+        // One byte too wide at either end, both ends still reached.
+        assert!(!covers_whole_file(&[0, 99, 200, 100], &contents, &pdf));
+        assert!(!covers_whole_file(&[0, 100, 201, 99], &contents, &pdf));
+        // Wide enough to swallow most of the file.
+        assert!(!covers_whole_file(&[0, 10, 290, 10], &contents, &pdf));
+
+        // The right width, but the hole is not a hex string — so it is some
+        // other run of bytes the same size as this `/Contents`.
+        let plain = vec![b'x'; 300];
+        assert!(!covers_whole_file(&[0, 100, 200, 100], &contents, &plain));
+    }
+
+    #[test]
+    fn reads_a_byte_range_only_when_every_entry_is_an_integer() {
+        let range = |objects: Vec<Object>| {
+            let mut dict = HashMap::new();
+            dict.insert("ByteRange".to_string(), Object::Array(objects));
+            byte_range_of(&dict)
+        };
+        let int = |n: i64| Object::Integer(n);
+
+        assert_eq!(
+            range(vec![int(0), int(1), int(2), int(3)]),
+            Some([0, 1, 2, 3])
+        );
+
+        // Four integers and a name: filtering the name away would read this as
+        // a well-formed range.
+        assert_eq!(
+            range(vec![
+                int(0),
+                int(1),
+                Object::Name("Junk".to_string()),
+                int(2),
+                int(3),
+            ]),
+            None
+        );
+        assert_eq!(range(vec![int(0), int(1), int(2)]), None);
+        assert_eq!(range(Vec::new()), None);
+    }
+
+    #[test]
+    fn upstream_still_over_reports_a_document_timestamp() {
+        let decoy = fixture_bytes("signature_doctimestamp_decoy.pdf");
+
+        assert!(
+            pdf_oxide::signatures::has_document_timestamp(&decoy),
+            "upstream no longer over-reports this decoy"
+        );
+        assert!(
+            document_timestamp(&decoy)
+                .expect("the decoy is a readable PDF")
+                .is_none(),
+            "the decoy carries no archival timestamp"
+        );
+    }
+
+    #[test]
+    fn finds_the_archival_timestamp_a_real_one_carries() {
+        let lta = fixture_bytes("form_signature_pades_lta.pdf");
+
+        assert!(document_timestamp(&lta)
+            .expect("the fixture is a readable PDF")
+            .is_some());
+    }
+
+    // The fixture preserves the real range and imprint but replaces the token
+    // with its unsigned `TSTInfo`.
+    #[test]
+    fn refuses_a_token_nobody_signed() {
+        let unsigned = fixture_bytes("signature_doctimestamp_unsigned.pdf");
+
+        assert!(document_timestamp(&unsigned)
+            .expect("still a readable PDF")
+            .is_none());
+    }
+
+    // Empty only the signer set so the test isolates that gate.
+    #[test]
+    fn refuses_a_cms_wrapper_carrying_no_signer() {
+        let token = signature_blob("signature_doctimestamp_covering.pdf");
+
+        assert!(
+            cms_wrapped_timestamp(&token).is_some(),
+            "the untouched token reads, so the refusal below is about the signer"
+        );
+
+        let mut signed = signed_data_of(&token).expect("a real timestamp token");
+        signed.signer_infos = SignerInfos(Default::default());
+
+        let signerless = ContentInfo {
+            content_type: OID_SIGNED_DATA,
+            content: Any::encode_from(&signed).expect("re-encodes"),
+        }
+        .to_der()
+        .expect("re-encodes");
+
+        assert!(cms_wrapped_timestamp(&signerless).is_none());
+    }
+
+    // A real token over the bytes this `/ByteRange` actually covers, so the
+    // imprint matches and only the width of the excluded hole separates it from
+    // an archival timestamp.
+    #[test]
+    fn refuses_a_timestamp_excluding_more_than_its_contents() {
+        let gapped = fixture_bytes("signature_doctimestamp_gapped.pdf");
+
+        assert!(document_timestamp(&gapped)
+            .expect("still a readable PDF")
+            .is_none());
+    }
+
+    // Alter a covered byte without changing any offsets.
+    #[test]
+    fn loses_the_archival_timestamp_when_a_covered_byte_changes() {
+        let mut lta = fixture_bytes("form_signature_pades_lta.pdf");
+
+        // `(Alice)` is the ordinary text field's value, well inside the first
+        // covered span; a same-length edit keeps every offset valid.
+        let at = lta
+            .windows(7)
+            .position(|w| w == b"(Alice)")
+            .expect("the text field's value");
+        lta[at + 5] = b'f';
+
+        assert!(document_timestamp(&lta)
+            .expect("still a readable PDF")
+            .is_none());
+    }
+
+    // A same-length OID edit preserves the DER shape and isolates the declared
+    // content-type check.
+    #[test]
+    fn refuses_a_blob_whose_content_type_is_not_signed_data() {
+        const SIGNED_DATA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
+
+        let blob = signature_blob("form_signature_cms.pdf");
+        let at = blob
+            .windows(SIGNED_DATA.len())
+            .position(|w| w == SIGNED_DATA)
+            .expect("the outer content type");
+
+        assert_eq!(
+            blob.windows(SIGNED_DATA.len())
+                .filter(|w| *w == SIGNED_DATA)
+                .count(),
+            1,
+            "id-signedData is no longer unique in this blob; the swap below is ambiguous"
+        );
+        assert!(signed_data_of(&blob).is_ok(), "the untouched blob reads");
+
+        let mut mistyped = blob.clone();
+        mistyped[at + SIGNED_DATA.len() - 1] = 0x01;
+
+        assert!(signed_data_of(&mistyped).is_err());
+    }
+
+    #[test]
+    fn upstream_still_reads_a_mistyped_timestamp_token() {
+        const TSTINFO: &[u8] = &[
+            0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x01, 0x04,
+        ];
+
+        let token = signature_blob("signature_doctimestamp.pdf");
+
+        // Twice: the encapsulated content type, then the signed `content-type`
+        // attribute. DER puts `encapContentInfo` before `signerInfos`, so the
+        // first is the one this gate reads.
+        assert_eq!(
+            token
+                .windows(TSTINFO.len())
+                .filter(|w| *w == TSTINFO)
+                .count(),
+            2,
+            "id-ct-TSTInfo is no longer twice in this token; the swap below moves the wrong one"
+        );
+        let at = token
+            .windows(TSTINFO.len())
+            .position(|w| w == TSTINFO)
+            .expect("the encapsulated content type");
+        assert!(
+            cms_wrapped_timestamp(&token).is_some(),
+            "the real token reads"
+        );
+
+        let mut mistyped = token.clone();
+        mistyped[at + TSTINFO.len() - 1] = 0x05;
+
+        assert!(
+            Timestamp::from_der(&mistyped).is_ok(),
+            "upstream now checks the encapsulated content type"
+        );
+        assert!(cms_wrapped_timestamp(&mistyped).is_none());
+    }
+
+    #[test]
     fn upstream_still_rejects_a_zero_padded_contents() {
         let doc = fixture("form_signature_cms.pdf");
         let infos = infos_of(&doc).expect("local enumeration");
@@ -1172,9 +1659,11 @@ mod tests {
                 expected,
                 "upstream now classifies {name} differently"
             );
+            let signed = signed_data_of(&contents).expect("both fixtures carry well-formed CMS");
+
             assert_eq!(
-                signature_timestamp_token(&contents)
-                    .expect("both fixtures carry well-formed CMS")
+                signature_timestamp_token(&signed)
+                    .expect("the walk reads a well-formed SignedData")
                     .is_some(),
                 expected == PadesLevel::BT,
                 "upstream no longer agrees with the transcribed walk on {name}"
@@ -1188,8 +1677,23 @@ mod tests {
     #[test]
     fn refuses_contents_that_are_not_a_cms_blob() {
         for blob in [b"".as_slice(), b"\x30\x82\x01\x00".as_slice()] {
-            assert!(signature_timestamp_token(blob).is_err());
+            assert!(signed_data_of(blob).is_err());
         }
+    }
+
+    // Assert content octets rather than their `04 <len>` DER wrapper.
+    #[test]
+    fn reads_the_signature_octets_the_signer_wrote() {
+        let blob = signature_blob("form_signature_cms.pdf");
+        let signed = signed_data_of(&blob).expect("a well-formed CMS blob");
+        let value = signer_signature_value(&signed).expect("one SignerInfo");
+
+        assert_eq!(value.len(), 256, "RSA-2048 signs 256 bytes");
+        assert!(
+            blob.windows(value.len()).any(|w| w == value),
+            "the signature octets are not in the blob verbatim; as_bytes may have \
+             started returning the DER TLV"
+        );
     }
 
     #[test]

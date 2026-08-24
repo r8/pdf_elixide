@@ -692,18 +692,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  describe "how upstream detects an archival timestamp" do
-    test "two literal strings anywhere in a file are enough" do
-      refute Signature.document_timestamp?("nothing here")
-      refute Signature.document_timestamp?("/DocTimeStamp on its own")
-      refute Signature.document_timestamp?("/ETSI.RFC3161 on its own")
-
-      assert Signature.document_timestamp?("/DocTimeStamp /ETSI.RFC3161")
-      assert Signature.document_timestamp?("/ETSI.RFC3161 comes first here /DocTimeStamp")
-
-      assert Signature.document_timestamp?("(/DocTimeStamp) Tj (/ETSI.RFC3161) Tj")
-    end
-
+  describe "how an archival timestamp is found" do
     test "the archival timestamp it finds is not one the listing reports" do
       doc = Document.open!(@pades_lta_pdf)
       on_exit(fn -> Document.close(doc) end)

@@ -155,6 +155,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Geometry.Rect
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
+  alias PdfElixide.Predicate
 
   # Spelled out rather than `defstruct @enforce_keys`, unlike the value structs:
   # `:page_count` is nil for a document whose page tree was unreadable at open,
@@ -365,7 +366,7 @@ defmodule PdfElixide.Document do
   """
   @spec has_structure_tree?(t()) :: boolean()
   def has_structure_tree?(%__MODULE__{ref: ref}) do
-    tolerant_predicate!(fn -> Native.document_has_structure_tree(ref) end)
+    Predicate.tolerant!(fn -> Native.document_has_structure_tree(ref) end)
   end
 
   @doc """
@@ -391,7 +392,7 @@ defmodule PdfElixide.Document do
   """
   @spec has_xfa?(t()) :: boolean()
   def has_xfa?(%__MODULE__{ref: ref}) do
-    tolerant_predicate!(fn -> Native.document_has_xfa(ref) end)
+    Predicate.tolerant!(fn -> Native.document_has_xfa(ref) end)
   end
 
   @doc """
@@ -420,18 +421,6 @@ defmodule PdfElixide.Document do
     # `Wrap.call!/1` rather than `Wrap.unwrap!/1` because there is no non-bang
     # counterpart here to have run `Wrap.call/1` already.
     Wrap.call!(fn -> Native.document_is_encrypted(ref) end)
-  end
-
-  # A tolerant predicate may hide an unreadable feature, but not a handle that
-  # cannot be used at all.
-  @handle_reasons [:closed, :lock_poisoned, :panic]
-
-  defp tolerant_predicate!(fun) do
-    case Wrap.call(fun) do
-      {:ok, value} -> value
-      {:error, %Error{reason: reason} = error} when reason in @handle_reasons -> raise error
-      {:error, _error} -> false
-    end
   end
 
   # Validate the semantic range here so it raises the same `ArgumentError` as

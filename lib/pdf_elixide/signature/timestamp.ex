@@ -6,7 +6,9 @@ defmodule PdfElixide.Signature.Timestamp do
   `PdfElixide.Signature.timestamp/1` reaches the one a signature carries, and
   `parse/1` takes a token from anywhere else. A signature's own `:signing_time`
   is the signer's unverifiable claim; a timestamp is a third party's, and
-  `verify/1` is what checks the authority actually made it:
+  `verify/1` is what checks the authority actually made it — while
+  `PdfElixide.Signature.verify_timestamp/2` checks that it was made over the
+  signature carrying it, which is a separate question with a separate answer:
 
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
       {:ok, timestamp} = PdfElixide.Signature.timestamp(signature)
@@ -21,9 +23,10 @@ defmodule PdfElixide.Signature.Timestamp do
 
     * **That the timestamp covers anything in particular.** `:message_imprint`
       is a digest of whatever was timestamped, and it is compared here to
-      nothing at all. Matching it against a signature, a document or a file is
-      the caller's to do, and until it is done a `:valid` timestamp is a valid
-      timestamp over unknown bytes.
+      nothing at all: until it is matched against something, a `:valid` timestamp
+      is a valid timestamp over unknown bytes.
+      `PdfElixide.Signature.verify_timestamp/2` performs that match for a token
+      reached from a signature.
     * **That the authority is who the token says.** No certificate is chained to
       a root, checked against a revocation list, or compared to any list of
       trusted authorities. `:tsa_name` is the token's own claim and is not
@@ -101,9 +104,9 @@ defmodule PdfElixide.Signature.Timestamp do
       library does not render — an `otherName`, an `ediPartyName`, an IP address
       or a registered identifier. `PdfElixide.Signature.certificate/1` reaches
       the certificate that actually signed the token, whatever this says.
-    * `:hash_algorithm`, `:message_imprint` — the digest that was timestamped,
-      and the algorithm that produced it. Compared here to nothing; see "What a
-      verdict proves".
+    * `:hash_algorithm`, `:message_imprint` — the digest that was timestamped and
+      the algorithm that produced it. `verify/1` does not compare it to content;
+      see "What a verdict proves".
   """
   @type t :: %__MODULE__{
           token: binary(),

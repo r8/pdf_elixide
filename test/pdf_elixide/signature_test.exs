@@ -29,11 +29,17 @@ defmodule PdfElixide.SignatureTest do
   @pades_pdf Path.join(@fixtures, "form_signature_pades.pdf")
   @pades_t_pdf Path.join(@fixtures, "form_signature_pades_t.pdf")
   @pades_lt_pdf Path.join(@fixtures, "form_signature_pades_lt.pdf")
+  @pades_t_mismatched_pdf Path.join(@fixtures, "form_signature_pades_t_mismatched.pdf")
   @pades_lta_pdf Path.join(@fixtures, "form_signature_pades_lta.pdf")
   @chain_pdf Path.join(@fixtures, "form_signature_chain.pdf")
   @dss_pdf Path.join(@fixtures, "signature_dss.pdf")
   @dss_empty_pdf Path.join(@fixtures, "signature_dss_empty.pdf")
   @doctimestamp_pdf Path.join(@fixtures, "signature_doctimestamp.pdf")
+  @doctimestamp_decoy_pdf Path.join(@fixtures, "signature_doctimestamp_decoy.pdf")
+  @doctimestamp_unsigned_pdf Path.join(@fixtures, "signature_doctimestamp_unsigned.pdf")
+  @doctimestamp_gapped_pdf Path.join(@fixtures, "signature_doctimestamp_gapped.pdf")
+  @doctimestamp_covering_pdf Path.join(@fixtures, "signature_doctimestamp_covering.pdf")
+  @doctimestamp_mistyped_pdf Path.join(@fixtures, "signature_doctimestamp_mistyped.pdf")
 
   # Outside the CMS and PAdES sets, every fixture carries a marker rather than a
   # signature, chosen so a test can tell the dictionaries apart. Nothing decodes
@@ -745,6 +751,21 @@ defmodule PdfElixide.SignatureTest do
                {:ok, :b_lt}
     end
 
+    test "stays :b_lt for bytes that only carry the names", ctx do
+      assert Signature.pades_level(ctx.signature, ctx.dss, File.read!(@doctimestamp_decoy_pdf)) ==
+               {:ok, :b_lt}
+    end
+
+    test "stays :b_lt for an archival timestamp that does not hold up", ctx do
+      for pdf <- [
+            @doctimestamp_unsigned_pdf,
+            @doctimestamp_gapped_pdf,
+            @doctimestamp_mistyped_pdf
+          ] do
+        assert Signature.pades_level(ctx.signature, ctx.dss, File.read!(pdf)) == {:ok, :b_lt}
+      end
+    end
+
     test "the bytes cannot raise a signature the levels do not describe", ctx do
       {:ok, [pkcs7]} = Signature.list(open!(@cms_pdf))
 
@@ -788,7 +809,45 @@ defmodule PdfElixide.SignatureTest do
     test "answers false for a document carrying none" do
       refute Signature.document_timestamp?(File.read!(@pades_lt_pdf))
       refute Signature.document_timestamp?(File.read!(@no_form_pdf))
-      refute Signature.document_timestamp?(<<>>)
+    end
+
+    test "is not satisfied by the two names appearing in the file" do
+      refute Signature.document_timestamp?(File.read!(@doctimestamp_decoy_pdf))
+    end
+
+    test "is not satisfied by a timestamp whose byte range covers nothing" do
+      refute Signature.document_timestamp?(File.read!(@doctimestamp_pdf))
+    end
+
+    # Its imprint matches and its byte range is the real one; the CMS wrapper is
+    # the only thing separating it from the archived document it was cut from.
+    test "is not satisfied by a token nobody signed" do
+      refute Signature.document_timestamp?(File.read!(@doctimestamp_unsigned_pdf))
+    end
+
+    # Its token is real and made over exactly the bytes its range covers; the
+    # width of the excluded hole is the only thing wrong with it.
+    test "is not satisfied by a timestamp excluding more than its own contents" do
+      refute Signature.document_timestamp?(File.read!(@doctimestamp_gapped_pdf))
+    end
+
+    # One byte from the archived file it was cut from: the token's encapsulated
+    # content is typed as something other than a TSTInfo, so the document itself
+    # says this is not a timestamp.
+    test "is not satisfied by a token that does not say it is one" do
+      refute Signature.document_timestamp?(File.read!(@doctimestamp_mistyped_pdf))
+    end
+
+    test "is lost when a covered byte changes" do
+      bytes = File.read!(@pades_lta_pdf)
+      at = :binary.match(bytes, "(Alice)") |> elem(0)
+
+      tampered =
+        :binary.part(bytes, 0, at + 5) <>
+          "f" <> :binary.part(bytes, at + 6, byte_size(bytes) - at - 6)
+
+      assert byte_size(tampered) == byte_size(bytes)
+      refute Signature.document_timestamp?(tampered)
     end
 
     test "does not come from the signatures the document lists" do
@@ -799,8 +858,49 @@ defmodule PdfElixide.SignatureTest do
       assert Signature.document_timestamp?(File.read!(@pades_lta_pdf))
     end
 
+    test "answers false rather than raising for bytes that are not a document" do
+      refute Signature.document_timestamp?(<<>>)
+      refute Signature.document_timestamp?("nothing here")
+    end
+
     test "raises on bytes that are not a binary" do
       assert_raise FunctionClauseError, fn -> Signature.document_timestamp?(42) end
+    end
+  end
+
+  describe "document_timestamp/1" do
+    test "hands back the token an archived document carries" do
+      assert {:ok, %Timestamp{} = timestamp} =
+               Signature.document_timestamp(File.read!(@pades_lta_pdf))
+
+      assert timestamp.hash_algorithm == :sha256
+      assert %DateTime{} = timestamp.time
+    end
+
+    test "reaches a token that can then be verified" do
+      timestamp = Signature.document_timestamp!(File.read!(@pades_lta_pdf))
+
+      assert Timestamp.verify(timestamp) == {:ok, :valid}
+    end
+
+    test "keeps an unreadable document apart from one carrying no timestamp" do
+      assert Signature.document_timestamp(File.read!(@pades_lt_pdf)) == {:ok, nil}
+      assert Signature.document_timestamp(File.read!(@doctimestamp_decoy_pdf)) == {:ok, nil}
+      assert Signature.document_timestamp(File.read!(@doctimestamp_unsigned_pdf)) == {:ok, nil}
+      assert Signature.document_timestamp(File.read!(@doctimestamp_gapped_pdf)) == {:ok, nil}
+      assert Signature.document_timestamp(File.read!(@doctimestamp_mistyped_pdf)) == {:ok, nil}
+
+      assert {:error, %Error{}} = Signature.document_timestamp("nothing here")
+    end
+
+    test "document_timestamp!/1 unwraps or raises" do
+      assert Signature.document_timestamp!(File.read!(@pades_lt_pdf)) == nil
+
+      assert_raise Error, fn -> Signature.document_timestamp!("nothing here") end
+    end
+
+    test "raises on bytes that are not a binary" do
+      assert_raise FunctionClauseError, fn -> Signature.document_timestamp(42) end
     end
   end
 
@@ -1114,6 +1214,88 @@ defmodule PdfElixide.SignatureTest do
       assert %Timestamp{} = Signature.timestamp!(b_t)
       assert Signature.timestamp!(b_b) == nil
       assert_raise Error, fn -> Signature.timestamp!(%{b_t | contents: nil}) end
+    end
+  end
+
+  describe "verify_timestamp/2" do
+    setup do
+      %{
+        signature: fn path -> open!(path) |> Signature.list!() |> hd() end,
+        verify: fn path ->
+          Signature.verify_timestamp(open!(path) |> Signature.list!() |> hd(), File.read!(path))
+        end
+      }
+    end
+
+    test "confirms a B-T token was made over the signature it sits beside", ctx do
+      assert ctx.verify.(@pades_t_pdf) == {:ok, :valid}
+      assert ctx.verify.(@pades_lta_pdf) == {:ok, :valid}
+    end
+
+    # The token is a real one the authority issued and `Timestamp.verify/1`
+    # answers `:valid` for it; it was simply made over something else. Nothing
+    # but this call separates the two.
+    test "reports a B-T token made over something else", ctx do
+      signature = ctx.signature.(@pades_t_mismatched_pdf)
+
+      assert Timestamp.verify(Signature.timestamp!(signature)) == {:ok, :valid}
+      assert ctx.verify.(@pades_t_mismatched_pdf) == {:ok, :invalid}
+    end
+
+    test "confirms a document timestamp was made over the bytes it covers", ctx do
+      assert ctx.verify.(@doctimestamp_covering_pdf) == {:ok, :valid}
+    end
+
+    test "reports a document timestamp whose byte range covers nothing", ctx do
+      assert ctx.verify.(@doctimestamp_pdf) == {:ok, :invalid}
+    end
+
+    test "does not read the bytes for a B-T signature", ctx do
+      signature = ctx.signature.(@pades_t_pdf)
+
+      assert Signature.verify_timestamp(signature, <<>>) == {:ok, :valid}
+      assert Signature.verify_timestamp(signature, File.read!(@pades_t_pdf)) == {:ok, :valid}
+    end
+
+    test "refuses a signature carrying no timestamp", ctx do
+      assert {:error, %Error{reason: :not_found}} = ctx.verify.(@cms_pdf)
+    end
+
+    # The retained 9-byte mock fails one step earlier, at the parse, so it can
+    # never reach a verdict.
+    test "refuses an attribute holding something that is not a token", ctx do
+      assert {:error, %Error{reason: :invalid_pdf}} = ctx.verify.(@pades_lt_pdf)
+    end
+
+    test "refuses a signature carrying no contents", ctx do
+      signature = ctx.signature.(@pades_t_pdf)
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.verify_timestamp(%{signature | contents: nil}, <<>>)
+    end
+
+    test "keeps answering after the document is closed" do
+      doc = Document.open!(@pades_t_pdf)
+      {:ok, [signature]} = Signature.list(doc)
+      :ok = Document.close(doc)
+
+      assert Signature.verify_timestamp(signature, <<>>) == {:ok, :valid}
+    end
+
+    test "raises on bytes that are not a binary", ctx do
+      signature = ctx.signature.(@pades_t_pdf)
+
+      assert_raise FunctionClauseError, fn -> Signature.verify_timestamp(signature, 42) end
+    end
+
+    test "verify_timestamp!/2 unwraps or raises", ctx do
+      signature = ctx.signature.(@pades_t_pdf)
+
+      assert Signature.verify_timestamp!(signature, <<>>) == :valid
+
+      assert_raise Error, fn ->
+        Signature.verify_timestamp!(%{signature | contents: nil}, <<>>)
+      end
     end
   end
 

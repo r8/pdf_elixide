@@ -1430,6 +1430,8 @@ dependencies = [
  "log",
  "pdf_oxide",
  "rustler",
+ "sha1",
+ "sha2 0.11.0",
 ]
 
 [[package]]

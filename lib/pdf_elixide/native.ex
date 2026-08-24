@@ -121,8 +121,10 @@ defmodule PdfElixide.Native do
   def signature_certificate(_contents), do: err()
   def signature_signing_time(_signing_time), do: err()
   def signature_pades_level(_contents, _dss), do: err()
-  def signature_has_document_timestamp(_pdf_data), do: err()
+  def signature_document_timestamp(_pdf_data), do: err()
   def signature_timestamp(_contents), do: err()
+  def signature_verify_timestamp(_contents), do: err()
+  def signature_verify_document_timestamp(_contents, _byte_range, _pdf_data), do: err()
   def timestamp_parse(_token), do: err()
   def timestamp_verify(_token), do: err()
 
