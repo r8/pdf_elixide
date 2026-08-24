@@ -5,6 +5,33 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.15.0](https://github.com/r8/pdf_elixide/compare/v0.14.0...v0.15.0) (2026-08-24)
+
+
+
+
+### Features:
+
+* add signature certificate parsing by [@r8](https://github.com/r8)
+
+* verify adbe.pkcs7.sha1 signatures by [@r8](https://github.com/r8)
+
+* validate timestamps structurally, include signed data in token scope by [@r8](https://github.com/r8)
+
+* improve signatures with B-LTA, parsed signing times, and signer certs by [@r8](https://github.com/r8)
+
+* identify signed and unsigned signature fields by [@r8](https://github.com/r8)
+
+* report PAdES levels, timestamps, and security store data by [@r8](https://github.com/r8)
+
+* verify PDF signatures and expose signer certificates by [@r8](https://github.com/r8)
+
+* capture upstream log output so a silently degraded page says why by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* escape document-controlled font names in inspect output by [@r8](https://github.com/r8)
+
 ## [v0.14.0](https://github.com/r8/pdf_elixide/compare/v0.13.0...v0.14.0) (2026-08-20)
 
 
