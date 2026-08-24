@@ -11,15 +11,14 @@ alias PdfElixide.Form
 
 doc = Document.open!("path/to/form.pdf")
 
-try do
-  Form.fields!(doc)
-  #=> [%PdfElixide.Form.Field.Text{name: "full_name", kind: :single_line, value: "John Doe", …},
-  #    %PdfElixide.Form.Field.Button{name: "subscribe", kind: :check_box, value: true, …},
-  #    %PdfElixide.Form.Field.Choice{name: "country", kind: :list_box, value: nil, …}]
-after
-  Document.close(doc)
-end
+Form.fields!(doc)
+#=> [%PdfElixide.Form.Field.Text{name: "full_name", kind: :single_line, value: "John Doe", …},
+#    %PdfElixide.Form.Field.Button{name: "subscribe", kind: :check_box, value: true, …},
+#    %PdfElixide.Form.Field.Choice{name: "country", kind: :list_box, value: nil, …}]
 ```
+
+The read-only examples through "Field kinds and flags" reuse this `doc`; close
+it after the last one.
 
 ## Fields and their values
 
@@ -96,6 +95,8 @@ names for that type, plus `:raw` for anything it does not:
 Form.field!(doc, "notes").flags
 #=> %PdfElixide.Form.Field.Text.Flags{multiline: true, password: false,
 #     read_only: false, required: false, comb: false, …, raw: 4096}
+
+:ok = Document.close(doc)
 ```
 
 Each type has its own flags struct — `PdfElixide.Form.Field.Text.Flags`,

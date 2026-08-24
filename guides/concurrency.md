@@ -74,11 +74,12 @@ writes or changes the document takes the handle exclusively, so concurrent
 *editing* of a single editor serializes instead of running in parallel. Give each
 process its own editor if you need them to work at once.
 
-Three editor calls are shared reads: `PdfElixide.Editor.page_count/1`,
-`PdfElixide.Editor.modified?/1` and `PdfElixide.Editor.flatten_warnings/1`. They
-do not wait on each other, but any of them will queue behind an in-flight
-exclusive operation such as a save on the same handle — which is what you want
-for the last one, since a save is what produces the warnings it reports.
+Four editor calls are shared reads: `PdfElixide.Editor.page_count/1`,
+`PdfElixide.Editor.modified?/1`, `PdfElixide.Editor.flatten_warnings/1` and
+`PdfElixide.Editor.closed?/1`. They do not wait on each other, but any of them
+will queue behind an in-flight exclusive operation such as a save on the same
+handle — which is what you want for `flatten_warnings/1`, since a save is what
+produces the warnings it reports.
 
 `PdfElixide.Form.fields/1` inherits whichever source it is handed — a shared read
 on a document, the editor's exclusive lock on an editor — so listing fields from

@@ -46,8 +46,18 @@ Every field `list/1` reports comes from the signature dictionary and nothing
 else. A document altered after signing lists exactly as it did before:
 
 ```elixir
-{:ok, [intact]} = Signature.list(Document.open!("signed.pdf"))
-{:ok, [altered]} = Signature.list(Document.open!("signed-then-edited.pdf"))
+intact_doc = Document.open!("signed.pdf")
+altered_doc = Document.open!("signed-then-edited.pdf")
+
+{intact, altered} =
+  try do
+    {:ok, [intact]} = Signature.list(intact_doc)
+    {:ok, [altered]} = Signature.list(altered_doc)
+    {intact, altered}
+  after
+    Document.close(intact_doc)
+    Document.close(altered_doc)
+  end
 
 altered == intact
 #=> true — the claims are identical
@@ -205,7 +215,9 @@ It takes a handle, so it happens **before** you close the document; everything
 downstream of it is a plain value that outlives the close.
 
 ```elixir
+doc = Document.open!(path)
 {:ok, dss} = Signature.dss(doc)
+:ok = Document.close(doc)
 
 dss.certificates
 #=> [<<48, 130, ...>>]
@@ -252,11 +264,17 @@ a well-formed form it and `list/1` partition the named signature fields between
 them, which is what answers "is this document fully executed":
 
 ```elixir
-Signature.list!(doc) |> Enum.map(& &1.field_name)
-#=> ["signature"]
+doc = Document.open!(path)
 
-Signature.unsigned_fields!(doc)
-#=> ["countersign", "witness", "group.slot"]
+try do
+  Signature.list!(doc) |> Enum.map(& &1.field_name)
+  #=> ["signature"]
+
+  Signature.unsigned_fields!(doc)
+  #=> ["countersign", "witness", "group.slot"]
+after
+  Document.close(doc)
+end
 ```
 
 A field whose value was cleared is a place left to sign and appears here. A

@@ -9,17 +9,15 @@ alias PdfElixide.Document
 
 doc = Document.open!("path/to/file.pdf")
 
-try do
-  # The whole document, in page order.
-  Document.search!(doc, "Figure 3")
-  #=> [%PdfElixide.Document.SearchMatch{page: 4, text: "Figure 3", bbox: %Rect{…}, …}]
+# The whole document, in page order.
+Document.search!(doc, "Figure 3")
+#=> [%PdfElixide.Document.SearchMatch{page: 4, text: "Figure 3", bbox: %Rect{…}, …}]
 
-  # One page. `PdfElixide.Document.Page.search/3` is the same call from a page handle.
-  Document.search!(doc, "Figure 3", 4)
-after
-  Document.close(doc)
-end
+# One page. `PdfElixide.Document.Page.search/3` is the same call from a page handle.
+Document.search!(doc, "Figure 3", 4)
 ```
+
+The examples below reuse this `doc`; close it after the last search.
 
 This is not the same thing as extracting the page and scanning it in Elixir.
 Searching builds a compact per-page index once and reuses it for every later
@@ -158,5 +156,9 @@ Searching and `prepare_search/1` take the document's lock *shared*, like every
 other read here, so searching from several processes at once is fine.
 `clear_search_index/1` takes it exclusively and waits for them. See the
 [Concurrency](concurrency.md) guide for what that does and does not buy.
+
+```elixir
+:ok = Document.close(doc)
+```
 
 [regex]: https://docs.rs/regex/1.12.3/regex/#syntax

@@ -89,7 +89,8 @@ alias PdfElixide.Document
 
 doc = Document.open!("path/to/file.pdf")
 
-{1, 7} = Document.version(doc)
+Document.version(doc)
+#=> {1, 7}
 {:ok, page_count} = Document.page_count(doc)
 {:ok, first_page} = Document.text(doc, 0)
 {:ok, all_text} = Document.text(doc)
@@ -111,7 +112,8 @@ Documents loaded from memory use the same API:
 
 ```elixir
 bytes = File.read!("path/to/file.pdf")
-doc = Document.from_binary!(bytes)
+memory_doc = Document.from_binary!(bytes)
+:ok = Document.close(memory_doc)
 ```
 
 ### Extract structured content
@@ -204,7 +206,15 @@ Signatures are read, never produced — open a document signed elsewhere:
 alias PdfElixide.Signature
 
 path = "path/to/signed.pdf"
-[signature] = Signature.list!(Document.open!(path))
+signed_doc = Document.open!(path)
+
+signature =
+  try do
+    [signature] = Signature.list!(signed_doc)
+    signature
+  after
+    Document.close(signed_doc)
+  end
 
 signature.signer_name
 #=> "Alice Example"
