@@ -11,8 +11,8 @@ defmodule PdfElixide.LoggingTest do
   alias PdfElixide.Error
   alias PdfElixide.Logging
 
-  # `:crash_reason` is metadata the default formatter does not print, so
-  # `capture_log/1` cannot see whether it was attached. This handler can.
+  # The default formatter prints only the metadata keys named in config, so
+  # `capture_log/1` cannot see which keys an event carried. This handler can.
   defmodule Collector do
     @moduledoc false
 
@@ -28,6 +28,20 @@ defmodule PdfElixide.LoggingTest do
     on_exit(fn -> Logging.set_level(:off) end)
     :ok
   end
+
+  defp collect(level) do
+    :ok =
+      :logger.add_handler(:pdf_elixide_test_collector, Collector, %{
+        config: %{pid: self()},
+        level: level
+      })
+
+    on_exit(fn -> :logger.remove_handler(:pdf_elixide_test_collector) end)
+  end
+
+  # Exercise a caller key that is deliberately absent from this Logger config.
+  # credo:disable-for-next-line Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
+  defp tag_caller, do: Logger.metadata(request_id: "REQ-A")
 
   defp extract(path) do
     {:ok, doc} = Document.open(path)
@@ -127,6 +141,37 @@ defmodule PdfElixide.LoggingTest do
     end
   end
 
+  describe "attribution" do
+    test "a forwarded record carries none of the flushing process's metadata" do
+      collect(:warning)
+      tag_caller()
+      Logging.set_level(:warning)
+
+      capture_log(fn -> assert {:ok, _} = extract(@broken) end)
+
+      assert_receive {:log_event, %{meta: %{pdf_source: _} = meta}}
+      refute Map.has_key?(meta, :request_id)
+    end
+
+    test "the flushing process keeps its own metadata afterwards" do
+      tag_caller()
+      Logging.set_level(:warning)
+
+      capture_log(fn -> assert {:ok, _} = extract(@broken) end)
+
+      assert Logger.metadata() == [request_id: "REQ-A"]
+    end
+
+    test "a failing flush is still reported with the flushing process's metadata" do
+      collect(:error)
+      tag_caller()
+
+      capture_log(fn -> assert :ok = Logging.flush_pending(fn -> raise "boom" end) end)
+
+      assert_receive {:log_event, %{meta: %{request_id: "REQ-A", crash_reason: _}}}
+    end
+  end
+
   describe "flush/0" do
     test "returns the number of records forwarded and empties the buffer" do
       Logging.set_level(:warning)
@@ -185,13 +230,7 @@ defmodule PdfElixide.LoggingTest do
     end
 
     test "the report carries the stacktrace as :crash_reason" do
-      :ok =
-        :logger.add_handler(:pdf_elixide_test_collector, Collector, %{
-          config: %{pid: self()},
-          level: :error
-        })
-
-      on_exit(fn -> :logger.remove_handler(:pdf_elixide_test_collector) end)
+      collect(:error)
 
       capture_log(fn -> assert :ok = Logging.flush_pending(fn -> raise "boom" end) end)
 

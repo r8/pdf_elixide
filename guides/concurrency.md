@@ -67,6 +67,12 @@ still contend while the document is being loaded and decoded, while repeated
 work may benefit more from cached data. Benchmark representative PDFs rather
 than expecting speedup proportional to the worker count.
 
+## Captured diagnostics are not per-process
+
+Diagnostics capture is global to the VM, and a captured record is forwarded by
+whichever process next returns from a library call, so it carries no `Logger`
+metadata identifying the work that produced it. See `PdfElixide.Logging`.
+
 ## The other handles
 
 `PdfElixide.Editor` is different in kind, because it mutates. Every call that

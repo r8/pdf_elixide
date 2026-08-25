@@ -30,6 +30,13 @@ defmodule PdfElixide.Logging do
   To capture at startup, set it in your application's `start/2` before opening
   any document.
 
+  ## Attribution
+
+  Under concurrent use, a record may be forwarded by a process other than the
+  one whose work produced it. Forwarded records therefore omit that process's
+  `Logger` metadata. Use `:pdf_source`, the message and the timestamp instead;
+  the `:pid` added by `Logger` identifies only the forwarding process.
+
   ## Cost, and why it is off by default
 
   Capture is process-global, not per-document or per-process: it affects every
@@ -90,20 +97,31 @@ defmodule PdfElixide.Logging do
   Called automatically after each library call while capture is enabled, so
   reach for it directly only to flush records left by a call that raised.
   Returns the number of records forwarded.
+
+  Records reach `Logger` without the calling process's own metadata; see
+  "Attribution" in the module documentation.
   """
   @spec flush() :: non_neg_integer()
   def flush do
     {records, dropped} = Native.log_drain()
 
-    if dropped > 0 do
-      Logger.warning(
-        "pdf_elixide dropped #{dropped} buffered log record(s); the capture below is incomplete",
-        pdf_elixide: true
-      )
-    end
+    # Do not attribute globally captured records to the draining process.
+    saved = Logger.metadata()
+    Logger.reset_metadata([])
 
-    Enum.each(records, &forward/1)
-    length(records)
+    try do
+      if dropped > 0 do
+        Logger.warning(
+          "pdf_elixide dropped #{dropped} buffered log record(s); the capture below is incomplete",
+          pdf_elixide: true
+        )
+      end
+
+      Enum.each(records, &forward/1)
+      length(records)
+    after
+      Logger.reset_metadata(saved)
+    end
   end
 
   # This runs from an `after` clause, so it must never replace the call's result.
@@ -123,6 +141,7 @@ defmodule PdfElixide.Logging do
     if Native.log_pending() > 0, do: flush()
   end
 
+  # Keep this outside the reset: the forwarding failure belongs to this process.
   defp report_failure(kind, reason, stacktrace) do
     # credo:disable-for-next-line Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
     Logger.error(
