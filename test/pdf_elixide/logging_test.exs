@@ -8,7 +8,16 @@ defmodule PdfElixide.LoggingTest do
   import ExUnit.CaptureLog
 
   alias PdfElixide.Document
+  alias PdfElixide.Error
   alias PdfElixide.Logging
+
+  # `:crash_reason` is metadata the default formatter does not print, so
+  # `capture_log/1` cannot see whether it was attached. This handler can.
+  defmodule Collector do
+    @moduledoc false
+
+    def log(event, %{config: %{pid: pid}}), do: send(pid, {:log_event, event})
+  end
 
   # `broken_page.pdf`'s third page does not resolve through the page tree. It is
   # the only fixture here that makes upstream log while still returning `:ok`.
@@ -92,6 +101,19 @@ defmodule PdfElixide.LoggingTest do
       refute log =~ "[warning]"
     end
 
+    test "a call that both logs and fails still returns its error" do
+      Logging.set_level(:warning)
+
+      log =
+        capture_log(fn ->
+          {:ok, doc} = Document.open(@broken)
+          assert {:error, %Error{reason: :invalid_pdf}} = Document.text(doc, 2)
+          Document.close(doc)
+        end)
+
+      assert log =~ "Page tree traversal failed"
+    end
+
     test "turning capture off discards what was buffered but not forwarded" do
       Logging.set_level(:warning)
       # Forwarded as it is captured, so this call's own records go to `Logger`
@@ -118,6 +140,72 @@ defmodule PdfElixide.LoggingTest do
 
     test "works while capture is off, so records left by a raising call still reach Logger" do
       assert 0 = Logging.flush()
+    end
+  end
+
+  describe "flush_pending/1" do
+    test "a raising flush is reported instead of reaching the caller" do
+      log =
+        capture_log(fn ->
+          assert :ok = Logging.flush_pending(fn -> raise "boom" end)
+        end)
+
+      assert log =~ "could not forward captured log records"
+      assert log =~ "** (RuntimeError) boom"
+    end
+
+    test "a throwing flush is reported instead of reaching the caller" do
+      log =
+        capture_log(fn ->
+          assert :ok = Logging.flush_pending(fn -> throw(:boom) end)
+        end)
+
+      assert log =~ "could not forward captured log records"
+      assert log =~ "** (throw) :boom"
+    end
+
+    test "an exiting flush is reported instead of reaching the caller" do
+      log =
+        capture_log(fn ->
+          assert :ok = Logging.flush_pending(fn -> exit(:boom) end)
+        end)
+
+      assert log =~ "could not forward captured log records"
+      assert log =~ "** (exit) :boom"
+    end
+
+    test "an unloaded NIF is reported instead of reaching the caller" do
+      log =
+        capture_log(fn ->
+          assert :ok = Logging.flush_pending(fn -> :erlang.nif_error(:nif_not_loaded) end)
+        end)
+
+      assert log =~ "could not forward captured log records"
+      assert log =~ ":nif_not_loaded"
+    end
+
+    test "the report carries the stacktrace as :crash_reason" do
+      :ok =
+        :logger.add_handler(:pdf_elixide_test_collector, Collector, %{
+          config: %{pid: self()},
+          level: :error
+        })
+
+      on_exit(fn -> :logger.remove_handler(:pdf_elixide_test_collector) end)
+
+      capture_log(fn -> assert :ok = Logging.flush_pending(fn -> raise "boom" end) end)
+
+      assert_receive {:log_event,
+                      %{meta: %{crash_reason: {%RuntimeError{message: "boom"}, [_ | _]}}}}
+    end
+
+    test "the default drains what a call left buffered" do
+      Logging.set_level(:warning)
+
+      capture_log(fn ->
+        assert {:ok, _} = extract(@broken)
+        assert :ok = Logging.flush_pending()
+      end)
     end
   end
 end

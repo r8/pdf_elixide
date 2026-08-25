@@ -11,9 +11,11 @@ defmodule PdfElixide.Logging do
   Elixir's `Logger`, naming the page and the reason.
 
   This is off by default and is a diagnostic aid, not an error channel — a
-  captured record does not change what a call returns. Errors still arrive as
-  `t:PdfElixide.Error.t/0`; see `t:PdfElixide.Document.text_opts/0` for what
-  `:on_page_error` can and cannot catch.
+  captured record does not change what a call returns, and neither does a
+  failure to forward one, which is reported at `:error` level and nothing more.
+  Errors still arrive as `t:PdfElixide.Error.t/0`; see
+  `t:PdfElixide.Document.text_opts/0` for what `:on_page_error` can and cannot
+  catch.
 
   ## Enabling
 
@@ -104,15 +106,37 @@ defmodule PdfElixide.Logging do
     length(records)
   end
 
-  # Called from `PdfElixide.Native.Wrap.call/1` on every wrapped call. Gated on
-  # the pending count rather than on `enabled?/0` so the common path costs one
-  # atomic load: `flush/0` reaches a dirty NIF, whose dispatch would cost more
-  # than the drain it performs when there is nothing to drain.
+  # This runs from an `after` clause, so it must never replace the call's result.
   @doc false
-  @spec flush_pending() :: :ok
-  def flush_pending do
-    if Native.log_pending() > 0, do: flush()
+  @spec flush_pending((-> term())) :: :ok
+  def flush_pending(flush \\ &drain_pending/0) do
+    flush.()
     :ok
+  rescue
+    exception -> report_failure(:error, exception, __STACKTRACE__)
+  catch
+    kind, reason -> report_failure(kind, reason, __STACKTRACE__)
+  end
+
+  # Avoid dispatching the dirty flush NIF when no records are pending.
+  defp drain_pending do
+    if Native.log_pending() > 0, do: flush()
+  end
+
+  defp report_failure(kind, reason, stacktrace) do
+    # credo:disable-for-next-line Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
+    Logger.error(
+      "pdf_elixide could not forward captured log records: " <>
+        Exception.format_banner(kind, reason),
+      pdf_elixide: true,
+      crash_reason: {reason, stacktrace}
+    )
+
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   defp forward({level, target, message}) do
