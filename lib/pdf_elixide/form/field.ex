@@ -16,8 +16,23 @@ defmodule PdfElixide.Form.Field do
   (`"person.first"`, not `"first"`) that `PdfElixide.Form.field/2`,
   `PdfElixide.Form.value/2` and `PdfElixide.Form.put_value/3` address it by,
   identical whether the form was read from a `PdfElixide.Document` or a
-  `PdfElixide.Editor` — `:value`, a plain term (`t:value/0`) — and `:flags`, the
-  decoded `/Ff` bits its type can carry.
+  `PdfElixide.Editor` — `:value`, a plain term (`t:value/0`) — `:default_value`,
+  the reset value the field itself declares, in the same shapes — `:flags`, the
+  decoded `/Ff` bits its type can carry — `:tooltip`, the text a viewer shows on
+  hover — and `:rect`, the box the field occupies, which is `nil` for a field
+  whose widgets are separate objects.
+
+  Beyond those, `Text` carries `:max_length` and `:alignment`, and `Choice`
+  `:alignment` and `:options`. The "What else a field reports" section of the
+  [Forms](guides/forms.md) guide covers all of it.
+
+  A field nested under a parent inherits the parent's *type* — so it is that
+  type's struct rather than `Unknown` — along with `:flags`, `:options`,
+  `:alignment` and `:max_length`, wherever it declares none of its own. It does
+  **not** inherit `:value` or `:default_value` — each is read off the field's own
+  dictionary, so a field whose parent carries the value and which carries none
+  itself reports `nil`. The "What a nested field inherits" section of the guide
+  says what to do instead.
 
   The first three also carry a `:kind`, naming the widget the type covers —
   `t:PdfElixide.Form.Field.Text.kind/0`,
@@ -59,4 +74,23 @@ defmodule PdfElixide.Form.Field do
   struct.
   """
   @type value :: String.t() | boolean() | [String.t()] | nil
+
+  @typedoc """
+  How a field's text is justified inside its box, from `/Q`.
+
+  `nil` when the field declares no `/Q`, and also when it declares a value the
+  PDF specification does not define — those two are not distinguished.
+  """
+  @type alignment :: :left | :center | :right | nil
+
+  @typedoc """
+  One entry of a choice field's option list.
+
+  A bare string when the PDF spells the option as a single value, and
+  `{export, display}` when it spells it as a pair: `export` is what a selection
+  is stored and submitted as — and so what `PdfElixide.Form.value/2` reports and
+  `PdfElixide.Form.put_value/3` takes — while `display` is only what a viewer
+  shows.
+  """
+  @type option :: String.t() | {export :: String.t(), display :: String.t()}
 end

@@ -1,6 +1,6 @@
 // Validates an AcroForm field tree and resolves the inheritable attributes
-// upstream reads off a field's own dictionary — `/FT`, `/Ff` and `/V` — before
-// extraction.
+// upstream reads off a field's own dictionary — `/FT`, `/Ff`, `/V`, `/MaxLen`
+// and `/Q` — before extraction, plus `/Opt`, which it never reads.
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,6 +17,8 @@ use rustler::NifResult;
 use crate::{
     atoms,
     error::{tagged_err, to_nif_err},
+    form::ChoiceOptionNif,
+    metadata::decode_pdf_text_string,
 };
 
 // Bound the native recursion before handing the tree to the uncapped extractor.
@@ -25,7 +27,18 @@ const MAX_FIELD_DEPTH: usize = 256;
 // Depth alone does not bound a DAG whose shared subtrees are reached by many paths.
 const MAX_FIELD_NODES: usize = 100_000;
 
-const SIGNATURE_FIELD_TYPE: &str = "Sig";
+// Upstream's `FormExtractor::parse_field_type` is private, so the four names it
+// recognizes are transcribed here; `upstream_still_maps_the_field_type_names`
+// is what notices the two drifting apart.
+fn field_type_of(name: &str) -> FieldType {
+    match name {
+        "Btn" => FieldType::Button,
+        "Tx" => FieldType::Text,
+        "Ch" => FieldType::Choice,
+        "Sig" => FieldType::Signature,
+        other => FieldType::Unknown(other.to_string()),
+    }
+}
 
 // Keep the walk BEAM-independent; build reason atoms only at its boundary.
 #[derive(Debug, PartialEq)]
@@ -36,13 +49,30 @@ enum Refused {
     Unreadable,
 }
 
+// Everything the walk decided about one field, as indices into the pools on
+// `Walked` where the value is not a plain integer. An attribute the walk
+// *rejected* is an absent `Option` on a present entry.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct FieldAttrs {
+    field_type: Option<usize>,
+    flags: Option<u32>,
+    options: Option<usize>,
+    max_length: Option<u32>,
+    // The raw `/Q`, normalized to an alignment by the caller — an out-of-range
+    // value must reach `alignment_nif` rather than being dropped here, so that
+    // an own malformed `/Q` still shadows an inherited valid one.
+    quadding: Option<u32>,
+}
+
 // Names, rather than object references, are the common key available to both
 // document and editor form APIs — `get_form_fields` builds every wrapper with
 // `object_ref: None`.
 #[derive(Debug, Default)]
 pub struct Resolved {
     signatures: HashSet<String>,
-    flags: HashMap<String, u32>,
+    attrs: HashMap<String, FieldAttrs>,
+    option_lists: Vec<Vec<ChoiceOptionNif>>,
+    field_types: Vec<FieldType>,
 }
 
 impl Resolved {
@@ -50,11 +80,33 @@ impl Resolved {
         self.signatures.contains(name)
     }
 
-    // The caller's own reading is the fallback, so a field the walk could not
-    // reach still reports the bits upstream found on it.
-    pub fn flags(&self, name: &str, own: Option<u32>) -> Option<u32> {
-        self.flags.get(name).copied().or(own)
+    // Every resolved attribute in one lookup, so the document and editor call
+    // sites cannot fall out of step. `None` means the walk never reached this
+    // field — an inline field dictionary, which has no object reference to key
+    // on — and only then may the caller answer from the source's own reading.
+    pub fn attrs(&self, name: &str) -> Option<ResolvedAttrs<'_>> {
+        let attrs = self.attrs.get(name)?;
+
+        Some(ResolvedAttrs {
+            field_type: attrs.field_type.map(|id| self.field_types[id].clone()),
+            flags: attrs.flags,
+            options: attrs.options.map(|id| self.option_lists[id].as_slice()),
+            max_length: attrs.max_length,
+            quadding: attrs.quadding,
+        })
     }
+}
+
+// What this walk resolves and neither upstream source does: `/FT`, `/Ff`,
+// `/MaxLen` and `/Q`, which upstream reads off the own dictionary, and `/Opt`,
+// which its forms path never reads.
+#[derive(Clone, Debug, Default)]
+pub struct ResolvedAttrs<'a> {
+    pub field_type: Option<FieldType>,
+    pub flags: Option<u32>,
+    pub options: Option<&'a [ChoiceOptionNif]>,
+    pub max_length: Option<u32>,
+    pub quadding: Option<u32>,
 }
 
 // Return fields and their resolved attributes together to avoid repeating
@@ -63,7 +115,7 @@ pub fn extract_fields(doc: &PdfDocument) -> NifResult<(Vec<FormField>, Resolved)
     let walked = walk(doc, Strictness::Tolerant).map_err(refused_err)?;
 
     let fields = FormExtractor::extract_fields(doc).map_err(to_nif_err)?;
-    let resolved = resolved_of(&fields, &walked);
+    let resolved = resolved_of(&fields, walked);
 
     Ok((fields, resolved))
 }
@@ -73,8 +125,15 @@ pub fn resolved(doc: &PdfDocument) -> NifResult<Resolved> {
 }
 
 // Only the first duplicate name matters because the editor writes the first match.
-fn resolved_of(fields: &[FormField], walked: &Walked) -> Resolved {
-    let mut resolved = Resolved::default();
+//
+// Takes `Walked` by value so the interned option lists move across rather than
+// being cloned per field; nothing reads the walk again afterwards.
+fn resolved_of(fields: &[FormField], walked: Walked) -> Resolved {
+    let mut resolved = Resolved {
+        option_lists: walked.option_lists,
+        field_types: walked.field_types,
+        ..Resolved::default()
+    };
     let mut seen = HashSet::new();
 
     for field in fields {
@@ -91,11 +150,11 @@ fn resolved_of(fields: &[FormField], walked: &Walked) -> Resolved {
             resolved.signatures.insert(field.full_name.clone());
         }
 
-        if let Some(flags) = field
+        if let Some(attrs) = field
             .object_ref
-            .and_then(|obj_ref| walked.flags.get(&obj_ref))
+            .and_then(|obj_ref| walked.attrs.get(&obj_ref))
         {
-            resolved.flags.insert(field.full_name.clone(), *flags);
+            resolved.attrs.insert(field.full_name.clone(), *attrs);
         }
     }
 
@@ -223,9 +282,17 @@ struct Walked {
     grouping: HashSet<ObjectRef>,
     // Signature fields carrying a signature, and every ancestor of one.
     signed: HashSet<ObjectRef>,
-    // Every field object's effective `/Ff`, absent where neither it nor any
-    // ancestor declares one.
-    flags: HashMap<ObjectRef, u32>,
+    // One entry per field object the walk reached, holding its effective
+    // attributes. Presence is load-bearing: it is what tells a field the walk
+    // rejected a declaration on from one the walk never saw.
+    attrs: HashMap<ObjectRef, FieldAttrs>,
+    // Interned. `Inherited` carries an index rather than the list itself
+    // because a choice field may list thousands of options and the node budget
+    // would multiply them, exactly as it would a direct `/V`.
+    option_lists: Vec<Vec<ChoiceOptionNif>>,
+    // Interned for the same reason, and because it keeps `Inherited` `Copy`
+    // where an owned `FieldType::Unknown(String)` would not.
+    field_types: Vec<FieldType>,
 }
 
 // Resolves the inheritable attributes, validating the tree on the way.
@@ -240,6 +307,8 @@ fn walk(doc: &PdfDocument, strictness: Strictness) -> Result<Walked, Refused> {
         walked: Walked::default(),
         budget: MAX_FIELD_NODES,
         strictness,
+        option_ids: HashMap::new(),
+        field_type_ids: HashMap::new(),
     };
 
     for field in &fields {
@@ -299,11 +368,17 @@ fn resolve(doc: &PdfDocument, obj: &Object) -> Option<Object> {
 // value rather than merged bit by bit.
 #[derive(Clone, Copy, Debug, Default)]
 struct Inherited {
-    signature: bool,
+    // An index into `Walked::field_types`, so this stays `Copy`.
+    field_type: Option<usize>,
     flags: Option<u32>,
     // Carry only references; copying a direct `/V` through the tree could
     // multiply a large signature dictionary by the node budget.
     value: Option<ObjectRef>,
+    // An index into `Walked::option_lists`, for the same reason.
+    options: Option<usize>,
+    // Plain integers, so these are carried by value and `Inherited` stays `Copy`.
+    max_length: Option<u32>,
+    quadding: Option<u32>,
     // Immediate parent; unlike the attributes above, this is not inherited.
     parent: Option<ObjectRef>,
 }
@@ -318,6 +393,13 @@ struct Walker<'a> {
     walked: Walked,
     budget: usize,
     strictness: Strictness,
+    // One decode per *declaring* object, however many paths reach it. Keyed by
+    // the `/Opt` array when indirect and by the declaring field otherwise, so
+    // first-write-wins is correct here where it would not be for a value.
+    option_ids: HashMap<ObjectRef, usize>,
+    // Keyed by the `/FT` name itself: a form declares a handful of distinct
+    // types however many fields it has, so there is nothing to key per object.
+    field_type_ids: HashMap<String, usize>,
 }
 
 impl Walker<'_> {
@@ -335,6 +417,80 @@ impl Walker<'_> {
         match dict.get(key) {
             Some(raw) => self.resolve_or_refuse(raw),
             None => Ok(None),
+        }
+    }
+
+    // Interns one `/FT` name and hands back its index.
+    fn intern_field_type(&mut self, name: &str) -> usize {
+        if let Some(&id) = self.field_type_ids.get(name) {
+            return id;
+        }
+
+        self.walked.field_types.push(field_type_of(name));
+
+        let id = self.walked.field_types.len() - 1;
+
+        self.field_type_ids.insert(name.to_string(), id);
+
+        id
+    }
+
+    // Decodes one `/Opt` array into the pool and hands back its index, reusing
+    // the entry already decoded for the same declaring object.
+    fn intern_options(
+        &mut self,
+        raw: &Object,
+        owner: Option<ObjectRef>,
+    ) -> Result<Option<usize>, Refused> {
+        // An `ObjectRef` names one object, which is either the array or the
+        // field dictionary, so the two key spaces cannot collide.
+        let key = raw.as_reference().or(owner);
+
+        if let Some(id) = key.and_then(|key| self.option_ids.get(&key)) {
+            return Ok(Some(*id));
+        }
+
+        let Some(resolved) = self.resolve_or_refuse(raw)? else {
+            return Ok(None);
+        };
+        // A non-array `/Opt` is malformed; upstream would drop it too, and this
+        // walk does not decide whether a document is readable.
+        let Some(entries) = resolved.as_array() else {
+            return Ok(None);
+        };
+
+        let options = entries
+            .iter()
+            .filter_map(|entry| self.choice_option(entry))
+            .collect();
+
+        self.walked.option_lists.push(options);
+        let id = self.walked.option_lists.len() - 1;
+
+        if let Some(key) = key {
+            self.option_ids.insert(key, id);
+        }
+
+        Ok(Some(id))
+    }
+
+    // One `/Opt` entry (Table 231). A malformed entry is skipped rather than
+    // failing the array, so the options around it survive.
+    fn choice_option(&self, entry: &Object) -> Option<ChoiceOptionNif> {
+        match resolve(self.doc, entry)? {
+            Object::Array(pair) if pair.len() == 2 => Some(ChoiceOptionNif::Pair((
+                self.option_text(&pair[0])?,
+                self.option_text(&pair[1])?,
+            ))),
+            other => Some(ChoiceOptionNif::Export(self.option_text(&other)?)),
+        }
+    }
+
+    fn option_text(&self, obj: &Object) -> Option<String> {
+        match resolve(self.doc, obj)? {
+            Object::String(bytes) => Some(decode_pdf_text_string(&bytes)),
+            Object::Name(name) => Some(name),
+            _ => None,
         }
     }
 
@@ -388,11 +544,16 @@ impl Walker<'_> {
         };
 
         // An own declaration settles it in both directions: a `/Tx` leaf under a
-        // `/Sig` parent is a text field, not an inherited signature.
-        let signature = match self.entry(dict, "FT")? {
-            Some(field_type) => field_type.as_name() == Some(SIGNATURE_FIELD_TYPE),
-            None => inherited.signature,
+        // `/Sig` parent is a text field, not an inherited signature. A `/FT`
+        // that is not a name is malformed and blocks inheritance the way a
+        // non-integer `/Ff` does, rather than falling through to the ancestor.
+        let field_type = match self.entry(dict, "FT")? {
+            Some(object) => object.as_name().map(|name| self.intern_field_type(name)),
+            None => inherited.field_type,
         };
+
+        let signature =
+            field_type.is_some_and(|id| self.walked.field_types[id] == FieldType::Signature);
 
         let flags = match self.entry(dict, "Ff")? {
             Some(Object::Integer(bits)) => u32::try_from(bits).ok(),
@@ -400,6 +561,29 @@ impl Walker<'_> {
             // walk does not decide whether a document is readable.
             Some(_) => None,
             None => inherited.flags,
+        };
+
+        // `/MaxLen` (Table 229) and `/Q` (Table 222) take `/Ff`'s
+        // malformed-is-dropped rule. `/Q` is carried raw: mapping an
+        // out-of-range value to "none" here would let it inherit instead.
+        let max_length = match self.entry(dict, "MaxLen")? {
+            Some(Object::Integer(len)) => u32::try_from(len).ok(),
+            Some(_) => None,
+            None => inherited.max_length,
+        };
+
+        let quadding = match self.entry(dict, "Q")? {
+            Some(Object::Integer(q)) => u32::try_from(q).ok(),
+            Some(_) => None,
+            None => inherited.quadding,
+        };
+
+        // The one attribute §12.7.3.1 does *not* make inheritable, carried down
+        // anyway because generators emit forms relying on it and because this
+        // is its only reader — a leaf would otherwise report no options at all.
+        let options = match dict.get("Opt") {
+            Some(raw) => self.intern_options(raw, obj_ref)?,
+            None => inherited.options,
         };
 
         // `/V` inherits by the same clause as `/FT` and `/Ff` (§12.7.3.1), so a
@@ -427,9 +611,18 @@ impl Walker<'_> {
                 self.walked.signatures.insert(obj_ref);
             }
 
-            if let Some(flags) = flags {
-                self.walked.flags.insert(obj_ref, flags);
-            }
+            // Written whatever the attributes resolved to: the entry existing is
+            // how the caller knows this field was reached at all.
+            self.walked.attrs.insert(
+                obj_ref,
+                FieldAttrs {
+                    field_type,
+                    flags,
+                    options,
+                    max_length,
+                    quadding,
+                },
+            );
         }
 
         if signature {
@@ -462,11 +655,14 @@ impl Walker<'_> {
         };
 
         let inherited = Inherited {
-            signature,
+            field_type,
             flags,
             value: own_value
                 .and_then(|raw| raw.as_reference())
                 .or(inherited.value),
+            options,
+            max_length,
+            quadding,
             parent: obj_ref,
         };
 
@@ -503,7 +699,7 @@ mod tests {
         let walked = walk(doc, Strictness::Tolerant).expect("a well-formed tree");
         let fields = FormExtractor::extract_fields(doc).expect("fields extract");
 
-        resolved_of(&fields, &walked)
+        resolved_of(&fields, walked)
     }
 
     #[test]
@@ -542,21 +738,106 @@ mod tests {
     fn carries_field_flags_down_to_a_kid_declaring_none() {
         let resolved = resolved_of_fixture(&fixture("form_flags.pdf"));
 
-        assert_eq!(resolved.flags("group.a", None), Some(0x8000));
+        assert_eq!(
+            resolved.attrs("group.a").and_then(|a| a.flags),
+            Some(0x8000)
+        );
     }
 
     #[test]
     fn an_own_field_flags_overrides_an_inherited_one() {
         let resolved = resolved_of_fixture(&fixture("form_flags.pdf"));
 
-        assert_eq!(resolved.flags("group.b", None), Some(0x10000));
+        assert_eq!(
+            resolved.attrs("group.b").and_then(|a| a.flags),
+            Some(0x10000)
+        );
+    }
+
+    // The whole fallback rule in one assertion: a name the walk never reached
+    // resolves to nothing at all, which is the only thing `field_nif` may
+    // answer from the source's own reading.
+    #[test]
+    fn a_field_the_walk_did_not_reach_resolves_nothing() {
+        let resolved = resolved_of_fixture(&fixture("sample.pdf"));
+
+        assert!(resolved.attrs("absent").is_none());
+    }
+
+    // The other side of it: the walk reached this field and *rejected* its
+    // declaration, so the attribute is absent on a present entry and must not
+    // fall back to upstream's `4294967295`.
+    #[test]
+    fn a_rejected_declaration_resolves_to_a_reached_field_with_no_value() {
+        let resolved = resolved_of_fixture(&fixture("form_metadata.pdf"));
+        let attrs = resolved.attrs("broken").expect("the walk reached it");
+
+        assert_eq!((attrs.max_length, attrs.flags), (None, None));
+    }
+
+    // The `/Ff` canary's reasoning: once the walk resolves them, nothing
+    // caller-visible separates an inherited `/MaxLen` or `/Q` from an own one.
+    #[test]
+    fn upstream_still_reads_max_length_and_quadding_off_the_own_dictionary() {
+        let doc = fixture("form_metadata.pdf");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+
+        let inherited = fields
+            .iter()
+            .find(|field| field.full_name == "limits.a")
+            .expect("the fixture's inheriting leaf");
+
+        assert_eq!(
+            (inherited.max_length, inherited.alignment),
+            (None, None),
+            "upstream now inherits /MaxLen or /Q; delete the resolution, not \
+             this assertion: {inherited:?}"
+        );
+    }
+
+    // Why the walk is authoritative over every field it reached: upstream casts
+    // `/MaxLen` and `/Ff` with a wrapping `i as u32`, so a `-1` comes back as a
+    // length cap and as every flag bit set.
+    #[test]
+    fn upstream_still_wraps_a_negative_max_length_and_field_flags() {
+        let doc = fixture("form_metadata.pdf");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+
+        let broken = fields
+            .iter()
+            .find(|field| field.full_name == "broken")
+            .expect("the fixture's malformed field");
+
+        assert_eq!(
+            (broken.max_length, broken.flags),
+            (Some(u32::MAX), Some(u32::MAX)),
+            "upstream now range-checks /MaxLen or /Ff; delete the walk-wins \
+             rule, not this assertion: {broken:?}"
+        );
     }
 
     #[test]
-    fn a_field_the_walk_did_not_reach_keeps_its_own_flags() {
-        let resolved = resolved_of_fixture(&fixture("sample.pdf"));
+    fn carries_max_length_and_quadding_down_to_a_kid_declaring_none() {
+        let resolved = resolved_of_fixture(&fixture("form_metadata.pdf"));
+        let attrs = resolved.attrs("limits.a").expect("the walk reached it");
 
-        assert_eq!(resolved.flags("absent", Some(0x2)), Some(0x2));
+        assert_eq!((attrs.max_length, attrs.quadding), (Some(12), Some(1)));
+    }
+
+    #[test]
+    fn an_own_max_length_and_quadding_override_inherited_ones() {
+        let resolved = resolved_of_fixture(&fixture("form_metadata.pdf"));
+        let attrs = resolved.attrs("limits.b").expect("the walk reached it");
+
+        assert_eq!((attrs.max_length, attrs.quadding), (Some(3), Some(2)));
+    }
+
+    // A declared zero must survive as a zero rather than reading as an absence.
+    #[test]
+    fn a_declared_zero_max_length_resolves_as_zero() {
+        let resolved = resolved_of_fixture(&fixture("form_metadata.pdf"));
+
+        assert_eq!(resolved.attrs("amount").and_then(|a| a.max_length), Some(0));
     }
 
     #[test]
@@ -607,6 +888,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    // The four names upstream's private `parse_field_type` recognizes, which
+    // `field_type_of` transcribes.
+    #[test]
+    fn upstream_still_maps_the_field_type_names() {
+        let doc = fixture("form_metadata.pdf");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+        let types = field_types_of(&fields);
+
+        for (name, declared) in [
+            ("full_name", "Tx"),
+            ("subscribe", "Btn"),
+            ("country", "Ch"),
+            ("legacy", "Barcode"),
+        ] {
+            assert_eq!(
+                types.get(name),
+                Some(&&field_type_of(declared)),
+                "upstream no longer types /FT /{declared} as this walk does: {types:?}"
+            );
+        }
+
+        let doc = fixture("form_signature.pdf");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+
+        assert_eq!(
+            field_types_of(&fields).get("signature"),
+            Some(&&field_type_of("Sig"))
+        );
+    }
+
+    #[test]
+    fn carries_the_field_type_down_to_a_kid_declaring_none() {
+        let resolved = resolved_of_fixture(&fixture("form_metadata.pdf"));
+        let attrs = resolved.attrs("typed.text").expect("the walk reached it");
+
+        assert_eq!(attrs.field_type, Some(FieldType::Text));
+    }
+
+    #[test]
+    fn an_own_field_type_overrides_an_inherited_one() {
+        let resolved = resolved_of_fixture(&fixture("form_signature_edge.pdf"));
+        let attrs = resolved
+            .attrs("inherited.typed")
+            .expect("the walk reached it");
+
+        assert_eq!(attrs.field_type, Some(FieldType::Text));
     }
 
     #[test]
@@ -661,6 +990,8 @@ mod tests {
                 walked: Walked::default(),
                 budget,
                 strictness: Strictness::Tolerant,
+                option_ids: HashMap::new(),
+                field_type_ids: HashMap::new(),
             };
 
             walker.node(root, Inherited::default(), 0)

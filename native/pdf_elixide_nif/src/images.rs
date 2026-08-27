@@ -2,7 +2,7 @@ use std::{borrow::Cow, io::Cursor};
 
 use pdf_oxide::extractors::{ColorSpace, ImageData, PdfImage, PixelFormat};
 use rustler::{
-    Binary, Encoder, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc, Term,
+    Binary, Encoder, Env, NifMap, NifResult, NifTuple, NifUnitEnum, OwnedBinary, ResourceArc, Term,
 };
 
 use crate::{
@@ -27,6 +27,21 @@ pub struct ImageNif {
     color_space: ColorSpaceNif,
     bits_per_component: u8,
     rotation_degrees: i32,
+    matrix: MatrixNif,
+}
+
+// The transformation in effect where the image was painted, `[a b c d e f]` —
+// every `cm` in scope composed, not one operator's operands. Named fields rather
+// than a bare six-tuple so the operand order is documented where the type is
+// declared; it still encodes as a six-tuple.
+#[derive(NifTuple, Debug)]
+pub struct MatrixNif {
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+    e: f32,
+    f: f32,
 }
 
 // How the image was stored in the PDF: a compressed JPEG blob (`:jpeg`, so
@@ -109,6 +124,8 @@ impl From<ColorSpace> for ColorSpaceNif {
 // Encoding is lazy, but the complete decoded image or JPEG blob is resident in
 // this resource from extraction onward.
 pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
+    let [a, b, c, d, e, f] = image.matrix();
+
     ImageNif {
         page,
         bbox: image.bbox().copied().map(rect_to_nif),
@@ -118,6 +135,7 @@ pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
         color_space: (*image.color_space()).into(),
         bits_per_component: image.bits_per_component(),
         rotation_degrees: image.rotation_degrees(),
+        matrix: MatrixNif { a, b, c, d, e, f },
         resource: ResourceArc::new(ImageResource {
             image: Closable::new("Image", image),
         }),

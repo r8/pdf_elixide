@@ -10,8 +10,13 @@ defmodule PdfElixide.Form.Field.Unknown do
 
   `:value` is whatever the field's `/V` holds, or `nil`; a grouping parent has
   none. See `t:PdfElixide.Form.Field.value/0`.
+  See `PdfElixide.Form.Field` for how fields are named and what every struct
+  carries.
   """
-  @enforce_keys [:name, :raw_type, :value, :flags]
+  alias PdfElixide.Form.Field
+  alias PdfElixide.Geometry.Rect
+
+  @enforce_keys [:name, :raw_type, :value, :default_value, :flags, :tooltip, :rect]
 
   defstruct @enforce_keys
 
@@ -28,7 +33,10 @@ defmodule PdfElixide.Form.Field.Unknown do
   @type t :: %__MODULE__{
           name: String.t(),
           raw_type: raw_type(),
-          value: PdfElixide.Form.Field.value(),
-          flags: PdfElixide.Form.Field.Flags.t()
+          value: Field.value(),
+          default_value: Field.value(),
+          flags: PdfElixide.Form.Field.Flags.t(),
+          tooltip: String.t() | nil,
+          rect: Rect.t() | nil
         }
 end

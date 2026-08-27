@@ -8,6 +8,7 @@ defmodule PdfElixide.FormTest do
   alias PdfElixide.Error
   alias PdfElixide.Form
   alias PdfElixide.Form.Field
+  alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @form_pdf Path.join(@fixtures, "form.pdf")
@@ -16,6 +17,7 @@ defmodule PdfElixide.FormTest do
   @signature_edge_pdf Path.join(@fixtures, "form_signature_edge.pdf")
   @cyclic_pdf Path.join(@fixtures, "form_cyclic.pdf")
   @flags_pdf Path.join(@fixtures, "form_flags.pdf")
+  @metadata_pdf Path.join(@fixtures, "form_metadata.pdf")
   @no_form_pdf Path.join(@fixtures, "sample.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
@@ -314,6 +316,223 @@ defmodule PdfElixide.FormTest do
 
       assert %Field.Button{kind: :push, flags: %Field.Button.Flags{radio: false, raw: 65_536}} =
                Form.field!(doc, "group.b")
+    end
+  end
+
+  describe "field metadata" do
+    test "a document and an editor report every field identically" do
+      doc = Document.open!(@metadata_pdf)
+      editor = Editor.open!(@metadata_pdf)
+
+      # The editor reaches `/TU`, `/Rect`, `/DV`, `/MaxLen` and `/Q` through the
+      # source field rather than through the wrapper's own accessors, two of
+      # which answer wrongly. This is what catches a drift onto them.
+      assert Form.fields!(doc) == Form.fields!(editor)
+    end
+
+    test "each struct carries exactly the keys its module declares" do
+      doc = Document.open!(@metadata_pdf)
+
+      # Nothing else gates this: the field structs are built in Rust, so a key
+      # the two sides disagree about is either silently extra on the map or
+      # missing and raises only when something reads it.
+      for field <- Form.fields!(doc) do
+        assert Map.keys(field) == field.__struct__ |> struct() |> Map.keys(),
+               "#{inspect(field.__struct__)} disagrees with its NIF struct"
+      end
+    end
+
+    test "reads a tooltip in either text-string encoding" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Text{tooltip: "Full name"} = Form.field!(doc, "full_name")
+      assert %Field.Text{tooltip: "Café notes"} = Form.field!(doc, "comment")
+      assert %Field.Text{tooltip: nil} = Form.field!(doc, "amount")
+    end
+
+    test "reports the field's box as a normalized rect" do
+      doc = Document.open!(@metadata_pdf)
+
+      # `/Rect [100 700 260 720]` is a 160 x 20 box. Upstream's own accessor
+      # reads the far corner as the size and would answer 260 x 720 here.
+      assert %Field.Text{rect: %Rect{x: 100.0, y: 700.0, width: 160.0, height: 20.0}} =
+               Form.field!(doc, "full_name")
+
+      # `amount` declares the same box corners-reversed.
+      assert Form.field!(doc, "amount").rect == Form.field!(doc, "full_name").rect
+    end
+
+    test "a field whose widget carries the box reports no rect of its own" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Text{rect: nil} = Form.field!(doc, "split")
+    end
+
+    test "reads the default value through the same model as the value" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Text{value: "John Doe", default_value: "Jane Roe"} =
+               Form.field!(doc, "full_name")
+
+      # `/DV /Off` maps to `false` exactly as `/V /Yes` maps to `true`.
+      assert %Field.Button{value: true, default_value: false} = Form.field!(doc, "subscribe")
+      assert %Field.Choice{default_value: "DE"} = Form.field!(doc, "country")
+      assert %Field.Text{default_value: nil} = Form.field!(doc, "comment")
+    end
+
+    test "reads a text field's maximum length, zero included" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Text{max_length: 40} = Form.field!(doc, "full_name")
+      # A declared zero, not an absence.
+      assert %Field.Text{max_length: 0} = Form.field!(doc, "amount")
+      assert %Field.Text{max_length: nil} = Form.field!(doc, "comment")
+    end
+
+    test "reads /Q as an alignment and drops a value the specification does not define" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Text{alignment: :left} = Form.field!(doc, "full_name")
+      assert %Field.Text{alignment: :center} = Form.field!(doc, "comment")
+      assert %Field.Text{alignment: :right} = Form.field!(doc, "amount")
+      assert %Field.Choice{alignment: nil} = Form.field!(doc, "messy")
+      assert %Field.Choice{alignment: nil} = Form.field!(doc, "country")
+    end
+
+    test "a kid with no /MaxLen or /Q of its own inherits its parent's" do
+      doc = Document.open!(@metadata_pdf)
+      editor = Editor.open!(@metadata_pdf)
+
+      # Upstream reads both off the field's own dictionary, so without the walk
+      # this leaf would report neither.
+      for source <- [doc, editor] do
+        assert %Field.Text{max_length: 12, alignment: :center} =
+                 Form.field!(source, "limits.a")
+      end
+    end
+
+    test "an own /MaxLen and /Q replace inherited ones" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Text{max_length: 3, alignment: :right} = Form.field!(doc, "limits.b")
+    end
+
+    test "a field typed only on its parent reports its type's struct and metadata" do
+      doc = Document.open!(@metadata_pdf)
+      editor = Editor.open!(@metadata_pdf)
+
+      # Upstream reads /FT off the field's own dictionary, so without the walk
+      # this leaf would be an Unknown carrying neither key.
+      for source <- [doc, editor] do
+        assert %Field.Text{kind: :single_line, max_length: 9, alignment: :right} =
+                 Form.field!(source, "typed.text")
+      end
+    end
+
+    test "a button typed only on its parent still reports boolean values" do
+      doc = Document.open!(@metadata_pdf)
+      editor = Editor.open!(@metadata_pdf)
+
+      # Upstream maps /Yes and /Off to a boolean only for a field it typed /Btn
+      # itself, so both arrive as text here and are remapped afterwards.
+      for source <- [doc, editor] do
+        assert %Field.Button{kind: :check_box, value: true, default_value: false} =
+                 Form.field!(source, "toggle.on")
+      end
+    end
+
+    test "a declaration outside the range its type allows reports as an absence" do
+      doc = Document.open!(@metadata_pdf)
+      editor = Editor.open!(@metadata_pdf)
+
+      # /MaxLen -1 and /Ff -1. Upstream casts both with a wrapping `as u32`, so
+      # its reading is a cap of 4294967295 and every flag bit set.
+      for source <- [doc, editor] do
+        assert %Field.Text{
+                 max_length: nil,
+                 flags: %Field.Text.Flags{read_only: false, required: false, raw: 0}
+               } = Form.field!(source, "broken")
+      end
+    end
+
+    test "an unknown field carries the keys every field has" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Unknown{
+               raw_type: "Barcode",
+               tooltip: "Scan me",
+               default_value: "x",
+               rect: %Rect{x: 400.0, y: 700.0, width: 60.0, height: 30.0}
+             } = Form.field!(doc, "legacy")
+    end
+
+    test "a write leaves the metadata alone" do
+      editor = Editor.open!(@metadata_pdf)
+      before = Form.field!(editor, "full_name")
+
+      {:ok, editor} = Form.put_value(editor, "full_name", "Jane Roe")
+
+      # Setting a value rebuilds the field's wrapper; everything but the value
+      # is still read off the source document.
+      assert %Field.Text{value: "Jane Roe"} = after_write = Form.field!(editor, "full_name")
+      assert Map.delete(after_write, :value) == Map.delete(before, :value)
+    end
+  end
+
+  describe "choice options" do
+    test "reads both /Opt entry spellings" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Choice{options: ["FR", {"DE", "Germany"}, "IT"]} =
+               Form.field!(doc, "country")
+    end
+
+    test "reports no options for a choice field declaring none" do
+      doc = Document.open!(@form_pdf)
+
+      assert %Field.Choice{options: nil} = Form.field!(doc, "country")
+    end
+
+    test "skips a malformed entry rather than the whole array" do
+      doc = Document.open!(@metadata_pdf)
+
+      # An integer, a three-element array and an empty one are each dropped.
+      assert %Field.Choice{options: ["One", {"x", "y"}]} = Form.field!(doc, "messy")
+    end
+
+    test "a kid with no /Opt of its own inherits its parent's" do
+      doc = Document.open!(@metadata_pdf)
+      editor = Editor.open!(@metadata_pdf)
+
+      # Upstream reads /Opt nowhere on this path, so this list exists only
+      # because the walk carried it down.
+      for source <- [doc, editor] do
+        assert %Field.Choice{options: ["en", {"fr", "French"}]} =
+                 Form.field!(source, "langs.a")
+      end
+    end
+
+    test "an own /Opt replaces an inherited one rather than merging with it" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert %Field.Choice{options: ["de"]} = Form.field!(doc, "langs.b")
+    end
+
+    test "two fields naming one /Opt array report equal lists" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert Form.field!(doc, "langs").options == Form.field!(doc, "langs_copy").options
+    end
+
+    test "reads the options a choice field carries beside its flags" do
+      doc = Document.open!(@flags_pdf)
+
+      # `form_flags.pdf` carries `/Opt` on both its choice fields, so the two
+      # fixtures are not redundant about this.
+      assert %Field.Choice{kind: :combo_box, options: ["One", "Two"]} =
+               Form.field!(doc, "combo")
+
+      assert %Field.Choice{kind: :list_box, options: ["One", "Two"]} = Form.field!(doc, "list")
     end
   end
 

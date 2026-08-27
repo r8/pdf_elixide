@@ -37,6 +37,7 @@ defmodule PdfElixide.DocumentTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
+  @image_placement_pdf Path.join(@fixtures, "image_placement.pdf")
   # Purpose-built for the Markdown- and HTML-conversion options: a 24pt heading
   # over an 11pt body line, a 64x64 DeviceRGB image (upstream's converter image
   # filter drops anything under 32x32, so @image_pdf's 24x24 never surfaces),
@@ -2186,6 +2187,53 @@ defmodule PdfElixide.DocumentTest do
       assert is_atom(image.color_space)
       assert is_integer(image.bits_per_component)
       assert is_integer(image.rotation_degrees)
+      assert {_a, _b, _c, _d, _e, _f} = image.matrix
+    end
+
+    test "reports the matrix the image was drawn with" do
+      doc = Document.open!(@image_pdf)
+
+      # `image.pdf` draws the image with `468 0 0 468 72 162 cm`, and its bbox
+      # is that matrix applied to the unit square.
+      assert {:ok, [%Document.Image{} = image]} = Document.images(doc, 0)
+      assert image.matrix == {468.0, 0.0, 0.0, 468.0, 72.0, 162.0}
+      assert image.bbox == %Rect{x: 72.0, y: 162.0, width: 468.0, height: 468.0}
+    end
+
+    test "reads the matrix off the page rather than the decoded image" do
+      jpeg = Document.open!(@image_jpeg_pdf)
+      raw = Document.open!(@image_pdf)
+
+      # The two fixtures place their image identically and differ only in how
+      # it is stored, so a matrix that differed would be coming from the decode.
+      assert [%{matrix: matrix}] = Document.images!(jpeg, 0)
+      assert [%{matrix: ^matrix}] = Document.images!(raw, 0)
+    end
+
+    test "composes every transformation in scope rather than reporting one of them" do
+      doc = Document.open!(@image_placement_pdf)
+
+      # Page 0 draws under `2 0 0 2 10 10 cm` and then `3 0 0 3 1 1 cm`. The
+      # operands of the second are `{3.0, 0.0, 0.0, 3.0, 1.0, 1.0}`; what the
+      # matrix reports is their product, which is what makes this fixture
+      # discriminate where `image.pdf`'s single `cm` cannot.
+      assert [image] = Document.images!(doc, 0)
+      assert image.matrix == {6.0, 0.0, 0.0, 6.0, 12.0, 12.0}
+      assert image.bbox == %Rect{x: 12.0, y: 12.0, width: 6.0, height: 6.0}
+    end
+
+    test "reports a form-nested image's matrix without the transformation applied to the form" do
+      doc = Document.open!(@image_placement_pdf)
+
+      # Page 1 draws a Form XObject under `2 0 0 2 10 10 cm`; the form's
+      # `/Matrix` is `[1 0 0 1 5 5]` and it draws the image under
+      # `100 0 0 100 0 0 cm`. The matrix stops at the form's own frame while the
+      # bbox carries the page's `cm` as well, so the two disagree — the
+      # divergence `t:PdfElixide.Document.Image.matrix/0` documents. When this
+      # fails because the two agree, drop the caveat rather than the assertion.
+      assert [image] = Document.images!(doc, 1)
+      assert image.matrix == {100.0, 0.0, 0.0, 100.0, 5.0, 5.0}
+      assert image.bbox == %Rect{x: 20.0, y: 20.0, width: 200.0, height: 200.0}
     end
 
     test "reports :jpeg source format for a JPEG-stored image" do

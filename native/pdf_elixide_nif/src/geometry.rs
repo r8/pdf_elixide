@@ -4,10 +4,10 @@ use rustler::NifStruct;
 #[derive(NifStruct, Debug)]
 #[module = "PdfElixide.Geometry.Rect"]
 pub struct RectNif {
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 // Use the constructor so hand-written rectangles normalize before reaching

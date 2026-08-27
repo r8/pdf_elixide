@@ -1,0 +1,121 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << >> /Annots [6 0 R 15 0 R 18 0 R] >>
+endobj
+4 0 obj
+<< /Length 6 >>
+stream
+BT ET
+endstream
+endobj
+5 0 obj
+<< /Fields [6 0 R 7 0 R 8 0 R 9 0 R 10 0 R 14 0 R 15 0 R 16 0 R 17 0 R 19 0 R 20 0 R 23 0 R 25 0 R 27 0 R] >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Widget /P 3 0 R /Rect [100 700 260 720] /FT /Tx /T (full_name) /TU <FEFF00460075006C006C0020006E0061006D0065> /MaxLen 40 /Q 0 /DV (Jane Roe) /V (John Doe) >>
+endobj
+7 0 obj
+<< /FT /Tx /T (comment) /TU (Caf\351 notes) /Q 1 >>
+endobj
+8 0 obj
+<< /FT /Tx /T (amount) /Rect [260 720 100 700] /Q 2 /MaxLen 0 >>
+endobj
+9 0 obj
+<< /FT /Ch /T (country) /Opt [(FR) [(DE) (Germany)] /IT] /V (FR) /DV (DE) >>
+endobj
+10 0 obj
+<< /FT /Ch /T (langs) /Opt 13 0 R /Kids [11 0 R 12 0 R] >>
+endobj
+11 0 obj
+<< /FT /Ch /T (a) /Parent 10 0 R >>
+endobj
+12 0 obj
+<< /FT /Ch /T (b) /Opt [(de)] /Parent 10 0 R >>
+endobj
+13 0 obj
+[(en) [(fr) (French)]]
+endobj
+14 0 obj
+<< /FT /Ch /T (messy) /Opt [(One) 42 [(a) (b) (c)] [] [(x) (y)]] /Q 7 >>
+endobj
+15 0 obj
+<< /Type /Annot /Subtype /Widget /P 3 0 R /Rect [100 640 120 660] /FT /Btn /T (subscribe) /TU (Subscribe to the newsletter) /V /Yes /DV /Off >>
+endobj
+16 0 obj
+<< /FT /Barcode /T (legacy) /TU (Scan me) /Rect [400 700 460 730] /DV (x) >>
+endobj
+17 0 obj
+<< /FT /Ch /T (langs_copy) /Opt 13 0 R >>
+endobj
+18 0 obj
+<< /Type /Annot /Subtype /Widget /P 3 0 R /Rect [400 640 500 660] /Parent 19 0 R >>
+endobj
+19 0 obj
+<< /FT /Tx /T (split) /Kids [18 0 R] /TU (Its rect is on the widget) >>
+endobj
+20 0 obj
+<< /FT /Tx /T (limits) /MaxLen 12 /Q 1 /Kids [21 0 R 22 0 R] >>
+endobj
+21 0 obj
+<< /FT /Tx /T (a) /Parent 20 0 R >>
+endobj
+22 0 obj
+<< /FT /Tx /T (b) /MaxLen 3 /Q 2 /Parent 20 0 R >>
+endobj
+23 0 obj
+<< /FT /Tx /T (typed) /MaxLen 9 /Q 2 /Kids [24 0 R] >>
+endobj
+24 0 obj
+<< /T (text) /Parent 23 0 R >>
+endobj
+25 0 obj
+<< /FT /Btn /T (toggle) /Kids [26 0 R] >>
+endobj
+26 0 obj
+<< /T (on) /V /Yes /DV /Off /Parent 25 0 R >>
+endobj
+27 0 obj
+<< /FT /Tx /T (broken) /MaxLen -1 /Ff -1 >>
+endobj
+xref
+0 28
+0000000000 65535 f 
+0000000015 00000 n 
+0000000080 00000 n 
+0000000161 00000 n 
+0000000271 00000 n 
+0000000325 00000 n 
+0000000450 00000 n 
+0000000649 00000 n 
+0000000716 00000 n 
+0000000796 00000 n 
+0000000888 00000 n 
+0000000963 00000 n 
+0000001015 00000 n 
+0000001079 00000 n 
+0000001118 00000 n 
+0000001207 00000 n 
+0000001367 00000 n 
+0000001460 00000 n 
+0000001518 00000 n 
+0000001618 00000 n 
+0000001706 00000 n 
+0000001786 00000 n 
+0000001838 00000 n 
+0000001905 00000 n 
+0000001976 00000 n 
+0000002023 00000 n 
+0000002081 00000 n 
+0000002143 00000 n 
+trailer
+<< /Size 28 /Root 1 0 R >>
+startxref
+2203
+%%EOF

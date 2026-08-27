@@ -14,8 +14,13 @@ defmodule PdfElixide.Form.Field.Button do
   button's value back is not always faithful — see the "Check boxes and radio
   groups" section of the [Forms](guides/forms.md) guide before round-tripping
   one.
+  See `PdfElixide.Form.Field` for how fields are named and what every struct
+  carries.
   """
-  @enforce_keys [:name, :kind, :value, :flags]
+  alias PdfElixide.Form.Field
+  alias PdfElixide.Geometry.Rect
+
+  @enforce_keys [:name, :kind, :value, :default_value, :flags, :tooltip, :rect]
 
   defstruct @enforce_keys
 
@@ -32,7 +37,10 @@ defmodule PdfElixide.Form.Field.Button do
   @type t :: %__MODULE__{
           name: String.t(),
           kind: kind(),
-          value: PdfElixide.Form.Field.value(),
-          flags: PdfElixide.Form.Field.Button.Flags.t()
+          value: Field.value(),
+          default_value: Field.value(),
+          flags: PdfElixide.Form.Field.Button.Flags.t(),
+          tooltip: String.t() | nil,
+          rect: Rect.t() | nil
         }
 end

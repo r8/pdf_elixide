@@ -7,6 +7,11 @@ use pdf_oxide::{
 };
 use rustler::{NifStruct, NifUnitEnum, NifUntaggedEnum};
 
+use crate::{
+    form_tree::ResolvedAttrs,
+    geometry::{rect_from_corners, RectNif},
+};
+
 // The two bits ISO 32000-1 defines that upstream's `field_flags` module does
 // not; every other value below is taken from there rather than spelled here, so
 // the numbers stay sourced from the crate that reads them.
@@ -20,6 +25,67 @@ pub enum FieldValueNif {
     Boolean(bool),
     Text(String),
     List(Vec<String>),
+}
+
+// One `/Opt` entry (Table 231): a bare export value, or an `[export, display]`
+// pair whose second element is what a viewer shows. Untagged so a bare entry
+// encodes as a string and a pair as a two-tuple, with no wrapping tag.
+#[derive(NifUntaggedEnum, Clone, Debug, PartialEq)]
+pub enum ChoiceOptionNif {
+    Pair((String, String)),
+    Export(String),
+}
+
+// `/Q` (Table 222). A value outside 0-2 names no alignment the specification
+// defines, so it reports as absent rather than as a fourth answer — the same
+// tolerance `form_tree` gives a non-integer `/Ff`.
+#[derive(NifUnitEnum, Clone, Copy, Debug, PartialEq)]
+pub enum AlignmentNif {
+    Left,
+    Center,
+    Right,
+}
+
+fn alignment_nif(quadding: Option<u32>) -> Option<AlignmentNif> {
+    match quadding? {
+        0 => Some(AlignmentNif::Left),
+        1 => Some(AlignmentNif::Center),
+        2 => Some(AlignmentNif::Right),
+        _ => None,
+    }
+}
+
+// The `/TU`, `/Rect`, `/DV`, `/MaxLen` and `/Q` entries upstream parses onto
+// `FormField`. Both paths build it from that one struct — the editor reaches it
+// through `FormFieldWrapper::original()` — so a field read from a document and
+// the same field read from an editor cannot disagree about them.
+#[derive(Debug, Default)]
+struct FieldMeta {
+    tooltip: Option<String>,
+    rect: Option<RectNif>,
+    default_value: Option<FieldValueNif>,
+    max_length: Option<u32>,
+    alignment: Option<AlignmentNif>,
+}
+
+impl From<&FormField> for FieldMeta {
+    fn from(field: &FormField) -> Self {
+        FieldMeta {
+            tooltip: field.tooltip.clone(),
+            // Converted here rather than through `FormFieldWrapper::bounds()`,
+            // which hands this corner array to a width/height constructor and
+            // so reports the far corner as the size.
+            rect: field
+                .bounds
+                .map(|[x1, y1, x2, y2]| rect_from_corners(x1, y1, x2, y2)),
+            default_value: field
+                .default_value
+                .clone()
+                .and_then(document_field_value_to_nif),
+            max_length: field.max_length,
+            alignment: alignment_nif(field.alignment),
+        }
+    }
 }
 
 // The `/Ff` bits ISO 32000-1 Table 226 gives every field, whatever its `/FT`.
@@ -103,7 +169,12 @@ pub struct TextFieldNif {
     name: String,
     kind: TextKindNif,
     value: Option<FieldValueNif>,
+    default_value: Option<FieldValueNif>,
     flags: TextFlagsNif,
+    tooltip: Option<String>,
+    rect: Option<RectNif>,
+    max_length: Option<u32>,
+    alignment: Option<AlignmentNif>,
 }
 
 #[derive(NifStruct, Debug)]
@@ -112,7 +183,10 @@ pub struct ButtonFieldNif {
     name: String,
     kind: ButtonKindNif,
     value: Option<FieldValueNif>,
+    default_value: Option<FieldValueNif>,
     flags: ButtonFlagsNif,
+    tooltip: Option<String>,
+    rect: Option<RectNif>,
 }
 
 #[derive(NifStruct, Debug)]
@@ -121,7 +195,12 @@ pub struct ChoiceFieldNif {
     name: String,
     kind: ChoiceKindNif,
     value: Option<FieldValueNif>,
+    default_value: Option<FieldValueNif>,
     flags: ChoiceFlagsNif,
+    tooltip: Option<String>,
+    rect: Option<RectNif>,
+    alignment: Option<AlignmentNif>,
+    options: Option<Vec<ChoiceOptionNif>>,
 }
 
 #[derive(NifStruct, Debug)]
@@ -130,7 +209,10 @@ pub struct UnknownFieldNif {
     name: String,
     raw_type: Option<String>,
     value: Option<FieldValueNif>,
+    default_value: Option<FieldValueNif>,
     flags: CommonFlagsNif,
+    tooltip: Option<String>,
+    rect: Option<RectNif>,
 }
 
 // An absent `/Ff` is the spec's own default of every bit clear, not a missing
@@ -227,34 +309,118 @@ pub enum FieldNif {
     Unknown(UnknownFieldNif),
 }
 
+// Upstream's own list (`FormExtractor::parse_field_value`), which it applies
+// only when the `/FT` it read off the own dictionary already said `/Btn`.
+fn button_value_nif(name: String) -> FieldValueNif {
+    match name.as_str() {
+        "Yes" | "On" => FieldValueNif::Boolean(true),
+        "No" | "Off" => FieldValueNif::Boolean(false),
+        _ => FieldValueNif::Text(name),
+    }
+}
+
+// Upstream parses `/V` and `/DV` against the `/FT` it read off the own
+// dictionary, so a button typed only by an ancestor arrives with `/Yes` and
+// `/Off` still text. Gated on the own type because an own-typed button has had
+// both mapped already, and a text field's literal `"Yes"` must stay a string.
+fn remap_inherited_button_value(
+    field_type: &Option<FieldType>,
+    own_type: Option<&FieldType>,
+    value: Option<FieldValueNif>,
+) -> Option<FieldValueNif> {
+    match (field_type, value) {
+        (Some(FieldType::Button), Some(FieldValueNif::Text(text)))
+            if own_type != Some(&FieldType::Button) =>
+        {
+            Some(button_value_nif(text))
+        }
+        (_, value) => value,
+    }
+}
+
 // Drop signatures from reads here; inherited signature types are filtered by
 // `form_tree`, while the editor separately guards direct writes.
 fn field_nif(
     name: String,
-    field_type: Option<&FieldType>,
+    own_type: Option<&FieldType>,
+    own_flags: Option<u32>,
     value: Option<FieldValueNif>,
-    flags: Option<u32>,
+    meta: FieldMeta,
+    attrs: Option<ResolvedAttrs<'_>>,
 ) -> Option<FieldNif> {
-    let bits = flags.unwrap_or_default();
+    // Refused whatever the walk resolved for this *name*: §12.7.3.2 requires
+    // fully qualified names to be unique and the walk answers with the first
+    // field of a name, so in a form breaking that rule a later `/Sig` row would
+    // otherwise inherit the first row's type and become fillable.
+    if own_type == Some(&FieldType::Signature) {
+        return None;
+    }
+
+    let FieldMeta {
+        tooltip,
+        rect,
+        default_value,
+        max_length,
+        alignment,
+    } = meta;
+
+    // The walk's reading wins outright for a field it reached, rejections
+    // included, so a declaration it dropped does not fall back to upstream's
+    // own. The source answers only for a field the walk never reached.
+    // Normalizing `/Q` after the choice keeps `/Q 7` reporting nil either way.
+    let (field_type, bits, options, max_length, alignment) = match attrs {
+        Some(attrs) => (
+            attrs.field_type,
+            attrs.flags.unwrap_or_default(),
+            attrs.options,
+            attrs.max_length,
+            alignment_nif(attrs.quadding),
+        ),
+        None => (
+            own_type.cloned(),
+            own_flags.unwrap_or_default(),
+            None,
+            max_length,
+            alignment,
+        ),
+    };
+
+    let value = remap_inherited_button_value(&field_type, own_type, value);
+    let default_value = remap_inherited_button_value(&field_type, own_type, default_value);
 
     match field_type {
         Some(FieldType::Text) => Some(FieldNif::Text(TextFieldNif {
             name,
             kind: text_kind_nif(bits),
             value,
+            default_value,
             flags: text_flags_nif(bits),
+            tooltip,
+            rect,
+            max_length,
+            alignment,
         })),
+        // `/MaxLen` and `/Q` are text- and variable-text-field entries, so a
+        // button carrying either is malformed and the value is dropped.
         Some(FieldType::Button) => Some(FieldNif::Button(ButtonFieldNif {
             name,
             kind: button_kind_nif(bits),
             value,
+            default_value,
             flags: button_flags_nif(bits),
+            tooltip,
+            rect,
         })),
         Some(FieldType::Choice) => Some(FieldNif::Choice(ChoiceFieldNif {
             name,
             kind: choice_kind_nif(bits),
             value,
+            default_value,
             flags: choice_flags_nif(bits),
+            tooltip,
+            rect,
+            alignment,
+            options: options.map(<[ChoiceOptionNif]>::to_vec),
         })),
         Some(FieldType::Signature) => None,
         // `Unknown("")` is how the extractor spells "no /FT at all" (a grouping
@@ -262,20 +428,33 @@ fn field_nif(
         // as `raw_type: nil` so the two sources cannot disagree.
         Some(FieldType::Unknown(s)) => Some(FieldNif::Unknown(UnknownFieldNif {
             name,
-            raw_type: (!s.is_empty()).then(|| s.clone()),
+            raw_type: (!s.is_empty()).then_some(s),
             value,
+            default_value,
             flags: common_flags_nif(bits),
+            tooltip,
+            rect,
         })),
         None => Some(FieldNif::Unknown(UnknownFieldNif {
             name,
             raw_type: None,
             value,
+            default_value,
             flags: common_flags_nif(bits),
+            tooltip,
+            rect,
         })),
     }
 }
 
-pub fn document_form_field_to_nif(field: FormField, flags: Option<u32>) -> Option<FieldNif> {
+pub fn document_form_field_to_nif(
+    field: FormField,
+    attrs: Option<ResolvedAttrs<'_>>,
+) -> Option<FieldNif> {
+    // Built before the destructure below consumes `field`. Cloning what it
+    // could have moved is the price of both paths running through one
+    // conversion, which is what stops them disagreeing.
+    let meta = FieldMeta::from(&field);
     // Destructured because `value` moves into the mapper while `field_type` is
     // still borrowed by `field_nif`.
     let FormField {
@@ -285,23 +464,37 @@ pub fn document_form_field_to_nif(field: FormField, flags: Option<u32>) -> Optio
         full_name,
         field_type,
         value,
+        flags,
         ..
     } = field;
 
     field_nif(
         full_name,
         Some(&field_type),
-        document_field_value_to_nif(value),
         flags,
+        document_field_value_to_nif(value),
+        meta,
+        attrs,
     )
 }
 
-pub fn editor_form_field_to_nif(wrapper: FormFieldWrapper, flags: Option<u32>) -> Option<FieldNif> {
+pub fn editor_form_field_to_nif(
+    wrapper: FormFieldWrapper,
+    attrs: Option<ResolvedAttrs<'_>>,
+) -> Option<FieldNif> {
+    // Off the source `FormField`, not the wrapper's own accessors: `bounds()`
+    // misreads the `/Rect` corners as a size and `get_default_value()` discards
+    // what it read. `original()` is `None` only for a field this binding never
+    // creates, and an all-absent `FieldMeta` is the honest answer for one.
+    let meta = wrapper.original().map(FieldMeta::from).unwrap_or_default();
+
     field_nif(
         wrapper.name().to_string(),
         wrapper.field_type(),
+        wrapper.flags(),
         editor_field_value_to_nif(wrapper.value()),
-        flags,
+        meta,
+        attrs,
     )
 }
 
@@ -334,9 +527,52 @@ pub fn set_value_from_nif(value: Option<FieldValueNif>) -> FormFieldValue {
 
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::object::Object;
+    use pdf_oxide::{editor::DocumentEditor, geometry::Rect, object::Object};
 
     use super::*;
+
+    fn fixture(name: &str) -> String {
+        format!(
+            "{}/../../test/fixtures/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        )
+    }
+
+    // The `form_metadata.pdf` field carrying every new entry at once.
+    fn metadata_field(name: &str) -> FormFieldWrapper {
+        let mut editor = DocumentEditor::open(fixture("form_metadata.pdf")).expect("fixture opens");
+
+        editor
+            .get_form_fields()
+            .expect("fields extract")
+            .into_iter()
+            .find(|field| field.name() == name)
+            .unwrap_or_else(|| panic!("no field named {name}"))
+    }
+
+    fn meta() -> FieldMeta {
+        FieldMeta::default()
+    }
+
+    fn meta_with_default(value: FieldValueNif) -> FieldMeta {
+        FieldMeta {
+            default_value: Some(value),
+            ..FieldMeta::default()
+        }
+    }
+
+    // A field the walk did not reach, so the source's own reading answers.
+    fn unreached() -> Option<ResolvedAttrs<'static>> {
+        None
+    }
+
+    fn resolved_type(field_type: FieldType) -> Option<ResolvedAttrs<'static>> {
+        Some(ResolvedAttrs {
+            field_type: Some(field_type),
+            ..ResolvedAttrs::default()
+        })
+    }
 
     fn every_field_value() -> Vec<FieldValue> {
         vec![
@@ -376,18 +612,47 @@ mod tests {
         let name = || String::from("f");
 
         assert!(matches!(
-            field_nif(name(), Some(&FieldType::Text), None, None),
+            field_nif(
+                name(),
+                Some(&FieldType::Text),
+                None,
+                None,
+                meta(),
+                unreached()
+            ),
             Some(FieldNif::Text(_))
         ));
         assert!(matches!(
-            field_nif(name(), Some(&FieldType::Button), None, None),
+            field_nif(
+                name(),
+                Some(&FieldType::Button),
+                None,
+                None,
+                meta(),
+                unreached()
+            ),
             Some(FieldNif::Button(_))
         ));
         assert!(matches!(
-            field_nif(name(), Some(&FieldType::Choice), None, None),
+            field_nif(
+                name(),
+                Some(&FieldType::Choice),
+                None,
+                None,
+                meta(),
+                unreached()
+            ),
             Some(FieldNif::Choice(_))
         ));
-        assert!(field_nif(name(), Some(&FieldType::Signature), None, None).is_none());
+        assert!(field_nif(
+            name(),
+            Some(&FieldType::Signature),
+            None,
+            None,
+            meta(),
+            unreached()
+        )
+        .is_none());
 
         // The three ways of arriving at `Unknown`, and what each says about
         // `raw_type`. The empty string and `None` are the same condition — a
@@ -396,15 +661,109 @@ mod tests {
         let named = FieldType::Unknown(String::from("Barcode"));
 
         for field_type in [Some(&empty), None] {
-            match field_nif(name(), field_type, None, None) {
+            match field_nif(name(), field_type, None, None, meta(), unreached()) {
                 Some(FieldNif::Unknown(f)) => assert_eq!(f.raw_type, None, "{field_type:?}"),
                 other => panic!("expected Unknown, got {other:?}"),
             }
         }
 
-        match field_nif(name(), Some(&named), None, None) {
+        match field_nif(name(), Some(&named), None, None, meta(), unreached()) {
             Some(FieldNif::Unknown(f)) => assert_eq!(f.raw_type.as_deref(), Some("Barcode")),
             other => panic!("expected Unknown, got {other:?}"),
+        }
+    }
+
+    // A field the walk reached is dispatched on what the walk resolved, not on
+    // the type upstream read off the own dictionary — which is `Unknown("")`
+    // for every field typed only by an ancestor.
+    #[test]
+    fn a_resolved_field_type_decides_the_struct_over_the_sources_own() {
+        let name = || String::from("f");
+        let own = FieldType::Unknown(String::new());
+
+        assert!(matches!(
+            field_nif(
+                name(),
+                Some(&own),
+                None,
+                None,
+                meta(),
+                resolved_type(FieldType::Choice)
+            ),
+            Some(FieldNif::Choice(_))
+        ));
+        assert!(field_nif(
+            name(),
+            Some(&own),
+            None,
+            None,
+            meta(),
+            resolved_type(FieldType::Signature)
+        )
+        .is_none());
+    }
+
+    // Each spelling is carried in `/V` and `/DV` at once, because upstream
+    // parses both against the own `/FT` and so loses both the same way.
+    #[test]
+    fn a_button_typed_by_inheritance_still_reports_boolean_values() {
+        let name = || String::from("f");
+        let own = FieldType::Unknown(String::new());
+        let text = |s: &str| FieldValueNif::Text(String::from(s));
+
+        for (spelling, expected) in [
+            ("Yes", FieldValueNif::Boolean(true)),
+            ("On", FieldValueNif::Boolean(true)),
+            ("No", FieldValueNif::Boolean(false)),
+            ("Off", FieldValueNif::Boolean(false)),
+            ("Choice1", FieldValueNif::Text(String::from("Choice1"))),
+        ] {
+            match field_nif(
+                name(),
+                Some(&own),
+                None,
+                Some(text(spelling)),
+                meta_with_default(text(spelling)),
+                resolved_type(FieldType::Button),
+            ) {
+                Some(FieldNif::Button(f)) => {
+                    assert_eq!(f.value, Some(expected), "{spelling}");
+                    assert_eq!(f.default_value, f.value, "{spelling}");
+                }
+                other => panic!("expected Button, got {other:?}"),
+            }
+        }
+
+        // Upstream typed this one itself, so only a genuine string reaches the
+        // remap.
+        match field_nif(
+            name(),
+            Some(&FieldType::Button),
+            None,
+            Some(text("Yes")),
+            meta_with_default(text("Yes")),
+            resolved_type(FieldType::Button),
+        ) {
+            Some(FieldNif::Button(f)) => {
+                assert_eq!(f.value, Some(text("Yes")));
+                assert_eq!(f.default_value, Some(text("Yes")));
+            }
+            other => panic!("expected Button, got {other:?}"),
+        }
+
+        match field_nif(
+            name(),
+            Some(&own),
+            None,
+            Some(text("Yes")),
+            meta_with_default(text("Yes")),
+            resolved_type(FieldType::Text),
+        ) {
+            Some(FieldNif::Text(f)) => {
+                assert_eq!(f.value, Some(text("Yes")));
+                assert_eq!(f.default_value, Some(text("Yes")));
+            }
+            other => panic!("expected Text, got {other:?}"),
         }
     }
 
@@ -556,5 +915,48 @@ mod tests {
             TextKindNif::Multiline
         );
         assert_eq!(choice_kind_nif(field_flags::COMBO), ChoiceKindNif::ComboBox);
+    }
+
+    // Canary for the upstream corner-as-size defect `FieldMeta::from` converts
+    // around.
+    #[test]
+    fn upstream_still_reads_a_field_rect_as_a_size() {
+        let field = metadata_field("full_name");
+        let original = field.original().expect("read from the source document");
+
+        assert_eq!(original.bounds, Some([100.0, 700.0, 260.0, 720.0]));
+        assert_eq!(
+            field.bounds(),
+            Some(Rect::new(100.0, 700.0, 260.0, 720.0)),
+            "upstream now re-corners a field /Rect; delete the conversion in \
+             FieldMeta::from, not this assertion"
+        );
+
+        // The same field through the local conversion, which is the 160 x 20
+        // box the PDF actually declares.
+        let meta = FieldMeta::from(original);
+        let rect = meta.rect.expect("a /Rect");
+
+        assert_eq!((rect.x, rect.y), (100.0, 700.0));
+        assert_eq!((rect.width, rect.height), (160.0, 20.0));
+    }
+
+    // Canary for the discarded `/DV` that makes `FieldMeta::from` read
+    // `original()` rather than the accessor.
+    #[test]
+    fn upstream_still_discards_a_read_default_value() {
+        let field = metadata_field("full_name");
+
+        assert!(
+            matches!(field.get_default_value(), None | Some(FormFieldValue::None)),
+            "upstream now returns a read /DV, so read the accessor instead: {:?}",
+            field.get_default_value()
+        );
+
+        // The value is there — it is the accessor that loses it.
+        assert_eq!(
+            field.original().and_then(|f| f.default_value.clone()),
+            Some(FieldValue::Text(String::from("Jane Roe")))
+        );
     }
 }

@@ -29,12 +29,17 @@ recognized type, which includes the grouping parents a nested form reports.
 `PdfElixide.Form.Field` is the umbrella defining the union. Which widget a
 button or choice field is, the struct's `:kind` says — see below.
 
-**Every struct carries the same three keys.** `:name` is the field's fully
+**Every struct carries the same six keys.** `:name` is the field's fully
 qualified name, dotted for a field nested under a parent — `"person.first"`, not
 `"first"` — and is what every other function here addresses it by. `:value` is a
 plain term: a string, `true`/`false`, a list of strings, or `nil` for a field
-carrying no value. `:flags` is described under "Field kinds and flags" below,
-along with the `:kind` the first three also carry.
+carrying no value. `:default_value` is the reset value the field itself
+declares, in the same shapes — not always what a viewer's reset would restore,
+for the reason "What a nested field inherits" gives. `:tooltip` is the text a
+viewer shows on hover, and `:rect` the box the field occupies on the page.
+`:flags` is described under "Field kinds and flags" below, along with the `:kind`
+the first three also carry; the rest of the metadata is under "What else a field
+reports".
 
 **A value is written back exactly as it was read.** `t:PdfElixide.Form.Field.value/0`
 is both what a field reports and what `PdfElixide.Form.put_value/3` accepts —
@@ -82,11 +87,12 @@ end
 defaults above are what the PDF specification says that means. Many real forms
 declare no `/Ff` at all.
 
-**A field inherits `/Ff` from its ancestors.** A radio group is commonly a parent
-carrying the flags over kids that carry none, and each kid reports the parent's
-kind. A kid declaring its own `/Ff` replaces the inherited value outright rather
-than merging bit by bit, so a `:push` button under a `:radio` parent stays a push
-button.
+**A field inherits `/Ff` from its ancestors**, so a radio group can be a parent
+carrying the flags over kids that carry none and each kid still reports
+`:radio`. A kid declaring its own `/Ff` replaces the inherited value outright
+rather than merging bit by bit, so a `:push` button under a `:radio` parent
+stays a push button. "What a nested field inherits" below says which other keys
+follow this rule and which do not.
 
 `:flags` carries the whole entry decoded, one boolean per bit the specification
 names for that type, plus `:raw` for anything it does not:
@@ -108,6 +114,114 @@ on different types. `PdfElixide.Form.Field.Unknown` carries
 `PdfElixide.Document.Annotation` reports the same classification for a widget
 annotation, through its `:field_type`, so the two surfaces agree about a field
 that appears on both.
+
+## What else a field reports
+
+Beyond its name, value and flags, a field carries the metadata a form filler
+needs to render or validate it. Which keys a struct has depends on its type:
+
+| Key | Text | Button | Choice | Unknown |
+|---|:-:|:-:|:-:|:-:|
+| `:tooltip`, `:rect`, `:default_value` | ✓ | ✓ | ✓ | ✓ |
+| `:max_length` | ✓ | | | |
+| `:alignment` | ✓ | | ✓ | |
+| `:options` | | | ✓ | |
+
+`:max_length` is the `/MaxLen` cap on how many characters may be entered; `0` is
+a declared zero, not an absence. `:alignment` is `:left`, `:center` or `:right`,
+and is `nil` both for a field declaring no justification and for one declaring a
+value the PDF specification does not define.
+
+**`:rect` is the field's own box, which not every field has.** A field and its
+widget are often one dictionary, and then `:rect` is that widget's rectangle. A
+field whose widgets are separate objects — a radio group, or any field appearing
+on more than one page — carries no rectangle of its own and reports `nil`. So
+does a field with no widget at all.
+
+**`:tooltip` reports `nil` for text that could not be decoded** as well as for a
+field carrying none; the two are not distinguished.
+
+### What a nested field inherits
+
+**A field's type is inherited**, so a field nested under a parent that declares
+the type is the struct that type names — a leaf under a text-field parent is a
+`PdfElixide.Form.Field.Text`, not an `Unknown`, even though it says nothing
+about its own type. A field declaring its own type keeps it.
+
+Four more keys are resolved the same way, so a field nested under a parent
+reports the parent's value where it declares none of its own:
+
+  * `:flags`
+  * `:options`
+  * `:alignment`
+  * `:max_length`
+
+A field declaring its own replaces the inherited value outright rather than
+combining with it — the rule holds for all four, so a `/MaxLen 3` leaf under a
+`/MaxLen 12` parent caps at 3 and a `:push` button under a `:radio` parent stays
+a push button.
+
+**`:options` is the one of the four the PDF specification does not require to be
+inherited**, and readers differ: a nested field whose parent alone declares
+`/Opt` reports the parent's list here, where a reader following the
+specification strictly would show it no options at all. Real forms are written
+both ways, so a field's own `/Opt` is the only list you can count on every
+viewer agreeing about.
+
+**`:value` and `:default_value` are not resolved this way.** Each is read off the
+field's own dictionary, so a field whose parent carries `/V` or `/DV` and which
+carries neither itself reports `nil` for both, even where the PDF specification
+would have it inherit them — and a viewer resetting such a form would restore a
+default this API reports as absent. There is no way to reach the parent's value
+through this API; read the parent field by name instead, since a nested field's
+name carries its parent's — `"person.first"` inherits from `"person"`. That
+works only for a parent that carries a name of its own: a grouping level
+declaring neither a name nor a type is not reported as a field at all, and
+contributes nothing to its children's names, so its value cannot be reached.
+
+**A field written *inline* rather than as an indirect reference inherits
+nothing.** The PDF specification requires the entries of `/Fields` and `/Kids` to
+be references to separate objects, and every producer writes them that way; a
+hand-built form that puts a field dictionary directly in either array still
+reports the field, but reports only what that dictionary itself declares — no
+inherited type, flags, alignment or maximum length, and no `:options`. Its own
+children are unaffected as long as they are references.
+
+### A choice field's options
+
+`:options` is what a combo box or list box permits, in the order the PDF lists
+them:
+
+```elixir
+Form.field!(doc, "country").options
+#=> ["FR", {"DE", "Germany"}, "IT"]
+```
+
+An entry is a plain string when the PDF spells the option as one value, and
+`{export, display}` when it spells it as a pair. **The export value is the one
+that matters to this API**: it is what `PdfElixide.Form.value/2` reports and what
+`PdfElixide.Form.put_value/3` takes. The display value is only what a viewer
+shows, so `{"DE", "Germany"}` is one option, not two.
+
+```elixir
+# Every value this field will accept, whichever way each option is spelled.
+Enum.map(field.options, fn
+  {export, _display} -> export
+  export -> export
+end)
+```
+
+`nil` means the field declares no options at all; `[]` means it declares an
+empty list. An entry the PDF spells as neither a string, a name nor a pair is
+skipped, and the options around it are still reported.
+
+**Options are inherited the way flags are** — see "What a nested field
+inherits" below. A field declaring its own `/Opt` replaces the inherited list
+outright rather than adding to it.
+
+`PdfElixide.Document.Annotation` also reports a widget's options, but as export
+values only — `["FR", "DE", "IT"]` for the field above. A field's `:options` is
+the one that keeps the display text.
 
 ## Filling a form
 

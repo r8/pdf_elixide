@@ -11,9 +11,29 @@ defmodule PdfElixide.Form.Field.Text do
   written as a PDF name arrives as its bare string; see
   `t:PdfElixide.Form.Field.value/0` for what a malformed one can put here.
 
-  See `PdfElixide.Form.Field` for how fields are named.
+  `:max_length` is the `/MaxLen` cap on how many characters may be entered,
+  where `0` is a declared zero rather than an absence. `:alignment` says how the
+  text is justified inside `:rect`. Both are inherited from a parent field, as
+  `:flags` is; the "What a nested field inherits" section of the
+  [Forms](guides/forms.md) guide says which keys are and which are not.
+
+  See `PdfElixide.Form.Field` for how fields are named and what every struct
+  carries.
   """
-  @enforce_keys [:name, :kind, :value, :flags]
+  alias PdfElixide.Form.Field
+  alias PdfElixide.Geometry.Rect
+
+  @enforce_keys [
+    :name,
+    :kind,
+    :value,
+    :default_value,
+    :flags,
+    :tooltip,
+    :rect,
+    :max_length,
+    :alignment
+  ]
 
   defstruct @enforce_keys
 
@@ -28,7 +48,12 @@ defmodule PdfElixide.Form.Field.Text do
   @type t :: %__MODULE__{
           name: String.t(),
           kind: kind(),
-          value: PdfElixide.Form.Field.value(),
-          flags: PdfElixide.Form.Field.Text.Flags.t()
+          value: Field.value(),
+          default_value: Field.value(),
+          flags: PdfElixide.Form.Field.Text.Flags.t(),
+          tooltip: String.t() | nil,
+          rect: Rect.t() | nil,
+          max_length: non_neg_integer() | nil,
+          alignment: Field.alignment()
         }
 end

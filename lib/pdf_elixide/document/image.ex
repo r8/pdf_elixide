@@ -25,6 +25,13 @@ defmodule PdfElixide.Document.Image do
   `:height`, and `:color_space`, or reach for `to_binary/2` when you want an
   encoded image).
 
+  `:matrix` is the transformation the image was drawn under (`t:matrix/0`). For
+  an image the page paints directly, `:bbox` is that matrix applied to the unit
+  square and squared up to the axes — so for a rotated or skewed image the box is
+  looser than the placement — and `:rotation_degrees` is the angle the matrix
+  turns through. An image painted inside a Form XObject is the exception, and
+  `t:matrix/0` says how the three disagree there.
+
   `data/1`, `to_binary/2` and `save/3` take the handle's lock shared and
   `close/1` takes it exclusively, so encoding one image from several processes
   runs in parallel; see the [Concurrency](guides/concurrency.md) guide.
@@ -44,7 +51,8 @@ defmodule PdfElixide.Document.Image do
     :ref,
     :color_space,
     :bits_per_component,
-    :rotation_degrees
+    :rotation_degrees,
+    :matrix
   ]
 
   defstruct @enforce_keys
@@ -77,6 +85,33 @@ defmodule PdfElixide.Document.Image do
 
   @image_opts_keys [:format]
 
+  @typedoc """
+  The transformation in effect where the image is painted, `{a, b, c, d, e, f}`.
+
+  Every `cm` operator in scope multiplied together, not the operands of any one
+  of them: a page drawing under `2 0 0 2 10 10 cm` and then `3 0 0 3 1 1 cm`
+  reports their product, `{6.0, 0.0, 0.0, 6.0, 12.0, 12.0}`.
+
+  The image occupies the unit square mapped through it, so
+  `{w, 0.0, 0.0, h, x, y}` is an unrotated image `w` by `h` points with its
+  bottom-left corner at `(x, y)`. An image drawn under no transformation reports
+  the identity `{1.0, 0.0, 0.0, 1.0, 0.0, 0.0}`; it is never `nil`.
+
+  ## What it does not include
+
+  The matrix is in default PDF user space, so a page's rotation is not folded
+  into it — read `PdfElixide.Document.Page.rotation/1` to place the image as a
+  viewer displays it.
+
+  **An image painted inside a Form XObject reports the transformation of the
+  form's own frame, not of the page.** The form's `/Matrix` and the `cm`
+  operators inside it are included; the `cm` that preceded the form's own
+  painting is not. `:bbox` does include it, so for such an image `:matrix` and
+  `:bbox` describe different frames and `:rotation_degrees` is the angle within
+  the form. `:bbox` is the one to trust for where the image lands on the page.
+  """
+  @type matrix :: {float(), float(), float(), float(), float(), float()}
+
   @typedoc "The layout of raw (uncompressed) pixel data from `data/1`."
   @type pixel_format :: :rgb | :grayscale | :cmyk
 
@@ -95,7 +130,8 @@ defmodule PdfElixide.Document.Image do
           ref: reference(),
           color_space: color_space(),
           bits_per_component: non_neg_integer(),
-          rotation_degrees: integer()
+          rotation_degrees: integer(),
+          matrix: matrix()
         }
 
   @doc false
@@ -109,7 +145,8 @@ defmodule PdfElixide.Document.Image do
         resource: ref,
         color_space: color_space,
         bits_per_component: bits_per_component,
-        rotation_degrees: rotation_degrees
+        rotation_degrees: rotation_degrees,
+        matrix: matrix
       }) do
     %__MODULE__{
       page: page,
@@ -120,7 +157,8 @@ defmodule PdfElixide.Document.Image do
       ref: ref,
       color_space: color_space,
       bits_per_component: bits_per_component,
-      rotation_degrees: rotation_degrees
+      rotation_degrees: rotation_degrees,
+      matrix: matrix
     }
   end
 

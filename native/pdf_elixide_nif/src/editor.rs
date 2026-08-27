@@ -121,9 +121,9 @@ fn editor_form_fields(resource: ResourceArc<EditorResource>) -> NifResult<Vec<Fi
             .into_iter()
             .filter(|field| !resolved.is_signature(field.name()))
             .filter_map(|field| {
-                let flags = resolved.flags(field.name(), field.flags());
+                let attrs = resolved.attrs(field.name());
 
-                editor_form_field_to_nif(field, flags)
+                editor_form_field_to_nif(field, attrs)
             })
             .collect())
     })

@@ -19,11 +19,12 @@ defmodule PdfElixide.Form do
   edit it takes effect when the editor is written.
 
   Fields come back as one struct per field type, listed in
-  `PdfElixide.Form.Field`, each carrying the widget it is as a `:kind` and its
-  decoded `/Ff` bits as `:flags`, and are addressed by the fully qualified name
-  each carries. Only an existing field can be set — there is no way to add one — and
-  a name that is not in the form is
-  `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and
+  `PdfElixide.Form.Field`, each carrying the widget it is as a `:kind`, its
+  decoded `/Ff` bits as `:flags`, and the metadata a filler needs to render it —
+  a tooltip, a box, a default value, and a choice field's permitted options —
+  and are addressed by the fully qualified name each carries. Only an existing
+  field can be set — there is no way to add one — and a name that is not in the
+  form is `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and
   `value/2` as much as from `put_value/3`. Signature fields are not fillable and
   are not reported at all — `PdfElixide.Signature` reads those — and writing a
   check box or radio group back is not always faithful.
