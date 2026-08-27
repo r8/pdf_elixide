@@ -2,6 +2,7 @@
 
 [![Elixir CI](https://github.com/r8/pdf_elixide/actions/workflows/elixir.yml/badge.svg)](https://github.com/r8/pdf_elixide/actions/workflows/elixir.yml)
 [![Hex.pm](https://img.shields.io/hexpm/v/pdf_elixide.svg?style=flat-square)](https://hex.pm/packages/pdf_elixide)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-green.svg?style=flat-square)](https://pdf-elixide.hexdocs.pm)
 [![Hex.pm](https://img.shields.io/hexpm/dt/pdf_elixide.svg?style=flat-square)](https://hex.pm/packages/pdf_elixide)
 [![pdf_oxide](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/r8/pdf_elixide/main/native/pdf_elixide_nif/Cargo.toml&query=$.dependencies.pdf_oxide.version&label=pdf_oxide&color=orange&style=flat-square)](https://crates.io/crates/pdf_oxide)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://github.com/r8/pdf_elixide/blob/main/LICENSE)
@@ -148,7 +149,7 @@ doc
 ```
 
 The same pattern applies to tables, paths, images, fonts, and annotations. See
-the [`PdfElixide.Document`](https://hexdocs.pm/pdf_elixide/PdfElixide.Document.html)
+the [`PdfElixide.Document`](https://pdf-elixide.hexdocs.pm/PdfElixide.Document.html)
 documentation for their return types and extraction options.
 
 ### Convert to Markdown, HTML, or plain text
@@ -257,7 +258,7 @@ that may also close them.
 ## Documentation
 
 Full API documentation is published on
-[HexDocs](https://hexdocs.pm/pdf_elixide).
+[HexDocs](https://pdf-elixide.hexdocs.pm).
 
 ## License
 
