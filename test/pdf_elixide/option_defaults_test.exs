@@ -199,7 +199,6 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Editor.__option_defaults__(:save) == %{
                incremental: false,
                compress: true,
-               linearize: false,
                garbage_collect: true
              }
     end

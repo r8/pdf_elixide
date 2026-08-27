@@ -200,13 +200,6 @@ defmodule PdfElixide.EditorTest do
       assert {:ok, %Editor{}} = Editor.from_binary(bytes)
     end
 
-    test "to_binary/2 with linearize: true returns a round-trippable PDF" do
-      editor = Editor.open!(@form_pdf)
-      assert {:ok, bytes} = Editor.to_binary(editor, linearize: true)
-      assert byte_size(bytes) > 0
-      assert {:ok, %Editor{}} = Editor.from_binary(bytes)
-    end
-
     test "to_binary/2 with incremental: true returns {:error, reason}" do
       editor = Editor.open!(@form_pdf)
       assert {:error, _reason} = Editor.to_binary(editor, incremental: true)

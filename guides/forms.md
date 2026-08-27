@@ -206,8 +206,8 @@ write before you close.
 {:ok, bytes} = Editor.to_binary(editor)
 ```
 
-Both accept `t:PdfElixide.Editor.save_opts/0`: `:incremental`, `:compress`,
-`:linearize` and `:garbage_collect`. The exception is `to_binary/2` with
+Both accept `t:PdfElixide.Editor.save_opts/0`: `:incremental`, `:compress`
+and `:garbage_collect`. The exception is `to_binary/2` with
 `incremental: true`, which returns
 `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`: an incremental update must
 be appended to the original file, so use `save/3` for one.

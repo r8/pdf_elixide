@@ -206,8 +206,6 @@ defmodule PdfElixide.Editor do
     * `:incremental` — write an incremental update instead of a full
       rewrite. Defaults to `false`.
     * `:compress` — compress streams. Defaults to `true`.
-    * `:linearize` — linearize the output for fast web view. Defaults
-      to `false`.
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`.
 
@@ -218,11 +216,10 @@ defmodule PdfElixide.Editor do
   @type save_opts :: [
           incremental: boolean(),
           compress: boolean(),
-          linearize: boolean(),
           garbage_collect: boolean()
         ]
 
-  @save_opts_keys [:incremental, :compress, :linearize, :garbage_collect]
+  @save_opts_keys [:incremental, :compress, :garbage_collect]
 
   @doc """
   Writes all in-memory changes to a PDF file at the given path, and returns the
@@ -392,7 +389,6 @@ defmodule PdfElixide.Editor do
     %{
       incremental: Keyword.get(opts, :incremental, false),
       compress: Keyword.get(opts, :compress, true),
-      linearize: Keyword.get(opts, :linearize, false),
       garbage_collect: Keyword.get(opts, :garbage_collect, true)
     }
   end

@@ -18,7 +18,6 @@ use crate::{
 pub struct SaveOptionsNif {
     pub incremental: bool,
     pub compress: bool,
-    pub linearize: bool,
     pub garbage_collect: bool,
 }
 
@@ -27,7 +26,8 @@ impl From<SaveOptionsNif> for SaveOptions {
         SaveOptions {
             incremental: o.incremental,
             compress: o.compress,
-            linearize: o.linearize,
+            // Upstream reads this nowhere; spelled out so the literal stays exhaustive.
+            linearize: false,
             garbage_collect: o.garbage_collect,
             encryption: None,
         }
@@ -273,4 +273,37 @@ fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<V
     resource
         .editor
         .with_read(|editor| Ok(editor.flatten_warnings().to_vec()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> String {
+        format!(
+            "{}/../../test/fixtures/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        )
+    }
+
+    fn saved_with(linearize: bool) -> Vec<u8> {
+        let mut editor = DocumentEditor::open(fixture("form.pdf")).expect("fixture opens");
+
+        editor
+            .save_to_bytes_with_options(SaveOptions {
+                linearize,
+                ..SaveOptions::full_rewrite()
+            })
+            .expect("full rewrite")
+    }
+
+    // Canary for upstream implementing the currently ignored option.
+    #[test]
+    fn upstream_still_ignores_the_linearize_save_option() {
+        let linearized = saved_with(true);
+
+        assert!(!linearized.is_empty(), "the fixture writes something");
+        assert_eq!(linearized, saved_with(false));
+    }
 }

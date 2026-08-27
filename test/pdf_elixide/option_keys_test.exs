@@ -130,7 +130,6 @@ defmodule PdfElixide.OptionKeysTest do
   @save_opts [
     incremental: false,
     compress: true,
-    linearize: false,
     garbage_collect: true
   ]
 
