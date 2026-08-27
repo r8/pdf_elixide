@@ -16,8 +16,8 @@ use crate::{
     error::{tagged_err, to_nif_err, to_nif_page_err, to_search_err},
     extract_options::{
         CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, OnPageErrorNif, RegionFilter,
-        SearchOptionsNif, SpansOptions, SpansOptionsNif, TablesOptions, TablesOptionsNif,
-        TextOptions, TextOptionsNif, WordsOptions, WordsOptionsNif,
+        SearchOptionsNif, SpansOptions, SpansOptionsNif, TableDetectionNif, TablesOptions,
+        TablesOptionsNif, TextOptions, TextOptionsNif, WordsOptions, WordsOptionsNif,
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, FieldNif},
@@ -59,7 +59,8 @@ impl OpenOptionsNif<'_> {
     }
 }
 
-// The reading-order strategy requested for a Markdown or HTML conversion.
+// The reading-order strategy requested for a Markdown, HTML or plain-text
+// conversion.
 #[derive(NifUnitEnum, Debug)]
 pub enum ReadingOrderNif {
     StructureTree,
@@ -196,6 +197,34 @@ impl From<HtmlOptionsNif> for ConversionOptions {
             image_output_dir: o.image_output_dir,
             include_form_fields: o.include_form_fields,
             max_image_pixels: o.max_image_pixels,
+            reading_order_mode: match o.reading_order {
+                // `mcid_order` is an extraction-time detail upstream fills in.
+                ReadingOrderNif::StructureTree => {
+                    ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
+                }
+                ReadingOrderNif::ColumnAware => ReadingOrderMode::ColumnAware,
+                ReadingOrderNif::TopToBottom => ReadingOrderMode::TopToBottomLeftToRight,
+            },
+            ..Default::default()
+        }
+    }
+}
+
+// Only options the plain-text conversion reads cross this boundary.
+#[derive(NifMap, Debug)]
+pub struct PlainTextOptionsNif {
+    pub extract_tables: bool,
+    pub table_detection: Option<TableDetectionNif>,
+    pub reading_order: ReadingOrderNif,
+    pub include_form_fields: bool,
+}
+
+impl From<PlainTextOptionsNif> for ConversionOptions {
+    fn from(o: PlainTextOptionsNif) -> Self {
+        ConversionOptions {
+            extract_tables: o.extract_tables,
+            table_detection_config: o.table_detection.map(Into::into),
+            include_form_fields: o.include_form_fields,
             reading_order_mode: match o.reading_order {
                 // `mcid_order` is an extraction-time detail upstream fills in.
                 ReadingOrderNif::StructureTree => {
@@ -546,6 +575,45 @@ fn document_to_html_all_to_dir(
     options: HtmlOptionsNif,
 ) -> NifResult<String> {
     html_all(&resource, options)
+}
+
+fn plain_text_page(
+    resource: &DocumentResource,
+    page_index: usize,
+    options: PlainTextOptionsNif,
+) -> NifResult<String> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        doc.to_plain_text(page_index, &options.into())
+            .map_err(to_nif_err)
+    })
+}
+
+fn plain_text_all(resource: &DocumentResource, options: PlainTextOptionsNif) -> NifResult<String> {
+    resource
+        .doc
+        .with_read(|doc| doc.to_plain_text_all(&options.into()).map_err(to_nif_err))
+}
+
+// No dirty-IO pair, unlike Markdown and HTML above: the plain-text converter
+// emits no images, so nothing on this path can write to disk.
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_to_plain_text(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+    options: PlainTextOptionsNif,
+) -> NifResult<String> {
+    plain_text_page(&resource, page_index, options)
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_to_plain_text_all(
+    resource: ResourceArc<DocumentResource>,
+    options: PlainTextOptionsNif,
+) -> NifResult<String> {
+    plain_text_all(&resource, options)
 }
 
 // Post-filter so a region composes with extraction options that the dedicated
@@ -1195,6 +1263,8 @@ fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
 
 #[cfg(test)]
 mod tests {
+    use pdf_oxide::{geometry::Rect, layout::RectFilterMode};
+
     use super::*;
 
     fn fixture(name: &str) -> String {
@@ -1249,6 +1319,69 @@ mod tests {
         assert_eq!(
             extract_all_text_pages(&doc, &options).expect("skips the failed page"),
             doc.extract_all_text().expect("upstream skips it too")
+        );
+    }
+
+    #[test]
+    fn upstream_still_ignores_region_filters_in_to_plain_text() {
+        let doc = PdfDocument::open(fixture("extraction.pdf")).expect("fixture opens");
+
+        // Vacuity guard: the tagged branch reads the option.
+        assert!(!doc.prefers_structure_reading_order());
+
+        let unfiltered = doc
+            .to_plain_text(3, &ConversionOptions::default())
+            .expect("plain text");
+        assert!(!unfiltered.trim().is_empty(), "the page carries text");
+
+        let (llx, lly, urx, ury) = doc.get_page_media_box(3).expect("media box");
+        let filtered = ConversionOptions {
+            exclude_regions: vec![Rect::new(llx, lly, urx - llx, ury - lly)],
+            exclude_regions_mode: RectFilterMode::Intersects,
+            ..Default::default()
+        };
+
+        // Control: the same exclusion is live on the text path.
+        assert!(doc
+            .extract_text_with_options(3, &filtered)
+            .expect("text")
+            .trim()
+            .is_empty());
+
+        assert_eq!(
+            doc.to_plain_text(3, &filtered).expect("plain text"),
+            unfiltered
+        );
+    }
+
+    #[test]
+    fn upstream_still_ignores_expand_ligatures_in_to_plain_text() {
+        let doc = PdfDocument::open(fixture("extraction.pdf")).expect("fixture opens");
+
+        // Vacuity guard: the tagged branch reads the option.
+        assert!(!doc.prefers_structure_reading_order());
+
+        let expand = ConversionOptions {
+            expand_ligatures: true,
+            ..Default::default()
+        };
+
+        // Control: the same option is live on the text path.
+        assert!(doc
+            .extract_text_with_options(2, &expand)
+            .expect("text")
+            .contains("cofin"));
+
+        let unexpanded = doc
+            .to_plain_text(2, &ConversionOptions::default())
+            .expect("plain text");
+        assert!(
+            unexpanded.contains("co\u{FB01}n"),
+            "the ligature reaches the plain-text output at all"
+        );
+        assert_eq!(
+            doc.to_plain_text(2, &expand).expect("plain text"),
+            unexpanded
         );
     }
 }

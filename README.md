@@ -21,7 +21,7 @@ high-performance PDF library written in Rust. Built with
   optional-content layers, and spot inks
 - Extract text, words, lines, characters, and spans with page geometry and
   typographic metadata
-- Convert individual pages or whole documents to Markdown or HTML
+- Convert individual pages or whole documents to Markdown, HTML, or plain text
 - Search literal text or regular expressions and locate matches on the page
 - Detect tables and render them as Markdown, HTML, or plain text
 - Extract vector paths, rectangles, straight lines, raster images, and embedded
@@ -108,6 +108,11 @@ page_count = Document.page_count!(doc)
 text = Document.text!(doc, 0)
 ```
 
+For a page, `text!` preserves inferred visual rows while `to_plain_text!`
+generally reflows prose. Both also convert a whole document. The [Text
+extraction](guides/text-extraction.md) guide compares them and says which to
+reach for.
+
 Documents loaded from memory use the same API:
 
 ```elixir
@@ -146,7 +151,7 @@ The same pattern applies to tables, paths, images, fonts, and annotations. See
 the [`PdfElixide.Document`](https://hexdocs.pm/pdf_elixide/PdfElixide.Document.html)
 documentation for their return types and extraction options.
 
-### Convert to Markdown or HTML
+### Convert to Markdown, HTML, or plain text
 
 Convert one page or the whole document:
 
@@ -156,6 +161,8 @@ Convert one page or the whole document:
 
 {:ok, html} = Document.to_html(doc)
 {:ok, positioned_html} = Document.to_html(doc, preserve_layout: true)
+
+{:ok, plain} = Document.to_plain_text(doc)
 ```
 
 Options control heading and table detection, images, form fields, reading

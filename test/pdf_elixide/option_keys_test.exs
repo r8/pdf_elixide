@@ -92,6 +92,13 @@ defmodule PdfElixide.OptionKeysTest do
     reading_order: :structure_tree
   ]
 
+  @plain_text_opts [
+    extract_tables: false,
+    table_detection: @table_detection_opts,
+    reading_order: :top_to_bottom,
+    include_form_fields: false
+  ]
+
   @words_opts [
     include_artifacts: true,
     region: @rect,
@@ -177,6 +184,12 @@ defmodule PdfElixide.OptionKeysTest do
       doc = doc()
       accepts_each!(@html_opts, &Document.to_html(doc, &1))
       accepts_each!(@html_opts, &Document.to_html(doc, 0, &1))
+    end
+
+    test "to_plain_text/2,3" do
+      doc = doc()
+      accepts_each!(@plain_text_opts, &Document.to_plain_text(doc, &1))
+      accepts_each!(@plain_text_opts, &Document.to_plain_text(doc, 0, &1))
     end
 
     test "words/2,3" do
@@ -270,6 +283,7 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.text(doc, 0, opts) end,
         fn opts -> Document.to_markdown(doc, opts) end,
         fn opts -> Document.to_html(doc, opts) end,
+        fn opts -> Document.to_plain_text(doc, opts) end,
         fn opts -> Document.words(doc, 0, opts) end,
         fn opts -> Document.text_lines(doc, 0, opts) end,
         fn opts -> Document.chars(doc, 0, opts) end,

@@ -75,6 +75,7 @@ defmodule PdfElixide.MixProject do
       # here or on disk, and on a moduledoc link to a renamed guide.
       extras: [
         "README.md": [title: "Overview"],
+        "guides/text-extraction.md": [],
         "guides/concurrency.md": [],
         "guides/forms.md": [],
         "guides/signatures.md": [],

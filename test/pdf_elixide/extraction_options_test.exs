@@ -10,6 +10,7 @@ defmodule PdfElixide.ExtractionOptionsTest do
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
+  @markdown_pdf Path.join(@fixtures, "markdown.pdf")
 
   # Page indices within @extraction_pdf.
   @columns 0
@@ -92,6 +93,44 @@ defmodule PdfElixide.ExtractionOptionsTest do
     test "options apply to every page of the whole-document arity", %{doc: doc} do
       assert Document.text!(doc, expand_ligatures: true) =~ "cofin"
       refute Document.text!(doc, expand_ligatures: true) =~ "coﬁn"
+    end
+  end
+
+  describe "to_plain_text/3" do
+    setup do
+      %{doc: open(@extraction_pdf), table_doc: open(@table_pdf), form_doc: open(@markdown_pdf)}
+    end
+
+    test ":include_form_fields false drops the widget's value", %{form_doc: doc} do
+      assert Document.to_plain_text!(doc, 0) =~ "John Doe"
+      refute Document.to_plain_text!(doc, 0, include_form_fields: false) =~ "John Doe"
+    end
+
+    test ":extract_tables false drops the column-aligned rendering", %{table_doc: doc} do
+      assert Document.to_plain_text!(doc, 0) =~ "Age       0.042"
+      refute Document.to_plain_text!(doc, 0, extract_tables: false) =~ "Age       0.042"
+    end
+
+    test ":table_detection reaches the detector", %{table_doc: doc} do
+      assert Document.to_plain_text!(doc, 0, table_detection: [min_table_cells: 999]) ==
+               Document.to_plain_text!(doc, 0, extract_tables: false)
+    end
+
+    test "every :reading_order value is accepted", %{doc: doc} do
+      # Acceptance rather than divergence: no fixture page here is laid out so
+      # that the three strategies order it differently.
+      for order <- [:structure_tree, :column_aware, :top_to_bottom] do
+        assert Document.to_plain_text!(doc, @columns, reading_order: order) =~ "Alpha one"
+      end
+    end
+
+    test "a paragraph reflows where text/3 keeps the line break", %{form_doc: doc} do
+      assert Document.text!(doc, 0) =~ "Markdown Fixture\nBody paragraph text."
+      assert Document.to_plain_text!(doc, 0) =~ "Markdown Fixture Body paragraph text."
+    end
+
+    test "the whole-document arity separates pages with its own break", %{doc: doc} do
+      assert Document.to_plain_text!(doc, []) |> String.split("\n\n---\n\n") |> length() == 5
     end
   end
 

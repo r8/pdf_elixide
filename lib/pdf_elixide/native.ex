@@ -40,6 +40,8 @@ defmodule PdfElixide.Native do
   def document_to_html_all(_doc, _options), do: err()
   def document_to_html_to_dir(_doc, _page_index, _options), do: err()
   def document_to_html_all_to_dir(_doc, _options), do: err()
+  def document_to_plain_text(_doc, _page_index, _options), do: err()
+  def document_to_plain_text_all(_doc, _options), do: err()
   def document_words(_doc, _page_index, _options), do: err()
   def document_all_words(_doc, _options), do: err()
   def document_text_lines(_doc, _page_index, _options), do: err()

@@ -469,6 +469,51 @@ defmodule PdfElixide.Document.PageTest do
     end
   end
 
+  describe "to_plain_text/1" do
+    test "delegates to Document.to_plain_text/3 for the page" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 1)
+      assert Page.to_plain_text(page) == Document.to_plain_text(doc, 1, [])
+      assert {:ok, text} = Page.to_plain_text(page)
+      assert text =~ "Page Two"
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, _reason} = Page.to_plain_text(%Page{doc: doc, index: 99})
+    end
+  end
+
+  describe "to_plain_text/2" do
+    test "passes options through to Document.to_plain_text/3" do
+      doc = Document.open!(@table_pdf)
+      page = Document.page!(doc, 0)
+      assert {:ok, with_tables} = Page.to_plain_text(page)
+      assert {:ok, without} = Page.to_plain_text(page, extract_tables: false)
+      assert with_tables =~ "Age       0.042"
+      refute without =~ "Age       0.042"
+    end
+  end
+
+  describe "to_plain_text!/1" do
+    test "returns the text directly" do
+      doc = Document.open!(@valid_pdf)
+      assert Page.to_plain_text!(Document.page!(doc, 0)) =~ "Page One"
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.to_plain_text!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "to_plain_text!/2" do
+    test "returns the text with options applied" do
+      doc = Document.open!(@table_pdf)
+      assert Page.to_plain_text!(Document.page!(doc, 0), extract_tables: false) =~ "Variable"
+    end
+  end
+
   describe "words/1" do
     test "delegates to Document.words/2 for the page" do
       doc = Document.open!(@valid_pdf)

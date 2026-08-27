@@ -99,6 +99,15 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "to_plain_text/2,3" do
+      assert Document.__option_defaults__(:plain_text) == %{
+               extract_tables: true,
+               table_detection: nil,
+               reading_order: :structure_tree,
+               include_form_fields: true
+             }
+    end
+
     test "words/2,3" do
       assert Document.__option_defaults__(:words) == %{
                include_artifacts: true,
@@ -214,6 +223,11 @@ defmodule PdfElixide.OptionDefaultsTest do
     test "an empty option list matches the no-option arity", %{doc: doc} do
       assert Document.text!(doc, @columns, []) == Document.text!(doc, @columns)
       assert Document.text!(doc, []) == Document.text!(doc)
+
+      assert Document.to_plain_text!(doc, @columns, []) ==
+               Document.to_plain_text!(doc, @columns)
+
+      assert Document.to_plain_text!(doc, []) == Document.to_plain_text!(doc)
       assert Document.words!(doc, @columns, []) == Document.words!(doc, @columns)
       assert Document.words!(doc, []) == Document.words!(doc)
       assert Document.chars!(doc, @columns, []) == Document.chars!(doc, @columns)

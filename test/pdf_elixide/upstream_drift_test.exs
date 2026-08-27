@@ -23,6 +23,8 @@ defmodule PdfElixide.UpstreamDriftTest do
   @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
+  @tagged_pdf Path.join(@fixtures, "tagged.pdf")
+  @markdown_pdf Path.join(@fixtures, "markdown.pdf")
   @search_pdf Path.join(@fixtures, "search.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
@@ -261,6 +263,25 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [0, 1] = doc |> Document.fonts!() |> Enum.map(& &1.page)
       assert {:error, %Error{}} = Document.chars(doc)
       assert {:error, %Error{}} = Document.images(doc)
+    end
+  end
+
+  describe "the two plain-text assemblers" do
+    test "a trustworthy structure tree still collapses them into one" do
+      doc = open(@tagged_pdf)
+
+      for page <- 0..(Document.page_count!(doc) - 1) do
+        assert Document.to_plain_text!(doc, page) == Document.text!(doc, page)
+      end
+    end
+
+    test "an untagged page still assembles differently on each" do
+      doc = open(@markdown_pdf)
+
+      # The negative control: without it the equality above could hold because
+      # the two calls had become one, rather than because the fixture is tagged.
+      assert Document.text!(doc, 0) =~ "Markdown Fixture\nBody paragraph text."
+      assert Document.to_plain_text!(doc, 0) =~ "Markdown Fixture Body paragraph text."
     end
   end
 

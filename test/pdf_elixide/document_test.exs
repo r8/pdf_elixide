@@ -904,6 +904,200 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  describe "to_plain_text/1" do
+    test "returns {:ok, text} covering every page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, text} = Document.to_plain_text(doc)
+      assert text =~ "Page One"
+      assert text =~ "Page Two"
+      assert text =~ "Page Three"
+    end
+
+    test "joins pages with its own break, not a form feed or the Markdown rule" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, text} = Document.to_plain_text(doc)
+      assert text =~ "\n\n---\n\n"
+      refute text =~ "\f"
+    end
+
+    test "is its per-page results joined by that break" do
+      doc = Document.open!(@valid_pdf)
+
+      assert Document.to_plain_text!(doc) ==
+               Enum.map_join(doc, "\n\n---\n\n", &Page.to_plain_text!/1)
+    end
+
+    test "returns {:ok, empty} for an encrypted document opened without a password" do
+      doc = Document.open!(@encrypted_pdf)
+      assert {:ok, ""} = Document.to_plain_text(doc)
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert {:error, %Error{reason: :closed}} = Document.to_plain_text(doc)
+    end
+  end
+
+  describe "to_plain_text!/1" do
+    test "returns the text for the whole document" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.to_plain_text!(doc) =~ "Page Three"
+    end
+
+    test "raises for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      Document.close(doc)
+      assert_raise Error, fn -> Document.to_plain_text!(doc) end
+    end
+  end
+
+  describe "to_plain_text/2" do
+    test "returns {:ok, text} for the page at the given index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, text} = Document.to_plain_text(doc, 1)
+      assert text =~ "Page Two"
+      refute text =~ "Page One"
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.to_plain_text(doc, 99)
+    end
+
+    test "raises FunctionClauseError for negative page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_plain_text(doc, -1) end
+    end
+  end
+
+  describe "to_plain_text/2 with options" do
+    test "include_form_fields: false drops the widget's value" do
+      doc = Document.open!(@markdown_pdf)
+      assert {:ok, included} = Document.to_plain_text(doc)
+      assert {:ok, omitted} = Document.to_plain_text(doc, include_form_fields: false)
+      assert included =~ "John Doe"
+      refute omitted =~ "John Doe"
+    end
+
+    test "extract_tables: false drops the column-aligned rendering" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, with_tables} = Document.to_plain_text(doc)
+      assert {:ok, without} = Document.to_plain_text(doc, extract_tables: false)
+      assert with_tables =~ "Age       0.042"
+      refute without =~ "Age       0.042"
+    end
+
+    test "table_detection reaches the detector" do
+      doc = Document.open!(@table_pdf)
+
+      assert Document.to_plain_text!(doc, table_detection: [min_table_cells: 999]) ==
+               Document.to_plain_text!(doc, extract_tables: false)
+    end
+
+    test "accepts every reading_order value" do
+      doc = Document.open!(@valid_pdf)
+
+      for order <- [:structure_tree, :column_aware, :top_to_bottom] do
+        assert Document.to_plain_text!(doc, reading_order: order) =~ "Page One"
+      end
+    end
+
+    test "raises for a value of the wrong type" do
+      doc = Document.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:extract_tables/, fn ->
+        Document.to_plain_text(doc, extract_tables: "yes")
+      end
+    end
+
+    test "raises for an unknown reading_order value" do
+      doc = Document.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:reading_order/, fn ->
+        Document.to_plain_text(doc, reading_order: :nope)
+      end
+    end
+
+    test "raises for an unknown key" do
+      doc = Document.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:extract_table/, fn ->
+        Document.to_plain_text(doc, extract_table: true)
+      end
+    end
+
+    test "raises for a sibling surface's option rather than ignoring it" do
+      doc = Document.open!(@valid_pdf)
+
+      for opt <- [
+            [detect_headings: false],
+            [preserve_layout: true],
+            [expand_ligatures: true],
+            [region: %Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0}],
+            [exclude_layers: ["Watermark"]],
+            [on_page_error: :halt]
+          ] do
+        assert_raise ArgumentError, fn -> Document.to_plain_text(doc, opt) end
+      end
+    end
+  end
+
+  describe "to_plain_text!/2" do
+    test "returns the text for a valid page" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.to_plain_text!(doc, 1) =~ "Page Two"
+    end
+
+    test "returns the text for the whole document with options" do
+      doc = Document.open!(@valid_pdf)
+      assert Document.to_plain_text!(doc, extract_tables: false) =~ "Page One"
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.to_plain_text!(doc, 99) end
+    end
+
+    test "raises FunctionClauseError for non-integer, non-list second argument" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_plain_text!(doc, :first) end
+    end
+  end
+
+  describe "to_plain_text/3" do
+    test "applies options to the given page" do
+      doc = Document.open!(@table_pdf)
+      assert {:ok, with_tables} = Document.to_plain_text(doc, 0, [])
+      assert {:ok, without} = Document.to_plain_text(doc, 0, extract_tables: false)
+      assert with_tables =~ "Age       0.042"
+      refute without =~ "Age       0.042"
+    end
+
+    test "returns {:error, reason} for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Document.to_plain_text(doc, 99, [])
+    end
+
+    test "raises FunctionClauseError for a non-list options argument" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.to_plain_text(doc, 0, :opts) end
+    end
+  end
+
+  describe "to_plain_text!/3" do
+    test "returns the text for a page with options applied" do
+      doc = Document.open!(@markdown_pdf)
+      assert Document.to_plain_text!(doc, 0, include_form_fields: false) =~ "Body paragraph"
+      refute Document.to_plain_text!(doc, 0, include_form_fields: false) =~ "John Doe"
+    end
+
+    test "raises RuntimeError for an out-of-range page index" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Document.to_plain_text!(doc, 99, []) end
+    end
+  end
+
   describe "words/1" do
     test "returns {:ok, words} for every page as a flat list" do
       doc = Document.open!(@valid_pdf)

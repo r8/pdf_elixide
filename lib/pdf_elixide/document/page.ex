@@ -241,7 +241,8 @@ defmodule PdfElixide.Document.Page do
   `PdfElixide.Document.text/1` skips it by default — `:on_page_error` is a
   whole-document option and does nothing on this path.
 
-  See `t:PdfElixide.Document.text_opts/0` for the available options.
+  See `t:PdfElixide.Document.text_opts/0` for the available options, and
+  `to_plain_text/2` for the other way to read a page as text.
   """
   @spec text(t(), Document.text_opts()) :: {:ok, String.t()} | {:error, Error.t()}
   def text(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
@@ -292,6 +293,27 @@ defmodule PdfElixide.Document.Page do
   @spec to_html!(t(), Document.html_opts()) :: String.t()
   def to_html!(page, opts \\ []) when is_list(opts) do
     to_html(page, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Converts the page to plain text.
+
+  A different assembler from `text/2`; see `PdfElixide.Document.to_plain_text/2`
+  for how the two differ. See `t:PdfElixide.Document.plain_text_opts/0` for the
+  available options.
+  """
+  @spec to_plain_text(t(), Document.plain_text_opts()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_plain_text(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.to_plain_text(doc, index, opts)
+  end
+
+  @doc """
+  Same as `to_plain_text/2` but raises an error if it fails.
+  """
+  @spec to_plain_text!(t(), Document.plain_text_opts()) :: String.t()
+  def to_plain_text!(page, opts \\ []) when is_list(opts) do
+    to_plain_text(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """

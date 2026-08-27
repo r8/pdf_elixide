@@ -14,14 +14,15 @@ defmodule PdfElixide.Document do
 
   ## Whole-document extraction and memory
 
-  Every extractor here has a whole-document arity — `chars/1`, `words/1`,
+  Every extractor here has a whole-document arity. `chars/1`, `words/1`,
   `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `rects/1`, `lines/1`,
-  `images/1`, `fonts/1`, `annotations/1`, `text/1`, `to_markdown/1` and
-  `to_html/1` — as does `search/2`. Each walks all pages inside a **single**
-  native call and returns one flat list, so its cost scales with the whole
-  document rather than with what the caller keeps. As the call returns, the
-  results exist twice — as the native vector and as the Elixir terms encoded
-  from it — so peak usage is roughly double the final list. `search/2` given a
+  `images/1`, `fonts/1` and `annotations/1` return one flat list, as does
+  `search/2`; `text/1`, `to_markdown/1`, `to_html/1` and `to_plain_text/1`
+  return a single string with the pages joined. Either shape walks all pages
+  inside a **single** native call, so its cost scales with the whole document
+  rather than with what the caller keeps. As the call returns, the result exists
+  twice — natively and as the Elixir terms encoded from it — so peak usage is
+  roughly double what the caller ends up holding. `search/2` given a
   `:max_results` is the one that need not walk every page; see
   `t:search_opts/0`.
 
@@ -47,10 +48,11 @@ defmodule PdfElixide.Document do
       Stream.flat_map(doc, &Page.chars!/1)
 
   Concatenating pages this way reproduces the whole-document arity exactly for
-  the list-returning extractors. The three that return one value do **not**,
+  the list-returning extractors. The four that return one value do **not**,
   since each joins pages itself: `text/1` separates them with a form feed and
-  applies `:on_page_error` (see `t:text_opts/0`), `to_markdown/1` joins with a
-  `---` break, and `to_html/1` wraps each page in a `<div class="page">`.
+  applies `:on_page_error` (see `t:text_opts/0`), `to_markdown/1` and
+  `to_plain_text/1` each join with a `---` break, and `to_html/1` wraps each
+  page in a `<div class="page">`.
 
   ## Choosing an extractor for search and matching
 
@@ -76,6 +78,11 @@ defmodule PdfElixide.Document do
   widths, so it returns `"Age"`, `"0.042"`, `"0.011"` and `"0.001"` separately
   and exactly once, each `PdfElixide.Document.Word` carrying the `bbox` to
   locate the hit. Prefer `search/2` when the query is known in advance.
+
+  `to_plain_text/2` is a third reading of the same page — prose paragraphs
+  rather than the page's visual lines. The [Text
+  extraction](guides/text-extraction.md) guide says when it is the one you
+  want.
 
   ## Page boxes and the coordinate origin
 
@@ -748,6 +755,11 @@ defmodule PdfElixide.Document do
   `:strip_running_headers_footers` are valid for `to_markdown/2` but not here,
   since the text assembler never reads them; passing one raises
   `ArgumentError`, as any other undeclared key does.
+
+  There is a second way to read a page as text — `to_plain_text/2`, which
+  returns reflowed paragraphs rather than the page's visual lines and takes a
+  different, smaller set of options. The [Text
+  extraction](guides/text-extraction.md) guide compares the two.
   """
   @type text_opts :: [
           extract_tables: boolean(),
@@ -1279,6 +1291,141 @@ defmodule PdfElixide.Document do
     if writes_images?(options),
       do: Native.document_to_html_to_dir(ref, page_index, options),
       else: Native.document_to_html(ref, page_index, options)
+  end
+
+  @typedoc """
+  Options accepted by the `to_plain_text` and `to_plain_text!` functions.
+
+    * `:extract_tables` — detect tables and render them inline as
+      space-padded, column-aligned rows. Defaults to `true`.
+    * `:table_detection` — a keyword list tuning the spatial table
+      detector; see `t:table_detection_opts/0`. Only consulted when
+      `:extract_tables` is `true`, and its `:text_fallback` key is ignored
+      here just as it is for `text/2`: this path always disables it, so a page
+      with no ruling lines yields no tables regardless. Defaults to `nil`.
+    * `:reading_order` — how text blocks are ordered: `:structure_tree`,
+      `:column_aware` or `:top_to_bottom`. Defaults to `:structure_tree`.
+      On an untagged document, `:structure_tree` and `:column_aware` produce
+      the same column-aware order; `:top_to_bottom` does not detect columns.
+    * `:include_form_fields` — inline AcroForm field values at their
+      positions on the page. Defaults to `true`. `text/2` has no such option
+      and always includes them.
+
+  `:reading_order` and `:include_form_fields` have no effect when a trustworthy
+  structure tree supplies the reading order. The [Text
+  extraction](guides/text-extraction.md) guide covers that case and compares
+  these options with `t:text_opts/0`.
+
+  Calling `to_plain_text/1` is equivalent to `to_plain_text/2` with no options.
+
+  An unknown key, or a declared key given a value of the wrong type, raises
+  `ArgumentError` naming the offending key; see the "Errors versus exceptions"
+  section of `PdfElixide.Error`.
+  """
+  @type plain_text_opts :: [
+          extract_tables: boolean(),
+          table_detection: table_detection_opts() | nil,
+          reading_order: :structure_tree | :column_aware | :top_to_bottom,
+          include_form_fields: boolean()
+        ]
+
+  @plain_text_opts_keys [
+    :extract_tables,
+    :table_detection,
+    :reading_order,
+    :include_form_fields
+  ]
+
+  @doc """
+  Converts the document to plain text.
+
+  This generally reflows prose paragraphs and orders them by detected column;
+  tables and some columnar layouts retain internal line breaks. `text/2`
+  instead preserves inferred visual rows. The [Text
+  extraction](guides/text-extraction.md) guide compares the two.
+
+  With a keyword list (or nothing) as the second argument, converts the whole
+  document, joining pages with `"\\n\\n---\\n\\n"` — close to the `---` break
+  `to_markdown/1` uses, and not the form feed of `text/1`. With a zero-based
+  integer, converts that single page instead.
+
+      Document.to_plain_text(doc)
+      Document.to_plain_text(doc, extract_tables: false)
+      Document.to_plain_text(doc, 0)
+
+  There is no `:on_page_error` here: a page that cannot be converted fails the
+  whole call, as it does for `to_markdown/1` and `to_html/1`. `text/1` is the
+  only whole-document text call that can skip one. A document that is
+  encrypted and could not be decrypted converts to an empty string rather than
+  failing.
+
+  The whole-document form builds the entire conversion in memory at once — see
+  the "Whole-document extraction and memory" section of `PdfElixide.Document`.
+
+  See `t:plain_text_opts/0` for the available options.
+  """
+  @spec to_plain_text(t(), plain_text_opts() | non_neg_integer()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_plain_text(doc, page_index_or_opts \\ [])
+
+  def to_plain_text(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_plain_text_options(opts)
+    Wrap.call(fn -> Native.document_to_plain_text_all(ref, options) end)
+  end
+
+  def to_plain_text(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    to_plain_text(doc, page_index, [])
+  end
+
+  @doc """
+  Converts the document to plain text, raising an error if it fails.
+  """
+  @spec to_plain_text!(t(), plain_text_opts() | non_neg_integer()) :: String.t()
+  def to_plain_text!(doc, page_index_or_opts \\ [])
+
+  def to_plain_text!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    to_plain_text(doc, opts) |> Wrap.unwrap!()
+  end
+
+  def to_plain_text!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    to_plain_text!(doc, page_index, [])
+  end
+
+  @doc """
+  Converts the page at the given zero-based index to plain text.
+
+  See `t:plain_text_opts/0` for the available options, and `to_plain_text/2`
+  for how this differs from `text/3`.
+  """
+  @spec to_plain_text(t(), non_neg_integer(), plain_text_opts()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def to_plain_text(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_plain_text_options(opts)
+    Wrap.call(fn -> Native.document_to_plain_text(ref, page_index, options) end)
+  end
+
+  @doc """
+  Converts the page at the given zero-based index to plain text, raising an
+  error if it fails.
+  """
+  @spec to_plain_text!(t(), non_neg_integer(), plain_text_opts()) :: String.t()
+  def to_plain_text!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    to_plain_text(doc, page_index, opts) |> Wrap.unwrap!()
+  end
+
+  defp build_plain_text_options(opts) do
+    opts = Keyword.validate!(opts, @plain_text_opts_keys)
+
+    %{
+      extract_tables: Keyword.get(opts, :extract_tables, true),
+      table_detection: build_table_detection_option(Keyword.get(opts, :table_detection)),
+      reading_order: Keyword.get(opts, :reading_order, :structure_tree),
+      include_form_fields: Keyword.get(opts, :include_form_fields, true)
+    }
   end
 
   @typedoc """
@@ -2120,6 +2267,7 @@ defmodule PdfElixide.Document do
   def __option_defaults__(:text), do: build_text_options([])
   def __option_defaults__(:markdown), do: build_markdown_options([])
   def __option_defaults__(:html), do: build_html_options([])
+  def __option_defaults__(:plain_text), do: build_plain_text_options([])
   def __option_defaults__(:words), do: build_words_options([])
   def __option_defaults__(:text_lines), do: build_text_lines_options([])
   def __option_defaults__(:chars), do: build_chars_options([])
