@@ -10,6 +10,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.PageLabelRange
   alias PdfElixide.Document.Permissions
   alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
@@ -36,6 +37,7 @@ defmodule PdfElixide.DocumentTest do
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
+  @page_labels_pdf Path.join(@fixtures, "page_labels.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @annotation_colors_pdf Path.join(@fixtures, "annotation_colors.pdf")
@@ -3630,6 +3632,87 @@ defmodule PdfElixide.DocumentTest do
       assert Document.page_labels!(doc) == ["i", "ii", "1"]
     end
   end
+
+  describe "page_label_ranges/1" do
+    test "returns every declared range, sorted by start page" do
+      doc = Document.open!(@page_labels_pdf)
+
+      assert {:ok, ranges} = Document.page_label_ranges(doc)
+
+      assert ranges == [
+               %PageLabelRange{
+                 start_page: 0,
+                 style: :roman_lower,
+                 prefix: nil,
+                 start_value: 1
+               },
+               %PageLabelRange{start_page: 2, style: :decimal, prefix: nil, start_value: 5},
+               %PageLabelRange{
+                 start_page: 4,
+                 style: :alpha_upper,
+                 prefix: "A-",
+                 start_value: 1
+               },
+               %PageLabelRange{start_page: 6, style: :none, prefix: "Cover", start_value: 1},
+               # `/St 0` is out of range, so upstream keeps the default of 1.
+               %PageLabelRange{start_page: 7, style: :decimal, prefix: nil, start_value: 1},
+               %PageLabelRange{start_page: 8, style: :decimal, prefix: "§", start_value: 1}
+             ]
+    end
+
+    test "agrees with page_labels/1 on the first label of each range" do
+      doc = Document.open!(@page_labels_pdf)
+      labels = Document.page_labels!(doc)
+
+      for range <- Document.page_label_ranges!(doc) do
+        assert Enum.at(labels, range.start_page) ==
+                 expected_first_label(range)
+      end
+    end
+
+    test "reads a flat /Nums tree as well as a /Kids one" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert {:ok, ranges} = Document.page_label_ranges(doc)
+
+      assert ranges == [
+               %PageLabelRange{
+                 start_page: 0,
+                 style: :roman_lower,
+                 prefix: nil,
+                 start_value: 1
+               },
+               %PageLabelRange{start_page: 2, style: :decimal, prefix: nil, start_value: 1}
+             ]
+    end
+
+    test "returns an empty list when the document declares no page labels" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:ok, []} = Document.page_label_ranges(doc)
+      assert Document.page_labels!(doc) == ["1", "2", "3"]
+    end
+  end
+
+  describe "page_label_ranges!/1" do
+    test "returns the list directly" do
+      doc = Document.open!(@metadata_pdf)
+
+      assert [%PageLabelRange{style: :roman_lower}, %PageLabelRange{style: :decimal}] =
+               Document.page_label_ranges!(doc)
+    end
+  end
+
+  defp expected_first_label(%PageLabelRange{style: :decimal, prefix: p, start_value: value}),
+    do: "#{p}#{value}"
+
+  defp expected_first_label(%PageLabelRange{style: :roman_lower, prefix: p, start_value: 1}),
+    do: "#{p}i"
+
+  defp expected_first_label(%PageLabelRange{style: :alpha_upper, prefix: p, start_value: 1}),
+    do: "#{p}A"
+
+  defp expected_first_label(%PageLabelRange{style: :none, prefix: p}), do: "#{p}"
 
   describe "layers/1" do
     test "returns every declared name, in order, undeduplicated" do

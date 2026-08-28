@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use pdf_oxide::{
     encryption::PdfPermissions,
     extractors::{
-        page_labels::PageLabelExtractor,
+        page_labels::{PageLabelExtractor, PageLabelRange, PageLabelStyle},
         xmp::{XmpExtractor, XmpMetadata},
     },
     PdfDocument,
 };
-use rustler::{NifMap, NifResult, ResourceArc};
+use rustler::{NifMap, NifResult, NifUnitEnum, ResourceArc};
 
 use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource};
 
@@ -206,6 +206,56 @@ fn document_page_label(
 
         let ranges = PageLabelExtractor::extract(doc).map_err(to_nif_err)?;
         Ok(PageLabelExtractor::get_label(&ranges, page_index))
+    })
+}
+
+// A page label range's numbering style. `None` is upstream's spelling for a
+// range whose label has no numeric part at all — the prefix alone.
+#[derive(NifUnitEnum, Debug)]
+enum PageLabelStyleNif {
+    Decimal,
+    RomanUpper,
+    RomanLower,
+    AlphaUpper,
+    AlphaLower,
+    None,
+}
+
+#[derive(NifMap, Debug)]
+struct PageLabelRangeNif {
+    start_page: usize,
+    style: PageLabelStyleNif,
+    prefix: Option<String>,
+    start_value: u32,
+}
+
+fn style_to_nif(style: PageLabelStyle) -> PageLabelStyleNif {
+    match style {
+        PageLabelStyle::Decimal => PageLabelStyleNif::Decimal,
+        PageLabelStyle::RomanUpper => PageLabelStyleNif::RomanUpper,
+        PageLabelStyle::RomanLower => PageLabelStyleNif::RomanLower,
+        PageLabelStyle::AlphaUpper => PageLabelStyleNif::AlphaUpper,
+        PageLabelStyle::AlphaLower => PageLabelStyleNif::AlphaLower,
+        PageLabelStyle::None => PageLabelStyleNif::None,
+    }
+}
+
+fn page_label_range_to_nif(range: &PageLabelRange) -> PageLabelRangeNif {
+    PageLabelRangeNif {
+        start_page: range.start_page,
+        style: style_to_nif(range.style),
+        prefix: range.prefix.clone(),
+        start_value: range.start_value,
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_page_label_ranges(
+    resource: ResourceArc<DocumentResource>,
+) -> NifResult<Vec<PageLabelRangeNif>> {
+    resource.doc.with_read(|doc| {
+        let ranges = PageLabelExtractor::extract(doc).map_err(to_nif_err)?;
+        Ok(ranges.iter().map(page_label_range_to_nif).collect())
     })
 }
 

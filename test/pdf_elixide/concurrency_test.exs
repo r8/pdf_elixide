@@ -59,6 +59,7 @@ defmodule PdfElixide.ConcurrencyTest do
         chars: &Document.chars!/1,
         metadata: &Document.metadata!/1,
         page_labels: &Document.page_labels!/1,
+        page_label_ranges: &Document.page_label_ranges!/1,
         outline: &Document.outline!/1,
         to_markdown: &Document.to_markdown!/1,
         # Handle-carrying, so two extractions never compare equal with `:ref` on —

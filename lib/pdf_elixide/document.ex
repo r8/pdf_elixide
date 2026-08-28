@@ -152,6 +152,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.PageLabelRange
   alias PdfElixide.Document.Permissions
   alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
@@ -562,7 +563,8 @@ defmodule PdfElixide.Document do
   index. Pages outside any declared label range fall back to their decimal page
   number, so the returned list always has one entry per page.
 
-  See also `PdfElixide.Document.Page.label/1` for a single page's label.
+  See also `PdfElixide.Document.Page.label/1` for a single page's label, and
+  `page_label_ranges/1` for the declared numbering schemes behind these strings.
   """
   @spec page_labels(t()) :: {:ok, [String.t()]} | {:error, Error.t()}
   def page_labels(%__MODULE__{ref: ref}) do
@@ -575,6 +577,27 @@ defmodule PdfElixide.Document do
   @spec page_labels!(t()) :: [String.t()]
   def page_labels!(%__MODULE__{} = doc) do
     page_labels(doc) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns the document's declared page-label ranges, sorted by `:start_page`.
+
+  A document with no `/PageLabels` returns `{:ok, []}`. See
+  `PdfElixide.Document.PageLabelRange` for the range fields and semantics.
+  """
+  @spec page_label_ranges(t()) :: {:ok, [PageLabelRange.t()]} | {:error, Error.t()}
+  def page_label_ranges(%__MODULE__{ref: ref}) do
+    with {:ok, ranges} <- Wrap.call(fn -> Native.document_page_label_ranges(ref) end) do
+      {:ok, Enum.map(ranges, &PageLabelRange.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Returns the document's page-label ranges, raising an error if it fails.
+  """
+  @spec page_label_ranges!(t()) :: [PageLabelRange.t()]
+  def page_label_ranges!(%__MODULE__{} = doc) do
+    page_label_ranges(doc) |> Wrap.unwrap!()
   end
 
   @doc """

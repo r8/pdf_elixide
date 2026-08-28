@@ -116,7 +116,8 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Document.Metadata,
         PdfElixide.Document.XmpMetadata,
         PdfElixide.Document.Permissions,
-        PdfElixide.Document.OutlineItem
+        PdfElixide.Document.OutlineItem,
+        PdfElixide.Document.PageLabelRange
       ],
       "Extracted content": [
         PdfElixide.Document.Char,
