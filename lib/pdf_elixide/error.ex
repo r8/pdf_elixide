@@ -53,7 +53,7 @@ defmodule PdfElixide.Error do
   calling code rather than a condition of the document:
 
     * `FunctionClauseError` when a guard rejects it — a negative page index, an
-      options argument that is not a keyword list.
+      options argument that is not a list.
     * `ArgumentError` for everything else, and the message names the offending
       key. That covers every way an option can be wrong — an unknown key
       (`detect_heading:` for `:detect_headings`), a key given twice, a value the

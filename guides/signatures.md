@@ -3,8 +3,8 @@
 `PdfElixide.Signature.list/1` reports what each digital signature in a document
 *claims* — who signed, when, why, which bytes the signature covers and which
 field it sits in — from a read-only `PdfElixide.Document` or a
-`PdfElixide.Editor` alike. `PdfElixide.Signature.verify/2` is what turns one of
-those claims into a finding.
+`PdfElixide.Editor` alike. `PdfElixide.Signature.verify/2` checks one of those
+claims against the signed bytes.
 
 ```elixir
 alias PdfElixide.Document
@@ -36,9 +36,8 @@ Signature.covers_whole_document?(signature, File.stat!(path).size)
 ```
 
 The struct outlives the handle. `list/1` is the only step above that touches the
-document, so everything after it keeps answering once the document is closed —
-which is why the example closes early and works from the struct and the file's
-bytes from then on.
+document; subsequent calls use the struct and the file's bytes after the example
+closes the document.
 
 ## What a signature claims
 
@@ -68,10 +67,9 @@ Signature.verify(altered, File.read!("signed-then-edited.pdf"))
 #=> {:ok, :invalid}
 ```
 
-That contrast is the whole reason the two halves of this guide are separate:
-treat a listed field as a claim until a call below turns it into a finding. The
-"What `list/1` reports are claims" section of `PdfElixide.Signature` says which
-values are affected and why.
+Treat listed fields as claims until they are verified. The "What `list/1`
+reports are claims" section of `PdfElixide.Signature` identifies the affected
+values.
 
 `signing_time_utc/1` parses the signer's claimed `:signing_time` into a
 `DateTime`, answering `{:ok, nil}` rather than a wrong date when the claim is
@@ -97,20 +95,18 @@ end
 the check could not run. Treat it as unverified rather than as a weak `:valid`.
 The "What verification proves" section of `PdfElixide.Signature` lists the
 algorithms that can be checked, the causes of `:unknown`, and the three things a
-`:valid` verdict deliberately does not establish.
+`:valid` verdict does not establish.
 
-`verify_signer/1` asks a narrower question — is the blob internally consistent —
-and needs no bytes at all. It is the fallback when the covered bytes are not at
-hand, and its limit is worth knowing before you reach for it: the altered
-document above answers `:valid` there, because nothing in the blob changed.
-Prefer `verify/2` whenever you have the file.
+`verify_signer/1` checks only whether the blob is internally consistent and
+needs no document bytes. It cannot detect appended document changes: the altered
+document above still answers `:valid` because its signature blob did not change.
+Use `verify/2` whenever the file is available.
 
 ## Whether it covers the whole file
 
-A verdict is about the bytes in `:byte_range` and about nothing outside them, so
-`covers_whole_document?/2` is the companion check rather than an optional extra
-— a `:valid` signature over a file with an appended revision is the shape that
-most often gets misread.
+A verdict covers only the bytes in `:byte_range`. Check
+`covers_whole_document?/2` separately to detect content appended after a valid
+signature.
 
 ```elixir
 Signature.covers_whole_document?(signature, File.stat!(path).size)
@@ -135,24 +131,21 @@ certificate.not_after
 #=> ~U[2027-01-01 00:00:00Z]
 ```
 
-`:der` is the way out to OTP's `:public_key` or another certificate library,
-which is where an actual trust decision gets made.
-`PdfElixide.Signature.Certificate.parse/1` goes the other way, reading a
-certificate you hold as DER — one out of a `dss/1` store, say. Nothing here makes one: the
-"Nothing here is a trust decision" section of
+Use `:der` with OTP's `:public_key` or another certificate library to make a
+trust decision. `PdfElixide.Signature.Certificate.parse/1` reads a certificate
+held as DER, such as one from a `dss/1` store. Nothing here makes a trust
+decision: the "Nothing here is a trust decision" section of
 `PdfElixide.Signature.Certificate` says what that means, and its "Names" section
 covers how `:subject` and `:issuer` are rendered.
 
-`Certificate.valid_at?/2` asks whether the certificate was within its validity
-window at an instant **you** choose, and choosing it is the decision. The
-signer's own `signing_time_utc/1` claim is unverified; a timestamp's `:time` is
-a third party's account, and worth more only once you have checked both of the
-questions below.
+`Certificate.valid_at?/2` checks the certificate's validity window at a
+caller-supplied instant. The signer's `signing_time_utc/1` is an unverified
+claim. A timestamp's `:time` comes from a third party but is useful only after
+the checks below succeed.
 
-## Timestamps ask three separate questions
+## Timestamp checks are independent
 
-A timestamp raises three questions that sound alike and are not. Answering one
-answers neither of the others:
+A timestamp involves three technical checks plus a separate trust decision:
 
 | Question | Call |
 |---|---|
@@ -161,18 +154,18 @@ answers neither of the others:
 | Was it made over *this* signature? | `PdfElixide.Signature.verify_timestamp/2` |
 | Is that authority one to trust? | Nothing here — yours to decide |
 
-The second and third genuinely come apart:
+Authority validation and signature-imprint validation are independent:
 
 ```elixir
 alias PdfElixide.Signature.Timestamp
 
 {:ok, token} = Signature.timestamp(signature)
 
-# A real token, genuinely issued by the authority …
+# The authority issued the token.
 Timestamp.verify(token)
 #=> {:ok, :valid}
 
-# … but made over something other than this signature.
+# The token covers something other than this signature.
 Signature.verify_timestamp(signature, File.read!(path))
 #=> {:ok, :invalid}
 ```
@@ -185,8 +178,8 @@ the shapes that come back as an error rather than a verdict.
 
 ## PAdES baseline levels
 
-The three arities of `pades_level` differ by what you have in hand, not by how
-thorough they are. A lower arity is a narrower question, not a lesser document:
+The three arities of `pades_level` differ by available input. Lower arities can
+report fewer levels:
 
 ```elixir
 doc = Document.open!(path)
@@ -211,8 +204,8 @@ verification result.
 A document built for long-term validation carries the certificates, CRLs and
 OCSP responses that were current when it was signed. `dss/1` reads them.
 
-It takes a handle, so it happens **before** you close the document; everything
-downstream of it is a plain value that outlives the close.
+`dss/1` takes a handle and must run before the document is closed. Its result is
+a plain value that outlives the handle.
 
 ```elixir
 doc = Document.open!(path)
@@ -251,17 +244,18 @@ Timestamp.verify(token)
 #=> {:ok, :valid}
 ```
 
-`document_timestamp?/1` is the cheap yes/no; `document_timestamp/1` is what
-hands the token back so its signature can be checked, and it is the one that
-keeps "unreadable" apart from "absent". Finding the timestamp does not verify it —
-that second step above is a separate question, exactly as it is for a
-signature's own token.
+`document_timestamp?/1` is the tolerant boolean form: unreadable bytes and an
+absent timestamp both answer `false`. `document_timestamp/1` hands the token
+back so its signature can be checked and keeps those two cases apart. Both
+inspect the document bytes, so use the predicate for its return shape rather
+than as a cheaper scan. Finding the timestamp does not verify it — that second
+step above remains separate, as it is for a signature's own token.
 
 ## Places left to sign
 
 `unsigned_fields/1` names the signature fields still waiting for a signature. On
-a well-formed form it and `list/1` partition the named signature fields between
-them, which is what answers "is this document fully executed":
+a well-formed form, it and `list/1` partition the named signature fields and can
+be used together to determine whether every such field is signed:
 
 ```elixir
 doc = Document.open!(path)
@@ -285,7 +279,7 @@ Flattening takes any signature field away with the rest of the AcroForm — the
 
 ## Damaged documents are refused, not stepped over
 
-Signature reads and form reads disagree on a damaged document, deliberately.
+Signature reads are stricter than form reads on a damaged document.
 `PdfElixide.Form.fields/1` steps over a field it cannot read and returns the
 ones it reached, so a form whose `/Fields` names an object the file does not
 contain still answers `{:ok, []}`. `list/1` refuses that same document as
@@ -298,41 +292,22 @@ not contain. The single exception is a `/V` of `null`, which is how a cleared
 field is spelled — that field is unsigned, so `list/1` skips it and
 `unsigned_fields/1` names it.
 
-`unsigned_fields/1` reads no signature at all, so that value-level strictness
-does not reach it: a field pointing at something that is not a signature
-dictionary is not a place left to sign, and is simply not listed. Ask `list/1`
-about the value itself.
+`unsigned_fields/1` reads no signature value, so it does not apply that
+value-level validation. A field pointing at something other than a signature
+dictionary is omitted; use `list/1` to validate the value.
 
-All three refuse, rather than read, a field hierarchy that is cyclic or nested
-far deeper than any real form: a cycle as `:invalid_pdf`, a hierarchy past the
-depth or size limit as `:unsupported`.
+All three reject a cyclic or excessively deep field hierarchy: cycles return
+`:invalid_pdf`, while depth or size limits return `:unsupported`.
 
 ## Signature fields are not form fields
 
-A signature field is not fillable and `PdfElixide.Form` omits it entirely,
-signed or not, refusing to write to one rather than merely failing to find it.
-The "Signature fields" section of the [Forms](forms.md) guide says why that
-refusal has to be a refusal.
+A signature field is not fillable. `PdfElixide.Form` omits it whether signed or
+unsigned and reports it as not found. The "Signature fields" section of the
+[Forms](forms.md) guide describes that boundary.
 
 ## Producing signatures is not offered
 
-Nothing in this library signs a document, and that is a decision rather than
-something not yet reached. A signature this library could produce would not be
-attached to a form field, so `list/1` would not find it afterwards — being able
-to sign a document but not to read back what you signed is not a contract worth
-offering.
-
-Sign with an external tool instead and open the result here: every call in this
-guide reads a document signed elsewhere.
-
-## What a signature call locks
-
-`list/1`, `unsigned_fields/1`, `count/1` and `dss/1` take a *shared* read on
-either source. Given an editor they read the document it was opened from, so
-listing signatures does not serialize the way `PdfElixide.Form.fields/1` on an
-editor does.
-
-Everything else takes the signature struct, or the file's own bytes, rather than
-a handle — so it takes no lock, cannot be delayed by other work on the document,
-and keeps answering after that document is closed. See the
-[Concurrency](concurrency.md) guide.
+Nothing in this library signs a document. Sign with an external tool instead and
+open the result here: every call in this guide reads a document signed elsewhere.
+The [Concurrency](concurrency.md) guide describes which signature calls touch a
+handle and which continue working independently after it is closed.

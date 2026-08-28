@@ -23,58 +23,27 @@ defmodule PdfElixide.DocumentTest do
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
-  # Encryption revision 4 (AES-128), where the password is a PDFDocEncoded byte
-  # string rather than the UTF-8 @encrypted_pdf's revision 6 requires. Its user
-  # password is Latin-1 "café", whose 0xE9 is not valid UTF-8 — the only fixture
-  # that can prove a byte password reaches upstream unmangled.
   @latin1_pdf Path.join(@fixtures, "encrypted_latin1.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
-  # The only fixture carrying XFA, and it carries it behind an *indirect*
-  # /AcroForm reference — the branch a check that only looked at an inline
-  # dictionary would silently answer `false` for.
   @xfa_pdf Path.join(@fixtures, "xfa.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
   @image_placement_pdf Path.join(@fixtures, "image_placement.pdf")
-  # Purpose-built for the Markdown- and HTML-conversion options: a 24pt heading
-  # over an 11pt body line, a 64x64 DeviceRGB image (upstream's converter image
-  # filter drops anything under 32x32, so @image_pdf's 24x24 never surfaces),
-  # and a /Widget annotation carrying /V (John Doe) in the page /Annots
-  # (upstream reads widget text from /Annots only, never from @form_pdf's
-  # /AcroForm).
   @markdown_pdf Path.join(@fixtures, "markdown.pdf")
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
-  # An /Info dictionary with a different text-string encoding in every field —
-  # the only fixture that can tell PDFDocEncoding from Latin-1, since
-  # @metadata_pdf is pure ASCII.
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @annotation_colors_pdf Path.join(@fixtures, "annotation_colors.pdf")
   @form_flags_pdf Path.join(@fixtures, "form_flags.pdf")
-  # Two real pages under a /Pages node whose /Count says three, so page 2 has
-  # no page object to resolve and is the only fixture whose text extraction
-  # fails for one page and succeeds for the others.
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
-  # One OCG per /Name encoding, and pages whose Form XObjects declare inks they
-  # do not — the only fixture where layer decoding and :deep are observable.
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
-  # Declares its /OCProperties and /OCGs inline and invokes no XObject at all —
-  # the control for both branches @layers_and_inks_pdf takes the other way.
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
-  # One page per branch family of upstream's rectangle and straight-line
-  # classification — the only fixture drawing a rectangle at all.
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
-  # One page laid out for `search`: a word inside a longer run (the whole-span
-  # box rule), two lines whose joined text forms a phrase, "cat" beside
-  # "category" and "concatenate", a literal "Fig. 3 (a)", the same word in three
-  # cases, and "aaa".
   @search_pdf Path.join(@fixtures, "search.pdf")
-  # A page tree with /Count 0 and an empty /Kids — the only document reporting
-  # no pages, and so the only one reaching the page-less branch of `search/2`.
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @unreachable_page 2
   @password "secret"
@@ -99,11 +68,6 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "an encrypted document opened with the right password caches its count" do
-      # A regression floor for reading the count *after* the password is applied:
-      # authentication is what makes an encrypted page tree readable. Weaker than
-      # it looks — this fixture's tree resolves unauthenticated too (see the test
-      # below), so no checked-in fixture can actually distinguish the orderings.
-      # The `cached_fields` doc comment in document.rs is the real defence.
       assert %Document{page_count: count} = Document.open!(@encrypted_pdf, password: @password)
       assert is_integer(count)
     end
@@ -166,6 +130,10 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       assert {:ok, text} = Document.text(doc)
       assert text =~ "\f"
+    end
+
+    test "returns an empty string for a document with no pages" do
+      assert Document.text!(Document.open!(@no_pages_pdf)) == ""
     end
   end
 

@@ -19,8 +19,6 @@ defmodule PdfElixide.LoggingTest do
     def log(event, %{config: %{pid: pid}}), do: send(pid, {:log_event, event})
   end
 
-  # `broken_page.pdf`'s third page does not resolve through the page tree. It is
-  # the only fixture here that makes upstream log while still returning `:ok`.
   @broken "test/fixtures/broken_page.pdf"
   @clean "test/fixtures/sample.pdf"
 

@@ -5,18 +5,16 @@ reads use shared access, so workers extracting from one open document do not
 queue behind each other at the handle boundary. Values already cached on the
 Elixir struct — the version, source path, and usually the page count — need no
 native access. You normally do not need to open the same file once per worker or
-keep a document inside the process that opened it. Separate handles remain an
-option when workers must isolate repeated extraction of the same page from the
-`/ActualText` behavior below, at the cost of loading and caching the document
-more than once.
+keep a document inside the process that opened it. Use separate handles only to
+isolate repeated extraction of the same page from the `/ActualText` behavior
+below. Each handle loads and caches its own document.
 
 ```elixir
 alias PdfElixide.Document
 
 doc = Document.open!("path/to/file.pdf")
 
-# One handle, one page per worker. Fanning out *by page* is the shape to prefer;
-# the /ActualText hazard below says why.
+# One handle, one page per worker. This avoids the /ActualText hazard below.
 pages =
   doc
   |> Task.async_stream(&PdfElixide.Document.Page.text!/1, ordered: true)
@@ -29,25 +27,22 @@ pages =
 
 ## The exclusive calls
 
-Three document operations take the native handle *exclusively*. They wait for
+These document operations take the native handle *exclusively*. They wait for
 in-flight native calls on that handle and block new ones for their duration.
 
-  * `PdfElixide.Document.authenticate/2` is exclusive because a first successful
-    authentication replaces the document underneath, which a concurrent read must
-    not be halfway through. Authenticate *before* fanning the document out to
+  * `PdfElixide.Document.authenticate/2` waits for current readers and blocks new
+    ones while it authenticates. Call it *before* fanning the document out to
     workers, not after.
-  * `PdfElixide.Document.clear_search_index/1` is exclusive because a search
-    running beside it would put its page back into the index moments after the
-    release returned. Waiting for the searches to finish is what lets it promise
-    the memory is gone. Its sibling `PdfElixide.Document.prepare_search/1` is an
-    ordinary shared read.
+  * `PdfElixide.Document.clear_search_index/1` waits for current searches before
+    releasing the index, so the memory is gone when it returns. Its sibling
+    `PdfElixide.Document.prepare_search/1` is an ordinary shared read.
   * `PdfElixide.Document.close/1` waits for every in-flight call to return rather
     than interrupting it — *immediately* means as soon as the handle is idle, not
     preemptively, and an extraction can hold its share of the lock for seconds.
     Afterwards every reader gets
     `{:error, %PdfElixide.Error{reason: :closed}}`, an ordinary error rather than
-    a crash, so a worker racing a close is safe but may come back empty-handed.
-    Close only once the workers are done.
+    a crash. A worker racing a close may therefore return this error. Close only
+    once the workers are done.
 
 ## The `/ActualText` hazard
 
@@ -80,12 +75,12 @@ writes or changes the document takes the handle exclusively, so concurrent
 *editing* of a single editor serializes instead of running in parallel. Give each
 process its own editor if you need them to work at once.
 
-Four editor calls are shared reads: `PdfElixide.Editor.page_count/1`,
+The editor's shared reads are `PdfElixide.Editor.page_count/1`,
 `PdfElixide.Editor.modified?/1`, `PdfElixide.Editor.flatten_warnings/1` and
 `PdfElixide.Editor.closed?/1`. They do not wait on each other, but any of them
 will queue behind an in-flight exclusive operation such as a save on the same
-handle — which is what you want for `flatten_warnings/1`, since a save is what
-produces the warnings it reports.
+handle. For `flatten_warnings/1`, this ensures an in-flight save finishes before
+the warnings are read.
 
 `PdfElixide.Form.fields/1` inherits whichever source it is handed — a shared read
 on a document, the editor's exclusive lock on an editor — so listing fields from
@@ -97,15 +92,12 @@ on *both* sources. Given an editor they read the document that editor was opened
 from, which needs no exclusive lock, so listing signatures does not serialize the
 way listing fields does.
 
-The rest take the signature struct, or the document's own bytes, rather than a
-handle, so they take no lock at all: `verify/2`, `verify_signer/1`,
-`certificate/1`, `timestamp/1`, `verify_timestamp/2`, `signing_time_utc/1`,
-`covers_whole_document?/2`, the `document_timestamp` pair and every arity of
-`pades_level`. Nothing else running on the document they came from can delay
-them, and closing it does not stop them answering. The
-`PdfElixide.Signature.Certificate` and `PdfElixide.Signature.Timestamp` a
-signature leads to are plain values too, so everything reached through them is
-lock-free for the same reason.
+Every other public signature operation takes a signature or security-store
+struct, plain bytes, or scalar values rather than a handle, so it takes no handle
+lock. Nothing else running on the source document can delay it, and closing the
+document does not stop it answering. Certificates and timestamps reached from a
+signature are plain values too, so their operations are lock-free for the same
+reason.
 
 `PdfElixide.Form.put_values/2` validates values together but does not make their
 writes atomic. `PdfElixide.Form.update_value/3` is likewise a read followed by a
@@ -115,5 +107,5 @@ write, so another process holding the same editor can write in between.
 `PdfElixide.Document.Table` handles are shareable the same way as a document, and
 without the `/ActualText` hazard above. Concurrent `to_binary/2`, `data/1` and
 table rendering calls can run alongside each other. Their `close/1` is the
-exclusive operation and waits for an in-flight call exactly as a document's
-does.
+exclusive operation and waits for in-flight calls in the same way as a
+document's `close/1`.

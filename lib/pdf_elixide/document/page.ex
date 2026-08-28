@@ -21,7 +21,7 @@ defmodule PdfElixide.Document.Page do
   `PdfElixide.Document`.
 
   A page whose `:index` is not a page of the document — only reachable from a
-  hand-built or stale `%Page{}` — yields
+  hand-built `%Page{}` — yields
   `%PdfElixide.Error{reason: :out_of_range}` from every function here.
   """
 

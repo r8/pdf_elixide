@@ -19,9 +19,8 @@ Document.search!(doc, "Figure 3", 4)
 
 The examples below reuse this `doc`; close it after the last search.
 
-This is not the same thing as extracting the page and scanning it in Elixir.
-Searching builds a compact per-page index once and reuses it for every later
-search, and each match comes back with the boxes needed to point at it.
+Unlike extracting a page and scanning it in Elixir, searching builds a compact
+per-page index and reuses it. Each match includes the boxes needed to locate it.
 
 ## Literal text and regular expressions
 
@@ -34,9 +33,8 @@ Pass `literal: false` to use a regular expression:
 Document.search!(doc, ~S"Figure \d+", literal: false)
 ```
 
-Under `literal: false` the pattern is a [Rust `regex` crate][regex] pattern, not
-a PCRE one, and the two differ in ways worth knowing before porting a pattern
-across:
+Under `literal: false`, patterns use the [Rust `regex` crate][regex] rather than
+PCRE. The important differences are:
 
   * There are **no backreferences and no lookaround** — `(?=…)`, `(?<=…)` and
     `\1` do not compile. In exchange, matching avoids catastrophic backtracking
@@ -56,11 +54,10 @@ under `literal: false`, since the default path escapes the pattern first.
 `whole_word: true` requires a word boundary at each end of the match, so `"cat"`
 finds *cat* but not *category*.
 
-It does that by wrapping the pattern rather than the alternatives inside it. With
-`literal: false` that distinction bites: `"cat|dog"` becomes `\bcat|dog\b`, which
-reads as "*cat* at a word boundary, or a *dog* that ends one" — not the
-"*cat* or *dog*, each a whole word" it looks like. Write the boundaries yourself
-when combining the two:
+The option wraps the complete pattern rather than each alternative. With
+`literal: false`, `"cat|dog"` becomes `\bcat|dog\b`: *cat* must start at a word
+boundary, while *dog* must end at one. Add explicit boundaries when combining
+the option with alternation:
 
 ```elixir
 Document.search!(doc, ~S"\b(?:cat|dog)\b", literal: false)
@@ -91,12 +88,12 @@ is inserted, so a phrase split across two lines still matches as one. The page
 behaves as a single line: `^` and `$` anchor to the page rather than to a line,
 and `.` never stops at a line end.
 
-One consequence of that join: a match landing entirely on one of the inserted
-spaces — reachable with a pattern like `~S"\s+"` — belongs to no run at all, and
-comes back with an empty `:span_boxes` and a zero-sized `:bbox`.
+A match consisting entirely of inserted spaces — possible with a pattern such
+as `~S"\s+"` — belongs to no run and returns empty `:span_boxes` and a zero-sized
+`:bbox`.
 
-Finally, the boxes are in the same coordinate space as the rest of the library,
-with the caveat that a rotated page has two. A search match is reported in the
+The boxes use the same coordinate spaces as the rest of the library. A rotated
+page has two: a search match is reported in the
 *displayed* frame, alongside `words/1` and `text_lines/1`, where `spans/1` and
 `chars/1` for the same text stay in raw page space. The "Rotated pages and
 extracted geometry" section of `PdfElixide.Document` has the full account.
@@ -133,14 +130,12 @@ the pattern**, reuses it. Each term still compiles its own pattern and scans the
 cached text; what the cache avoids is extracting the PDF text and rebuilding its
 position map for every term.
 
-Nothing evicts from that index. It grows to hold every page that has been
-searched and stays that way for the life of the handle, which is worth knowing
-for a long-lived document: searching a thousand-page PDF end to end keeps a
-thousand pages of text in memory afterwards, and being native memory, nothing
-about it pressures the VM to collect. A capped search is the cheap way out — a
-whole-document `search/2` with `:max_results` stops at the page that reaches the
-limit, so that call does not index later pages. Pages indexed by earlier calls
-remain until explicitly cleared.
+Nothing evicts pages from the index during the handle's lifetime. Searching a
+thousand-page PDF end to end therefore retains a thousand pages of text in
+native memory without creating VM collection pressure. A whole-document
+`search/2` with `:max_results` stops at the page that reaches the limit and does
+not index later pages. Pages indexed by earlier calls remain until explicitly
+cleared.
 
 Two calls control it:
 
@@ -152,10 +147,9 @@ Two calls control it:
     first `search/2` and onto a call you choose, which is useful when that first
     search is on a latency path.
 
-Searching and `prepare_search/1` take the document's lock *shared*, like every
-other read here, so searching from several processes at once is fine.
-`clear_search_index/1` takes it exclusively and waits for them. See the
-[Concurrency](concurrency.md) guide for what that does and does not buy.
+Searching from several processes is supported. If searches may overlap
+`clear_search_index/1`, see the [Concurrency](concurrency.md) guide for the
+waiting and memory-release guarantees.
 
 ```elixir
 :ok = Document.close(doc)

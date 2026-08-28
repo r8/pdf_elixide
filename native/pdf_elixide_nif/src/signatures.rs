@@ -1306,7 +1306,6 @@ mod tests {
         assert_eq!(encapsulated_sha1_digest(&retagged), None);
     }
 
-    // Canary for the upstream mismatch that requires local signer selection.
     #[test]
     fn upstream_still_returns_the_first_certificate_rather_than_the_signer() {
         let blob = signature_blob("form_signature_chain.pdf");
@@ -1323,7 +1322,6 @@ mod tests {
         );
     }
 
-    // Canary for the upstream normalization that requires local validation.
     #[test]
     fn upstream_still_normalizes_an_out_of_range_pdf_date() {
         for (claim, normalizes_to) in [

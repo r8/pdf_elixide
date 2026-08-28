@@ -22,10 +22,10 @@ Document.to_plain_text!(doc, 0)
 
 The examples below reuse this `doc`; close it when you are done.
 
-Everything here is about those two. The structured extractors — `chars/2`,
-`words/2`, `text_lines/2`, `spans/2` — return glyphs and geometry rather than a
-string, and `to_markdown/2` and `to_html/2` return markup; the last section
-points at each.
+This guide focuses on those two functions. The structured extractors —
+`chars/2`, `words/2`, `text_lines/2`, `spans/2` — return glyphs and geometry,
+while `to_markdown/2` and `to_html/2` return markup. The last section summarizes
+them.
 
 ## `text/2` — the page as laid out
 
@@ -56,10 +56,10 @@ Reach for it when you want paragraph text rather than page text: indexing,
 chunking for retrieval, feeding a model, or diffing two versions of a document
 whose line wrapping has changed.
 
-One thing to know before you use it on typeset or OCR-backed scanned prose: **a
-hyphen at a line break stays where it fell.** Where `text/2` rejoins `in-` and
-`dex` into `index`, this returns `in- dex`. If hyphen-joined words matter more
-than paragraph shape to you, that alone is a reason to prefer `text/2`.
+On typeset or OCR-backed scanned prose, **a hyphen at a line break stays where it
+fell.** Where `text/2` rejoins `in-` and `dex` into `index`, this returns
+`in- dex`. Prefer `text/2` when rejoining such words matters more than paragraph
+shape.
 
 Neither function performs OCR. An image-only scanned page normally returns an
 empty string; supply an OCR text layer before using either extractor.
@@ -77,9 +77,8 @@ Document.to_plain_text!(tagged, 0) == Document.text!(tagged, 0)
 #=> true
 ```
 
-Two consequences worth keeping in mind. `:reading_order` and
-`:include_form_fields` stop having an effect on such a document — the order is
-the tags' and field values are inlined either way.
+On such a document, `:reading_order` and `:include_form_fields` have no effect:
+the tags determine the order and field values are always inlined.
 
 `PdfElixide.Document.has_structure_tree?/1` is only a hint here: it reports a
 readable tree even when the producer marked its tags suspect, while extraction
@@ -123,13 +122,14 @@ Document.text!(doc)            # pages separated by a form feed, "\f"
 Document.to_plain_text!(doc)   # pages separated by "\n\n---\n\n"
 ```
 
-Splitting `text/1` on the form feed recovers its pages, and always yields
-exactly `page_count/1` parts, because a page that fails to extract still gets
-its separator. The `---` boundary is not as safe: `to_plain_text/2` separates
-paragraphs with a blank line, so a page whose own text has a `---` line between
-two paragraphs emits the same bytes and splits into an extra part, shifting
-every page after it. When the page a result came from has to be right,
-enumerate pages instead of splitting.
+For a document with at least one page, splitting `text/1` on the form feed
+recovers exactly `page_count/1` parts, because a page that fails to extract still
+gets its separator. A zero-page document returns `""`, which `String.split/2`
+represents as one empty part rather than none. The `---` boundary is not as safe:
+`to_plain_text/2` separates paragraphs with a blank line, so a page whose own
+text has a `---` line between two paragraphs emits the same bytes and splits
+into an extra part, shifting every page after it. Enumerate pages when page
+boundaries must be unambiguous.
 
 Neither bounds memory: each builds the whole result before returning. Working a
 page at a time does, and needs no extra API, since a document is enumerable over
@@ -139,8 +139,8 @@ its pages and `PdfElixide.Document.Page` offers both functions:
 Stream.map(doc, &PdfElixide.Document.Page.to_plain_text!/1)
 ```
 
-That is also the shape to fan out across processes; the
-[Concurrency](concurrency.md) guide explains why per-page is the right unit.
+Use the same page-wise shape for concurrent extraction; see the
+[Concurrency](concurrency.md) guide.
 
 ## When a page fails
 
@@ -149,9 +149,9 @@ That is also the shape to fan out across processes; the
 call still succeeds. `to_plain_text/1`, `to_markdown/1` and `to_html/1` all fail
 the whole call instead.
 
-In practice few damaged pages fail at all — an undecodable content stream, a
-missing font, a scan with no text layer and a document that could not be
-decrypted all extract as `""` rather than an error, on either surface. See the
+Many damaged or unreadable pages still produce no error. An undecodable content
+stream, a missing font, a scan with no text layer, and a document that could not
+be decrypted all extract as `""` on either surface. See the
 "`:on_page_error` and partly extractable documents" section of
 `t:PdfElixide.Document.text_opts/0` for what that option can and cannot catch.
 

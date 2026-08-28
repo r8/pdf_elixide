@@ -4,13 +4,14 @@ defmodule PdfElixide.Document do
 
   ## Sharing a document across processes
 
-  A `%Document{}` is safe to pass to other processes, and its reads run
-  *concurrently*: every function here takes the native handle's lock shared, so
-  N processes extracting from one document do not queue behind each other.
-  `authenticate/2`, `clear_search_index/1` and `close/1` are the exceptions,
-  taking the lock exclusively. The [Concurrency](guides/concurrency.md) guide
-  has the rest, including the tagged-PDF hazard that makes fanning out *by page*
-  the shape to prefer.
+  A `%Document{}` is safe to pass to other processes. Operations that read the
+  native document take its handle lock shared, so N processes extracting from
+  one document do not queue on that lock. `version/1`, `source_path/1` and,
+  normally, `page_count/1` read cached struct fields instead and take no native
+  lock. `authenticate/2`, `clear_search_index/1` and `close/1` take the handle
+  lock exclusively. The [Concurrency](guides/concurrency.md) guide has the rest,
+  including contention inside the PDF reader and the tagged-PDF hazard that
+  makes fanning out *by page* the shape to prefer.
 
   ## Whole-document extraction and memory
 
@@ -802,9 +803,9 @@ defmodule PdfElixide.Document do
 
   A page that fails to extract contributes an empty string to the
   whole-document result rather than failing the call. Its separator is emitted
-  regardless, so the result always splits into exactly `page_count/1` parts and
-  a skipped page reads as a blank one. Pass `on_page_error: :halt` to fail the
-  call instead.
+  regardless, so a document with at least one page splits into exactly
+  `page_count/1` parts and a skipped page reads as a blank one. A document with
+  no pages returns `""`. Pass `on_page_error: :halt` to fail the call instead.
 
   The whole-document form builds every page's text in memory at once — see the
   "Whole-document extraction and memory" section of `PdfElixide.Document`.

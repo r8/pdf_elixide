@@ -102,18 +102,17 @@ defmodule PdfElixide.Signature do
 
   Signatures are read here and never produced: nothing in this library signs a
   document. The "Producing signatures is not offered" section of the
-  [Signatures](guides/signatures.md) guide says why, and what to do instead.
+  [Signatures](guides/signatures.md) guide says what to do instead.
 
   The [Signatures](guides/signatures.md) guide is the end-to-end account —
   listing, verifying, coverage, the certificate and timestamp, PAdES levels and
   the security store.
 
-  `list/1`, `unsigned_fields/1`, `count/1` and `dss/1` take a *shared* read on
-  either source;
-  `verify/2`, `verify_signer/1`, `certificate/1`, `timestamp/1`,
-  `verify_timestamp/2`, `signing_time_utc/1`, `document_timestamp?/1`,
-  `document_timestamp/1` and every arity of `pades_level` take no handle at all,
-  so they take no lock. See the [Concurrency](guides/concurrency.md) guide.
+  `list/1`, `unsigned_fields/1`, `count/1` and `dss/1` — and their bang variants
+  — take a *shared* read on either source. Every other public function here
+  operates only on signature or security-store structs, plain bytes, or scalar
+  values, so it takes no handle lock. See the
+  [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Document

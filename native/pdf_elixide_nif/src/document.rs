@@ -426,7 +426,7 @@ fn document_extract_text(
 }
 
 // Insert the form feed before extraction so a skipped page still leaves an
-// empty slot and the result always splits into `page_count` parts.
+// empty slot. Any non-empty document then splits into `page_count` parts.
 fn extract_all_text_pages(doc: &PdfDocument, options: &TextOptions) -> NifResult<String> {
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut text = String::new();

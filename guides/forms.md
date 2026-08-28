@@ -29,9 +29,9 @@ recognized type, which includes the grouping parents a nested form reports.
 `PdfElixide.Form.Field` is the umbrella defining the union. Which widget a
 button or choice field is, the struct's `:kind` says — see below.
 
-**Every struct carries the same six keys.** `:name` is the field's fully
-qualified name, dotted for a field nested under a parent — `"person.first"`, not
-`"first"` — and is what every other function here addresses it by. `:value` is a
+Every struct carries the same six keys. `:name` is the field's fully qualified
+name, dotted for a field nested under a parent — `"person.first"`, not `"first"`
+— and is what every other function here addresses it by. `:value` is a
 plain term: a string, `true`/`false`, a list of strings, or `nil` for a field
 carrying no value. `:default_value` is the reset value the field itself
 declares, in the same shapes — not always what a viewer's reset would restore,
@@ -41,10 +41,10 @@ viewer shows on hover, and `:rect` the box the field occupies on the page.
 the first three also carry; the rest of the metadata is under "What else a field
 reports".
 
-**A value is written back exactly as it was read.** `t:PdfElixide.Form.Field.value/0`
-is both what a field reports and what `PdfElixide.Form.put_value/3` accepts —
-anything else raises `ArgumentError` — so a value read from one form goes
-straight into another. Button fields are the exception, described below.
+`t:PdfElixide.Form.Field.value/0` is both what a field reports and what
+`PdfElixide.Form.put_value/3` accepts. Anything else raises `ArgumentError`, so a
+value read from one form can be written to another. Button fields are the
+exception described below.
 
 For one field there is no need to walk the list. `PdfElixide.Form.field/2`
 returns the struct and `PdfElixide.Form.value/2` just its value, from either
@@ -83,16 +83,14 @@ case Form.field!(doc, "subscribe") do
 end
 ```
 
-**A field declaring no `/Ff` is not an unknown** — every bit is clear, and the
-defaults above are what the PDF specification says that means. Many real forms
-declare no `/Ff` at all.
+A field declaring no `/Ff` is not unknown. Every bit is clear, producing the
+defaults above. Many real forms declare no `/Ff` at all.
 
-**A field inherits `/Ff` from its ancestors**, so a radio group can be a parent
-carrying the flags over kids that carry none and each kid still reports
-`:radio`. A kid declaring its own `/Ff` replaces the inherited value outright
-rather than merging bit by bit, so a `:push` button under a `:radio` parent
-stays a push button. "What a nested field inherits" below says which other keys
-follow this rule and which do not.
+A field inherits `/Ff` from its ancestors. A radio-group parent can therefore
+supply the flags for kids that carry none, and each kid still reports `:radio`.
+A kid's own `/Ff` replaces the inherited value instead of merging bit by bit, so
+a `:push` button under a `:radio` parent stays a push button. "What a nested
+field inherits" below lists the other inherited keys.
 
 `:flags` carries the whole entry decoded, one boolean per bit the specification
 names for that type, plus `:raw` for anything it does not:
@@ -132,21 +130,18 @@ a declared zero, not an absence. `:alignment` is `:left`, `:center` or `:right`,
 and is `nil` both for a field declaring no justification and for one declaring a
 value the PDF specification does not define.
 
-**`:rect` is the field's own box, which not every field has.** A field and its
-widget are often one dictionary, and then `:rect` is that widget's rectangle. A
-field whose widgets are separate objects — a radio group, or any field appearing
-on more than one page — carries no rectangle of its own and reports `nil`. So
-does a field with no widget at all.
+`:rect` is the field's own box, which not every field has. A field and its widget
+are often one dictionary, and then `:rect` is that widget's rectangle. A field
+whose widgets are separate objects — a radio group, or any field appearing on
+more than one page — reports `nil`, as does a field with no widget.
 
-**`:tooltip` reports `nil` for text that could not be decoded** as well as for a
-field carrying none; the two are not distinguished.
+`:tooltip` reports `nil` both for absent text and text that could not be decoded.
 
 ### What a nested field inherits
 
-**A field's type is inherited**, so a field nested under a parent that declares
-the type is the struct that type names — a leaf under a text-field parent is a
-`PdfElixide.Form.Field.Text`, not an `Unknown`, even though it says nothing
-about its own type. A field declaring its own type keeps it.
+A field inherits its type. A leaf under a text-field parent is therefore a
+`PdfElixide.Form.Field.Text`, not an `Unknown`, even when it declares no type of
+its own. A field's own type takes precedence.
 
 Four more keys are resolved the same way, so a field nested under a parent
 reports the parent's value where it declares none of its own:
@@ -161,31 +156,22 @@ combining with it — the rule holds for all four, so a `/MaxLen 3` leaf under a
 `/MaxLen 12` parent caps at 3 and a `:push` button under a `:radio` parent stays
 a push button.
 
-**`:options` is the one of the four the PDF specification does not require to be
-inherited**, and readers differ: a nested field whose parent alone declares
-`/Opt` reports the parent's list here, where a reader following the
-specification strictly would show it no options at all. Real forms are written
-both ways, so a field's own `/Opt` is the only list you can count on every
-viewer agreeing about.
+The PDF specification does not require `:options` to be inherited, and readers
+differ. This library reports a parent's `/Opt` for a nested field that declares
+none, while a strict reader may report no options. Only a field's own `/Opt` is
+portable across viewers.
 
-**`:value` and `:default_value` are not resolved this way.** Each is read off the
-field's own dictionary, so a field whose parent carries `/V` or `/DV` and which
-carries neither itself reports `nil` for both, even where the PDF specification
-would have it inherit them — and a viewer resetting such a form would restore a
-default this API reports as absent. There is no way to reach the parent's value
-through this API; read the parent field by name instead, since a nested field's
-name carries its parent's — `"person.first"` inherits from `"person"`. That
-works only for a parent that carries a name of its own: a grouping level
-declaring neither a name nor a type is not reported as a field at all, and
-contributes nothing to its children's names, so its value cannot be reached.
+`:value` and `:default_value` are not inherited this way. Each comes from the
+field's own dictionary, so both report `nil` when only the parent carries `/V`
+or `/DV`. A viewer may still inherit that default when resetting the form. Read
+a named parent directly to reach its value; a grouping level with neither a name
+nor a type is not reported and its value cannot be reached.
 
-**A field written *inline* rather than as an indirect reference inherits
-nothing.** The PDF specification requires the entries of `/Fields` and `/Kids` to
-be references to separate objects, and every producer writes them that way; a
-hand-built form that puts a field dictionary directly in either array still
-reports the field, but reports only what that dictionary itself declares — no
-inherited type, flags, alignment or maximum length, and no `:options`. Its own
-children are unaffected as long as they are references.
+A field written *inline* rather than as an indirect reference inherits nothing.
+The PDF specification requires `/Fields` and `/Kids` entries to reference
+separate objects. A hand-built form that puts a field dictionary directly in
+either array is still reported, but only with what its dictionary declares. Its
+referenced children remain unaffected.
 
 ### A choice field's options
 
@@ -198,10 +184,9 @@ Form.field!(doc, "country").options
 ```
 
 An entry is a plain string when the PDF spells the option as one value, and
-`{export, display}` when it spells it as a pair. **The export value is the one
-that matters to this API**: it is what `PdfElixide.Form.value/2` reports and what
-`PdfElixide.Form.put_value/3` takes. The display value is only what a viewer
-shows, so `{"DE", "Germany"}` is one option, not two.
+`{export, display}` when it spells it as a pair. This API reads and writes the
+export value; the display value is what a viewer shows. `{"DE", "Germany"}` is
+therefore one option, not two.
 
 ```elixir
 # Every value this field will accept, whichever way each option is spelled.
@@ -215,9 +200,8 @@ end)
 empty list. An entry the PDF spells as neither a string, a name nor a pair is
 skipped, and the options around it are still reported.
 
-**Options are inherited the way flags are** — see "What a nested field
-inherits" below. A field declaring its own `/Opt` replaces the inherited list
-outright rather than adding to it.
+Options follow the inheritance rules above. A field's own `/Opt` replaces the
+inherited list rather than extending it.
 
 `PdfElixide.Document.Annotation` also reports a widget's options, but as export
 values only — `["FR", "DE", "IT"]` for the field above. A field's `:options` is
@@ -244,10 +228,9 @@ end
 #=> :ok
 ```
 
-The values are the plain terms `fields/1` returns — no wrapper, no tag. Fields
-are addressed by name and **only an existing field can be written**: there is no
-way to add one, so a name the form does not carry is an error rather than a new
-field.
+The values are the plain terms `fields/1` returns — no wrapper or tag. Fields
+are addressed by name, and only existing fields can be written. An unknown name
+is an error; this API cannot add fields.
 
 ## The tuple-returning half
 
@@ -305,8 +288,8 @@ current value and writing back whatever it returns:
 end)
 ```
 
-**That is a read and then a write, not an atomic read-modify-write** — another
-process holding the same editor can write in between.
+This is not an atomic read-modify-write. Another process holding the same editor
+can write between the read and the write.
 
 ## Saving
 
@@ -333,9 +316,8 @@ field-value updates and leaves the original AcroForm structure as it was:
 {:ok, editor} = Editor.save(editor, "path/to/filled.pdf", incremental: true)
 ```
 
-One asymmetry worth knowing: `to_binary/2` clears
-`PdfElixide.Editor.modified?/1` even though it writes no file, while an
-incremental `save/3` leaves it set.
+`to_binary/2` clears `PdfElixide.Editor.modified?/1` even though it writes no
+file; an incremental `save/3` leaves it set.
 
 `to_binary/2` builds the whole output in native memory before copying it into an
 Elixir binary, so peak usage includes both copies on top of the editor. For a
@@ -383,14 +365,13 @@ partial flatten regardless of the selected page. **`Form.flatten/1` takes any
 signature field with the AcroForm**, so a signed document comes back unsigned —
 the signature dictionary is still in the file, but nothing points at it.
 `flatten/2` keeps a signature field whose widgets are not on a page you flattened.
-This is the one write the library does not protect a signature from, because
-removing the form is what you asked for; note that any non-incremental write
-invalidates a signature anyway.
+Any non-incremental write invalidates a signature whether or not it also removes
+the field.
 
-Both remove the form field widgets from a page's annotations and leave notes,
-links and highlights as they were — with one exception worth knowing if you
-hand-build PDFs: an annotation written *inline* in `/Annots` rather than as an
-indirect reference is dropped whatever its type, silently.
+Both remove form-field widgets from a page's annotations while leaving notes,
+links, and highlights unchanged. In hand-built PDFs, however, an annotation
+written *inline* in `/Annots` rather than as an indirect reference is silently
+dropped regardless of type.
 
 `Editor.flatten_annotations/1,2` is blunter. On a page where at least one
 annotation appearance can be produced, it removes **every annotation entry**,
@@ -419,26 +400,22 @@ end
 
 **Treat an empty list as "nothing was reported", not as "nothing was lost".** The
 list is a best effort: an inline annotation is dropped with no entry, and so is a
-widget whose appearance stream cannot be loaded. Deciding a flatten was faithful
-because the list came back empty is the one thing not to do with it.
+widget whose appearance stream cannot be loaded. An empty list cannot establish
+that flattening was faithful.
 
-Three things it does report:
+Reported cases include:
 
 - **A newly set value containing non-Latin text or emoji that the shipped
-  appearance path cannot render faithfully.** This is the one to watch. The
-  field is written with wrong glyphs or none at all, the PDF is otherwise
-  perfectly valid, and this warning is the only sign it happened. It applies to
-  values you set in this editing session, which is to say the ordinary
-  fill-then-flatten workflow, so check the list whenever you fill a form with
-  text outside Latin-1 and then flatten it. A field whose appearance the
-  document already carried is copied across untouched and is unaffected.
+  appearance path cannot render faithfully.** The field may contain incorrect
+  glyphs or none at all while the PDF remains valid. Check the warnings after
+  filling and flattening text outside Latin-1. Existing appearance streams are
+  copied unchanged and are unaffected.
 
-  The warning text names a build-time option of the underlying Rust library and
-  tells you to rebuild with it. That is not something you can act on: this
-  package ships a precompiled binary, and the option is deliberately off. Read
-  the warning as "this field did not flatten legibly" and handle it in your own
-  code — leave the form unflattened, substitute a value the field's font can
-  render, or draw the text yourself before flattening.
+  The warning may tell you to rebuild with an optional feature. The installed
+  package is precompiled and cannot be reconfigured that way. Read the warning
+  as "this field did not flatten legibly" and handle it in your own code — leave
+  the form unflattened, substitute a value the field's font can render, or draw
+  the text yourself before flattening.
 - **A field with no appearance stream that could not be given one.** The warning
   names the field. If another appearance causes that page to be flattened, the
   field is removed without being drawn; if the page produces no appearances at
@@ -448,8 +425,7 @@ Three things it does report:
 
 ## An editor is a handle, not a value
 
-**Rebinding does not fork it.** The editor a mutating call returns is the one
-that went in:
+The editor returned by a mutating call is the same handle that went in:
 
 ```elixir
 editor = Editor.open!("path/to/form.pdf")
@@ -458,22 +434,22 @@ filled = Form.put_value!(editor, "full_name", "Jane")
 :ok = Editor.close(editor)
 ```
 
-So a pipeline *sequences effects* rather than threading a value: an earlier
-binding will not give you the document as it was before the edit. Reopen the
-source for that.
+A pipeline therefore sequences effects; an earlier binding does not preserve
+the document's previous state. Reopen the source when a separate state is
+needed. The [Concurrency](concurrency.md) guide describes sharing editor and
+form handles across processes.
 
 ## Signature fields
 
 A signature field (`/FT /Sig`) is not a fillable field, and this API does not
 have one: `fields/1` omits it, and `field/2`, `value/2` and `put_value/3` all
-answer `{:error, %PdfElixide.Error{reason: :not_found}}` for its name, exactly as
-they would for a name the form does not carry. `put_values/2` reports it the same
-way, from the `fields/1` read it validates against.
+answer `{:error, %PdfElixide.Error{reason: :not_found}}` for its name, the same
+result as an unknown field name. `put_values/2` reports it the same way, from the
+`fields/1` read it validates against.
 
-`put_value/3` has to refuse it rather than merely fail to find it. A signature's
-`/V` is a signature dictionary rather than a value, and writing *any* value over
-it — `nil` included — replaces that dictionary, so a filled form would silently
-come back unsigned.
+A signature's `/V` is a signature dictionary rather than a form value. This API
+never writes over it; doing so — with `nil` included — would replace that
+dictionary and silently remove the signature.
 
 Flattening is the exception: `PdfElixide.Form.flatten/1` removes the whole
 AcroForm and a signature field goes with it, as "Flattening" above describes.
@@ -483,9 +459,8 @@ field itself, which the PDF specification permits.
 
 Reading the signatures themselves is a separate capability, and
 `PdfElixide.Signature` is where it lives. The [Signatures](signatures.md)
-guide is the account of it — listing them, verifying one against the bytes it
-covers, the certificate and timestamp behind it, and the damaged documents a
-signature read refuses where a field read tolerates them.
+guide covers listing, byte verification, certificates, timestamps, and damaged
+documents that signature reads reject but field reads tolerate.
 
 ## Check boxes and radio groups
 
@@ -512,13 +487,3 @@ render the field wrongly.
 
 Either field needs its dictionaries edited directly, which this library does not
 expose. Reading such a field is unaffected — only writing one back is.
-
-## What a form call locks
-
-Reading follows the source: `fields/1` on a `PdfElixide.Document` takes the
-handle's lock shared, like every other document read, while `fields/1` on an
-editor takes the editor's lock *exclusively* — the same lock a write takes — so
-concurrent form work on one editor serializes even when it only reads. `field/2`
-and `value/2` are `fields/1` filtered in Elixir, so reading several fields one at
-a time costs more than one `fields/1`. Give each process its own editor if you
-need them to work at once; see the [Concurrency](concurrency.md) guide.

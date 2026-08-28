@@ -298,7 +298,6 @@ mod tests {
             .expect("full rewrite")
     }
 
-    // Canary for upstream implementing the currently ignored option.
     #[test]
     fn upstream_still_ignores_the_linearize_save_option() {
         let linearized = saved_with(true);

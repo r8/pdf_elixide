@@ -917,8 +917,6 @@ mod tests {
         assert_eq!(choice_kind_nif(field_flags::COMBO), ChoiceKindNif::ComboBox);
     }
 
-    // Canary for the upstream corner-as-size defect `FieldMeta::from` converts
-    // around.
     #[test]
     fn upstream_still_reads_a_field_rect_as_a_size() {
         let field = metadata_field("full_name");
@@ -941,8 +939,6 @@ mod tests {
         assert_eq!((rect.width, rect.height), (160.0, 20.0));
     }
 
-    // Canary for the discarded `/DV` that makes `FieldMeta::from` read
-    // `original()` rather than the accessor.
     #[test]
     fn upstream_still_discards_a_read_default_value() {
         let field = metadata_field("full_name");

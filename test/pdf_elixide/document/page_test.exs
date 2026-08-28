@@ -27,11 +27,7 @@ defmodule PdfElixide.Document.PageTest do
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
   @text_layer_pdf Path.join(@fixtures, "text_layer.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
-  # Page 0 declares one ink itself and reaches two more through a nested chain
-  # of Form XObjects, so it is the only fixture where :deep changes the answer.
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
-  # Page 0 draws only rectangles and page 1 only straight lines, so each of the
-  # two classifiers has a page that is entirely its own.
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
 
   describe "inspect/1" do

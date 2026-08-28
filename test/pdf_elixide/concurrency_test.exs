@@ -88,10 +88,9 @@ defmodule PdfElixide.ConcurrencyTest do
     # saturate the dirty-CPU pool that `close/1` also has to be scheduled on.
     @readers 4
 
-    # Bounds a failure, not a measurement. Rust's `RwLock` queues writers on
-    # every platform this runs on, so a reader that never observes `:closed`
-    # means starvation — and without the deadline that would hang as an opaque
-    # `Task.await` exit instead of failing by name.
+    # Bounds a failure, not a measurement. The deadline stops the reader loops
+    # even if the platform's `RwLock` policy starves the waiting close, turning
+    # that hang into a failure that names what happened.
     @deadline_ms 30_000
 
     setup do

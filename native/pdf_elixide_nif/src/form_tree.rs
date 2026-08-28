@@ -28,8 +28,7 @@ const MAX_FIELD_DEPTH: usize = 256;
 const MAX_FIELD_NODES: usize = 100_000;
 
 // Upstream's `FormExtractor::parse_field_type` is private, so the four names it
-// recognizes are transcribed here; `upstream_still_maps_the_field_type_names`
-// is what notices the two drifting apart.
+// recognizes are transcribed here.
 fn field_type_of(name: &str) -> FieldType {
     match name {
         "Btn" => FieldType::Button,
@@ -775,8 +774,6 @@ mod tests {
         assert_eq!((attrs.max_length, attrs.flags), (None, None));
     }
 
-    // The `/Ff` canary's reasoning: once the walk resolves them, nothing
-    // caller-visible separates an inherited `/MaxLen` or `/Q` from an own one.
     #[test]
     fn upstream_still_reads_max_length_and_quadding_off_the_own_dictionary() {
         let doc = fixture("form_metadata.pdf");
