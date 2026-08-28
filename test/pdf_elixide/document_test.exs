@@ -31,6 +31,7 @@ defmodule PdfElixide.DocumentTest do
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
   @image_placement_pdf Path.join(@fixtures, "image_placement.pdf")
+  @image_jpx_pdf Path.join(@fixtures, "image_jpx.pdf")
   @markdown_pdf Path.join(@fixtures, "markdown.pdf")
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
@@ -2131,6 +2132,12 @@ defmodule PdfElixide.DocumentTest do
       {:ok, images} = Document.images(doc)
       assert Enum.all?(images, &(&1.page == 0))
     end
+
+    test "collects the JPEG 2000 image of each page in page order" do
+      doc = Document.open!(@image_jpx_pdf)
+      assert {:ok, images} = Document.images(doc)
+      assert Enum.map(images, & &1.page) == [0, 1, 2]
+    end
   end
 
   describe "images!/1" do
@@ -2209,6 +2216,17 @@ defmodule PdfElixide.DocumentTest do
       assert {:ok, [%Document.Image{format: :jpeg} | _]} = Document.images(doc, 0)
     end
 
+    # A /JPXDecode image whose codestream cannot be decoded is dropped from the
+    # list rather than reported, so this asserts against an empty list, not an
+    # error. The 16x16 raster clears ImageExtractFilter's 8x8 floor.
+    test "decodes a JPEG 2000 image rather than omitting it" do
+      doc = Document.open!(@image_jpx_pdf)
+
+      assert {:ok, [%Document.Image{format: :raw} = image]} = Document.images(doc, 0)
+      assert image.width == 16
+      assert image.height == 16
+    end
+
     test "returns {:ok, []} for a page with no images" do
       doc = Document.open!(@valid_pdf)
       assert {:ok, []} = Document.images(doc, 0)
@@ -2266,6 +2284,13 @@ defmodule PdfElixide.DocumentTest do
       assert {:ok, ^stored} = Document.Image.to_binary(image, format: :jpeg)
     end
 
+    test "encodes a JPEG 2000 image as PNG" do
+      [image] = Document.open!(@image_jpx_pdf) |> Document.images!(0)
+
+      assert {:ok, <<137, 80, 78, 71, 13, 10, 26, 10, _::binary>>} =
+               Document.Image.to_binary(image)
+    end
+
     test "raises ArgumentError for an unsupported format" do
       [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
       assert_raise ArgumentError, fn -> Document.Image.to_binary(image, format: :gif) end
@@ -2293,6 +2318,22 @@ defmodule PdfElixide.DocumentTest do
       # DeviceRGB fixture: one byte per component, three components per pixel.
       assert pixel_format == :rgb
       assert byte_size(pixels) == image.width * image.height * 3
+    end
+
+    # The pixel format of a JPEG 2000 image comes from its codestream's component
+    # count, not from the XObject's /ColorSpace. Both pages declare a /ColorSpace
+    # agreeing with their codestream, so these also pin that the samples are
+    # decoded rather than passed through as the codestream.
+    test "returns three-component pixels for a JPEG 2000 RGB image" do
+      [image] = Document.open!(@image_jpx_pdf) |> Document.images!(0)
+      assert {:ok, {:raw, pixels, :rgb}} = Document.Image.data(image)
+      assert byte_size(pixels) == image.width * image.height * 3
+    end
+
+    test "returns single-component pixels for a JPEG 2000 grayscale image" do
+      [image] = Document.open!(@image_jpx_pdf) |> Document.images!(1)
+      assert {:ok, {:raw, pixels, :grayscale}} = Document.Image.data(image)
+      assert byte_size(pixels) == image.width * image.height
     end
 
     test "data!/1 returns the raw data directly" do

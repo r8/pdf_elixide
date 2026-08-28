@@ -16,6 +16,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
+  @image_jpx_pdf Path.join(@fixtures, "image_jpx.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
   @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
@@ -40,6 +41,10 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   # In @broken_page_pdf: /Count says three pages, two page objects exist.
   @unreachable 2
+
+  # In @image_jpx_pdf: a JPEG 2000 codestream carrying RGB plus alpha, whose
+  # page declares /ColorSpace /DeviceRGB and /SMaskInData 1.
+  @rgb_with_alpha 2
 
   # In @layers_and_inks_pdf: DeviceN plus /All and /None on one page, a tiling
   # pattern and an annotation appearance stream on another.
@@ -858,6 +863,29 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert Document.annotations!(doc, 0) == []
       assert Editor.flatten_warnings!(editor) == []
+    end
+  end
+
+  describe "a JPEG 2000 image carrying alpha" do
+    # Nothing upstream reads /SMaskInData, so a four-component RGB-plus-alpha
+    # codestream is typed CMYK and encodes to a valid PNG in the wrong colours.
+    # When this fails, upstream has started honouring it: delete the alpha
+    # warning from the `PdfElixide.Document.Image` moduledoc rather than
+    # relaxing the assertion.
+    test "still reads its alpha channel as ink" do
+      doc = open(@image_jpx_pdf)
+
+      assert [image] = Document.images!(doc, @rgb_with_alpha)
+
+      # The struct contradicts its own pixels: three components declared, four
+      # decoded. Without this pair the assertion below could pass on a fixture
+      # that really was CMYK.
+      assert image.color_space == :device_rgb
+      assert {:ok, {:raw, pixels, :cmyk}} = Document.Image.data(image)
+      assert byte_size(pixels) == image.width * image.height * 4
+
+      assert {:ok, <<137, 80, 78, 71, 13, 10, 26, 10, _::binary>>} =
+               Document.Image.to_binary(image)
     end
   end
 end

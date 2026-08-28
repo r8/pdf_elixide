@@ -2782,6 +2782,10 @@ defmodule PdfElixide.Document do
   pixels — or its original JPEG bytes — stay resident behind its handle until
   `PdfElixide.Document.Image.close/1` or GC. See the "Whole-document extraction
   and memory" section of `PdfElixide.Document`.
+
+  An image that is too small, or whose encoding cannot be decoded, is left out
+  of the list rather than reported — see the "Which images are extracted"
+  section of `PdfElixide.Document.Image`.
   """
   @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{ref: ref}) do
@@ -2806,6 +2810,10 @@ defmodule PdfElixide.Document do
   holds the metadata and a handle rather than the pixel data itself; encode it on
   demand with `PdfElixide.Document.Image.to_binary/2` or
   `PdfElixide.Document.Image.save/3`.
+
+  It also returns `{:ok, []}` when every image on the page was skipped, or the
+  page's content stream could not be parsed — see the "Which images are
+  extracted" section of `PdfElixide.Document.Image`.
   """
   @spec images(t(), non_neg_integer()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{ref: ref}, page_index)

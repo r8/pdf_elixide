@@ -492,7 +492,9 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the raster images of the page — photos, logos, and scanned pictures.
 
-  Returns `{:ok, []}` when the page has no images.
+  Returns `{:ok, []}` when the page has no images — and also in the cases
+  `PdfElixide.Document.images/2` explains, where an image is left out rather
+  than reported.
   """
   @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{doc: doc, index: index}) do

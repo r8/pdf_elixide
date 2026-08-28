@@ -35,6 +35,34 @@ defmodule PdfElixide.Document.Image do
   `data/1`, `to_binary/2` and `save/3` take the handle's lock shared and
   `close/1` takes it exclusively, so encoding one image from several processes
   runs in parallel; see the [Concurrency](guides/concurrency.md) guide.
+
+  ## Which images are extracted
+
+  **An image is left out of the list rather than reported as an error** when
+  it is under 8 pixels wide or tall, or when its stored encoding cannot be
+  decoded. Flate, LZW, run-length, CCITT fax, JPEG and JPEG 2000
+  (`/JPXDecode`) decode; JBIG2 does not, nor does a JPEG 2000 codestream whose
+  component count is anything but 1, 3 or 4. A JPEG 2000 image arrives as
+  `:raw` pixels whose `pixel_format` comes from its codestream rather than
+  from the colour space the PDF declares for it.
+
+  `PdfElixide.Document.images/1` and `PdfElixide.Document.images/2` return
+  `{:ok, list}` either way, so a page whose only picture was skipped is
+  indistinguishable from a page with none — nothing is raised and nothing is
+  logged.
+
+  **JPEG 2000 transparency is the one case that comes back wrong rather than
+  missing.** The alpha channel declared through `/SMaskInData` is ignored, so
+  a four-component codestream carrying RGB plus alpha is reported as `:cmyk`,
+  and `to_binary/2` and `save/3` *succeed* with wrong colours instead of
+  failing. To spot one, compare `:color_space` against `data/1`'s
+  `pixel_format`: a `:device_rgb` image whose pixels are `:cmyk` is one. (An
+  `:indexed` image reports `:rgb` pixels too, but correctly — its palette
+  really is expanded to RGB.)
+
+  A page that cannot be reached, or whose `/Resources` cannot be resolved,
+  does return `{:error, t:PdfElixide.Error.t/0}`. A page whose content stream
+  fails to parse does not: it returns `{:ok, []}`, like a page with no images.
   """
   alias PdfElixide.Document.Image
   alias PdfElixide.Error
