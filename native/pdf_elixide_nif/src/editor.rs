@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    OnceLock,
+    Mutex, MutexGuard, OnceLock,
 };
 
 use pdf_oxide::editor::{DocumentEditor, EditableDocument, SaveOptions};
@@ -45,6 +45,28 @@ fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
 }
 
+// A visible page's source identity and optional pending rotation.
+pub struct PageRotation {
+    source: usize,
+    set: Option<i32>,
+}
+
+// Recover poisoning like `Closable`; a contained panic must not prevent close.
+fn page_rotations(resource: &EditorResource) -> MutexGuard<'_, Vec<PageRotation>> {
+    resource.pages.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+// At open, visible and source page indices are identical.
+fn seed_pages(resource: &EditorResource) -> NifResult<()> {
+    resource.editor.with_read(|editor| {
+        *page_rotations(resource) = (0..editor.current_page_count())
+            .map(|source| PageRotation { source, set: None })
+            .collect();
+
+        Ok(())
+    })
+}
+
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::open(path_arg(path)?).map_err(to_nif_err)?;
@@ -53,7 +75,9 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
         editor: Closable::new("Editor", editor),
         resolved_fields: OnceLock::new(),
         pages_deleted: AtomicBool::new(false),
+        pages: Mutex::new(Vec::new()),
     });
+    seed_pages(&resource)?;
     let version = cached_version(&resource)?;
 
     Ok((resource, version))
@@ -67,7 +91,9 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
         editor: Closable::new("Editor", editor),
         resolved_fields: OnceLock::new(),
         pages_deleted: AtomicBool::new(false),
+        pages: Mutex::new(Vec::new()),
     });
+    seed_pages(&resource)?;
     let version = cached_version(&resource)?;
 
     Ok((resource, version))
@@ -90,7 +116,9 @@ fn editor_is_modified(resource: ResourceArc<EditorResource>) -> NifResult<bool> 
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
+    // Close first so no later call can observe the cleared mirror.
     resource.editor.close();
+    page_rotations(&resource).clear();
 
     atoms::ok()
 }
@@ -204,16 +232,20 @@ fn editor_set_form_field_value(
     })
 }
 
+fn out_of_range(page_index: usize, count: usize) -> rustler::Error {
+    tagged_err(
+        atoms::out_of_range(),
+        format!("Page index {page_index} out of range (editor has {count} pages)"),
+    )
+}
+
 // Upstream bounds-checks every page-taking method but reports a bad index as a
 // generic `InvalidPdf`, so the check is repeated here to reach `:out_of_range`.
 // The editor's count is live rather than cached, so it must be read per call.
 fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> NifResult<()> {
     let count = editor.current_page_count();
     if page_index >= count {
-        return Err(tagged_err(
-            atoms::out_of_range(),
-            format!("Page index {page_index} out of range (editor has {count} pages)"),
-        ));
+        return Err(out_of_range(page_index, count));
     }
 
     Ok(())
@@ -231,6 +263,7 @@ fn editor_delete_page(resource: ResourceArc<EditorResource>, page_index: usize) 
         // Relaxed because the flatten NIFs load it under the same exclusive
         // guard, so the lock already orders this against every reader.
         resource.pages_deleted.store(true, Ordering::Relaxed);
+        page_rotations(&resource).remove(page_index);
 
         Ok(atoms::ok())
     })
@@ -249,6 +282,139 @@ fn editor_move_page(
         ensure_editor_page_in_range(editor, to)?;
 
         editor.move_page(from, to).map_err(to_nif_err)?;
+
+        // The mirror is indexed by visible position, so it takes the same
+        // permutation the editor just took.
+        let mut pages = page_rotations(&resource);
+        let page = pages.remove(from);
+        pages.insert(to, page);
+
+        Ok(atoms::ok())
+    })
+}
+
+// `source()` is the pre-edit document, so an unchanged rotation must be read at
+// the recorded source index rather than at the visible one.
+fn effective_rotation(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<i32> {
+    // Drop the mirror guard before source lookup so shared reads stay concurrent.
+    let (source, set) = {
+        let pages = page_rotations(resource);
+        let count = pages.len();
+        let page = pages
+            .get(page_index)
+            .ok_or_else(|| out_of_range(page_index, count))?;
+
+        (page.source, page.set)
+    };
+
+    match set {
+        Some(rotation) => Ok(rotation),
+        None => editor
+            .source()
+            .get_page_rotation(source)
+            .map_err(to_nif_err),
+    }
+}
+
+// Update the mirror only after the upstream write succeeds.
+fn write_rotation(
+    resource: &EditorResource,
+    editor: &mut DocumentEditor,
+    page_index: usize,
+    degrees: i32,
+) -> NifResult<()> {
+    let mut pages = page_rotations(resource);
+    let count = pages.len();
+    let page = pages
+        .get_mut(page_index)
+        .ok_or_else(|| out_of_range(page_index, count))?;
+
+    editor
+        .set_page_rotation(page_index, degrees)
+        .map_err(to_nif_err)?;
+    page.set = Some(degrees);
+
+    Ok(())
+}
+
+// Reduce before adding to avoid i32 overflow; keep upstream's quadrant buckets.
+fn round_to_quadrant(current: i32, degrees: i32) -> i32 {
+    match ((current % 360 + degrees % 360) % 360 + 360) % 360 {
+        0..=44 => 0,
+        45..=134 => 90,
+        135..=224 => 180,
+        225..=314 => 270,
+        _ => 0,
+    }
+}
+
+// Shared because it reaches the source document rather than the pending edits.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_page_rotation(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+) -> NifResult<i32> {
+    resource
+        .editor
+        .with_read(|editor| effective_rotation(&resource, editor, page_index))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_set_page_rotation(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+    degrees: i32,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        write_rotation(&resource, editor, page_index, degrees)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+// Avoid upstream's relative getter; it can use the wrong base after page edits.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_rotate_page_by(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+    degrees: i32,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        let current = effective_rotation(&resource, editor, page_index)?;
+        let rotation = round_to_quadrant(current, degrees);
+
+        write_rotation(&resource, editor, page_index, rotation)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_rotate_all_pages_by(
+    resource: ResourceArc<EditorResource>,
+    degrees: i32,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        // The mirror's length, not `current_page_count`: every write below is
+        // bounded by the mirror.
+        let count = page_rotations(&resource).len();
+
+        // Resolve bases first so a read failure leaves the editor unchanged.
+        let rotations = (0..count)
+            .map(|page_index| {
+                let current = effective_rotation(&resource, editor, page_index)?;
+
+                Ok(round_to_quadrant(current, degrees))
+            })
+            .collect::<NifResult<Vec<_>>>()?;
+
+        for (page_index, rotation) in rotations.into_iter().enumerate() {
+            write_rotation(&resource, editor, page_index, rotation)?;
+        }
 
         Ok(atoms::ok())
     })
@@ -412,6 +578,129 @@ mod tests {
                 "the bulk form flatten missed output page {page} with nothing deleted"
             );
         }
+    }
+
+    // In `rotation.pdf`, by /Rotate: 90 on the leaf, 180 inherited from an
+    // intermediate /Pages node, -90 and the invalid 45.
+    const INHERITED: usize = 1;
+    const NEGATIVE: usize = 2;
+    const INVALID: usize = 3;
+
+    #[test]
+    fn upstream_still_reads_page_rotation_off_the_leaf_dictionary() {
+        let mut editor = DocumentEditor::open(fixture("rotation.pdf")).expect("fixture opens");
+        let doc = PdfDocument::open(fixture("rotation.pdf")).expect("fixture opens");
+
+        let mut editor_says = |page| editor.get_page_rotation(page).expect("the editor reads");
+
+        assert_eq!(
+            (
+                editor_says(INHERITED),
+                editor_says(NEGATIVE),
+                editor_says(INVALID)
+            ),
+            (0, -90, 45),
+            "the editor now resolves an inherited /Rotate, or normalizes the value"
+        );
+
+        let doc_says = |page| doc.get_page_rotation(page).expect("the document reads");
+
+        assert_eq!(
+            (doc_says(INHERITED), doc_says(NEGATIVE), doc_says(INVALID)),
+            (180, 270, 0)
+        );
+    }
+
+    #[test]
+    fn upstream_still_reads_rotation_from_the_wrong_page_after_a_deletion() {
+        let mut editor = DocumentEditor::open(fixture("rotation.pdf")).expect("fixture opens");
+
+        editor.remove_page(0).expect("removes the first page");
+
+        assert_eq!(
+            editor.get_page_rotation(0).expect("reads"),
+            90,
+            "the getter now maps its read through the page order"
+        );
+    }
+
+    #[test]
+    fn upstream_still_reads_rotation_from_the_wrong_page_after_a_move() {
+        let mut editor = DocumentEditor::open(fixture("rotation.pdf")).expect("fixture opens");
+
+        editor.move_page(0, 3).expect("moves the first page last");
+
+        assert_eq!(
+            editor.get_page_rotation(0).expect("reads"),
+            90,
+            "the getter now maps its read through the page order"
+        );
+    }
+
+    #[test]
+    fn upstream_still_launders_an_invalid_rotation_through_rotate_page_by() {
+        let mut editor = DocumentEditor::open(fixture("rotation.pdf")).expect("fixture opens");
+
+        editor
+            .rotate_page_by(INVALID, 0)
+            .expect("rotates by nothing");
+
+        assert_eq!(
+            editor.get_page_rotation(INVALID).expect("reads"),
+            90,
+            "rotating by nothing is now an identity, so 45 is no longer rounded up"
+        );
+    }
+
+    #[test]
+    fn upstream_still_rotates_all_pages_from_the_wrong_base_after_a_deletion() {
+        let mut editor = DocumentEditor::open(fixture("rotation.pdf")).expect("fixture opens");
+
+        editor.remove_page(0).expect("removes the first page");
+        editor.rotate_all_pages(90).expect("rotates every page");
+
+        assert_eq!(
+            editor.get_page_rotation(0).expect("reads"),
+            180,
+            "the bulk rotation now reads its base through the page order"
+        );
+    }
+
+    #[test]
+    fn round_to_quadrant_still_matches_upstreams_rotate_page_by() {
+        // `sample.pdf` has no /Rotate and keeps source order in this test.
+        for degrees in [45, 90, -90, 134, 135, 315, 450] {
+            let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+
+            editor.rotate_page_by(0, degrees).expect("rotates");
+
+            assert_eq!(
+                editor.get_page_rotation(0).expect("reads"),
+                round_to_quadrant(0, degrees),
+                "upstream retuned its rounding for a delta of {degrees}"
+            );
+        }
+    }
+
+    #[test]
+    fn rounds_a_rotation_to_the_nearest_quadrant() {
+        assert_eq!(round_to_quadrant(0, 44), 0);
+        assert_eq!(round_to_quadrant(0, 45), 90);
+        assert_eq!(round_to_quadrant(0, 134), 90);
+        assert_eq!(round_to_quadrant(0, 135), 180);
+        assert_eq!(round_to_quadrant(0, 224), 180);
+        assert_eq!(round_to_quadrant(0, 225), 270);
+        assert_eq!(round_to_quadrant(0, 314), 270);
+        assert_eq!(round_to_quadrant(0, 315), 0);
+        assert_eq!(round_to_quadrant(270, 90), 0);
+        assert_eq!(round_to_quadrant(0, -90), 270);
+        assert_eq!(round_to_quadrant(0, 450), 90);
+
+        assert_eq!(
+            round_to_quadrant(270, i32::MAX),
+            round_to_quadrant(270, i32::MAX % 360),
+            "the reduction before the sum is what keeps the addition from overflowing"
+        );
     }
 
     #[test]

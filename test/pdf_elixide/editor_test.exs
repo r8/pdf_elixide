@@ -14,6 +14,8 @@ defmodule PdfElixide.EditorTest do
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @invalid_pdf Path.join(@fixtures, "invalid.bin")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
+  @rotation_pdf Path.join(@fixtures, "rotation.pdf")
+  @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
 
   describe "open/1" do
     test "returns {:ok, %Editor{}} for a valid PDF file" do
@@ -376,6 +378,10 @@ defmodule PdfElixide.EditorTest do
 
       assert {:error, %Error{reason: :closed}} = Editor.delete_page(editor, 0)
       assert {:error, %Error{reason: :closed}} = Editor.move_page(editor, 0, 0)
+      assert {:error, %Error{reason: :closed}} = Editor.rotation(editor, 0)
+      assert {:error, %Error{reason: :closed}} = Editor.set_rotation(editor, 0, 90)
+      assert {:error, %Error{reason: :closed}} = Editor.rotate_page_by(editor, 0, 90)
+      assert {:error, %Error{reason: :closed}} = Editor.rotate_all_by(editor, 90)
 
       refute File.exists?(out_path)
     end
@@ -389,6 +395,10 @@ defmodule PdfElixide.EditorTest do
 
       assert_raise Error, "Editor is closed", fn -> Editor.save!(editor, out_path) end
       assert_raise Error, "Editor is closed", fn -> Editor.page_count!(editor) end
+      assert_raise Error, "Editor is closed", fn -> Editor.rotation!(editor, 0) end
+      assert_raise Error, "Editor is closed", fn -> Editor.set_rotation!(editor, 0, 90) end
+      assert_raise Error, "Editor is closed", fn -> Editor.rotate_page_by!(editor, 0, 90) end
+      assert_raise Error, "Editor is closed", fn -> Editor.rotate_all_by!(editor, 90) end
       assert_raise Error, "Editor is closed", fn -> Editor.delete_page!(editor, 0) end
       assert_raise Error, "Editor is closed", fn -> Editor.move_page!(editor, 0, 0) end
     end
@@ -606,6 +616,278 @@ defmodule PdfElixide.EditorTest do
       editor |> Editor.delete_page!(1) |> Editor.move_page!(1, 0)
 
       assert page_texts(editor) == ["Page Three", "Page One"]
+    end
+  end
+
+  # `rotation.pdf` carries one page per branch of /Rotate resolution: 90 on the
+  # leaf, 180 inherited from an intermediate /Pages node, -90 and the invalid 45.
+  defp saved_rotations(editor) do
+    doc = Document.from_binary!(Editor.to_binary!(editor))
+    rotations = Enum.map(doc, &Document.Page.rotation!/1)
+    Document.close(doc)
+
+    rotations
+  end
+
+  defp rotations(editor) do
+    for page <- 0..(Editor.page_count!(editor) - 1), do: Editor.rotation!(editor, page)
+  end
+
+  describe "rotation/2" do
+    test "answers what the read side answers for the same page" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert rotations(editor) == [90, 180, 270, 0]
+      assert rotations(editor) == saved_rotations(editor)
+    end
+
+    test "reflects a pending rotation before any save" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_rotation!(editor, 0, 180)
+
+      assert {:ok, 180} = Editor.rotation(editor, 0)
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.rotation(editor, 3)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.rotation(editor, -1) end
+    end
+  end
+
+  describe "set_rotation/3" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.set_rotation(editor, 0, 180)
+      assert Editor.modified?(editor)
+    end
+
+    test "writes the angle into the saved document" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.set_rotation!(0, 0) |> Editor.set_rotation!(3, 270)
+
+      assert saved_rotations(editor) == [0, 180, 270, 270]
+    end
+
+    test "is absolute rather than a delta" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_rotation!(editor, 1, 90)
+
+      assert Editor.rotation!(editor, 1) == 90
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.set_rotation(editor, 3, 90)
+    end
+
+    test "raises for an angle that is not a quadrant" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.set_rotation(editor, 0, 45) end
+      assert_raise FunctionClauseError, fn -> Editor.set_rotation(editor, 0, -90) end
+      assert_raise FunctionClauseError, fn -> Editor.set_rotation(editor, 0, 360) end
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.set_rotation(editor, -1, 90) end
+    end
+  end
+
+  describe "rotate_page_by/3" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.rotate_page_by(editor, 0, 90)
+      assert Editor.modified?(editor)
+    end
+
+    test "adds to the angle the page already has, wrapping past 360" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.rotate_page_by!(editor, 0, 90)
+      Editor.rotate_page_by!(editor, 1, 270)
+
+      assert Editor.rotation!(editor, 0) == 180
+      assert Editor.rotation!(editor, 1) == 90
+    end
+
+    test "adds to an inherited angle" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.rotate_page_by!(editor, 1, 90)
+
+      assert Editor.rotation!(editor, 1) == 270
+    end
+
+    test "turns anticlockwise for a negative delta" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.rotate_page_by!(editor, 0, -90)
+
+      assert Editor.rotation!(editor, 0) == 0
+    end
+
+    test "rounds a delta that is not a multiple of 90 to the nearest quadrant" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.rotate_page_by!(0, 45) |> Editor.rotate_page_by!(1, 134)
+
+      assert Editor.rotation!(editor, 0) == 180
+      assert Editor.rotation!(editor, 1) == 270
+    end
+
+    test "leaves an invalid /Rotate at zero rather than rounding it up" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.rotate_page_by!(editor, 3, 0)
+
+      assert Editor.rotation!(editor, 3) == 0
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.rotate_page_by(editor, 3, 90)
+    end
+
+    test "accepts a delta larger than a machine integer" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.rotate_page_by!(editor, 0, 36_000_000_090)
+
+      assert Editor.rotation!(editor, 0) == 180
+    end
+
+    test "raises for a negative page index or a non-integer delta" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, -1, 90) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, 0, 90.0) end
+    end
+  end
+
+  describe "rotate_all_by/2" do
+    test "turns every page from its own angle" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.rotate_all_by(editor, 90)
+
+      assert rotations(editor) == [180, 270, 0, 90]
+      assert saved_rotations(editor) == [180, 270, 0, 90]
+    end
+
+    test "changes nothing on a document with no pages" do
+      editor = Editor.open!(@no_pages_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.rotate_all_by(editor, 90)
+      refute Editor.modified?(editor)
+    end
+
+    # `broken_page.pdf`'s /Count claims three pages where the tree holds two, so
+    # page 2 clears the bounds check and then fails to resolve — the only fixture
+    # where a later page's read fails after an earlier page's has succeeded.
+    test "turns no page at all when a later page cannot be read" do
+      editor = Editor.open!(@broken_page_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.rotate_all_by(editor, 90)
+
+      assert Editor.rotation!(editor, 0) == 0
+      refute Editor.modified?(editor)
+    end
+
+    test "accepts a delta larger than a machine integer" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.rotate_all_by!(editor, -36_000_000_090)
+
+      assert rotations(editor) == [0, 90, 180, 270]
+    end
+
+    test "raises for a non-integer delta" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.rotate_all_by(editor, 90.0) end
+    end
+  end
+
+  describe "rotation and the page operations" do
+    test "a rotation follows its page through a move" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 0, 3)
+
+      assert rotations(editor) == [180, 270, 0, 90]
+      assert saved_rotations(editor) == [180, 270, 0, 90]
+    end
+
+    test "a rotation set before a move travels with the page" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.set_rotation!(0, 270) |> Editor.move_page!(0, 3)
+
+      assert Editor.rotation!(editor, 3) == 270
+      assert saved_rotations(editor) == [180, 270, 0, 270]
+    end
+
+    test "deleting a page does not shift the rotations of the survivors" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 0)
+
+      assert rotations(editor) == [180, 270, 0]
+      assert saved_rotations(editor) == [180, 270, 0]
+    end
+
+    test "rotating after a deletion turns the page that survived" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.delete_page!(0) |> Editor.rotate_page_by!(0, 90)
+
+      assert saved_rotations(editor) == [270, 270, 0]
     end
   end
 

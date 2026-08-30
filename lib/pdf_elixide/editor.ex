@@ -59,15 +59,38 @@ defmodule PdfElixide.Editor do
   field's widget references, so entries pointing at a page that was deleted or
   moved are left pointing where they were.
 
-  **An incremental save does not carry either one.**
+  **An incremental save carries neither of them, nor a page rotation.**
   `save(editor, path, incremental: true)` appends an update to the original
   file, whose page tree is still there, so the written file has the pages it
-  started with in the order it started with — and reports no error. Write with
-  `save/3` without `:incremental`, or with `to_binary/2`.
+  started with, in the order and at the rotation it started with — and reports
+  no error. Write with `save/3` without `:incremental`, or with `to_binary/2`.
+
+  ## Page rotation
+
+  `set_rotation/3` turns a page to an absolute angle, `rotate_page_by/3` turns it
+  a further so many degrees from where it already is, and `rotate_all_by/2` does
+  that to every page. `rotation/2` reads the angle back, pending changes
+  included:
+
+      "scan.pdf"
+      |> PdfElixide.Editor.open!()
+      |> PdfElixide.Editor.rotate_all_by!(90)
+      |> PdfElixide.Editor.set_rotation!(0, 0)
+      |> PdfElixide.Editor.save!("upright.pdf")
+      |> PdfElixide.Editor.close()
+      #=> :ok
+
+  A rotation belongs to the page rather than to the position, so it follows the
+  page through `move_page/3` and survives the deletion of another page.
+
+  Rotation only turns the page as a viewer displays it. Nothing re-lays out the
+  content, and the page's `/MediaBox` is not swapped, so a `90`-rotated portrait
+  page still reports portrait dimensions. The "Page structure" section above
+  describes the incremental-save limitation.
 
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
-  a single editor serializes. `page_count/1`, `modified?/1`,
+  a single editor serializes. `page_count/1`, `modified?/1`, `rotation/2`,
   `flatten_warnings/1` and `closed?/1` take the lock shared, as do the
   `PdfElixide.Signature` reads given an editor, which reach the document it was
   opened from. Give each process its own editor if you need them to work at
@@ -387,6 +410,132 @@ defmodule PdfElixide.Editor do
       when is_integer(from) and from >= 0 and is_integer(to) and to >= 0 do
     editor |> move_page(from, to) |> Wrap.unwrap!()
   end
+
+  @doc """
+  Returns the clockwise display rotation of the page at the given zero-based
+  index, as `0`, `90`, `180` or `270`.
+
+  It reflects pending edits immediately. For unchanged pages, it matches
+  `PdfElixide.Document.Page.rotation/1`, including inheritance and normalization.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist.
+  """
+  @spec rotation(t(), non_neg_integer()) ::
+          {:ok, PdfElixide.Document.Page.rotation()} | {:error, Error.t()}
+  def rotation(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    Wrap.call(fn -> Native.editor_page_rotation(ref, page_index) end)
+  end
+
+  @doc """
+  Returns the clockwise display rotation of the page at the given zero-based
+  index, raising an error if it fails.
+  """
+  @spec rotation!(t(), non_neg_integer()) :: PdfElixide.Document.Page.rotation()
+  def rotation!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    rotation(editor, page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the page at the given zero-based index to rotate by `degrees` clockwise,
+  and returns the editor.
+
+  `degrees` is absolute, not a delta, and must be `0`, `90`, `180` or `270` —
+  anything else raises `FunctionClauseError`. Use `rotate_page_by/3` to turn a
+  page relative to where it already is.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist. See the "Page rotation" section of this module.
+  """
+  @spec set_rotation(t(), non_neg_integer(), PdfElixide.Document.Page.rotation()) ::
+          {:ok, t()} | {:error, Error.t()}
+  def set_rotation(%__MODULE__{ref: ref} = editor, page_index, degrees)
+      when is_integer(page_index) and page_index >= 0 and degrees in [0, 90, 180, 270] do
+    # Loosely bound for the same reason as `save/3`.
+    case Wrap.call(fn -> Native.editor_set_page_rotation(ref, page_index, degrees) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Sets the page at the given zero-based index to rotate by `degrees` clockwise,
+  raising an error if it fails.
+  """
+  @spec set_rotation!(t(), non_neg_integer(), PdfElixide.Document.Page.rotation()) :: t()
+  def set_rotation!(%__MODULE__{} = editor, page_index, degrees)
+      when is_integer(page_index) and page_index >= 0 and degrees in [0, 90, 180, 270] do
+    editor |> set_rotation(page_index, degrees) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Turns the page at the given zero-based index a further `degrees` clockwise from
+  where it already is, and returns the editor.
+
+  `degrees` is a delta rather than an absolute angle, so `rotate_page_by(e, 0, 90)`
+  takes a page already at `180` to `270`. Any integer is accepted: a negative one
+  turns anticlockwise, one past `360` wraps, and one that is not a multiple of 90
+  is rounded to the nearest quadrant — `45` and `134` both add `90`.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist. See the "Page rotation" section of this module.
+  """
+  @spec rotate_page_by(t(), non_neg_integer(), integer()) :: {:ok, t()} | {:error, Error.t()}
+  def rotate_page_by(%__MODULE__{ref: ref} = editor, page_index, degrees)
+      when is_integer(page_index) and page_index >= 0 and is_integer(degrees) do
+    # Loosely bound for the same reason as `save/3`.
+    case Wrap.call(fn -> Native.editor_rotate_page_by(ref, page_index, delta(degrees)) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Turns the page at the given zero-based index a further `degrees` clockwise,
+  raising an error if it fails.
+  """
+  @spec rotate_page_by!(t(), non_neg_integer(), integer()) :: t()
+  def rotate_page_by!(%__MODULE__{} = editor, page_index, degrees)
+      when is_integer(page_index) and page_index >= 0 and is_integer(degrees) do
+    editor |> rotate_page_by(page_index, degrees) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Turns every page a further `degrees` clockwise from where it already is, and
+  returns the editor.
+
+  Each page is turned from its own current rotation, so a document whose pages
+  disagree keeps them disagreeing. `degrees` is a delta and is accepted on the
+  same terms as `rotate_page_by/3`. On a document with no pages this changes
+  nothing and succeeds.
+
+  Every page's current rotation is read before any page is turned, so if one of
+  them cannot be read the call fails having turned none of them and left the
+  editor unmodified.
+
+  See the "Page rotation" section of this module.
+  """
+  @spec rotate_all_by(t(), integer()) :: {:ok, t()} | {:error, Error.t()}
+  def rotate_all_by(%__MODULE__{ref: ref} = editor, degrees) when is_integer(degrees) do
+    # Loosely bound for the same reason as `save/3`.
+    case Wrap.call(fn -> Native.editor_rotate_all_pages_by(ref, delta(degrees)) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Turns every page a further `degrees` clockwise, raising an error if it fails.
+  """
+  @spec rotate_all_by!(t(), integer()) :: t()
+  def rotate_all_by!(%__MODULE__{} = editor, degrees) when is_integer(degrees) do
+    editor |> rotate_all_by(degrees) |> Wrap.unwrap!()
+  end
+
+  # Reduce before the NIF so arbitrary-size Elixir integers fit `i32`.
+  defp delta(degrees), do: rem(degrees, 360)
 
   @doc """
   Marks every page's annotations for flattening.

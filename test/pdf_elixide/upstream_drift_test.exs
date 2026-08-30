@@ -722,6 +722,24 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert doc |> Enum.map(&Page.text!/1) |> Enum.map(&String.trim/1) ==
                ["Page One", "Page Two", "Page Three"]
     end
+
+    @tag :tmp_dir
+    test "a page rotation goes missing too", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_rotation.pdf")
+
+      Editor.rotate_all_by!(editor, 90)
+      assert Editor.rotation!(editor, @rotate_90) == 180
+
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Enum.map(doc, &Page.rotation!/1) == [90, 180, 270, 0],
+             "upstream now carries page properties into an incremental update"
+    end
   end
 
   describe "how upstream reports an unknown form field" do
