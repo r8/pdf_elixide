@@ -33,6 +33,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @pades_lta_pdf Path.join(@fixtures, "form_signature_pades_lta.pdf")
   @ecdsa_p521_pdf Path.join(@fixtures, "form_signature_ecdsa_p521.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
+  @sample_pdf Path.join(@fixtures, "sample.pdf")
 
   @columns 0
   @artifacts 1
@@ -665,6 +666,61 @@ defmodule PdfElixide.UpstreamDriftTest do
       Editor.save!(editor, out_path, incremental: true)
 
       assert Editor.modified?(editor)
+    end
+  end
+
+  describe "what a deleted page leaves in the saved file" do
+    # Compression would make the orphaned content stream impossible to grep.
+    test "the page is gone from the tree and its bytes are still in the file" do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 1)
+      bytes = Editor.to_binary!(editor, compress: false, garbage_collect: true)
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.page_count!(doc) == 2
+      refute doc |> Enum.map_join(&Page.text!/1) |> String.contains?("Page Two")
+
+      assert String.contains?(bytes, "Page Two"),
+             "the deleted page's content stream was dropped, so deletion now redacts"
+    end
+
+    test "a document emptied of pages reopens claiming it still has them" do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for _ <- 1..3, do: Editor.delete_page!(editor, 0)
+      assert Editor.page_count!(editor) == 0
+
+      doc = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.page_count!(doc) == 3
+    end
+  end
+
+  describe "what an incremental save carries out of the editor" do
+    @tag :tmp_dir
+    test "a page deletion and a move both go missing", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_pages.pdf")
+
+      editor |> Editor.delete_page!(1) |> Editor.move_page!(1, 0)
+      assert Editor.page_count!(editor) == 2
+
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.page_count!(doc) == 3
+
+      assert doc |> Enum.map(&Page.text!/1) |> Enum.map(&String.trim/1) ==
+               ["Page One", "Page Two", "Page Three"]
     end
   end
 

@@ -1,4 +1,7 @@
-use std::sync::OnceLock;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    OnceLock,
+};
 
 use pdf_oxide::editor::{DocumentEditor, EditableDocument, SaveOptions};
 use rustler::{Atom, Binary, NifMap, NifResult, OwnedBinary, ResourceArc};
@@ -49,6 +52,7 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
         resolved_fields: OnceLock::new(),
+        pages_deleted: AtomicBool::new(false),
     });
     let version = cached_version(&resource)?;
 
@@ -62,6 +66,7 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
         resolved_fields: OnceLock::new(),
+        pages_deleted: AtomicBool::new(false),
     });
     let version = cached_version(&resource)?;
 
@@ -199,7 +204,7 @@ fn editor_set_form_field_value(
     })
 }
 
-// Upstream bounds-checks both per-page flattens but reports a bad index as a
+// Upstream bounds-checks every page-taking method but reports a bad index as a
 // generic `InvalidPdf`, so the check is repeated here to reach `:out_of_range`.
 // The editor's count is live rather than cached, so it must be read per call.
 fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> NifResult<()> {
@@ -215,9 +220,52 @@ fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> Ni
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
+fn editor_delete_page(resource: ResourceArc<EditorResource>, page_index: usize) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        // Inside the guard so the check and the removal cannot straddle a writer
+        // that changes the page count.
+        ensure_editor_page_in_range(editor, page_index)?;
+
+        editor.remove_page(page_index).map_err(to_nif_err)?;
+
+        // Relaxed because the flatten NIFs load it under the same exclusive
+        // guard, so the lock already orders this against every reader.
+        resource.pages_deleted.store(true, Ordering::Relaxed);
+
+        Ok(atoms::ok())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_move_page(
+    resource: ResourceArc<EditorResource>,
+    from: usize,
+    to: usize,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        // Both indices, `from` first: upstream rejects the pair with one message
+        // naming neither, so checking here is the only way to say which is bad.
+        ensure_editor_page_in_range(editor, from)?;
+        ensure_editor_page_in_range(editor, to)?;
+
+        editor.move_page(from, to).map_err(to_nif_err)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+// The bulk call owns the `/AcroForm` side effect. After a deletion its raw page
+// indices miss survivors, so re-mark them through the mapped per-page method.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn editor_flatten_forms(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         editor.flatten_forms().map_err(to_nif_err)?;
+
+        if resource.pages_deleted.load(Ordering::Relaxed) {
+            for page in 0..editor.current_page_count() {
+                editor.flatten_forms_on_page(page).map_err(to_nif_err)?;
+            }
+        }
 
         Ok(atoms::ok())
     })
@@ -241,10 +289,18 @@ fn editor_flatten_forms_on_page(
     })
 }
 
+// The bulk call marks a page-less editor modified; the loop fixes its page
+// mapping after deletion for the same reason as `editor_flatten_forms`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_flatten_all_annotations(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         editor.flatten_all_annotations().map_err(to_nif_err)?;
+
+        if resource.pages_deleted.load(Ordering::Relaxed) {
+            for page in 0..editor.current_page_count() {
+                editor.flatten_page_annotations(page).map_err(to_nif_err)?;
+            }
+        }
 
         Ok(atoms::ok())
     })
@@ -277,6 +333,8 @@ fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<V
 
 #[cfg(test)]
 mod tests {
+    use pdf_oxide::PdfDocument;
+
     use super::*;
 
     fn fixture(name: &str) -> String {
@@ -296,6 +354,64 @@ mod tests {
                 ..SaveOptions::full_rewrite()
             })
             .expect("full rewrite")
+    }
+
+    #[test]
+    fn upstream_still_duplicates_a_page_by_reference() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+
+        let copy = editor.duplicate_page(0).expect("duplicate");
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+
+        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+
+        assert_eq!(doc.page_count().expect("counts pages"), 4);
+        assert!(
+            doc.extract_text(copy).is_err(),
+            "the duplicated page is readable, so upstream now writes a real copy"
+        );
+    }
+
+    #[test]
+    fn upstream_still_marks_bulk_flattens_by_output_index() {
+        let mut editor = DocumentEditor::open(fixture("flatten.pdf")).expect("fixture opens");
+
+        // The fixture's second page is the one that survives, so a correctly
+        // mapped mark would land on output page 0.
+        editor.remove_page(0).expect("removes the first page");
+
+        editor.flatten_all_annotations().expect("marks every page");
+        editor.flatten_forms().expect("marks every page");
+
+        assert!(
+            !editor.is_page_marked_for_flatten(0),
+            "the bulk annotation flatten now maps its marks through the page order"
+        );
+        assert!(
+            !editor.is_page_marked_for_form_flatten(0),
+            "the bulk form flatten now maps its marks through the page order"
+        );
+    }
+
+    #[test]
+    fn upstream_still_marks_every_page_without_a_deletion() {
+        let mut editor = DocumentEditor::open(fixture("flatten.pdf")).expect("fixture opens");
+
+        editor.move_page(0, 1).expect("reorders the pages");
+
+        editor.flatten_all_annotations().expect("marks every page");
+        editor.flatten_forms().expect("marks every page");
+
+        for page in 0..editor.current_page_count() {
+            assert!(
+                editor.is_page_marked_for_flatten(page),
+                "the bulk annotation flatten missed output page {page} with nothing deleted"
+            );
+            assert!(
+                editor.is_page_marked_for_form_flatten(page),
+                "the bulk form flatten missed output page {page} with nothing deleted"
+            );
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::{atomic::AtomicBool, Arc, OnceLock};
 
 use pdf_oxide::{
     editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo,
@@ -72,6 +72,9 @@ struct EditorResource {
     editor: Closable<DocumentEditor>,
     // Cacheable while no bound operation mutates the source document or fields.
     resolved_fields: OnceLock<Resolved>,
+    // Set after a deletion so whole-document flattens re-mark surviving pages
+    // through the mapped per-page methods.
+    pages_deleted: AtomicBool,
 }
 
 #[rustler::resource_impl]

@@ -113,6 +113,8 @@ defmodule PdfElixide.Native do
   def editor_set_form_field_value(_editor, _name, _value), do: err()
   def editor_to_bytes(_editor, _options), do: err()
   def editor_save(_editor, _path, _options), do: err()
+  def editor_delete_page(_editor, _page_index), do: err()
+  def editor_move_page(_editor, _from, _to), do: err()
   def editor_flatten_forms(_editor), do: err()
   def editor_flatten_forms_on_page(_editor, _page_index), do: err()
   def editor_flatten_all_annotations(_editor), do: err()

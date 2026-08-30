@@ -156,6 +156,7 @@ defmodule PdfElixide.Form do
   @spec put_value(Editor.t(), String.t(), Field.value()) ::
           {:ok, Editor.t()} | {:error, Error.t()}
   def put_value(%Editor{ref: ref} = editor, name, value) when is_binary(name) do
+    # Loosely bound for the same reason as `PdfElixide.Editor.save/3`.
     case Wrap.call(fn -> Native.editor_set_form_field_value(ref, name, value) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -276,6 +277,7 @@ defmodule PdfElixide.Form do
   """
   @spec flatten(Editor.t()) :: {:ok, Editor.t()} | {:error, Error.t()}
   def flatten(%Editor{ref: ref} = editor) do
+    # Loosely bound for the same reason as `PdfElixide.Editor.save/3`.
     case Wrap.call(fn -> Native.editor_flatten_forms(ref) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -307,7 +309,7 @@ defmodule PdfElixide.Form do
   @spec flatten(Editor.t(), non_neg_integer()) :: {:ok, Editor.t()} | {:error, Error.t()}
   def flatten(%Editor{ref: ref} = editor, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    # Loosely bound for the same reason as `flatten/1`.
+    # Loosely bound for the same reason as `PdfElixide.Editor.save/3`.
     case Wrap.call(fn -> Native.editor_flatten_forms_on_page(ref, page_index) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err

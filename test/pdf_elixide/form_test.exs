@@ -1050,6 +1050,22 @@ defmodule PdfElixide.FormTest do
       assert length(Document.annotations!(doc, 0)) == 1
     end
 
+    # The widget assertion distinguishes page remapping from catalog-only removal.
+    test "flattens the page that survives a deletion, not the one that was deleted" do
+      editor = Editor.open!(@flatten_pdf)
+
+      {:ok, flattened} =
+        editor
+        |> Editor.delete_page!(0)
+        |> Form.flatten!()
+        |> Editor.to_binary()
+
+      {:ok, doc} = Document.from_binary(flattened)
+
+      assert Form.fields!(doc) == []
+      assert Document.annotations!(doc, 0) == []
+    end
+
     test "is not an error for a document carrying no form" do
       editor = Editor.open!(@no_form_pdf)
       assert {:ok, ^editor} = Form.flatten(editor)

@@ -30,6 +30,7 @@ high-performance PDF library written in Rust. Built with
 - Read annotations and AcroForm fields, with check boxes, radio groups, combo
   boxes and the rest classified from their field flags
 - Fill AcroForm fields, flatten forms and annotations, and save edited PDFs to a file or binary
+- Delete and reorder pages in a mutable editor
 - Read what a document's digital signatures claim — signer, time, reason, the
   byte range each covers and the field each sits in — and list the fields still
   waiting for a signature

@@ -374,6 +374,9 @@ defmodule PdfElixide.EditorTest do
       assert {:error, %Error{reason: :closed}} =
                Form.put_value(editor, "full_name", "Ada")
 
+      assert {:error, %Error{reason: :closed}} = Editor.delete_page(editor, 0)
+      assert {:error, %Error{reason: :closed}} = Editor.move_page(editor, 0, 0)
+
       refute File.exists?(out_path)
     end
 
@@ -386,6 +389,8 @@ defmodule PdfElixide.EditorTest do
 
       assert_raise Error, "Editor is closed", fn -> Editor.save!(editor, out_path) end
       assert_raise Error, "Editor is closed", fn -> Editor.page_count!(editor) end
+      assert_raise Error, "Editor is closed", fn -> Editor.delete_page!(editor, 0) end
+      assert_raise Error, "Editor is closed", fn -> Editor.move_page!(editor, 0, 0) end
     end
 
     test "the struct-reading functions keep working after close" do
@@ -454,6 +459,156 @@ defmodule PdfElixide.EditorTest do
     end
   end
 
+  # `sample.pdf` carries one distinguishable line per page, so the page *order*
+  # is observable in the reopened document rather than only the page count.
+  defp page_texts(editor) do
+    doc = Document.from_binary!(Editor.to_binary!(editor))
+    texts = doc |> Enum.map(&Document.Page.text!/1) |> Enum.map(&String.trim/1)
+    Document.close(doc)
+
+    texts
+  end
+
+  describe "delete_page/2" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.delete_page(editor, 1)
+      assert Editor.modified?(editor)
+    end
+
+    test "drops the page, shifting the ones after it down" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 1)
+
+      assert page_texts(editor) == ["Page One", "Page Three"]
+    end
+
+    test "page_count/1 answers the new count before any save" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      assert Editor.page_count!(editor) == 3
+
+      Editor.delete_page!(editor, 0)
+
+      assert Editor.page_count!(editor) == 2
+    end
+
+    test "deleting every page empties the editor and still writes a file" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for _ <- 1..3, do: Editor.delete_page!(editor, 0)
+
+      assert Editor.page_count!(editor) == 0
+      assert {:ok, bytes} = Editor.to_binary(editor)
+      assert byte_size(bytes) > 0
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.delete_page(editor, 3)
+    end
+
+    test "returns {:error, :out_of_range} on a document with no pages" do
+      editor = Editor.open!(@no_pages_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.delete_page(editor, 0)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.delete_page(editor, -1) end
+    end
+  end
+
+  describe "move_page/3" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.move_page(editor, 0, 2)
+      assert Editor.modified?(editor)
+    end
+
+    test "moves a page later, leaving it at the destination index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 0, 2)
+
+      assert page_texts(editor) == ["Page Two", "Page Three", "Page One"]
+    end
+
+    test "moves a page earlier" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 2, 0)
+
+      assert page_texts(editor) == ["Page Three", "Page One", "Page Two"]
+    end
+
+    test "moving a page onto its own index leaves the order alone" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 1, 1)
+
+      assert page_texts(editor) == ["Page One", "Page Two", "Page Three"]
+    end
+
+    test "leaves the page count alone" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 0, 2)
+
+      assert Editor.page_count!(editor) == 3
+    end
+
+    test "returns {:error, :out_of_range} for a source past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.move_page(editor, 3, 0)
+    end
+
+    test "returns {:error, :out_of_range} for a destination past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.move_page(editor, 0, 3)
+    end
+
+    test "raises for a negative index in either position" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.move_page(editor, -1, 0) end
+      assert_raise FunctionClauseError, fn -> Editor.move_page(editor, 0, -1) end
+    end
+
+    test "counts from what a deletion left behind" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.delete_page!(1) |> Editor.move_page!(1, 0)
+
+      assert page_texts(editor) == ["Page Three", "Page One"]
+    end
+  end
+
   describe "flatten_annotations/1" do
     test "returns the same editor and marks it modified" do
       editor = Editor.open!(@flatten_pdf)
@@ -472,6 +627,16 @@ defmodule PdfElixide.EditorTest do
       assert Document.text!(doc, 0) =~ "FLATTENED"
       # Widgets go with the rest, so the form fields lose their widgets too.
       assert Document.annotations!(doc, 0) == []
+    end
+
+    # With no page to mark, only the bulk call can set the modified flag.
+    test "marks a document with no pages modified anyway" do
+      editor = Editor.open!(@no_pages_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.flatten_annotations(editor)
+      assert Editor.modified?(editor)
     end
 
     test "returns {:error, :closed} for a closed editor" do

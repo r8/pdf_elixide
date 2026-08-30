@@ -27,6 +27,44 @@ defmodule PdfElixide.Editor do
   binding will not give you the document as it was before the edit. The
   [Forms](guides/forms.md) guide has both shapes and the full account.
 
+  ## Page structure
+
+  `delete_page/2` and `move_page/3` change which pages the document has and in
+  what order. Indices are zero-based and count the pages as currently edited, so
+  `page_count/1` is what they are bounded by, and it moves as soon as a page is
+  deleted rather than waiting for a save:
+
+      "report.pdf"
+      |> PdfElixide.Editor.open!()
+      |> PdfElixide.Editor.move_page!(0, 2)
+      |> PdfElixide.Editor.delete_page!(0)
+      |> PdfElixide.Editor.save!("reordered.pdf")
+      |> PdfElixide.Editor.close()
+      #=> :ok
+
+  Three things they do not do, none of them visible from the call:
+
+  **Deleting a page is not redaction.** It removes the page from the document's
+  page tree, so the written file has one fewer page and nothing displays it —
+  but the page's objects and content stream are still in that file as
+  unreferenced data, with `garbage_collect: true` as much as without. Anyone
+  reading the bytes can recover them. Do not use `delete_page/2` to remove
+  confidential content; write the pages you want to keep to a new document
+  instead. If every page is deleted, reopening the written file can discover
+  those orphaned page objects again, so this is not a way to create a safely
+  page-less PDF either.
+
+  **Bookmarks and links are not remapped.** Nothing updates the outline, link
+  annotations, named destinations, page labels, the structure tree or a form
+  field's widget references, so entries pointing at a page that was deleted or
+  moved are left pointing where they were.
+
+  **An incremental save does not carry either one.**
+  `save(editor, path, incremental: true)` appends an update to the original
+  file, whose page tree is still there, so the written file has the pages it
+  started with in the order it started with — and reports no error. Write with
+  `save/3` without `:incremental`, or with `to_binary/2`.
+
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
   a single editor serializes. `page_count/1`, `modified?/1`,
@@ -235,6 +273,10 @@ defmodule PdfElixide.Editor do
       when is_binary(path) and is_list(opts) do
     options = build_save_options(opts)
 
+    # The payload is bound loosely rather than as `{:ok, :ok}`: the NIF's only
+    # success value is a bare `:ok`, which `Wrap.call/1` wraps, so pinning the
+    # literal would not be exhaustive and a NIF that stopped returning it would
+    # raise a `CaseClauseError` from inside the library.
     case Wrap.call(fn -> Native.editor_save(ref, path, options) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -285,6 +327,68 @@ defmodule PdfElixide.Editor do
   end
 
   @doc """
+  Deletes the page at the given zero-based index, and returns the editor.
+
+  Every later page moves down one index, and `page_count/1` reflects the removal
+  at once — no save is needed. See the "Page structure" section of this module
+  for the deletion's security and writing limitations.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist.
+  """
+  @spec delete_page(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
+  def delete_page(%__MODULE__{ref: ref} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    # Loosely bound for the same reason as `save/3`.
+    case Wrap.call(fn -> Native.editor_delete_page(ref, page_index) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Deletes the page at the given zero-based index, raising an error if it fails.
+  """
+  @spec delete_page!(t(), non_neg_integer()) :: t()
+  def delete_page!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> delete_page(page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Moves the page at zero-based index `from` so that it sits at index `to`, and
+  returns the editor.
+
+  `to` is where the page ends up once it has been lifted out, so
+  `move_page(editor, 0, 2)` on a three-page document leaves the first page last.
+  The pages it passes over shift by one to fill the gap; nothing else changes.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if either index
+  does not exist. See the "Page structure" section of this module for what a move
+  does not update, and why an incremental `save/3` does not carry it.
+  """
+  @spec move_page(t(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, t()} | {:error, Error.t()}
+  def move_page(%__MODULE__{ref: ref} = editor, from, to)
+      when is_integer(from) and from >= 0 and is_integer(to) and to >= 0 do
+    # Loosely bound for the same reason as `save/3`.
+    case Wrap.call(fn -> Native.editor_move_page(ref, from, to) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Moves the page at zero-based index `from` so that it sits at index `to`,
+  raising an error if it fails.
+  """
+  @spec move_page!(t(), non_neg_integer(), non_neg_integer()) :: t()
+  def move_page!(%__MODULE__{} = editor, from, to)
+      when is_integer(from) and from >= 0 and is_integer(to) and to >= 0 do
+    editor |> move_page(from, to) |> Wrap.unwrap!()
+  end
+
+  @doc """
   Marks every page's annotations for flattening.
 
   Flattening draws each annotation's appearance into the page content. Nothing
@@ -307,6 +411,7 @@ defmodule PdfElixide.Editor do
   """
   @spec flatten_annotations(t()) :: {:ok, t()} | {:error, Error.t()}
   def flatten_annotations(%__MODULE__{ref: ref} = editor) do
+    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_flatten_all_annotations(ref) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -334,7 +439,7 @@ defmodule PdfElixide.Editor do
   @spec flatten_annotations(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
   def flatten_annotations(%__MODULE__{ref: ref} = editor, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    # Loosely bound for the same reason as `flatten_annotations/1`.
+    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_flatten_page_annotations(ref, page_index) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
