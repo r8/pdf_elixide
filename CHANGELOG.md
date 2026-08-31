@@ -5,6 +5,29 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.16.0](https://github.com/r8/pdf_elixide/compare/v0.15.1...v0.16.0) (2026-08-31)
+
+
+
+
+### Features:
+
+* add page rotation by [@r8](https://github.com/r8)
+
+* add page deletion and reordering by [@r8](https://github.com/r8)
+
+* add page label ranges extraction by [@r8](https://github.com/r8)
+
+* enable JPEG 2000 extraction for JPXDecode images by [@r8](https://github.com/r8)
+
+* add a form field's tooltip, box, default, limits and options by [@r8](https://github.com/r8)
+
+* add plain text conversion with to_plain_text for Document and Page by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* drop the unused :linearize save option by [@r8](https://github.com/r8)
+
 ## [v0.15.1](https://github.com/r8/pdf_elixide/compare/v0.15.0...v0.15.1) (2026-08-25)
 
 
