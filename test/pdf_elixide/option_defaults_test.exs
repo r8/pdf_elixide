@@ -212,6 +212,10 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "Editor.embed_file/4" do
+      assert Editor.__option_defaults__(:embed) == %{description: nil, relationship: nil}
+    end
+
     test "Table.to_markdown/2" do
       assert Document.Table.__option_defaults__(:markdown) == %{bold_markers: :conservative}
     end

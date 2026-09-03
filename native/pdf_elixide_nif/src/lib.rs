@@ -1,8 +1,8 @@
-use std::sync::{atomic::AtomicBool, Arc, Mutex, OnceLock};
+use std::sync::{atomic::AtomicBool, Arc, Mutex, OnceLock, RwLock};
 
 use pdf_oxide::{
     editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo,
-    structure::table_extractor::Table, PdfDocument,
+    structure::table_extractor::Table, writer::EmbeddedFile, PdfDocument,
 };
 
 use crate::{editor::PageRotation, form_tree::Resolved, resource::Closable};
@@ -13,6 +13,7 @@ mod char;
 mod color;
 mod document;
 mod editor;
+mod embedded_files;
 mod error;
 mod extract_options;
 mod fonts;
@@ -77,6 +78,8 @@ struct EditorResource {
     pages_deleted: AtomicBool,
     // Visible pages in output order, including pending rotations.
     pages: Mutex<Vec<PageRotation>>,
+    // Re-supplied after full writes drain the editor's pending list.
+    embedded: RwLock<Vec<EmbeddedFile>>,
 }
 
 #[rustler::resource_impl]

@@ -1,14 +1,21 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Mutex, MutexGuard, OnceLock,
+    Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 
-use pdf_oxide::editor::{DocumentEditor, EditableDocument, SaveOptions};
-use rustler::{Atom, Binary, NifMap, NifResult, OwnedBinary, ResourceArc};
+use pdf_oxide::{
+    editor::{DocumentEditor, EditableDocument, SaveOptions},
+    writer::EmbeddedFile,
+};
+use rustler::{Atom, Binary, Env, NifMap, NifResult, OwnedBinary, ResourceArc};
 
 use crate::{
     atoms,
     binary::owned_binary,
+    embedded_files::{
+        embedded_file, ensure_no_name_tree, pending_to_nif, read_embedded_files, EmbeddedFileNif,
+        RelationshipNif,
+    },
     error::{tagged_err, to_form_err, to_nif_err},
     form::{
         editor_form_field_to_nif, export_bytes, export_form_field, is_exportable,
@@ -59,6 +66,17 @@ fn page_rotations(resource: &EditorResource) -> MutexGuard<'_, Vec<PageRotation>
     resource.pages.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+// The editor guard provides exclusion; this lock provides interior mutability
+// and recovers poisoning like `page_rotations`.
+fn embedded_files(resource: &EditorResource) -> RwLockReadGuard<'_, Vec<EmbeddedFile>> {
+    resource.embedded.read().unwrap_or_else(|e| e.into_inner())
+}
+
+// The write half of `embedded_files`, reached only under the exclusive lock.
+fn embedded_files_mut(resource: &EditorResource) -> RwLockWriteGuard<'_, Vec<EmbeddedFile>> {
+    resource.embedded.write().unwrap_or_else(|e| e.into_inner())
+}
+
 // At open, visible and source page indices are identical.
 fn seed_pages(resource: &EditorResource) -> NifResult<()> {
     resource.editor.with_read(|editor| {
@@ -79,6 +97,7 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
         resolved_fields: OnceLock::new(),
         pages_deleted: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
+        embedded: RwLock::new(Vec::new()),
     });
     seed_pages(&resource)?;
     let version = cached_version(&resource)?;
@@ -95,6 +114,7 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
         resolved_fields: OnceLock::new(),
         pages_deleted: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
+        embedded: RwLock::new(Vec::new()),
     });
     seed_pages(&resource)?;
     let version = cached_version(&resource)?;
@@ -122,6 +142,7 @@ fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
     // Close first so no later call can observe the cleared mirror.
     resource.editor.close();
     page_rotations(&resource).clear();
+    embedded_files_mut(&resource).clear();
 
     atoms::ok()
 }
@@ -187,12 +208,81 @@ fn editor_export_form_data(
     })
 }
 
+// Full writes drain pending attachments, so restore the mirror before repeats.
+fn resupply_embedded(resource: &EditorResource, editor: &mut DocumentEditor) -> NifResult<()> {
+    let mirror = embedded_files(resource);
+    if editor.pending_embedded_files().len() == mirror.len() {
+        return Ok(());
+    }
+
+    editor.clear_embedded_files();
+    for file in mirror.iter() {
+        editor
+            .embed_file_with_options(file.clone())
+            .map_err(to_nif_err)?;
+    }
+
+    Ok(())
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_embed_file(
+    resource: ResourceArc<EditorResource>,
+    name: String,
+    data: Binary,
+    description: Option<String>,
+    relationship: Option<RelationshipNif>,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        // Inside the guard so the check and the push cannot straddle a writer.
+        ensure_no_name_tree(editor.source())?;
+
+        let file = embedded_file(name, data.as_slice().to_vec(), description, relationship);
+
+        // Upstream first: it owns `is_modified`, and the mirror must not record
+        // an attachment the editor rejected.
+        editor
+            .embed_file_with_options(file.clone())
+            .map_err(to_nif_err)?;
+        embedded_files_mut(&resource).push(file);
+
+        Ok(atoms::ok())
+    })
+}
+
+// Both reads are shared; mirror writes always hold the exclusive editor guard.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_embedded_files<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<EditorResource>,
+) -> NifResult<Vec<EmbeddedFileNif<'a>>> {
+    resource.editor.with_read(|editor| {
+        // The source and pending halves cannot both be populated.
+        let mut files = read_embedded_files(env, editor.source())?;
+
+        // Match the name order a full write will produce.
+        let mirror = embedded_files(&resource);
+        let mut pending: Vec<&EmbeddedFile> = mirror.iter().collect();
+        pending.sort_by(|a, b| a.name.cmp(&b.name));
+
+        for file in pending {
+            files.push(pending_to_nif(env, file)?);
+        }
+
+        Ok(files)
+    })
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_to_bytes(
     resource: ResourceArc<EditorResource>,
     options: SaveOptionsNif,
 ) -> NifResult<OwnedBinary> {
     resource.editor.with_lock(|editor| {
+        if !options.incremental {
+            resupply_embedded(&resource, editor)?;
+        }
+
         let bytes = editor
             .save_to_bytes_with_options(options.into())
             .map_err(to_nif_err)?;
@@ -212,6 +302,10 @@ fn editor_save(
     let path = path_arg(path)?;
 
     resource.editor.with_lock(|editor| {
+        if !options.incremental {
+            resupply_embedded(&resource, editor)?;
+        }
+
         editor
             .save_with_options(&path, options.into())
             .map_err(to_nif_err)?;
@@ -560,6 +654,107 @@ mod tests {
         assert!(
             doc.extract_text(copy).is_err(),
             "the duplicated page is readable, so upstream now writes a real copy"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drains_pending_embedded_files_on_a_full_write() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+
+        editor
+            .embed_file("data.csv", b"a,b".to_vec())
+            .expect("embeds");
+        editor.save_to_bytes().expect("full rewrite");
+
+        assert!(
+            editor.pending_embedded_files().is_empty(),
+            "the full writer no longer drains pending embedded files"
+        );
+    }
+
+    #[test]
+    fn upstream_still_replaces_an_indirect_name_tree() {
+        let mut editor = DocumentEditor::open(fixture("attachments.pdf")).expect("fixture opens");
+
+        let before = PdfDocument::open(fixture("attachments.pdf")).expect("fixture opens");
+        assert!(
+            !before
+                .extract_embedded_files()
+                .expect("reads attachments")
+                .is_empty(),
+            "the fixture must start with an attachment for the loss to be visible"
+        );
+
+        assert!(
+            names_key(&before, "Dests").is_some(),
+            "the fixture must start with a destination for the loss to be visible"
+        );
+
+        editor
+            .embed_file("added.txt", b"added".to_vec())
+            .expect("embeds");
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+        let after = PdfDocument::from_bytes(bytes).expect("reopens");
+
+        assert_eq!(
+            after
+                .extract_embedded_files()
+                .expect("reads attachments")
+                .len(),
+            1,
+            "embedding preserved the document's existing attachments"
+        );
+        assert!(
+            names_key(&after, "Dests").is_none(),
+            "embedding preserved the rest of the name tree"
+        );
+    }
+
+    fn names_key(doc: &PdfDocument, key: &str) -> Option<pdf_oxide::object::Object> {
+        let catalog = doc.catalog().ok()?;
+        let names = doc.resolve_object(catalog.as_dict()?.get("Names")?).ok()?;
+
+        doc.resolve_object(names.as_dict()?.get(key)?).ok()
+    }
+
+    #[test]
+    fn upstream_still_mangles_an_embedded_file_name() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+
+        editor
+            .embed_file("r\u{e9}sum\u{e9}.txt", b"body".to_vec())
+            .expect("embeds");
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+
+        let names: Vec<String> = doc
+            .extract_embedded_files()
+            .expect("reads attachments")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+
+        assert!(
+            !names.contains(&"r\u{e9}sum\u{e9}.txt".to_string()),
+            "upstream now decodes its UTF-16BE /UF correctly: {names:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_still_double_escapes_an_embedded_file_mime_type() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+
+        editor
+            .embed_file_with_options(
+                pdf_oxide::writer::EmbeddedFile::new("data.csv", b"a,b".to_vec())
+                    .with_mime_type("text/csv"),
+            )
+            .expect("embeds");
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains("/Subtype /text#2Fcsv"),
+            "upstream now serializes the embedded-file media type correctly"
         );
     }
 

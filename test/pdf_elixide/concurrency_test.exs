@@ -18,6 +18,7 @@ defmodule PdfElixide.ConcurrencyTest do
   @fonts_pdf Path.join(@fixtures_dir, "fonts.pdf")
   @table_pdf Path.join(@fixtures_dir, "table.pdf")
   @form_pdf Path.join(@fixtures_dir, "form.pdf")
+  @attachments_pdf Path.join(@fixtures_dir, "attachments.pdf")
 
   @concurrency 16
 
@@ -81,6 +82,22 @@ defmodule PdfElixide.ConcurrencyTest do
         timeout: @timeout
       )
       |> Enum.each(fn {:ok, {name, actual}} -> assert actual == expected[name] end)
+    end
+
+    test "concurrent attachment reads from one handle match the serial result" do
+      doc = Document.open!(@attachments_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      expected = Document.embedded_files!(doc)
+      assert length(expected) == 3
+
+      1..@concurrency
+      |> Task.async_stream(fn _ -> Document.embedded_files!(doc) end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, actual} -> assert actual == expected end)
     end
   end
 

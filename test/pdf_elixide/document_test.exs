@@ -7,6 +7,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Document
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
@@ -48,6 +49,10 @@ defmodule PdfElixide.DocumentTest do
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
   @search_pdf Path.join(@fixtures, "search.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
+  @attachments_pdf Path.join(@fixtures, "attachments.pdf")
+  @attachments_cyclic_pdf Path.join(@fixtures, "attachments_cyclic.pdf")
+  @attachments_indirect_pdf Path.join(@fixtures, "attachments_indirect.pdf")
+  @attachments_undecodable_pdf Path.join(@fixtures, "attachments_undecodable.pdf")
   @unreachable_page 2
   @password "secret"
   @latin1_password "caf" <> <<0xE9>>
@@ -3713,6 +3718,101 @@ defmodule PdfElixide.DocumentTest do
     do: "#{p}A"
 
   defp expected_first_label(%PageLabelRange{style: :none, prefix: p}), do: "#{p}"
+
+  describe "embedded_files/1" do
+    test "returns every attachment the name tree reaches, in tree order" do
+      doc = Document.open!(@attachments_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      # The root holds only /Kids. The entries cover optional metadata, Flate
+      # decoding, absent metadata and a UTF-16BE /UF.
+      assert {:ok, [csv, notes, resume]} = Document.embedded_files(doc)
+
+      assert csv == %EmbeddedFile{
+               name: "data.csv",
+               data: "a,b\n1,2\n",
+               description: "Chart data",
+               mime_type: "text/csv",
+               relationship: :data,
+               size: 8,
+               checksum: :erlang.md5("a,b\n1,2\n"),
+               created: "D:20260101120000Z",
+               modified: "D:20260102130000Z"
+             }
+
+      assert notes == %EmbeddedFile{
+               name: "notes.txt",
+               data: "Plain notes.\n",
+               description: nil,
+               mime_type: nil,
+               relationship: nil,
+               size: nil,
+               checksum: nil,
+               created: nil,
+               modified: nil
+             }
+
+      assert resume.name == "résumé.txt"
+      assert resume.data == "Curriculum vitae.\n"
+      assert resume.relationship == :supplement
+    end
+
+    test "resolves an indirect /CheckSum" do
+      # The fixture's /Params holds a direct /Size beside an indirect /CheckSum,
+      # so a passing /Size cannot mask an unresolved digest.
+      doc = Document.open!(@attachments_indirect_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:ok, [csv]} = Document.embedded_files(doc)
+      assert csv.size == 8
+      assert csv.checksum == :erlang.md5("a,b\n1,2\n")
+    end
+
+    test "returns an empty list for a document with no attachments" do
+      doc = Document.open!(@valid_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:ok, []} = Document.embedded_files(doc)
+    end
+
+    test "returns {:error, :closed} for a closed document" do
+      doc = Document.open!(@attachments_pdf)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Document.embedded_files(doc)
+    end
+
+    test "raises through the bang variant" do
+      doc = Document.open!(@attachments_pdf)
+      :ok = Document.close(doc)
+
+      assert_raise Error, fn -> Document.embedded_files!(doc) end
+    end
+
+    test "refuses a name tree whose /Kids loops back" do
+      # The only /EmbeddedFiles node lists itself as a child.
+      doc = Document.open!(@attachments_cyclic_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Document.embedded_files(doc)
+    end
+
+    test "does not stop a document with a cyclic name tree being read otherwise" do
+      doc = Document.open!(@attachments_cyclic_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:ok, 1} = Document.page_count(doc)
+    end
+
+    test "refuses the whole list when one attachment cannot be decoded" do
+      # The second entry declares /FlateDecode over invalid data.
+      doc = Document.open!(@attachments_undecodable_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:error, %Error{reason: :invalid_pdf} = error} = Document.embedded_files(doc)
+      assert error.message =~ "declares 2 embedded files but 1"
+    end
+  end
 
   describe "layers/1" do
     test "returns every declared name, in order, undeduplicated" do

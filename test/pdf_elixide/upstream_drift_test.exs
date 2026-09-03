@@ -725,6 +725,23 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     @tag :tmp_dir
+    test "an embedded file goes missing too", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_attachment.pdf")
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n")
+
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.embedded_files!(doc) == [],
+             "upstream now writes pending attachments into an incremental update"
+    end
+
+    @tag :tmp_dir
     test "a page rotation goes missing too", %{tmp_dir: tmp_dir} do
       editor = Editor.open!(@rotation_pdf)
       on_exit(fn -> Editor.close(editor) end)

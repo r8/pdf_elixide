@@ -147,6 +147,7 @@ defmodule PdfElixide.Document do
   # filesystem-path `Path.t()` in this module into the struct type.
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
+  alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
   alias PdfElixide.Document.Metadata
@@ -598,6 +599,38 @@ defmodule PdfElixide.Document do
   @spec page_label_ranges!(t()) :: [PageLabelRange.t()]
   def page_label_ranges!(%__MODULE__{} = doc) do
     page_label_ranges(doc) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Lists the file attachments the document carries, in name-tree order.
+
+  A document with no `/Names /EmbeddedFiles` returns `{:ok, []}`. See
+  `PdfElixide.Document.EmbeddedFile` for the fields,
+  `PdfElixide.Editor.embed_file/4` to add one, and
+  `PdfElixide.Editor.embedded_files/1` to list them from an editor.
+
+  The result holds every attachment's bytes at once; see the "Memory" section of
+  `PdfElixide.Document.EmbeddedFile`.
+
+  Malformed or excessively complex name trees return an error.
+
+  Returns `{:error, %PdfElixide.Error{reason: :invalid_pdf}}` when the document
+  declares an attachment whose contents cannot be decoded. The whole call fails
+  rather than returning the remaining attachments.
+  """
+  @spec embedded_files(t()) :: {:ok, [EmbeddedFile.t()]} | {:error, Error.t()}
+  def embedded_files(%__MODULE__{ref: ref}) do
+    with {:ok, files} <- Wrap.call(fn -> Native.document_embedded_files(ref) end) do
+      {:ok, Enum.map(files, &EmbeddedFile.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Lists the document's file attachments, raising an error if it fails.
+  """
+  @spec embedded_files!(t()) :: [EmbeddedFile.t()]
+  def embedded_files!(%__MODULE__{} = doc) do
+    embedded_files(doc) |> Wrap.unwrap!()
   end
 
   @doc """

@@ -1,0 +1,47 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names 4 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>
+endobj
+4 0 obj
+<< /EmbeddedFiles 5 0 R >>
+endobj
+5 0 obj
+<< /Names [(data.csv) 6 0 R] >>
+endobj
+6 0 obj
+<< /Type /Filespec /F (data.csv) /Desc (Chart data) /EF << /F 7 0 R >> >>
+endobj
+7 0 obj
+<< /Type /EmbeddedFile /Length 8 /Params << /Size 8 /CheckSum 8 0 R >> >>
+stream
+a,b
+1,2
+
+endstream
+endobj
+8 0 obj
+<E5EBD4C02CEFBE7955977C67ADA242B7>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000077 00000 n 
+0000000134 00000 n 
+0000000205 00000 n 
+0000000247 00000 n 
+0000000294 00000 n 
+0000000383 00000 n 
+0000000498 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+548
+%%EOF

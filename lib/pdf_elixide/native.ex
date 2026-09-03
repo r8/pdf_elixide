@@ -99,6 +99,7 @@ defmodule PdfElixide.Native do
   def document_page_label_ranges(_doc), do: err()
   def document_layers(_doc), do: err()
   def document_page_inks(_doc, _page_index, _options), do: err()
+  def document_embedded_files(_doc), do: err()
 
   def editor_open(_path), do: err()
   def editor_from_bytes(_bytes), do: err()
@@ -115,6 +116,8 @@ defmodule PdfElixide.Native do
   def editor_set_form_field_value(_editor, _name, _value), do: err()
   def editor_to_bytes(_editor, _options), do: err()
   def editor_save(_editor, _path, _options), do: err()
+  def editor_embed_file(_editor, _name, _data, _description, _relationship), do: err()
+  def editor_embedded_files(_editor), do: err()
   def editor_delete_page(_editor, _page_index), do: err()
   def editor_move_page(_editor, _from, _to), do: err()
   def editor_page_rotation(_editor, _page_index), do: err()

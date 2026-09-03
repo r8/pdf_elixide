@@ -271,6 +271,16 @@ defmodule PdfElixide.OptionKeysTest do
       on_exit(fn -> Document.close(doc) end)
       accepts_each!([file_spec: "form.pdf"], &Form.export(doc, :fdf, &1))
     end
+
+    test "Editor.embed_file/4" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      accepts_each!(
+        [description: "Chart data", relationship: :data],
+        &Editor.embed_file(editor, "data.csv", "a,b", &1)
+      )
+    end
   end
 
   describe "an undeclared key is rejected" do
@@ -313,7 +323,8 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.Image.to_binary(image, opts) end,
         fn opts -> Document.Image.save(image, "out.png", opts) end,
         fn opts -> Form.export(form_doc, :fdf, opts) end,
-        fn opts -> Form.export(form_editor, :xfdf, opts) end
+        fn opts -> Form.export(form_editor, :xfdf, opts) end,
+        fn opts -> Editor.embed_file(editor, "data.csv", "a,b", opts) end
       ]
 
       for call <- calls do

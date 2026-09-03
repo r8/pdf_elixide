@@ -4,6 +4,7 @@ defmodule PdfElixide.EditorTest do
   use ExUnit.Case, async: true
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form
@@ -16,6 +17,8 @@ defmodule PdfElixide.EditorTest do
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
+  @attachments_pdf Path.join(@fixtures, "attachments.pdf")
+  @attachments_cyclic_pdf Path.join(@fixtures, "attachments_cyclic.pdf")
 
   describe "open/1" do
     test "returns {:ok, %Editor{}} for a valid PDF file" do
@@ -974,6 +977,204 @@ defmodule PdfElixide.EditorTest do
       :ok = Editor.close(editor)
 
       assert {:error, %Error{reason: :closed}} = Editor.flatten_warnings(editor)
+    end
+  end
+
+  defp attached(editor) do
+    doc = Document.from_binary!(Editor.to_binary!(editor))
+    files = Document.embedded_files!(doc)
+    Document.close(doc)
+
+    files
+  end
+
+  describe "embed_file/4" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.embed_file(editor, "data.csv", "a,b\n")
+      assert Editor.modified?(editor)
+    end
+
+    test "writes the file into the saved document" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n1,2\n",
+        description: "Chart data",
+        relationship: :data
+      )
+
+      assert [file] = attached(editor)
+      assert file.name == "data.csv"
+      assert file.data == "a,b\n1,2\n"
+      assert file.description == "Chart data"
+      assert file.relationship == :data
+      assert file.size == 8
+    end
+
+    test "carries the file into every write, not only the first" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n")
+
+      assert [%{name: "data.csv"}] = attached(editor)
+      assert [%{name: "data.csv"}] = attached(editor)
+    end
+
+    test "a refused incremental write leaves the modified flag alone" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n")
+      Editor.to_binary!(editor)
+      refute Editor.modified?(editor)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.to_binary(editor, incremental: true)
+      refute Editor.modified?(editor)
+    end
+
+    @tag :tmp_dir
+    test "survives a save to a file, garbage collection included", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "attached.pdf")
+
+      editor
+      |> Editor.embed_file!("notes.txt", "kept")
+      |> Editor.save!(path, garbage_collect: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [%{name: "notes.txt", data: "kept"}] = Document.embedded_files!(doc)
+    end
+
+    test "round-trips a name outside ASCII" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "résumé.txt", "body")
+
+      assert [%{name: "résumé.txt"}] = attached(editor)
+    end
+
+    test "attaches several files in one session" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.embed_file!("a.txt", "first")
+      |> Editor.embed_file!("b.txt", "second")
+
+      assert [%{name: "a.txt", data: "first"}, %{name: "b.txt", data: "second"}] =
+               attached(editor)
+    end
+
+    test "refuses a document that already has a name tree" do
+      editor = Editor.open!(@attachments_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported} = error} =
+               Editor.embed_file(editor, "added.txt", "added")
+
+      assert error.message =~ "EmbeddedFiles"
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a name that is empty or not a string" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.embed_file(editor, "", "x") end
+      assert_raise FunctionClauseError, fn -> Editor.embed_file(editor, :name, "x") end
+      assert_raise ArgumentError, fn -> Editor.embed_file(editor, <<0xFF>>, "x") end
+    end
+
+    test "raises for an invalid option value" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/:relationship/, fn ->
+        Editor.embed_file(editor, "a.txt", "x", relationship: :attachment)
+      end
+
+      assert_raise ArgumentError, ~r/:description/, fn ->
+        Editor.embed_file(editor, "a.txt", "x", description: 1)
+      end
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@valid_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.embed_file(editor, "a.txt", "x")
+    end
+  end
+
+  describe "embedded_files/1" do
+    test "reports an attachment before it is written" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, []} = Editor.embedded_files(editor)
+
+      Editor.embed_file!(editor, "pending.txt", "body", description: "Note", relationship: :data)
+
+      assert [
+               %EmbeddedFile{
+                 name: "pending.txt",
+                 data: "body",
+                 description: "Note",
+                 relationship: :data,
+                 size: nil,
+                 checksum: nil,
+                 created: nil,
+                 modified: nil
+               }
+             ] = Editor.embedded_files!(editor)
+
+      Editor.to_binary!(editor)
+
+      assert [%EmbeddedFile{size: nil, checksum: nil, created: nil, modified: nil}] =
+               Editor.embedded_files!(editor)
+    end
+
+    test "reports a pending attachment where a write will place it" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.embed_file!("z.txt", "last")
+      |> Editor.embed_file!("a.txt", "first")
+
+      assert ["a.txt", "z.txt"] = editor |> Editor.embedded_files!() |> Enum.map(& &1.name)
+      assert ["a.txt", "z.txt"] = editor |> attached() |> Enum.map(& &1.name)
+    end
+
+    test "reports what the edited document already carried" do
+      editor = Editor.open!(@attachments_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert ["data.csv", "notes.txt", "résumé.txt"] =
+               editor |> Editor.embedded_files!() |> Enum.map(& &1.name)
+    end
+
+    test "refuses a name tree whose /Kids loops back" do
+      editor = Editor.open!(@attachments_cyclic_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.embedded_files(editor)
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@attachments_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.embedded_files(editor)
     end
   end
 end

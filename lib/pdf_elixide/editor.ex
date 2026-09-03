@@ -59,11 +59,13 @@ defmodule PdfElixide.Editor do
   field's widget references, so entries pointing at a page that was deleted or
   moved are left pointing where they were.
 
-  **An incremental save carries neither of them, nor a page rotation.**
-  `save(editor, path, incremental: true)` appends an update to the original
-  file, whose page tree is still there, so the written file has the pages it
-  started with, in the order and at the rotation it started with — and reports
-  no error. Write with `save/3` without `:incremental`, or with `to_binary/2`.
+  **An incremental save carries none of them — not a deletion, a move, a
+  rotation or an attachment.** `save(editor, path, incremental: true)` appends an
+  update to the original file, whose page tree and catalog are both still there,
+  so the written file has the pages it started with, in the order and at the
+  rotation it started with, carrying the attachments it started with — and
+  reports no error. Write with `save/3` without `:incremental`, or with
+  `to_binary/2`.
 
   ## Page rotation
 
@@ -88,15 +90,40 @@ defmodule PdfElixide.Editor do
   page still reports portrait dimensions. The "Page structure" section above
   describes the incremental-save limitation.
 
+  ## Attachments
+
+  `embed_file/4` attaches a file to the document — a spreadsheet behind a
+  report, the source data behind a chart — and `embedded_files/1` lists what the
+  document will carry, pending attachments included:
+
+      "report.pdf"
+      |> PdfElixide.Editor.open!()
+      |> PdfElixide.Editor.embed_file!("figures.csv", csv, description: "Chart data")
+      |> PdfElixide.Editor.save!("report-with-data.pdf")
+      |> PdfElixide.Editor.close()
+      #=> :ok
+
+  **A document that already has a name tree is refused** with
+  `{:error, %PdfElixide.Error{reason: :unsupported}}`, because attaching a file
+  cannot preserve that tree's existing attachments, named destinations or
+  document-level JavaScript. To attach several files, add them in the same
+  editing session.
+
+  The "Page structure" section above describes the incremental-save limitation.
+
+  No media type is written for an attachment. `PdfElixide.Document.EmbeddedFile`
+  reads one when another producer declared it, but this editor cannot set one.
+
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
   a single editor serializes. `page_count/1`, `modified?/1`, `rotation/2`,
-  `flatten_warnings/1` and `closed?/1` take the lock shared, as do the
-  `PdfElixide.Signature` reads given an editor, which reach the document it was
-  opened from. Give each process its own editor if you need them to work at
-  once; see the [Concurrency](guides/concurrency.md) guide.
+  `embedded_files/1`, `flatten_warnings/1` and `closed?/1` take the lock shared,
+  as do the `PdfElixide.Signature` reads given an editor, which reach the
+  document it was opened from. Give each process its own editor if you need them
+  to work at once; see the [Concurrency](guides/concurrency.md) guide.
   """
 
+  alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Error
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
@@ -537,6 +564,110 @@ defmodule PdfElixide.Editor do
   # Reduce before the NIF so arbitrary-size Elixir integers fit `i32`.
   defp delta(degrees), do: rem(degrees, 360)
 
+  @typedoc """
+  Options for `embed_file/4`.
+
+    * `:description` — a human-readable note about the attachment, shown by
+      viewers beside its name. Absent by default.
+    * `:relationship` — how the attachment relates to the document, one of the
+      values in `t:PdfElixide.Document.EmbeddedFile.relationship/0`. Absent by
+      default.
+
+  Unknown keys and invalid values raise `ArgumentError` naming the key.
+  """
+  @type embed_opts :: [
+          description: String.t(),
+          relationship: EmbeddedFile.relationship()
+        ]
+
+  @embed_opts_keys [:description, :relationship]
+
+  @relationships [
+    :source,
+    :data,
+    :alternative,
+    :supplement,
+    :encrypted_payload,
+    :form_data,
+    :schema,
+    :unspecified
+  ]
+
+  @doc """
+  Attaches `data` to the document under `name`, and returns the editor.
+
+  The attachment is written into the document's `/Names /EmbeddedFiles` name
+  tree by the next **full** write — `save/3` without `:incremental`, or
+  `to_binary/2` — and read back with `PdfElixide.Document.embedded_files/1`. It
+  is a file the document carries, not page content: nothing about the pages
+  changes and nothing displays it, though
+  a viewer will offer it for saving.
+
+  `name` must be a non-empty UTF-8 string; anything else raises. Attaching two
+  files under the same name is allowed and produces a document declaring both,
+  which readers resolve inconsistently — use distinct names.
+
+  Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` for a document that
+  already has a name tree. See the "Attachments" section of this module for this
+  restriction, the media-type limitation and incremental-save behavior.
+
+  Attachment data is copied into native memory and increases peak memory during
+  writes, so measure large attachments before adding several.
+  """
+  @spec embed_file(t(), String.t(), binary(), embed_opts()) ::
+          {:ok, t()} | {:error, Error.t()}
+  def embed_file(%__MODULE__{ref: ref} = editor, name, data, opts \\ [])
+      when is_binary(name) and name != "" and is_binary(data) and is_list(opts) do
+    name = validate_name!(name)
+    %{description: description, relationship: relationship} = build_embed_options(opts)
+
+    # Loosely bound for the same reason as `save/3`.
+    case Wrap.call(fn ->
+           Native.editor_embed_file(ref, name, data, description, relationship)
+         end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Attaches `data` to the document under `name`, raising an error if it fails.
+  """
+  @spec embed_file!(t(), String.t(), binary(), embed_opts()) :: t()
+  def embed_file!(%__MODULE__{} = editor, name, data, opts \\ [])
+      when is_binary(name) and name != "" and is_binary(data) and is_list(opts) do
+    editor |> embed_file(name, data, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Lists the file attachments the edited document will carry, in name-tree order.
+
+  This reflects pending edits: an attachment added with `embed_file/4` appears
+  here before any save, in the order a full write will place it. Its `:size`,
+  `:checksum`, `:created` and `:modified` remain `nil`, even after a save. Read
+  those fields with `PdfElixide.Document.embedded_files/1` on the written
+  document.
+
+  Malformed or excessively complex name trees return an error. See
+  `PdfElixide.Document.EmbeddedFile` for the fields and for the memory the
+  result holds.
+  """
+  @spec embedded_files(t()) :: {:ok, [EmbeddedFile.t()]} | {:error, Error.t()}
+  def embedded_files(%__MODULE__{ref: ref}) do
+    with {:ok, files} <- Wrap.call(fn -> Native.editor_embedded_files(ref) end) do
+      {:ok, Enum.map(files, &EmbeddedFile.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Lists the file attachments the edited document will carry, raising an error if
+  it fails.
+  """
+  @spec embedded_files!(t()) :: [EmbeddedFile.t()]
+  def embedded_files!(%__MODULE__{} = editor) do
+    embedded_files(editor) |> Wrap.unwrap!()
+  end
+
   @doc """
   Marks every page's annotations for flattening.
 
@@ -637,6 +768,47 @@ defmodule PdfElixide.Editor do
     flatten_warnings(editor) |> Wrap.unwrap!()
   end
 
+  # Validate here so a bad positional NIF argument still names what it was.
+  defp validate_name!(name) do
+    unless String.valid?(name) do
+      raise ArgumentError, "invalid name, expected a UTF-8 string: #{inspect(name)}"
+    end
+
+    name
+  end
+
+  defp build_embed_options(opts) do
+    opts = Keyword.validate!(opts, @embed_opts_keys)
+
+    %{
+      description: validate_text!(:description, Keyword.get(opts, :description)),
+      relationship: validate_relationship!(Keyword.get(opts, :relationship))
+    }
+  end
+
+  defp validate_text!(_key, nil), do: nil
+
+  defp validate_text!(key, value) when is_binary(value) do
+    if String.valid?(value) do
+      value
+    else
+      raise ArgumentError, "invalid #{inspect(key)}, expected a UTF-8 string: #{inspect(value)}"
+    end
+  end
+
+  defp validate_text!(key, other) do
+    raise ArgumentError, "invalid #{inspect(key)}, expected a string: #{inspect(other)}"
+  end
+
+  defp validate_relationship!(nil), do: nil
+
+  defp validate_relationship!(value) when value in @relationships, do: value
+
+  defp validate_relationship!(other) do
+    raise ArgumentError,
+          "invalid :relationship, expected one of #{inspect(@relationships)}: #{inspect(other)}"
+  end
+
   defp build_save_options(opts) do
     opts = Keyword.validate!(opts, @save_opts_keys)
 
@@ -648,8 +820,9 @@ defmodule PdfElixide.Editor do
   end
 
   @doc false
-  @spec __option_defaults__(:save) :: map()
+  @spec __option_defaults__(:save | :embed) :: map()
   def __option_defaults__(:save), do: build_save_options([])
+  def __option_defaults__(:embed), do: build_embed_options([])
 
   defimpl Inspect do
     import Inspect.Algebra
