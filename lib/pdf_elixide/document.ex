@@ -302,7 +302,7 @@ defmodule PdfElixide.Document do
   def source_path(%__MODULE__{source_path: p}), do: p
 
   @doc """
-  Releases the document's native memory immediately.
+  Releases the document's native memory without waiting for garbage collection.
 
   A document holds its PDF data in memory on the Rust side, normally freed only
   when the BEAM garbage-collects the handle. `close/1` frees it now, which
@@ -311,8 +311,8 @@ defmodule PdfElixide.Document do
 
   It takes the handle's lock *exclusively*, where reads take it shared, so it
   waits for every in-flight call on the same document — and an extraction can
-  hold its share of that lock for seconds. *Immediately* means as soon as the
-  handle is idle, not preemptively. That is one of the exclusive calls the
+  hold its share of that lock for seconds. The memory is released as soon as
+  the handle is idle, not preemptively. That is one of the exclusive calls the
   [Concurrency](guides/concurrency.md) guide is about.
 
   Afterwards, functions that read the document return

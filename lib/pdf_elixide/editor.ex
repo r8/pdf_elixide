@@ -69,10 +69,9 @@ defmodule PdfElixide.Editor do
 
   ## Page rotation
 
-  `set_rotation/3` turns a page to an absolute angle, `rotate_page_by/3` turns it
-  a further so many degrees from where it already is, and `rotate_all_by/2` does
-  that to every page. `rotation/2` reads the angle back, pending changes
-  included:
+  `set_rotation/3` turns a page to an absolute angle, `rotate_page_by/3` adds a
+  relative rotation, and `rotate_all_by/2` does that to every page. `rotation/2`
+  reads the angle back, pending changes included:
 
       "scan.pdf"
       |> PdfElixide.Editor.open!()
@@ -256,14 +255,14 @@ defmodule PdfElixide.Editor do
   end
 
   @doc """
-  Releases the editor's native memory immediately.
+  Releases the editor's native memory without waiting for garbage collection.
 
   An editor holds the source document plus its pending edits in memory on the
   Rust side, normally freed only when the BEAM garbage-collects the handle.
   `close/1` frees it now, which matters for long-lived processes that open many
   documents. Calling it is optional and idempotent. It waits for an in-flight
-  call on the same editor — a save can hold the handle's lock for seconds — so
-  *immediately* means as soon as the handle is idle, not preemptively.
+  call on the same editor — a save can hold the handle's lock for seconds — and
+  releases the memory as soon as the handle is idle, not preemptively.
 
   **Unsaved edits are discarded** — call `save/3` or `to_binary/2` first.
   Afterwards, functions that read or mutate the editor return

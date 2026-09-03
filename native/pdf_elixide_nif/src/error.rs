@@ -55,9 +55,8 @@ pub fn to_form_err(e: PdfError) -> Error {
     }
 }
 
-// Defensive: every guard is now taken through `Closable::with_lock` /
-// `with_read`, which contain a panic before it can poison anything (see
-// `crate::resource::contain_panic`), so this should no longer be reachable.
+// `Closable::with_lock` and `with_read` contain panics before they can poison a
+// guard, so this is only a defensive fallback.
 pub fn lock_err() -> Error {
     tagged_err(atoms::lock_poisoned(), "Lock is poisoned")
 }

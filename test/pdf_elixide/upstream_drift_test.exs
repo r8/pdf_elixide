@@ -644,11 +644,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       editor
     end
 
-    # Only the full-rewrite serializer resets the flag, and it is reached by
-    # both a save to a file and a save to bytes. `Editor.modified?/1` documents
-    # the asymmetry below as a caller-visible rule, so a release that made an
-    # incremental save reset it too — or stopped `to_binary/2` from doing so —
-    # would silently make that documentation wrong.
     test "a full rewrite clears it, whether it lands in a file or in bytes", %{
       out_path: out_path
     } do
@@ -796,11 +791,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Editor.to_binary!(editor, compress: false) =~ "/V null"
     end
 
-    # The other half of the same flush: for a `/Btn` field it copies `/V` into
-    # `/AS` verbatim, so a custom on-state written as a string lands as a string
-    # where §12.5.5 requires a name. This is why `Form` documents that spelling
-    # as making matters worse rather than as a workaround, and it is the reason
-    # the `{:name, _}` write escape was removed rather than kept pointing at it.
+    # `/V` is copied verbatim into `/AS`, where §12.5.5 requires a name.
     test "a bare string on a button is copied into /AS as a string" do
       editor = Editor.open!(@form_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -920,9 +911,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   end
 
   describe "flattening" do
-    # The asymmetry both `Form.flatten/1` and `flatten/2` document. Upstream sets
-    # `remove_acroform` in the whole-document call only; the per-page one rebuilds
-    # an AcroForm from the fields whose widgets survive.
+    # Only the whole-document path removes the AcroForm.
     test "the whole-document flatten drops the AcroForm, the per-page one rebuilds it" do
       whole = Editor.open!(@flatten_pdf)
       on_exit(fn -> Editor.close(whole) end)
@@ -941,8 +930,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Enum.map(Form.fields!(doc), & &1.name) == ["comments"]
     end
 
-    # Flattening is deferred to the write, so nothing upstream can report until
-    # one happens. Every `@doc` in the family says the list is empty until then.
     test "warnings appear only after a write" do
       editor = Editor.open!(@flatten_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -954,8 +941,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [_ | _] = Editor.flatten_warnings!(editor)
     end
 
-    # Nothing upstream clears the warning list, so a second write reports the
-    # first one's entries again. `Editor.flatten_warnings/1` documents this.
     test "warnings accumulate across writes rather than being cleared" do
       editor = Editor.open!(@flatten_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -969,9 +954,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Editor.flatten_warnings!(editor) == first ++ first
     end
 
-    # `write_incremental` never consults either flatten mark set, so an
-    # incremental save writes an unflattened file and reports nothing. The
-    # "Flattening" section of `guides/forms.md` tells callers to avoid it.
     test "an incremental save ignores the flatten marks entirely" do
       editor = Editor.open!(@flatten_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -985,11 +967,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Editor.flatten_warnings!(editor) == []
     end
 
-    # `remove_acroform` drops the catalog's `/AcroForm` outright (there is no
-    # per-field exemption), so the whole-document flatten unhooks a signature
-    # field while the per-page rebuild keeps one whose widgets it did not touch.
-    # Nothing is *destroyed* in either case — the dictionary survives collection —
-    # which is the half `Form.flatten/1` promises alongside the loss.
+    # The signature dictionary survives even when the catalog no longer links it.
     test "the whole-document flatten unhooks a signature field, the per-page one keeps it" do
       whole = Editor.open!(@signature_pdf)
       on_exit(fn -> Editor.close(whole) end)
@@ -1006,18 +984,13 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert bytes =~ "/AcroForm"
     end
 
-    # The write reaches `/Annots` entries through `as_reference()`, so an entry
-    # written inline is dropped whatever its subtype — and nothing records it.
-    # This is why `Editor.flatten_warnings/1` documents the list as a best effort
-    # rather than an inventory. The fixture's inline annotation is the only one
-    # `Document.annotations/2` does not report, hence the byte assertion.
+    # The inline annotation is observable only in the fixture bytes.
     test "an inline annotation is dropped by a flatten with no warning" do
       editor = Editor.open!(@flatten_pdf)
       on_exit(fn -> Editor.close(editor) end)
       inline = "72 550"
 
       assert File.read!(@flatten_pdf) =~ inline
-      # The control: an ordinary write keeps it, so the loss is the flatten's.
       assert Editor.to_binary!(editor, compress: false) =~ inline
 
       bytes = editor |> Form.flatten!() |> Editor.to_binary!(compress: false)
@@ -1027,10 +1000,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert only =~ "orphan"
     end
 
-    # The annotation branch removes the page's whole `/Annots` array rather than
-    # filtering it, so an annotation it could not draw is deleted rather than
-    # rendered. `Editor.flatten_annotations/1` warns about exactly this, and
-    # upstream emits no warning for it.
     test "flattening annotations removes even the ones it could not draw" do
       editor = Editor.open!(@flatten_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -1046,9 +1015,6 @@ defmodule PdfElixide.UpstreamDriftTest do
   describe "a JPEG 2000 image carrying alpha" do
     # Nothing upstream reads /SMaskInData, so a four-component RGB-plus-alpha
     # codestream is typed CMYK and encodes to a valid PNG in the wrong colours.
-    # When this fails, upstream has started honouring it: delete the alpha
-    # warning from the `PdfElixide.Document.Image` moduledoc rather than
-    # relaxing the assertion.
     test "still reads its alpha channel as ink" do
       doc = open(@image_jpx_pdf)
 

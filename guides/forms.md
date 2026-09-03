@@ -207,6 +207,40 @@ inherited list rather than extending it.
 values only — `["FR", "DE", "IT"]` for the field above. A field's `:options` is
 the one that keeps the display text.
 
+
+## Check boxes and radio groups
+
+`:kind` tells the two apart, per "Field kinds and flags" above. What follows
+applies to both, and to producing a value rather than reading one — writing one
+back with `put_value/3`, or exporting one with `export/3`.
+
+Setting a button field writes `/Yes` for `true` and `/Off` for `false`, and those
+are the only two states `put_value/3` can produce. That makes the read-then-write
+round trip lossy for some check boxes and radio groups, in two ways.
+
+**A box whose on-state is `/On` rather than `/Yes` becomes unchecked after a
+read-then-write round trip.** It reads as `true`, since both names mean
+"checked", but writing that `true` back emits `/Yes` — which is not the state
+the widget declares. Nothing in the value reveals this; the two spellings are
+indistinguishable once read. (`/No` collapses to `false` and writes `/Off` in the
+same way, but harmlessly: `/Off` is the off state for every check box.)
+
+`export/3` loses it identically, and there the loss travels: an `/On` box
+exports as `Yes` in both formats, so data exported from one copy of a form
+cannot re-check that box in another. A custom on-state survives an export, since
+it is never collapsed to `true` in the first place.
+
+**A box whose on-state is a *custom* name — `/Export1`, say — cannot be checked
+at all.** `true` writes `/Yes`, which matches no widget state, and no other value
+writes a PDF name either. Writing the on-state's name as a string is not a
+workaround and makes matters worse: it goes into `/V` *and* is copied into the
+widget's `/AS`, where the PDF specification requires a name, so a reader may
+render the field wrongly.
+
+Either field needs its dictionaries edited directly, which this library does not
+expose. Reading such a field is unaffected; it is only the value produced from
+it — written back, or exported — that is wrong.
+
 ## Filling a form
 
 Open the file as an editor, write values, then persist. Every call that changes
@@ -333,11 +367,15 @@ batch process, a web form, another document.
 ```elixir
 editor = Editor.open!("path/to/form.pdf")
 
-editor
-|> Form.put_value!("full_name", "Jane Doe")
-|> Form.put_value!("subscribe", true)
+try do
+  editor
+  |> Form.put_value!("full_name", "Jane Doe")
+  |> Form.put_value!("subscribe", true)
 
-File.write!("path/to/data.xfdf", Form.export!(editor, :xfdf))
+  File.write!("path/to/data.xfdf", Form.export!(editor, :xfdf))
+after
+  Editor.close(editor)
+end
 ```
 
 It reads from either source, like `fields/1`. From an editor it includes values
@@ -346,13 +384,18 @@ from a document it reports what the file holds.
 
 ```elixir
 doc = Document.open!("path/to/form.pdf")
-Form.export!(doc, :fdf)
+
+try do
+  Form.export!(doc, :fdf)
+after
+  Document.close(doc)
+end
 ```
 
 What comes out is exactly what `PdfElixide.Form.fields/1` reports for the same
 source, under the same fully qualified names — `person.first`, not `first`. That
 is also the limit: an exported check box value is not always faithful, per
-"Check boxes and radio groups" below.
+"Check boxes and radio groups" above.
 
 ### Which format
 
@@ -467,13 +510,8 @@ links, and highlights unchanged. In hand-built PDFs, however, an annotation
 written *inline* in `/Annots` rather than as an indirect reference is silently
 dropped regardless of type.
 
-`Editor.flatten_annotations/1,2` is blunter. On a page where at least one
-annotation appearance can be produced, it removes **every annotation entry**,
-including form field widgets and annotations it could not draw. A skipped
-annotation can therefore be deleted without being rendered or reported. If no
-annotation on the page produces an appearance, the write creates no flatten data
-for that page and draws or removes nothing.
-
+`Editor.flatten_annotations/1,2` has broader, page-wide removal behavior; its
+API documentation describes what happens when an appearance cannot be produced.
 Do not mark both kinds of flattening on the same page: where appearances are
 produced, the two marks are applied independently and fields can be drawn twice.
 
@@ -555,36 +593,3 @@ Reading the signatures themselves is a separate capability, and
 `PdfElixide.Signature` is where it lives. The [Signatures](signatures.md)
 guide covers listing, byte verification, certificates, timestamps, and damaged
 documents that signature reads reject but field reads tolerate.
-
-## Check boxes and radio groups
-
-`:kind` tells the two apart, per "Field kinds and flags" above. What follows
-applies to both, and to producing a value rather than reading one — writing one
-back with `put_value/3`, or exporting one with `export/3`.
-
-Setting a button field writes `/Yes` for `true` and `/Off` for `false`, and those
-are the only two states `put_value/3` can produce. That makes the read-then-write
-round trip lossy for some check boxes and radio groups, in two ways.
-
-**A box whose on-state is `/On` rather than `/Yes` becomes unchecked after a
-read-then-write round trip.** It reads as `true`, since both names mean
-"checked", but writing that `true` back emits `/Yes` — which is not the state
-the widget declares. Nothing in the value reveals this; the two spellings are
-indistinguishable once read. (`/No` collapses to `false` and writes `/Off` in the
-same way, but harmlessly: `/Off` is the off state for every check box.)
-
-`export/3` loses it identically, and there the loss travels: an `/On` box
-exports as `Yes` in both formats, so data exported from one copy of a form
-cannot re-check that box in another. A custom on-state survives an export, since
-it is never collapsed to `true` in the first place.
-
-**A box whose on-state is a *custom* name — `/Export1`, say — cannot be checked
-at all.** `true` writes `/Yes`, which matches no widget state, and no other value
-writes a PDF name either. Writing the on-state's name as a string is not a
-workaround and makes matters worse: it goes into `/V` *and* is copied into the
-widget's `/AS`, where the PDF specification requires a name, so a reader may
-render the field wrongly.
-
-Either field needs its dictionaries edited directly, which this library does not
-expose. Reading such a field is unaffected; it is only the value produced from
-it — written back, or exported — that is wrong.

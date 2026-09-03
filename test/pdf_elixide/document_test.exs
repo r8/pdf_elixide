@@ -1867,8 +1867,6 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "each page's matches equal the whole-document result filtered by page" do
-      # `per_page_equivalence_test.exs` cannot generate this one — its helpers
-      # pass no pattern — so the equivalence is asserted here instead.
       doc = Document.open!(@valid_pdf)
       whole = Document.search!(doc, "Page")
 
@@ -2210,9 +2208,7 @@ defmodule PdfElixide.DocumentTest do
       # Page 1 draws a Form XObject under `2 0 0 2 10 10 cm`; the form's
       # `/Matrix` is `[1 0 0 1 5 5]` and it draws the image under
       # `100 0 0 100 0 0 cm`. The matrix stops at the form's own frame while the
-      # bbox carries the page's `cm` as well, so the two disagree — the
-      # divergence `t:PdfElixide.Document.Image.matrix/0` documents. When this
-      # fails because the two agree, drop the caveat rather than the assertion.
+      # bbox carries the page's `cm` as well, so the two disagree.
       assert [image] = Document.images!(doc, 1)
       assert image.matrix == {100.0, 0.0, 0.0, 100.0, 5.0, 5.0}
       assert image.bbox == %Rect{x: 20.0, y: 20.0, width: 200.0, height: 200.0}
@@ -2693,10 +2689,7 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "emits the same block the whole-page conversion emits" do
-      # The table goes back to upstream's own converter with the config the
-      # document path builds, so rendering one table in isolation must not drift
-      # from rendering it as part of its page. This is the assertion that
-      # catches such a drift.
+      # Standalone and whole-page rendering must use the same configuration.
       doc = Document.open!(@table_pdf)
       [table] = Document.tables!(doc, 0)
 

@@ -112,13 +112,14 @@ defmodule PdfElixide.Document.Font do
   end
 
   @doc """
-  Releases this handle's reference to the font immediately.
+  Releases this handle's reference to the font without waiting for garbage
+  collection.
 
   The embedded font program behind `:ref` is normally released when the BEAM
   garbage-collects the handle; `close/1` releases this handle now. Calling it is
   optional and idempotent, and other extracted font handles remain valid. It
-  takes the handle's lock exclusively, so it waits for an in-flight `data/1` —
-  *immediately* means as soon as the handle is idle, not preemptively.
+  takes the handle's lock exclusively, so it waits for an in-flight `data/1`
+  and releases the reference as soon as the handle is idle, not preemptively.
 
   Afterwards `data/1` returns `{:error, %PdfElixide.Error{reason: :closed}}`
   (and `data!/1` raises it); the metadata fields on the struct keep working. A

@@ -143,26 +143,16 @@ defmodule PdfElixide.ConcurrencyTest do
 
       results = Task.await_many(readers, @timeout)
 
-      # Non-vacuity, and it is structural rather than timed. Every reader's
-      # first read was issued before the close was even called, and every
-      # reader looped until it observed the close — so each reader's sequence
-      # provably spans it. Neither half can degrade into "close always won" or
-      # "close never happened". This does not claim a read was in flight at the
-      # instant `close` took the write lock.
+      # Each reader is proven to span the close without relying on timing.
       assert Enum.all?(results, &(&1.first == {:ok, expected}))
 
       assert Enum.all?(results, &(&1.stopped == :saw_closed)),
              "a reader hit the #{@deadline_ms}ms deadline without ever observing :closed"
 
-      # The acceptable outcomes, exhaustively: the right text, or `:closed`.
-      # Comparing the text for equality rather than for shape is what makes
-      # "never a wrong or partial result" an assertion; `:lock_poisoned` and
-      # `:panic` are reachable through `Closable` and fail here too.
       for %{outcomes: outcomes} <- results, outcome <- outcomes do
         assert outcome == {:ok, expected} or closed_outcome?(outcome)
       end
 
-      # A close is permanent: within one reader, no `:ok` follows a `:closed`.
       for %{outcomes: outcomes} <- results do
         tail = Enum.drop_while(outcomes, &(not closed_outcome?(&1)))
         assert Enum.all?(tail, &closed_outcome?/1)
@@ -171,7 +161,6 @@ defmodule PdfElixide.ConcurrencyTest do
       assert Document.closed?(doc)
       assert {:error, %Error{reason: :closed}} = Document.text(doc, 0)
 
-      # Struct-served, so it keeps answering — exactly what `close/1` promises.
       assert {:ok, 3} = Document.page_count(doc)
     end
   end
@@ -190,9 +179,7 @@ defmodule PdfElixide.ConcurrencyTest do
       jpeg = Image.to_binary!(image, format: :jpeg)
       data = Image.data!(image)
 
-      # Non-vacuity, and the reason equality across tasks is an assertion rather
-      # than a cache hit: this fixture stores raw pixels, so every `to_binary/2`
-      # call encodes afresh from the image behind the handle.
+      # Raw pixels force every `to_binary/2` call to encode afresh.
       assert <<137, 80, 78, 71, _::binary>> = png
       assert {:raw, _pixels, _pixel_format} = data
 
@@ -254,8 +241,6 @@ defmodule PdfElixide.ConcurrencyTest do
   end
 
   describe "a single editor" do
-    # Enough rounds for the two writers and the readers to interleave; the
-    # assertions below do not depend on how they do.
     @writes 25
 
     test "one writer per field on one editor, and no write is lost" do
@@ -335,11 +320,7 @@ defmodule PdfElixide.ConcurrencyTest do
       assert Enum.all?(writes, &match?({:ok, %Editor{}}, &1))
       assert length(snapshots) == @concurrency
 
-      # Every snapshot was taken *between* mutations, never during one: it
-      # parses, and its value is one whole written string rather than a torn or
-      # missing one. Asserting that a *particular* value shows up would be a
-      # timing assertion; a subset check cannot degrade silently, since a torn
-      # or absent value fails it just the same.
+      # Accept any complete value written between snapshots; do not assert timing.
       for pdf <- snapshots do
         assert <<"%PDF", _::binary>> = pdf
 
@@ -364,9 +345,6 @@ defmodule PdfElixide.ConcurrencyTest do
       :ok = Document.close(serial)
       refute expected == ""
 
-      # No handle is shared here. What this exercises is allocation and
-      # destruction running concurrently across handles, where a use-after-free
-      # or a close racing collection would show.
       results =
         1..@workers
         |> Task.async_stream(
@@ -386,16 +364,11 @@ defmodule PdfElixide.ConcurrencyTest do
         )
         |> Enum.flat_map(fn {:ok, cycles} -> cycles end)
 
-      # Non-vacuity: every cycle ran, so this cannot pass on zero of them.
       assert length(results) == @workers * @cycles
       assert Enum.all?(results, &(&1 == {expected, :ok, true}))
     end
   end
 
-  # Fans `calls` at one handle `@concurrency` times over, shuffled, and asserts
-  # every result equals the serial one in `expected`. Mixing the calls beats
-  # repeating one: different call paths over a single shared value is the
-  # combination sharing a handle uniquely produces.
   defp assert_concurrently_equal(calls, handle, expected) do
     calls
     |> List.duplicate(@concurrency)

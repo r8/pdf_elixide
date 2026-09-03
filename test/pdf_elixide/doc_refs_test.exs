@@ -2,24 +2,14 @@ defmodule PdfElixide.DocRefsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
-  # ExDoc resolves an unqualified `fun/arity` against the module the doc block
-  # sits in, and renders one that does not resolve as plain text — no link, and
-  # no warning even under `mix docs --warnings-as-errors`. A reference that
-  # drifts onto the wrong module is therefore invisible in CI and in the built
-  # HTML alike, which is what this test exists to catch.
-
-  # Deliberate non-references: the prose asserts the function's *absence*, or
-  # names a callback of another module by its bare name. Add to this only with a
-  # reason — the default answer to a failure here is to qualify the reference.
+  # Prose that intentionally names an absent function or another module's callback.
   @allowed [
     {PdfElixide.Document.Page, "Page.close/1"},
     {PdfElixide.Document.Table, "close!/1"},
     {PdfElixide.Logging, "start/2"}
   ]
 
-  # A whole backticked span, so prose that merely contains a slash cannot match.
-  # `\w` would let `1/2` through as a function named "1", hence the leading
-  # lowercase class. The trailing `,` form covers `flatten/1,2`.
+  # Match a whole backticked reference, including compact multi-arity spellings.
   @ref ~r/^(?:(t|c):)?(?:([A-Z][\w.]*)\.)?([a-z_]\w*[?!]?)\/(\d+(?:,\d+)*)$/
 
   defp modules do

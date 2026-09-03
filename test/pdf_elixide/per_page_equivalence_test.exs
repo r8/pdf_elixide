@@ -83,9 +83,6 @@ defmodule PdfElixide.PerPageEquivalenceTest do
     assert Document.text!(doc) =~ "\f"
     refute joined =~ "\f"
 
-    # The separator is the whole of the difference on a document whose pages all
-    # extract, which is what makes `String.split(text, "\f")` the documented way
-    # back to per-page text.
     assert Document.text!(doc) |> String.split("\f") |> Enum.join() == joined
   end
 end

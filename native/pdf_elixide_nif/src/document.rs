@@ -60,8 +60,6 @@ impl OpenOptionsNif<'_> {
     }
 }
 
-// The reading-order strategy requested for a Markdown, HTML or plain-text
-// conversion.
 #[derive(NifUnitEnum, Debug)]
 pub enum ReadingOrderNif {
     StructureTree,
@@ -69,7 +67,6 @@ pub enum ReadingOrderNif {
     TopToBottom,
 }
 
-// Whether bold markers may wrap whitespace-only spans.
 #[derive(NifUnitEnum, Debug)]
 pub enum BoldMarkersNif {
     Conservative,

@@ -196,9 +196,6 @@ fn button_field_type_nif(flags: u32, appearance_state: Option<&str>) -> WidgetFi
     }
 }
 
-// The decoded `/F` annotation flags (ISO 32000-1 §12.5.3, Table 165), mirroring
-// `PdfElixide.Document.Permissions`: one boolean per bit plus `raw`, the
-// undecoded integer.
 #[derive(NifStruct, Debug)]
 #[module = "PdfElixide.Document.Annotation.Flags"]
 pub struct FlagsNif {

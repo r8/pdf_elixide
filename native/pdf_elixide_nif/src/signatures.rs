@@ -463,9 +463,8 @@ fn encapsulated_sha1_digest(signed: &SignedData) -> Option<&[u8]> {
     (digest.len() == SHA1_DIGEST_LEN).then_some(digest)
 }
 
-// Dirty for its own work rather than for a lock — it takes no resource at all.
-// Parsing the CMS blob and verifying a public-key signature over it, plus
-// hashing the covered range here, can outrun a normal scheduler's budget.
+// Signature, certificate and timestamp parsing or verification below is
+// CPU-bound and takes no resource lock, so those NIFs use the dirty scheduler.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_verify_detached(
     contents: Option<Binary>,
@@ -480,8 +479,6 @@ fn signature_verify_detached(
         .map_err(to_nif_err)
 }
 
-// Dirty for the same reason as `signature_verify_detached` above.
-//
 // Verify the signer against the encapsulated digest, then compare that digest
 // with SHA-1 of the covered PDF bytes. Checking the signer against those bytes
 // directly reports a sound signature as an altered document.
@@ -509,7 +506,6 @@ fn signature_verify_pkcs7_sha1(
     }
 }
 
-// Dirty for the same reason as `signature_verify_detached` above.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_verify_signer(contents: Option<Binary>) -> NifResult<Atom> {
     let blob = cms_blob(contents.as_deref())?;
@@ -517,7 +513,6 @@ fn signature_verify_signer(contents: Option<Binary>) -> NifResult<Atom> {
     verify_signer(blob).map(verdict_atom).map_err(to_nif_err)
 }
 
-// Dirty for the same reason as the two verify NIFs above.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_certificate<'a>(
     env: Env<'a>,
@@ -530,8 +525,6 @@ fn signature_certificate<'a>(
     certificate_to_nif(env, &certificate)
 }
 
-// Takes no resource and no lock, and is dirty because decoding a certificate
-// and rendering two distinguished names out of it is CPU-bound.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn certificate_parse<'a>(env: Env<'a>, der: Binary) -> NifResult<CertificateNif<'a>> {
     let unpadded = || {
@@ -780,8 +773,6 @@ fn hex_upper(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02X}")).collect()
 }
 
-// Dirty for the same reason as the three verify/certificate NIFs above.
-//
 // The blob goes in untrimmed: the classifier decodes through a reader that
 // tolerates the signer's zero padding, and upstream keys a DSS `/VRI` entry on
 // the digest of the *padded* bytes, so trimming would break the B-LT lookup.
@@ -1051,9 +1042,6 @@ fn no_timestamp() -> rustler::Error {
     )
 }
 
-// Dirty for the same reason as the verify NIFs above: a CMS parse and a digest,
-// no resource and no lock.
-//
 // Use the same permissive token parser as `timestamp/1`; this call judges
 // attachment, not token authenticity.
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -1069,9 +1057,8 @@ fn signature_verify_timestamp(contents: Option<Binary>) -> NifResult<Atom> {
     Ok(attachment_verdict(&parse_timestamp(&token)?, value))
 }
 
-// Dirty for the same reason, and the same argument shape as
-// `signature_verify_detached`. A document timestamp's `/Contents` is the token
-// itself, and the value it is made over is the bytes its `/ByteRange` covers.
+// A document timestamp's `/Contents` is the token itself, and the value it is
+// made over is the bytes its `/ByteRange` covers.
 //
 // Coverage extent is a separate question; this checks only the declared range.
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -1151,7 +1138,6 @@ fn parse_timestamp(token: &[u8]) -> NifResult<Timestamp> {
     Timestamp::from_der(token).map_err(to_nif_err)
 }
 
-// Dirty for the same reason as the four verify/certificate/level NIFs above.
 // Trimmed, unlike `signature_pades_level`: a `/DocTimeStamp` hands its padded
 // `/Contents` straight here, and `der`'s `from_der` reports the tail as
 // `TrailingData`.
@@ -1160,8 +1146,6 @@ fn timestamp_parse<'a>(env: Env<'a>, token: Binary) -> NifResult<TimestampNif<'a
     timestamp_to_nif(env, &parse_timestamp(&token)?)
 }
 
-// Dirty for the same reason, and trimmed for the same reason.
-//
 // Two atoms rather than the three `verdict_atom` builds: upstream's `verify`
 // folds `SignerVerify::Unknown` into an error, and so does a token that is not
 // CMS-wrapped, both of which reach the caller as `:invalid_pdf`.
@@ -1176,8 +1160,8 @@ fn timestamp_verify(token: Binary) -> NifResult<Atom> {
     })
 }
 
-// Dirty for the same reason as the NIFs above. `contents_of` rather than
-// `cms_blob`, because the extraction tolerates the padding itself.
+// `contents_of` rather than `cms_blob`, because extraction tolerates the
+// padding itself.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_timestamp<'a>(
     env: Env<'a>,
@@ -1209,8 +1193,6 @@ mod tests {
         signed_data::SignerInfos,
     };
     use der::{asn1::SetOfVec, Any, Tag};
-    // Only the canaries reach upstream's picker now; `signer_certificate` is what
-    // the NIF calls.
     use pdf_oxide::signatures::{extract_signer_certificate_der, SigningCredentials};
 
     use super::*;
@@ -1251,7 +1233,6 @@ mod tests {
         trim_der_padding(&contents).to_vec()
     }
 
-    // Pins the upstream detached treatment that requires the local path.
     #[test]
     fn upstream_still_verifies_a_pkcs7_sha1_signature_as_detached() {
         let name = "form_signature_pkcs7_sha1.pdf";

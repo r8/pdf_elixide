@@ -75,6 +75,8 @@ tagged = Document.open!("tagged.pdf")
 
 Document.to_plain_text!(tagged, 0) == Document.text!(tagged, 0)
 #=> true
+
+:ok = Document.close(tagged)
 ```
 
 On such a document, `:reading_order` and `:include_form_fields` have no effect:
@@ -182,3 +184,7 @@ padding while `text/2` collapses the padding to single spaces.
     Both take a larger option set than either plain-text surface.
   * **Finding a known string.** `PdfElixide.Document.search/2` indexes each page
     once and returns match geometry — see the [Search](search.md) guide.
+
+```elixir
+:ok = Document.close(doc)
+```

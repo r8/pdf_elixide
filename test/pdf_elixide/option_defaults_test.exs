@@ -193,9 +193,6 @@ defmodule PdfElixide.OptionDefaultsTest do
     end
 
     test "search/3,4" do
-      # `:literal` is the one default here that is not upstream's — upstream and
-      # every official binding treat the pattern as a regular expression. See
-      # the Search guide for why this binding inverts it.
       assert Document.__option_defaults__(:search) == %{
                literal: true,
                case_insensitive: false,

@@ -89,9 +89,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "leaves extracted coordinates in the same space as the box" do
       # The box starts at (10, 20) and the text is drawn at (82, 740). Nothing
-      # rebases a bbox on the box origin — the fact `media_box/1` makes visible,
-      # and the reason `PdfElixide.Document`'s "Page boxes and the coordinate
-      # origin" section tells callers to subtract it themselves.
+      # rebases a bbox on the box origin.
       doc = Document.open!(@media_box_pdf)
       page = Document.page!(doc, 0)
 
@@ -142,9 +140,7 @@ defmodule PdfElixide.Document.PageTest do
     end
 
     test "is never negative for a box whose corners are reversed" do
-      # This returned -612.0 while width/1 had its own NIF subtracting the raw
-      # corners; it is the rect's `:width` now, so it cannot disagree with
-      # `media_box/1` about the sign or anything else.
+      # Width is sourced from the same normalized rectangle as `media_box/1`.
       doc = Document.open!(@media_box_pdf)
       assert {:ok, 612.0} = Page.width(Document.page!(doc, 1))
     end

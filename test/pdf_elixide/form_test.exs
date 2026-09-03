@@ -544,9 +544,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@metadata_pdf)
       editor = Editor.open!(@metadata_pdf)
 
-      # The editor reaches `/TU`, `/Rect`, `/DV`, `/MaxLen` and `/Q` through the
-      # source field rather than through the wrapper's own accessors, two of
-      # which answer wrongly. This is what catches a drift onto them.
+      # Both sources must use the same resolved field metadata.
       assert Form.fields!(doc) == Form.fields!(editor)
     end
 
@@ -806,8 +804,6 @@ defmodule PdfElixide.FormTest do
       assert {:ok, ^editor} = Form.put_value(editor, "country", ["Canada", "Mexico"])
       assert {:ok, %Field.Choice{value: ["Canada", "Mexico"]}} = Form.field(editor, "country")
 
-      # Written as an array of text strings and re-parsed on the way back in, so
-      # this is the one place `mix test` reaches the *document* path's list arm.
       reopened = Document.from_binary!(Editor.to_binary!(editor))
       assert {:ok, %Field.Choice{value: ["Canada", "Mexico"]}} = Form.field(reopened, "country")
     end
@@ -1228,9 +1224,8 @@ defmodule PdfElixide.FormTest do
   describe "a cyclic field tree" do
     test "is refused rather than walked, from every function that reads one" do
       # `form_cyclic.pdf`'s only field is its own `/Kids` entry. Upstream's
-      # extractor would recurse until the native stack is gone, which aborts the
-      # OS process — so the assertion that matters most here is that the suite
-      # gets to run its next test at all.
+      # extractor would recurse until the native stack is gone, so refusal must
+      # happen before calling it.
       doc = Document.open!(@cyclic_pdf)
       editor = Editor.open!(@cyclic_pdf)
 
