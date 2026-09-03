@@ -7,11 +7,12 @@ use pdf_oxide::{
     search::{SearchOptions, TextSearcher},
     PdfDocument,
 };
-use rustler::{Atom, Binary, NifMap, NifResult, NifUnitEnum, ResourceArc};
+use rustler::{Atom, Binary, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc};
 
 use crate::{
     annotations::{annotation_to_nif, AnnotationNif},
     atoms,
+    binary::owned_binary,
     char::{char_to_nif, CharNif},
     error::{tagged_err, to_nif_err, to_nif_page_err, to_search_err},
     extract_options::{
@@ -20,7 +21,7 @@ use crate::{
         TablesOptionsNif, TextOptions, TextOptionsNif, WordsOptions, WordsOptionsNif,
     },
     fonts::{extract_page_fonts, FontNif},
-    form::{document_form_field_to_nif, FieldNif},
+    form::{document_form_field_to_nif, export_bytes, is_exportable, FieldNif, FormDataFormatNif},
     form_tree,
     fs_path::path_arg,
     geometry::{rect_from_corners, RectNif},
@@ -1258,6 +1259,25 @@ fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
                 document_form_field_to_nif(field, attrs)
             })
             .collect())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_export_form_data(
+    resource: ResourceArc<DocumentResource>,
+    format: FormDataFormatNif,
+    file_spec: Option<String>,
+) -> NifResult<OwnedBinary> {
+    resource.doc.with_read(|doc| {
+        let (fields, resolved) = form_tree::extract_fields(doc)?;
+
+        // The writers do not omit signature fields themselves.
+        let fields = fields
+            .into_iter()
+            .filter(|field| is_exportable(field, &resolved))
+            .collect();
+
+        owned_binary(&export_bytes(fields, format, file_spec)?, "form data")
     })
 }
 

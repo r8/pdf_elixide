@@ -2,11 +2,12 @@ defmodule PdfElixide.Form do
   @moduledoc """
   AcroForm field access for documents and editors.
 
-  `fields/1`, `field/2` and `value/2` read from *either* source — a read-only
-  `PdfElixide.Document` or a mutable `PdfElixide.Editor` (`t:source/0`) — so
-  inspecting a form needs no editor. Writing needs one: `put_value/3`,
-  `put_values/2`, `update_value/3` and `flatten/1,2` take an `Editor` only, and
-  each returns it, so filling and saving compose as a pipeline.
+  `fields/1`, `field/2`, `value/2` and `export/3` read from *either* source — a
+  read-only `PdfElixide.Document` or a mutable `PdfElixide.Editor`
+  (`t:source/0`) — so inspecting a form needs no editor. Writing needs one:
+  `put_value/3`, `put_values/2`, `update_value/3` and `flatten/1,2` take an
+  `Editor` only, and each returns it, so filling and saving compose as a
+  pipeline.
 
       "form.pdf"
       |> PdfElixide.Editor.open!()
@@ -17,6 +18,9 @@ defmodule PdfElixide.Form do
   `flatten/1,2` is how a filled form stops being fillable: it draws the field
   values into the page and takes the interactive fields away. Like every other
   edit it takes effect when the editor is written.
+
+  `export/3` hands the same fields back as FDF or XFDF bytes, so a filled form's
+  data can leave without the PDF around it.
 
   Fields come back as one struct per field type, listed in
   `PdfElixide.Form.Field`, each carrying the widget it is as a `:kind`, its
@@ -35,8 +39,8 @@ defmodule PdfElixide.Form do
 
   Which lock a call takes follows its source: a shared read on a
   `PdfElixide.Document`, and the editor's exclusive lock on a
-  `PdfElixide.Editor` — which `fields/1` takes too, so concurrent form work on
-  one editor serializes even when it only reads. See the
+  `PdfElixide.Editor` — which `fields/1` and `export/3` take too, so concurrent
+  form work on one editor serializes even when it only reads. See the
   [Concurrency](guides/concurrency.md) guide.
 
   The [Forms](guides/forms.md) guide covers the field structs, both filling
@@ -51,6 +55,31 @@ defmodule PdfElixide.Form do
   alias PdfElixide.Native.Wrap
 
   @type source :: Document.t() | Editor.t()
+
+  @typedoc """
+  The encoding `export/3` writes.
+
+  `:fdf` is the binary Forms Data Format of ISO 32000-1 §12.7.7; `:xfdf` is its
+  XML counterpart. They are not interchangeable for every value — see the
+  "Exporting field data" section of the [Forms](guides/forms.md) guide. Any other
+  value raises `ArgumentError`.
+  """
+  @type export_format :: :fdf | :xfdf
+
+  @typedoc """
+  Options for `export/3`.
+
+    * `:file_spec` — the name of the PDF this data came from, written into the
+      output so a reader can pair the two. It is a label, not a path, and is
+      absent by default.
+
+  Unknown keys and an invalid `:file_spec` raise `ArgumentError`. See the
+  "Exporting field data" section of the [Forms](guides/forms.md) guide for the
+  accepted characters.
+  """
+  @type export_opts :: [file_spec: String.t()]
+
+  @export_opts_keys [:file_spec]
 
   @doc """
   Extracts form fields from the given PDF document or editor.
@@ -135,6 +164,44 @@ defmodule PdfElixide.Form do
   @spec value!(source(), String.t()) :: Field.value()
   def value!(source, name) when is_binary(name) do
     value(source, name) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Exports the form's field data as FDF or XFDF bytes.
+
+  The bytes are returned rather than written, so no path is involved:
+
+      File.write!("data.xfdf", PdfElixide.Form.export!(editor, :xfdf))
+
+  What is exported is exactly what `fields/1` reports for the same source, under
+  the same fully qualified names — signature fields are omitted from both. From
+  a `PdfElixide.Editor` that includes values written with `put_value/3` but not
+  yet saved, so filling and exporting need no write in between.
+
+  Prefer `:xfdf` when values may contain non-ASCII text. The "Exporting field
+  data" section of the [Forms](guides/forms.md) guide covers both formats and
+  their field-value limitations.
+  """
+  @spec export(source(), export_format(), export_opts()) ::
+          {:ok, binary()} | {:error, Error.t()}
+  def export(source, format, opts \\ [])
+
+  def export(%Document{ref: ref}, format, opts) when is_list(opts) do
+    {format, file_spec} = export_args!(format, opts)
+    Wrap.call(fn -> Native.document_export_form_data(ref, format, file_spec) end)
+  end
+
+  def export(%Editor{ref: ref}, format, opts) when is_list(opts) do
+    {format, file_spec} = export_args!(format, opts)
+    Wrap.call(fn -> Native.editor_export_form_data(ref, format, file_spec) end)
+  end
+
+  @doc """
+  Same as `export/3` but returns the bytes directly, raising on error.
+  """
+  @spec export!(source(), export_format(), export_opts()) :: binary()
+  def export!(source, format, opts \\ []) when is_list(opts) do
+    export(source, format, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -388,5 +455,48 @@ defmodule PdfElixide.Form do
 
   defp not_found(name) do
     %Error{reason: :not_found, message: "Form field not found: #{name}"}
+  end
+
+  defp export_args!(format, opts) do
+    opts = Keyword.validate!(opts, @export_opts_keys)
+
+    {validate_export_format!(format), validate_file_spec!(Keyword.get(opts, :file_spec))}
+  end
+
+  defp validate_export_format!(format) when format in [:fdf, :xfdf], do: format
+
+  defp validate_export_format!(other) do
+    raise ArgumentError,
+          "unsupported form data format #{inspect(other)}, expected :fdf or :xfdf"
+  end
+
+  defp validate_file_spec!(nil), do: nil
+
+  # Validate here so a bad positional NIF argument still names `:file_spec`.
+  defp validate_file_spec!(spec) when is_binary(spec) do
+    cond do
+      not String.valid?(spec) ->
+        raise ArgumentError, "invalid :file_spec, expected a UTF-8 string: #{inspect(spec)}"
+
+      xml_forbidden?(spec) ->
+        raise ArgumentError,
+              "invalid :file_spec, expected no XML-forbidden characters: #{inspect(spec)}"
+
+      true ->
+        spec
+    end
+  end
+
+  defp validate_file_spec!(other) do
+    raise ArgumentError, "invalid :file_spec, expected a string: #{inspect(other)}"
+  end
+
+  defp xml_forbidden?(spec) do
+    spec |> String.to_charlist() |> Enum.any?(&xml_forbidden_codepoint?/1)
+  end
+
+  # XML 1.0 exclusions that a valid UTF-8 string can still hold.
+  defp xml_forbidden_codepoint?(c) do
+    c in 0x00..0x08 or c in 0x0B..0x0C or c in 0x0E..0x1F or c in 0xFFFE..0xFFFF
   end
 end

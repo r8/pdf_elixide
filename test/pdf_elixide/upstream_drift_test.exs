@@ -29,6 +29,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @search_pdf Path.join(@fixtures, "search.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
+  @button_states_pdf Path.join(@fixtures, "form_button_states.pdf")
   @signature_pdf Path.join(@fixtures, "form_signature.pdf")
   @pades_lta_pdf Path.join(@fixtures, "form_signature_pades_lta.pdf")
   @ecdsa_p521_pdf Path.join(@fixtures, "form_signature_ecdsa_p521.pdf")
@@ -790,6 +791,91 @@ defmodule PdfElixide.UpstreamDriftTest do
       Form.put_value!(editor, "subscribe", "Export1")
 
       assert Editor.to_binary!(editor, compress: false) =~ "/AS (Export1)"
+    end
+  end
+
+  describe "how a form-data export encodes a value outside ASCII" do
+    test "FDF writes it as raw UTF-8 inside a PDF literal string" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.put_value!(editor, "full_name", "Café")
+      fdf = Form.export!(editor, :fdf)
+
+      # `(Caf` + the UTF-8 encoding of é + `)`. A conforming reader decodes a
+      # literal string as PDFDocEncoded, so those two bytes render as `Ã©`.
+      assert fdf =~ <<0x28, "Caf", 0xC3, 0xA9, 0x29>>
+      refute fdf =~ <<0xE9>>
+      refute fdf =~ "FEFF"
+    end
+
+    test "the same value written into the PDF itself is encoded conformantly" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.put_value!(editor, "full_name", "Café")
+
+      # PDFDocEncoded as a hex string, `43 61 66 E9` — not raw UTF-8.
+      assert Editor.to_binary!(editor, compress: false) =~ "/V <436166E9>"
+    end
+
+    test "a value with no Latin-1 spelling takes the UTF-16BE branch on save" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.put_value!(editor, "full_name", "Привет")
+
+      assert Editor.to_binary!(editor, compress: false) =~ "/V <FEFF041F"
+      assert Form.export!(editor, :fdf) =~ <<0xD0, 0x9F>>
+    end
+
+    test "XFDF carries it correctly, being UTF-8 XML" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.put_value!(editor, "full_name", "Café")
+
+      assert Form.export!(editor, :xfdf) =~ "<value>Café</value>"
+    end
+  end
+
+  describe "how a check box on-state survives a read and an export" do
+    test "an /On box and a /Yes box are the same value once read" do
+      doc = Document.open!(@button_states_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      values = Form.fields!(doc) |> Map.new(&{&1.name, &1.value})
+
+      # The pair is the point: nothing in either struct says which name the file
+      # spells, so no caller can compensate.
+      assert values["on"] == true
+      assert values["yes"] == true
+      assert values["no"] == false
+
+      assert values["custom"] == "Export1"
+    end
+
+    test "an /On box exports as the /Yes it is not" do
+      doc = Document.open!(@button_states_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      fdf = Form.export!(doc, :fdf)
+
+      assert fdf =~ "/T (on) /V /Yes"
+      assert fdf =~ "/T (yes) /V /Yes"
+
+      assert fdf =~ "/T (no) /V /Off"
+      assert fdf =~ "/T (custom) /V /Export1"
+    end
+
+    test "XFDF loses it the same way" do
+      doc = Document.open!(@button_states_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      xfdf = Form.export!(doc, :xfdf)
+
+      assert xfdf =~ ~s(<field name="on">\n      <value>Yes</value>)
+      assert xfdf =~ ~s(<field name="custom">\n      <value>Export1</value>)
     end
   end
 

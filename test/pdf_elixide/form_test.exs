@@ -27,6 +27,10 @@ defmodule PdfElixide.FormTest do
 
   defp kinds(fields), do: Enum.map(fields, & &1.__struct__)
 
+  defp exported_names(fdf) do
+    Regex.scan(~r/\/T \(([^)]*)\)/, fdf) |> Enum.map(fn [_, name] -> name end)
+  end
+
   describe "fields/1" do
     test "returns {:ok, []} for a document with no AcroForm" do
       doc = Document.open!(@no_form_pdf)
@@ -198,6 +202,222 @@ defmodule PdfElixide.FormTest do
     test "raises for an unknown field name" do
       doc = Document.open!(@form_pdf)
       assert_raise Error, fn -> Form.value!(doc, "no_such_field") end
+    end
+  end
+
+  describe "export/3" do
+    test "writes an FDF carrying every field fields/1 reports" do
+      doc = Document.open!(@form_pdf)
+      assert {:ok, fdf} = Form.export(doc, :fdf)
+
+      assert fdf =~ "%FDF-1.2"
+      assert fdf =~ "%%EOF"
+      assert fdf =~ "/T (full_name) /V (John Doe)"
+      assert fdf =~ "/T (subscribe) /V /Yes"
+    end
+
+    test "omits /V for a field carrying no value" do
+      doc = Document.open!(@form_pdf)
+      fdf = Form.export!(doc, :fdf)
+
+      assert fdf =~ "/T (country)"
+      refute fdf =~ "/T (country) /V"
+    end
+
+    test "writes an XFDF carrying the same fields" do
+      doc = Document.open!(@form_pdf)
+      xfdf = Form.export!(doc, :xfdf)
+
+      assert xfdf =~ ~s(<?xml version="1.0" encoding="UTF-8"?>)
+      assert xfdf =~ ~s(<xfdf xmlns="http://ns.adobe.com/xfdf/")
+      assert xfdf =~ ~s(<field name="full_name">)
+      assert xfdf =~ "<value>John Doe</value>"
+      assert xfdf =~ ~s(<field name="subscribe">)
+      assert xfdf =~ "<value>Yes</value>"
+    end
+
+    test "names a nested field by its fully qualified name" do
+      doc = Document.open!(@hierarchical_pdf)
+      fdf = Form.export!(doc, :fdf)
+
+      assert fdf =~ "/T (person.first) /V (Jane)"
+      assert fdf =~ "/T (person.last) /V (Doe)"
+      refute fdf =~ "/T (first)"
+    end
+
+    test "omits a signature field, in both formats" do
+      doc = Document.open!(@signature_pdf)
+
+      assert fdf = Form.export!(doc, :fdf)
+      assert fdf =~ "signer_name"
+      refute fdf =~ "signature"
+
+      assert xfdf = Form.export!(doc, :xfdf)
+      assert xfdf =~ "signer_name"
+      refute xfdf =~ "signature"
+    end
+
+    test "omits a signature field typed on an ancestor" do
+      doc = Document.open!(@signature_edge_pdf)
+
+      # A list comparison exposes the fixture's duplicate `shadowed` name.
+      assert exported_names(Form.export!(doc, :fdf)) == ["inherited.typed", "shadowed", "plain"]
+    end
+
+    test "exports exactly the names fields/1 reports, from either source" do
+      for fixture <- [@form_pdf, @signature_pdf, @signature_edge_pdf, @hierarchical_pdf],
+          source <- [Document.open!(fixture), Editor.open!(fixture)] do
+        names = Form.fields!(source) |> Enum.map(& &1.name)
+
+        assert exported_names(Form.export!(source, :fdf)) == names, fixture
+      end
+    end
+
+    test "exports an empty field list for a document with no AcroForm" do
+      doc = Document.open!(@no_form_pdf)
+
+      assert {:ok, fdf} = Form.export(doc, :fdf)
+      assert fdf =~ "/Fields [\n]"
+      refute fdf =~ "/T ("
+    end
+
+    test "refuses a cyclic field tree" do
+      doc = Document.open!(@cyclic_pdf)
+
+      for format <- [:fdf, :xfdf] do
+        assert {:error, %Error{reason: :invalid_pdf}} = Form.export(doc, format)
+      end
+    end
+
+    test "writes no file spec by default and one when asked" do
+      doc = Document.open!(@form_pdf)
+
+      refute Form.export!(doc, :fdf) =~ "/F ("
+      assert Form.export!(doc, :fdf, file_spec: "form.pdf") =~ "/F (form.pdf)"
+
+      refute Form.export!(doc, :xfdf) =~ "<f href="
+      assert Form.export!(doc, :xfdf, file_spec: "form.pdf") =~ ~s(<f href="form.pdf"/>)
+    end
+
+    test "raises for an unrecognised format" do
+      doc = Document.open!(@form_pdf)
+
+      assert_raise ArgumentError, ~r/:pdf/, fn -> Form.export(doc, :pdf) end
+    end
+
+    test "raises for a :file_spec that is not a UTF-8 string" do
+      doc = Document.open!(@form_pdf)
+
+      for spec <- [123, <<0xFF>>] do
+        assert_raise ArgumentError, ~r/:file_spec/, fn ->
+          Form.export(doc, :fdf, file_spec: spec)
+        end
+      end
+    end
+
+    test "raises for a :file_spec holding a character XML forbids" do
+      doc = Document.open!(@form_pdf)
+
+      # These inputs are valid UTF-8 but invalid XML characters.
+      for spec <- [<<0>>, "a\vb", "a\fb", <<0xEF, 0xBF, 0xBF>>] do
+        assert_raise ArgumentError, ~r/:file_spec/, fn ->
+          Form.export(doc, :xfdf, file_spec: spec)
+        end
+      end
+
+      assert Form.export!(doc, :xfdf, file_spec: "a\tb\nc") =~ "<f href="
+    end
+
+    test "reports a closed document" do
+      doc = Document.open!(@form_pdf)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Form.export(doc, :fdf)
+    end
+  end
+
+  describe "export/3 with %Editor{}" do
+    test "an unmodified editor exports byte-identical data to a document" do
+      # `form_flags.pdf` supplies the `/V` name round-trip case.
+      for fixture <- [@form_pdf, @flags_pdf, @hierarchical_pdf, @signature_edge_pdf],
+          format <- [:fdf, :xfdf] do
+        doc = Document.open!(fixture)
+        editor = Editor.open!(fixture)
+
+        assert Form.export!(editor, format) == Form.export!(doc, format)
+      end
+    end
+
+    test "reflects a put_value/3 that has not been saved" do
+      editor = Editor.open!(@form_pdf)
+      Form.put_value!(editor, "full_name", "Jane Roe")
+
+      fdf = Form.export!(editor, :fdf)
+
+      assert fdf =~ "/T (full_name) /V (Jane Roe)"
+      refute fdf =~ "John Doe"
+      assert Form.value!(editor, "full_name") == "Jane Roe"
+    end
+
+    test "a cleared value drops /V rather than writing null" do
+      editor = Editor.open!(@form_pdf)
+      Form.put_value!(editor, "full_name", nil)
+
+      fdf = Form.export!(editor, :fdf)
+
+      assert fdf =~ "/T (full_name)"
+      refute fdf =~ "John Doe"
+      refute fdf =~ "/V null"
+    end
+
+    test "a boolean write becomes a name and a list becomes an array" do
+      editor = Editor.open!(@form_pdf)
+      Form.put_value!(editor, "subscribe", false)
+      Form.put_value!(editor, "country", ["FR", "IT"])
+
+      fdf = Form.export!(editor, :fdf)
+
+      assert fdf =~ "/T (subscribe) /V /Off"
+      assert fdf =~ "/T (country) /V [ (FR) (IT) ]"
+    end
+
+    test "omits a signature field" do
+      editor = Editor.open!(@signature_pdf)
+      fdf = Form.export!(editor, :fdf)
+
+      assert fdf =~ "signer_name"
+      refute fdf =~ "signature"
+    end
+
+    test "takes the same options" do
+      editor = Editor.open!(@form_pdf)
+
+      assert Form.export!(editor, :xfdf, file_spec: "form.pdf") =~ ~s(<f href="form.pdf"/>)
+
+      assert_raise ArgumentError, ~r/:no_such_option/, fn ->
+        Form.export(editor, :fdf, no_such_option: true)
+      end
+    end
+
+    test "reports a closed editor" do
+      editor = Editor.open!(@form_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Form.export(editor, :fdf)
+    end
+  end
+
+  describe "export!/3" do
+    test "returns the bytes directly from either source" do
+      assert Form.export!(Document.open!(@form_pdf), :fdf) =~ "%FDF-1.2"
+      assert Form.export!(Editor.open!(@form_pdf), :xfdf) =~ "<xfdf"
+    end
+
+    test "raises on a closed handle" do
+      doc = Document.open!(@form_pdf)
+      :ok = Document.close(doc)
+
+      assert_raise Error, fn -> Form.export!(doc, :fdf) end
     end
   end
 

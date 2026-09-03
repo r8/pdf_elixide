@@ -4,12 +4,14 @@ defmodule PdfElixide.OptionKeysTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Editor
+  alias PdfElixide.Form
   alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
+  @form_pdf Path.join(@fixtures, "form.pdf")
 
   @rect %Rect{x: 0.0, y: 0.0, width: 1000.0, height: 1000.0}
 
@@ -263,6 +265,12 @@ defmodule PdfElixide.OptionKeysTest do
       [image] = Document.images!(doc, 0)
       accepts_each!([format: :jpeg], &Document.Image.to_binary(image, &1))
     end
+
+    test "Form.export/3" do
+      doc = Document.open!(@form_pdf)
+      on_exit(fn -> Document.close(doc) end)
+      accepts_each!([file_spec: "form.pdf"], &Form.export(doc, :fdf, &1))
+    end
   end
 
   describe "an undeclared key is rejected" do
@@ -276,6 +284,10 @@ defmodule PdfElixide.OptionKeysTest do
       image_doc = Document.open!(@image_pdf)
       on_exit(fn -> Document.close(image_doc) end)
       [image] = Document.images!(image_doc, 0)
+      form_doc = Document.open!(@form_pdf)
+      on_exit(fn -> Document.close(form_doc) end)
+      form_editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(form_editor) end)
 
       calls = [
         fn opts -> Document.open(@valid_pdf, opts) end,
@@ -299,7 +311,9 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Editor.save(editor, "/dev/null", opts) end,
         fn opts -> Document.Table.to_markdown(table, opts) end,
         fn opts -> Document.Image.to_binary(image, opts) end,
-        fn opts -> Document.Image.save(image, "out.png", opts) end
+        fn opts -> Document.Image.save(image, "out.png", opts) end,
+        fn opts -> Form.export(form_doc, :fdf, opts) end,
+        fn opts -> Form.export(form_editor, :xfdf, opts) end
       ]
 
       for call <- calls do

@@ -324,6 +324,100 @@ Elixir binary, so peak usage includes both copies on top of the editor. For a
 very large document, prefer `save/3`, which writes to the file without that
 second full-size buffer.
 
+## Exporting field data
+
+`PdfElixide.Form.export/3` hands the form's values back on their own, as FDF or
+XFDF bytes, so filled data can go somewhere the PDF around it is not needed — a
+batch process, a web form, another document.
+
+```elixir
+editor = Editor.open!("path/to/form.pdf")
+
+editor
+|> Form.put_value!("full_name", "Jane Doe")
+|> Form.put_value!("subscribe", true)
+
+File.write!("path/to/data.xfdf", Form.export!(editor, :xfdf))
+```
+
+It reads from either source, like `fields/1`. From an editor it includes values
+written but **not yet saved**, so filling and exporting need no write in between;
+from a document it reports what the file holds.
+
+```elixir
+doc = Document.open!("path/to/form.pdf")
+Form.export!(doc, :fdf)
+```
+
+What comes out is exactly what `PdfElixide.Form.fields/1` reports for the same
+source, under the same fully qualified names — `person.first`, not `first`. That
+is also the limit: an exported check box value is not always faithful, per
+"Check boxes and radio groups" below.
+
+### Which format
+
+`:fdf` is the binary Forms Data Format of ISO 32000-1 §12.7.7. `:xfdf` is its
+XML counterpart. Both name every field and carry its value; they differ in what
+they can carry faithfully.
+
+**`:fdf` cannot represent a value outside ASCII.** It writes the value as UTF-8
+inside a PDF literal string, where a conforming reader decodes it as
+PDFDocEncoded — so even a Latin-1 name like `"Müller"` arrives as `MÃ¼ller`.
+`:xfdf` is UTF-8 XML with a declared encoding and carries any value correctly.
+
+**Prefer `:xfdf` unless every value is certainly ASCII**, or unless the tool
+receiving the data reads only FDF.
+
+**Neither format escapes a control character.** A value or field name holding
+one XML forbids — `NUL`, the rest of `0x01`–`0x1F` apart from tab, newline and
+carriage return, and `U+FFFE`/`U+FFFF` — is written through verbatim, which
+makes the XFDF not well-formed XML even though the export reports success. A
+`:file_spec` carrying one raises, since you supplied it and can fix it. One
+already in the PDF's own field names or values does not, since refusing it would
+make a document you cannot edit un-exportable.
+
+Two XFDF shapes to know before parsing it back. A multi-select field's values
+are joined into one `<value>` element separated by commas, so a value containing
+a comma cannot be told from two values. And a field whose value is the empty
+string emits no `<value>` element, which is what a field with no value emits
+too. FDF keeps both distinctions — an array stays an array, and only a valueless
+field omits `/V`.
+
+### Naming the source file
+
+`:file_spec` writes the name of the PDF the data came from into the output, so a
+reader opening the exported file can pair the two:
+
+```elixir
+Form.export!(doc, :fdf, file_spec: "form.pdf")
+#=> "%FDF-1.2\n…/F (form.pdf)…"
+
+Form.export!(doc, :xfdf, file_spec: "form.pdf")
+#=> ~s(…<f href="form.pdf"/>…)
+```
+
+It is a label carried in the exported bytes, not a path this library reads or
+writes, and nothing fills it in from the handle. A non-ASCII `:file_spec` carries
+the same FDF caveat as a non-ASCII value.
+
+### What is left out, and what is not
+
+Signature fields are omitted, in both formats and from both sources, exactly as
+`fields/1` omits them.
+
+A field flagged **NoExport** is *not* omitted. The PDF specification defines
+that flag for submit-form actions, and this API exports every field it reports.
+`:no_export` on the field's flags struct is what identifies them:
+
+```elixir
+Form.fields!(doc) |> Enum.reject(& &1.flags.no_export)
+```
+
+### There is no import
+
+Nothing here reads FDF or XFDF back. `PdfElixide.Form.put_values/2` is how data
+comes into a form.
+
 ## Flattening
 
 Flattening draws a field's appearance into the page content and takes the
@@ -465,7 +559,8 @@ documents that signature reads reject but field reads tolerate.
 ## Check boxes and radio groups
 
 `:kind` tells the two apart, per "Field kinds and flags" above. What follows
-applies to both, and to writing rather than reading.
+applies to both, and to producing a value rather than reading one — writing one
+back with `put_value/3`, or exporting one with `export/3`.
 
 Setting a button field writes `/Yes` for `true` and `/Off` for `false`, and those
 are the only two states `put_value/3` can produce. That makes the read-then-write
@@ -478,6 +573,11 @@ the widget declares. Nothing in the value reveals this; the two spellings are
 indistinguishable once read. (`/No` collapses to `false` and writes `/Off` in the
 same way, but harmlessly: `/Off` is the off state for every check box.)
 
+`export/3` loses it identically, and there the loss travels: an `/On` box
+exports as `Yes` in both formats, so data exported from one copy of a form
+cannot re-check that box in another. A custom on-state survives an export, since
+it is never collapsed to `true` in the first place.
+
 **A box whose on-state is a *custom* name — `/Export1`, say — cannot be checked
 at all.** `true` writes `/Yes`, which matches no widget state, and no other value
 writes a PDF name either. Writing the on-state's name as a string is not a
@@ -486,4 +586,5 @@ widget's `/AS`, where the PDF specification requires a name, so a reader may
 render the field wrongly.
 
 Either field needs its dictionaries edited directly, which this library does not
-expose. Reading such a field is unaffected — only writing one back is.
+expose. Reading such a field is unaffected; it is only the value produced from
+it — written back, or exported — that is wrong.

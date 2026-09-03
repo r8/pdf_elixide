@@ -4,11 +4,13 @@ use pdf_oxide::{
         forms::{field_flags, FieldType, FieldValue},
         FormField,
     },
+    fdf::{FdfWriter, XfdfWriter},
 };
-use rustler::{NifStruct, NifUnitEnum, NifUntaggedEnum};
+use rustler::{NifResult, NifStruct, NifUnitEnum, NifUntaggedEnum};
 
 use crate::{
-    form_tree::ResolvedAttrs,
+    error::to_nif_err,
+    form_tree::{Resolved, ResolvedAttrs},
     geometry::{rect_from_corners, RectNif},
 };
 
@@ -525,9 +527,69 @@ pub fn set_value_from_nif(value: Option<FieldValueNif>) -> FormFieldValue {
     }
 }
 
+#[derive(NifUnitEnum, Debug)]
+pub enum FormDataFormatNif {
+    Fdf,
+    Xfdf,
+}
+
+// `Choice` originates from a `/V` name and must retain that type when exported.
+fn export_field_value(value: FormFieldValue) -> FieldValue {
+    match value {
+        FormFieldValue::Text(s) => FieldValue::Text(s),
+        FormFieldValue::Boolean(b) => FieldValue::Boolean(b),
+        FormFieldValue::Choice(s) => FieldValue::Name(s),
+        FormFieldValue::MultiChoice(v) => FieldValue::Array(v),
+        FormFieldValue::None => FieldValue::None,
+    }
+}
+
+pub fn export_form_field(wrapper: FormFieldWrapper) -> Option<FormField> {
+    let mut field = wrapper.original()?.clone();
+    field.value = export_field_value(wrapper.value());
+
+    Some(field)
+}
+
+// Check both sources: the row catches duplicate names and `Resolved` catches an
+// inherited `/FT`.
+pub fn is_exportable(field: &FormField, resolved: &Resolved) -> bool {
+    field.field_type != FieldType::Signature && !resolved.is_signature(&field.full_name)
+}
+
+pub fn export_bytes(
+    fields: Vec<FormField>,
+    format: FormDataFormatNif,
+    file_spec: Option<String>,
+) -> NifResult<Vec<u8>> {
+    match format {
+        FormDataFormatNif::Fdf => {
+            let writer = FdfWriter::from_fields(fields);
+            let writer = match file_spec {
+                Some(spec) => writer.with_file_spec(spec),
+                None => writer,
+            };
+
+            writer.to_bytes().map_err(to_nif_err)
+        }
+        FormDataFormatNif::Xfdf => {
+            let writer = XfdfWriter::from_fields(fields);
+            let writer = match file_spec {
+                Some(spec) => writer.with_file_spec(spec),
+                None => writer,
+            };
+
+            Ok(writer.to_bytes())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::{editor::DocumentEditor, geometry::Rect, object::Object};
+    use pdf_oxide::{
+        document::PdfDocument, editor::DocumentEditor, extractors::FormExtractor, geometry::Rect,
+        object::Object,
+    };
 
     use super::*;
 
@@ -953,6 +1015,23 @@ mod tests {
         assert_eq!(
             field.original().and_then(|f| f.default_value.clone()),
             Some(FieldValue::Text(String::from("Jane Roe")))
+        );
+    }
+
+    #[test]
+    fn upstream_still_exports_a_signature_field() {
+        let doc = PdfDocument::open(fixture("form_signature.pdf")).expect("fixture opens");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+        let bytes = export_bytes(fields, FormDataFormatNif::Fdf, None).expect("fdf writes");
+        let fdf = String::from_utf8_lossy(&bytes);
+
+        // Precondition: the fillable field really is exported, so the assertion
+        // below cannot pass by nothing having been written at all.
+        assert!(fdf.contains("/T (signer_name)"), "{fdf}");
+
+        assert!(
+            fdf.contains("/T (signature)"),
+            "upstream now filters signature fields itself: {fdf}"
         );
     }
 }

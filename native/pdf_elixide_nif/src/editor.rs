@@ -10,7 +10,10 @@ use crate::{
     atoms,
     binary::owned_binary,
     error::{tagged_err, to_form_err, to_nif_err},
-    form::{editor_form_field_to_nif, set_value_from_nif, FieldNif, FieldValueNif},
+    form::{
+        editor_form_field_to_nif, export_bytes, export_form_field, is_exportable,
+        set_value_from_nif, FieldNif, FieldValueNif, FormDataFormatNif,
+    },
     form_tree::{self, Resolved},
     fs_path::path_arg,
     resource::Closable,
@@ -159,6 +162,28 @@ fn editor_form_fields(resource: ResourceArc<EditorResource>) -> NifResult<Vec<Fi
                 editor_form_field_to_nif(field, attrs)
             })
             .collect())
+    })
+}
+
+// Use the merged view so unsaved field edits reach the export; obtaining it
+// requires the exclusive lock.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_export_form_data(
+    resource: ResourceArc<EditorResource>,
+    format: FormDataFormatNif,
+    file_spec: Option<String>,
+) -> NifResult<OwnedBinary> {
+    resource.editor.with_lock(|editor| {
+        let resolved = resolved_fields(&resource, editor)?;
+        let fields = editor.get_form_fields().map_err(to_nif_err)?;
+
+        let fields = fields
+            .into_iter()
+            .filter_map(export_form_field)
+            .filter(|field| is_exportable(field, resolved))
+            .collect();
+
+        owned_binary(&export_bytes(fields, format, file_spec)?, "form data")
     })
 }
 
@@ -499,7 +524,7 @@ fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<V
 
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::PdfDocument;
+    use pdf_oxide::{editor::form_fields::FormFieldValue, PdfDocument};
 
     use super::*;
 
@@ -709,5 +734,40 @@ mod tests {
 
         assert!(!linearized.is_empty(), "the fixture writes something");
         assert_eq!(linearized, saved_with(false));
+    }
+
+    #[test]
+    fn upstream_still_exports_the_editors_source_values() {
+        let mut editor = DocumentEditor::open(fixture("form.pdf")).expect("fixture opens");
+        editor
+            .set_form_field_value("full_name", FormFieldValue::Text(String::from("Jane Roe")))
+            .expect("field is writable");
+
+        // Confirm the write landed before checking that upstream omits it.
+        let merged = editor.get_form_fields().expect("fields extract");
+        let merged = merged
+            .iter()
+            .find(|field| field.name() == "full_name")
+            .expect("field is reported");
+        assert_eq!(
+            merged.value(),
+            FormFieldValue::Text(String::from("Jane Roe"))
+        );
+
+        let path = std::env::temp_dir().join(format!(
+            "pdf_elixide_export_drift_{}.fdf",
+            std::process::id()
+        ));
+        editor.export_form_data_fdf(&path).expect("export writes");
+        // Lossy because an FDF opens with a high-bit binary marker.
+        let fdf = std::fs::read(&path).expect("export reads back");
+        let fdf = String::from_utf8_lossy(&fdf);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(fdf.contains("/V (John Doe)"), "{fdf}");
+        assert!(
+            !fdf.contains("Jane Roe"),
+            "upstream's editor export now sees pending edits: {fdf}"
+        );
     }
 }
