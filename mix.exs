@@ -126,6 +126,8 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Document.Word,
         PdfElixide.Document.TextLine,
         PdfElixide.Document.Span,
+        PdfElixide.Document.StructuredPage,
+        PdfElixide.Document.StructuredPage.Region,
         PdfElixide.Document.SearchMatch,
         PdfElixide.Document.Table,
         PdfElixide.Document.Table.Row,

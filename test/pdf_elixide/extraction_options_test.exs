@@ -11,6 +11,7 @@ defmodule PdfElixide.ExtractionOptionsTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
   @markdown_pdf Path.join(@fixtures, "markdown.pdf")
+  @structured_pdf Path.join(@fixtures, "structured.pdf")
 
   # Page indices within @extraction_pdf.
   @columns 0
@@ -343,6 +344,29 @@ defmodule PdfElixide.ExtractionOptionsTest do
       # preset here; ours passes the config through, so the cell floor still
       # rejects the table.
       assert Document.tables!(doc, @ruleless, region: table.bbox, min_table_cells: 999) == []
+    end
+  end
+
+  describe "structured/3" do
+    # In @structured_pdf: page 2 holds one body span per side of the page
+    # midpoint, too few for the gutter detector.
+    @sparse 2
+
+    setup do: %{doc: open(@structured_pdf)}
+
+    test ":column_mode :auto leaves a sparse page as one region", %{doc: doc} do
+      assert [%{kind: :body, column: nil, text: "Left alone Right alone", spans: [_, _]}] =
+               Document.structured!(doc, @sparse).regions
+    end
+
+    test ":column_mode :two splits it at the page midpoint", %{doc: doc} do
+      assert [%{column: 0, text: "Left alone"}, %{column: 1, text: "Right alone"}] =
+               Document.structured!(doc, @sparse, column_mode: :two).regions
+    end
+
+    test ":column_mode :single matches :auto there", %{doc: doc} do
+      assert Document.structured!(doc, @sparse, column_mode: :single) ==
+               Document.structured!(doc, @sparse)
     end
   end
 

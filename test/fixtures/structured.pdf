@@ -1,0 +1,157 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 9 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 16 0 R 18 0 R] /Count 5 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 15 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 944 >>
+stream
+/Artifact << /Type /Pagination /Subtype /Header >> BDC
+BT /F1 10 Tf 1 0 0 1 72 750 Tm (Running header) Tj ET
+EMC
+BT /F1 12 Tf
+1 0 0 1 72 700 Tm (Left column line one) Tj
+1 0 0 1 72 680 Tm (Left column line two) Tj
+1 0 0 1 72 660 Tm (Left column line three) Tj
+1 0 0 1 72 640 Tm (Left column line four) Tj
+1 0 0 1 72 620 Tm (Left column line five) Tj
+1 0 0 1 72 600 Tm (Left column line six) Tj
+1 0 0 1 342 700 Tm (Right column line one) Tj
+1 0 0 1 342 680 Tm (Right column line two) Tj
+1 0 0 1 342 660 Tm (Right column line three) Tj
+1 0 0 1 342 640 Tm (Right column line four) Tj
+1 0 0 1 342 620 Tm (Right column line five) Tj
+1 0 0 1 342 600 Tm (Right column line six) Tj
+1 0 0 1 72 560 Tm (12) Tj
+1 0 0 1 500 60 Tm (7) Tj
+ET
+/Artifact << /Type /Pagination /Subtype /Footer >> BDC
+BT /F1 10 Tf 1 0 0 1 72 40 Tm (Running footer) Tj ET
+EMC
+/Artifact << /Type /Pagination /Subtype /PageNumber >> BDC
+BT /F1 10 Tf 1 0 0 1 300 40 Tm (1) Tj ET
+EMC
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 15 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 198 >>
+stream
+BT /F1 12 Tf
+/H1 << /MCID 0 >> BDC 1 0 0 1 72 700 Tm (Chapter One) Tj EMC
+/Lbl << /MCID 1 >> BDC 1 0 0 1 72 660 Tm (1.) Tj EMC
+/P << /MCID 2 >> BDC 1 0 0 1 92 660 Tm (Body of the chapter) Tj EMC
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 15 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 102 >>
+stream
+BT /F1 12 Tf 1 0 0 1 72 700 Tm (Left alone) Tj ET
+BT /F1 12 Tf 1 0 0 1 342 700 Tm (Right alone) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /StructTreeRoot /K [10 0 R] >>
+endobj
+10 0 obj
+<< /Type /StructElem /S /Document /P 9 0 R /K [11 0 R] >>
+endobj
+11 0 obj
+<< /Type /StructElem /S /Sect /P 10 0 R /K [12 0 R 13 0 R 14 0 R] >>
+endobj
+12 0 obj
+<< /Type /StructElem /S /H1 /P 11 0 R /Pg 5 0 R /K [0] >>
+endobj
+13 0 obj
+<< /Type /StructElem /S /Lbl /P 11 0 R /Pg 5 0 R /K [1] >>
+endobj
+14 0 obj
+<< /Type /StructElem /S /P /P 11 0 R /Pg 5 0 R /K [2] >>
+endobj
+15 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+16 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 15 0 R >> >> /Contents 17 0 R >>
+endobj
+17 0 obj
+<< /Length 564 >>
+stream
+BT /F1 12 Tf
+1 0 0 1 72 700 Tm (Left column line one) Tj
+1 0 0 1 72 680 Tm (Left column line two) Tj
+1 0 0 1 72 660 Tm (Left column line three) Tj
+1 0 0 1 72 640 Tm (Left column line four) Tj
+1 0 0 1 72 620 Tm (Left column line five) Tj
+1 0 0 1 72 600 Tm (Left column line six) Tj
+1 0 0 1 342 720 Tm (Right column line one) Tj
+1 0 0 1 342 700 Tm (Right column line two) Tj
+1 0 0 1 342 680 Tm (Right column line three) Tj
+1 0 0 1 342 660 Tm (Right column line four) Tj
+1 0 0 1 342 640 Tm (Right column line five) Tj
+1 0 0 1 342 620 Tm (Right column line six) Tj
+ET
+endstream
+endobj
+18 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 15 0 R >> >> /Contents 19 0 R >>
+endobj
+19 0 obj
+<< /Length 615 >>
+stream
+BT /F1 12 Tf
+1 0 0 1 72 720 Tm (12) Tj
+1 0 0 1 72 700 Tm (Left column line one) Tj
+1 0 0 1 72 680 Tm (Left column line two) Tj
+1 0 0 1 72 660 Tm (Left column line three) Tj
+1 0 0 1 72 640 Tm (Left column line four) Tj
+1 0 0 1 72 620 Tm (Left column line five) Tj
+1 0 0 1 72 600 Tm (Left column line six) Tj
+1 0 0 1 342 700 Tm (Right column line one) Tj
+1 0 0 1 342 680 Tm (Right column line two) Tj
+1 0 0 1 342 660 Tm (Right column line three) Tj
+1 0 0 1 342 640 Tm (Right column line four) Tj
+1 0 0 1 342 620 Tm (Right column line five) Tj
+1 0 0 1 342 600 Tm (Right column line six) Tj
+1 0 0 1 72 580 Tm (3) Tj
+ET
+endstream
+endobj
+xref
+0 20
+0000000000 65535 f 
+0000000009 00000 n 
+0000000109 00000 n 
+0000000192 00000 n 
+0000000319 00000 n 
+0000001313 00000 n 
+0000001440 00000 n 
+0000001688 00000 n 
+0000001815 00000 n 
+0000001967 00000 n 
+0000002022 00000 n 
+0000002096 00000 n 
+0000002181 00000 n 
+0000002255 00000 n 
+0000002330 00000 n 
+0000002403 00000 n 
+0000002501 00000 n 
+0000002630 00000 n 
+0000003245 00000 n 
+0000003374 00000 n 
+trailer
+<< /Size 20 /Root 1 0 R >>
+startxref
+4040
+%%EOF

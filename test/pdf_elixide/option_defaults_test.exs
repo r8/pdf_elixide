@@ -152,6 +152,10 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "structured/2,3" do
+      assert Document.__option_defaults__(:structured) == %{column_mode: :auto}
+    end
+
     test "tables/2,3" do
       assert Document.__option_defaults__(:tables) == %{
                detection: @table_detection_defaults,
@@ -267,6 +271,8 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.chars!(doc, @columns, []) == Document.chars!(doc, @columns)
       assert Document.text_lines!(doc, @columns, []) == Document.text_lines!(doc, @columns)
       assert Document.spans!(doc, @columns, []) == Document.spans!(doc, @columns)
+      assert Document.structured!(doc, @columns, []) == Document.structured!(doc, @columns)
+      assert Document.structured!(doc, []) == Document.structured!(doc)
       assert Document.inks!(doc, @columns, []) == Document.inks!(doc, @columns)
 
       assert Document.search!(doc, "the", @columns, []) ==

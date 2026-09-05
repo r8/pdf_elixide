@@ -129,6 +129,8 @@ defmodule PdfElixide.OptionKeysTest do
 
   @tables_opts [{:region, @rect} | @table_detection_opts]
 
+  @structured_opts [column_mode: :two]
+
   @search_opts [
     literal: true,
     case_insensitive: true,
@@ -235,6 +237,12 @@ defmodule PdfElixide.OptionKeysTest do
       doc = doc()
       accepts_each!(@spans_opts, &Document.spans(doc, &1))
       accepts_each!(@spans_opts, &Document.spans(doc, 0, &1))
+    end
+
+    test "structured/2,3" do
+      doc = doc()
+      accepts_each!(@structured_opts, &Document.structured(doc, &1))
+      accepts_each!(@structured_opts, &Document.structured(doc, 0, &1))
     end
 
     test "tables/2,3" do
@@ -351,6 +359,7 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.text_lines(doc, 0, opts) end,
         fn opts -> Document.chars(doc, 0, opts) end,
         fn opts -> Document.spans(doc, 0, opts) end,
+        fn opts -> Document.structured(doc, 0, opts) end,
         fn opts -> Document.tables(doc, 0, opts) end,
         fn opts -> Document.inks(doc, 0, opts) end,
         fn opts -> Document.search(doc, "Page", opts) end,

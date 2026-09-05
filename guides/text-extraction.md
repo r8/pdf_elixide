@@ -22,10 +22,10 @@ Document.to_plain_text!(doc, 0)
 
 The examples below reuse this `doc`; close it when you are done.
 
-This guide focuses on those two functions. The structured extractors —
+This guide focuses on those two functions. The geometric extractors —
 `chars/2`, `words/2`, `text_lines/2`, `spans/2` — return glyphs and geometry,
-while `to_markdown/2` and `to_html/2` return markup. The last section summarizes
-them.
+`structured/2` returns typed regions, and `to_markdown/2` and `to_html/2`
+return markup. The last section summarizes them.
 
 ## `text/2` — the page as laid out
 
@@ -179,6 +179,12 @@ padding while `text/2` collapses the padding to single spaces.
   * **Glyphs and geometry.** `chars/2`, `spans/2`, `words/2` and
     `text_lines/2` return structs with bounding boxes, fonts and colors. Use
     them to locate text on the page rather than to read it.
+  * **Typed regions.** `structured/2` groups a page's spans into
+    `PdfElixide.Document.StructuredPage.Region`s — body text with one region
+    per column, running header, footer and page number where the PDF marks
+    them as artifacts, marginal numerals — each carrying its spans and their
+    union box. The reading to reach for when the role of a block matters more
+    than its glyphs.
   * **Markup.** `to_markdown/2` represents detected headings, lists and tables;
     `to_html/2` returns an escaped fragment, optionally absolutely positioned.
     Both take a larger option set than either plain-text surface.

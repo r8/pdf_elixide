@@ -31,6 +31,7 @@ mod resource;
 mod search;
 mod signatures;
 mod span;
+mod structured;
 mod table;
 mod text_line;
 mod word;

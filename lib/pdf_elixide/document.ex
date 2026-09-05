@@ -18,8 +18,9 @@ defmodule PdfElixide.Document do
   Every extractor here has a whole-document arity. `chars/1`, `words/1`,
   `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `rects/1`, `lines/1`,
   `images/1`, `fonts/1` and `annotations/1` return one flat list, as does
-  `search/2`; `text/1`, `to_markdown/1`, `to_html/1` and `to_plain_text/1`
-  return a single string with the pages joined. Either shape walks all pages
+  `search/2`; `structured/1` returns one `PdfElixide.Document.StructuredPage`
+  per page; `text/1`, `to_markdown/1`, `to_html/1` and `to_plain_text/1`
+  return a single string with the pages joined. Each shape walks all pages
   inside a **single** native call, so its cost scales with the whole document
   rather than with what the caller keeps. As the call returns, the result exists
   twice — natively and as the Elixir terms encoded from it — so peak usage is
@@ -49,7 +50,8 @@ defmodule PdfElixide.Document do
       Stream.flat_map(doc, &Page.chars!/1)
 
   Concatenating pages this way reproduces the whole-document arity exactly for
-  the list-returning extractors. The four that return one value do **not**,
+  the list-returning extractors, and `Enum.map(doc, &Page.structured!/1)`
+  reproduces `structured/1`. The four that return one value do **not**,
   since each joins pages itself: `text/1` separates them with a form feed and
   applies `:on_page_error` (see `t:text_opts/0`), `to_markdown/1` and
   `to_plain_text/1` each join with a `---` break, and `to_html/1` wraps each
@@ -125,9 +127,9 @@ defmodule PdfElixide.Document do
   coordinate handed back is turned with it, and on a rotated page **the
   extractors do not all report in the same frame**:
 
-    * `chars/1`, `spans/1`, `paths/1` — with `rects/1` and `lines/1`, which are
-      the same values narrowed — and `images/1` stay in raw, unrotated user
-      space, whatever the rotation.
+    * `chars/1`, `spans/1`, `structured/1`, `paths/1` — with `rects/1` and
+      `lines/1`, which are the same values narrowed — and `images/1` stay in
+      raw, unrotated user space, whatever the rotation.
     * `words/1`, `text_lines/1`, the cell boxes of `tables/1` and the boxes on a
       `search/2` match are mapped into the **displayed** frame.
       The mapping is selective: a `180`-degree page maps everything, while a
@@ -157,6 +159,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Permissions
   alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
+  alias PdfElixide.Document.StructuredPage
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
@@ -2106,6 +2109,102 @@ defmodule PdfElixide.Document do
   defp build_adaptive_threshold_option(other), do: other
 
   @typedoc """
+  Options accepted by the `structured` and `structured!` functions.
+
+    * `:column_mode` — how a two-column body is recognised. `:auto` splits only
+      when a clear vertical gutter separates two columns of body text; `:two`
+      always splits, at the detected gutter or else at the page's horizontal
+      midpoint; `:single` never splits, so every region's `:column` is `nil`.
+      Decides only `:column`; roles are unaffected. Defaults to `:auto`.
+  """
+  @type structured_opts :: [column_mode: :auto | :two | :single]
+
+  @structured_opts_keys [:column_mode]
+
+  @doc """
+  Reads pages as `PdfElixide.Document.StructuredPage` structs containing typed
+  regions. See `PdfElixide.Document.StructuredPage.Region` for grouping and
+  `t:PdfElixide.Document.StructuredPage.Region.kind/0` for roles.
+
+  With options or no second argument, returns a list of page structs in page
+  order. With a zero-based page index, returns one page struct.
+
+      Document.structured(doc)
+      Document.structured(doc, 0)
+      Document.structured(doc, 0, column_mode: :two)
+
+  The whole-document form builds every page's regions in memory at once — see
+  the "Whole-document extraction and memory" section of `PdfElixide.Document`.
+
+  See `t:structured_opts/0` for the available options.
+  """
+  @spec structured(t(), structured_opts() | non_neg_integer()) ::
+          {:ok, [StructuredPage.t()] | StructuredPage.t()} | {:error, Error.t()}
+  def structured(doc, page_index_or_opts \\ [])
+
+  def structured(%__MODULE__{ref: ref}, opts) when is_list(opts) do
+    options = build_structured_options(opts)
+
+    with {:ok, pages} <- Wrap.call(fn -> Native.document_all_structured(ref, options) end) do
+      {:ok, Enum.map(pages, &StructuredPage.from_nif/1)}
+    end
+  end
+
+  def structured(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    structured(doc, page_index, [])
+  end
+
+  @doc """
+  Reads pages as typed regions, raising an error if it fails.
+  """
+  @spec structured!(t(), structured_opts() | non_neg_integer()) ::
+          [StructuredPage.t()] | StructuredPage.t()
+  def structured!(doc, page_index_or_opts \\ [])
+
+  def structured!(%__MODULE__{} = doc, opts) when is_list(opts) do
+    structured(doc, opts) |> Wrap.unwrap!()
+  end
+
+  def structured!(%__MODULE__{} = doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    structured!(doc, page_index, [])
+  end
+
+  @doc """
+  Reads the page at the given zero-based index as typed regions.
+
+  See `t:structured_opts/0` for the available options.
+  """
+  @spec structured(t(), non_neg_integer(), structured_opts()) ::
+          {:ok, StructuredPage.t()} | {:error, Error.t()}
+  def structured(%__MODULE__{ref: ref}, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_structured_options(opts)
+
+    with {:ok, page} <-
+           Wrap.call(fn -> Native.document_structured(ref, page_index, options) end) do
+      {:ok, StructuredPage.from_nif(page)}
+    end
+  end
+
+  @doc """
+  Reads the page at the given zero-based index as typed regions, raising an
+  error if it fails.
+  """
+  @spec structured!(t(), non_neg_integer(), structured_opts()) :: StructuredPage.t()
+  def structured!(doc, page_index, opts)
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    structured(doc, page_index, opts) |> Wrap.unwrap!()
+  end
+
+  defp build_structured_options(opts) do
+    opts = Keyword.validate!(opts, @structured_opts_keys)
+
+    %{column_mode: Keyword.get(opts, :column_mode, :auto)}
+  end
+
+  @typedoc """
   Options tuning the spatial table detector. Accepted directly by the `tables`
   functions, and as the `:table_detection` option of the `text` functions.
 
@@ -2324,6 +2423,7 @@ defmodule PdfElixide.Document do
   def __option_defaults__(:text_lines), do: build_text_lines_options([])
   def __option_defaults__(:chars), do: build_chars_options([])
   def __option_defaults__(:spans), do: build_spans_options([])
+  def __option_defaults__(:structured), do: build_structured_options([])
   def __option_defaults__(:tables), do: build_tables_options([])
   def __option_defaults__(:search), do: build_search_options([])
   def __option_defaults__(:table_detection), do: build_table_detection_option([])

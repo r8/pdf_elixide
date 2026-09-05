@@ -10,6 +10,7 @@ use pdf_oxide::{
     layout::RectFilterMode,
     search::SearchOptions,
     structure::spatial_table_detector::{TableDetectionConfig, TableStrategy},
+    structured::ColumnMode,
 };
 use rustler::{NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
 
@@ -126,6 +127,23 @@ impl From<SpanReadingOrderNif> for ReadingOrder {
             SpanReadingOrderNif::TopToBottom => ReadingOrder::TopToBottom,
             SpanReadingOrderNif::ColumnAware => ReadingOrder::ColumnAware,
             SpanReadingOrderNif::Structure => ReadingOrder::Structure,
+        }
+    }
+}
+
+#[derive(NifUnitEnum, Debug, Clone, Copy)]
+pub enum ColumnModeNif {
+    Auto,
+    Two,
+    Single,
+}
+
+impl From<ColumnModeNif> for ColumnMode {
+    fn from(mode: ColumnModeNif) -> Self {
+        match mode {
+            ColumnModeNif::Auto => ColumnMode::Auto,
+            ColumnModeNif::Two => ColumnMode::Two,
+            ColumnModeNif::Single => ColumnMode::Single,
         }
     }
 }
@@ -536,6 +554,11 @@ impl From<SpansOptionsNif> for SpansOptions {
             exclude_inks: o.exclude_inks,
         }
     }
+}
+
+#[derive(NifMap, Debug)]
+pub struct StructuredOptionsNif {
+    pub column_mode: ColumnModeNif,
 }
 
 // Options for `PdfElixide.Document.tables/2,3`. There is no `region_mode`:

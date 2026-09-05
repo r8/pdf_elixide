@@ -35,6 +35,8 @@ defmodule PdfElixide.UpstreamDriftTest do
   @ecdsa_p521_pdf Path.join(@fixtures, "form_signature_ecdsa_p521.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
   @sample_pdf Path.join(@fixtures, "sample.pdf")
+  @structured_pdf Path.join(@fixtures, "structured.pdf")
+  @media_box_pdf Path.join(@fixtures, "media_box.pdf")
 
   @columns 0
   @artifacts 1
@@ -1044,6 +1046,94 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert Document.annotations!(doc, 0) == []
       assert Editor.flatten_warnings!(editor) == []
+    end
+  end
+
+  describe "what structured extraction reads off a page" do
+    # Page 0 has body numeral `12` and margin numeral `7`, about 500pt apart
+    # with no intervening role in reading order; its columns share a baseline.
+    @two_columns 0
+    @heading 1
+    # The right column starts 20pt above the left.
+    @higher_right 3
+    # Labels `12` and `3` sit above and below the left-column body.
+    @stacked_labels 4
+    @offset_box 0
+
+    test "a tagged /H1 still yields no heading" do
+      page = Document.structured!(open(@structured_pdf), @heading)
+
+      assert %{kind: :body, spans: [%{heading_level: nil}]} =
+               Enum.find(page.regions, &(&1.text == "Chapter One"))
+
+      refute Enum.any?(page.regions, &match?({:heading, _}, &1.kind))
+    end
+
+    test "the running-artifact heuristic still does not run on this path" do
+      doc = open(@structured_pdf)
+
+      refute "7" in texts(Document.words!(doc, @two_columns, include_artifacts: false))
+      assert "7" in texts(Document.words!(doc, @two_columns))
+      assert "12" in texts(Document.words!(doc, @two_columns, include_artifacts: false))
+
+      assert %{kind: :marginal_label} =
+               Enum.find(Document.structured!(doc, @two_columns).regions, &(&1.text == "7"))
+    end
+
+    test "coalescing still ignores the vertical gap between spans" do
+      doc = open(@structured_pdf)
+      single = Document.structured!(doc, @two_columns, column_mode: :single)
+
+      assert [%{text: "12 7", spans: [_, _], bbox: %{height: height}}] =
+               Enum.filter(single.regions, &(&1.kind == :marginal_label))
+
+      assert height > 400
+
+      auto = Document.structured!(doc, @two_columns)
+
+      assert [%{text: "12", column: 0}, %{text: "7", column: 1}] =
+               Enum.filter(auto.regions, &(&1.kind == :marginal_label))
+    end
+
+    test "column regions still arrive in first-span order" do
+      doc = open(@structured_pdf)
+
+      assert [%{column: 1, spans: right}, %{column: 0, spans: left}] =
+               Document.structured!(doc, @higher_right).regions
+
+      assert Enum.map(right, & &1.text) ==
+               Enum.map(~w(one two three four five six), &"Right column line #{&1}")
+
+      assert Enum.map(left, & &1.text) ==
+               Enum.map(~w(one two three four five six), &"Left column line #{&1}")
+
+      assert [%{column: 0}, %{column: 1}] =
+               Enum.filter(Document.structured!(doc, @two_columns).regions, &(&1.kind == :body))
+    end
+
+    test "column-assigned labels still merge across intervening body" do
+      doc = open(@structured_pdf)
+
+      assert [
+               %{kind: :marginal_label, column: 0, text: "12 3", spans: [_, _]},
+               %{kind: :body, column: 0},
+               %{kind: :body, column: 1}
+             ] = Document.structured!(doc, @stacked_labels).regions
+
+      assert [
+               %{kind: :marginal_label, column: nil, text: "12"},
+               %{kind: :body, column: nil},
+               %{kind: :marginal_label, column: nil, text: "3"}
+             ] = Document.structured!(doc, @stacked_labels, column_mode: :single).regions
+    end
+
+    test "width and height are still the MediaBox corner" do
+      doc = open(@media_box_pdf)
+      page = Document.page!(doc, @offset_box)
+
+      assert %{width: 622.0, height: 812.0} = Document.structured!(doc, @offset_box)
+      assert Page.width!(page) == 612.0
+      assert Page.height!(page) == 792.0
     end
   end
 

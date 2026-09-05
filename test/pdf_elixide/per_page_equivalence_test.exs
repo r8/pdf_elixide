@@ -64,6 +64,21 @@ defmodule PdfElixide.PerPageEquivalenceTest do
     end
   end
 
+  test "structured/1 equals one Page.structured!/1 per page" do
+    found =
+      for fixture <- @fixtures do
+        doc = open!(fixture)
+        whole = Document.structured!(doc)
+
+        assert whole == Enum.map(doc, &Page.structured!/1),
+               "structured/1 and Page.structured/1 disagree on #{fixture}"
+
+        whole |> Enum.map(&length(&1.regions)) |> Enum.sum()
+      end
+
+    assert Enum.sum(found) > 0, "no fixture exercises structured/1"
+  end
+
   test "the handled extractors really do carry a distinct handle per extraction" do
     # Otherwise `strip_refs/1` above would be dropping a field that never
     # differed, and the tests using it would silently be plain `==` after all.

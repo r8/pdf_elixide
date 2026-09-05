@@ -21,7 +21,7 @@ high-performance PDF library written in Rust. Built with
 - Read page count, PDF version, metadata, permissions, page labels, outlines,
   optional-content layers, and spot inks
 - Extract text, words, lines, characters, and spans with page geometry and
-  typographic metadata
+  typographic metadata, or read a page as typed regions grouped by column
 - Convert individual pages or whole documents to Markdown, HTML, or plain text
 - Search literal text or regular expressions and locate matches on the page
 - Detect tables and render them as Markdown, HTML, or plain text
@@ -135,11 +135,13 @@ Use the extractor that matches the level of detail you need:
 {:ok, lines} = Document.text_lines(doc, 0)
 {:ok, spans} = Document.spans(doc, 0)
 {:ok, chars} = Document.chars(doc, 0)
+{:ok, page} = Document.structured(doc, 0)
 ```
 
 Each returned struct includes its page and geometry. Words and lines provide a
 convenient reading-level view; spans retain PDF text-state runs; characters
-retain per-glyph details.
+retain per-glyph details. `structured/2` groups a page's spans into typed
+regions — body text per column, running header and footer, page number.
 
 Every extractor is also available from a page value, and a document is
 enumerable over its pages:

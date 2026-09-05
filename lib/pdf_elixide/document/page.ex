@@ -35,6 +35,7 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Document.Image
   alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.Span
+  alias PdfElixide.Document.StructuredPage
   alias PdfElixide.Document.Table
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
@@ -388,6 +389,26 @@ defmodule PdfElixide.Document.Page do
   @spec spans!(t(), Document.spans_opts()) :: [Span.t()]
   def spans!(page, opts \\ []) when is_list(opts) do
     spans(page, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Reads the page as a `PdfElixide.Document.StructuredPage` containing typed
+  regions.
+
+  See `t:PdfElixide.Document.structured_opts/0` for the available options.
+  """
+  @spec structured(t(), Document.structured_opts()) ::
+          {:ok, StructuredPage.t()} | {:error, Error.t()}
+  def structured(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.structured(doc, index, opts)
+  end
+
+  @doc """
+  Same as `structured/2` but raises an error if it fails.
+  """
+  @spec structured!(t(), Document.structured_opts()) :: StructuredPage.t()
+  def structured!(page, opts \\ []) when is_list(opts) do
+    structured(page, opts) |> Wrap.unwrap!()
   end
 
   @doc """
