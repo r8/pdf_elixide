@@ -4,6 +4,11 @@
 `PdfElixide.Document` or from a mutable `PdfElixide.Editor` alike. Writing needs
 an editor, since a document cannot be changed.
 
+An **encrypted** document is where those two diverge: `fields/1` reads one
+through a document opened with its password, but `PdfElixide.Editor.open/1`
+refuses it, so such a form can be read and not filled. The
+[Encryption](encryption.md) guide has the reason.
+
 ```elixir
 alias PdfElixide.Document
 alias PdfElixide.Editor

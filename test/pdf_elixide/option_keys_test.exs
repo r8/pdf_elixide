@@ -139,7 +139,26 @@ defmodule PdfElixide.OptionKeysTest do
   @save_opts [
     incremental: false,
     compress: true,
-    garbage_collect: true
+    garbage_collect: true,
+    encryption: [user_password: "secret"]
+  ]
+
+  @encryption_opts [
+    user_password: "secret",
+    owner_password: "owner",
+    algorithm: :aes128,
+    permissions: [copy: false]
+  ]
+
+  @permission_opts [
+    print_low_res: true,
+    print_high_res: true,
+    modify: true,
+    copy: true,
+    annotate: true,
+    fill_forms: true,
+    accessibility: true,
+    assemble: true
   ]
 
   defp doc do
@@ -252,6 +271,28 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!(@save_opts, &Editor.to_binary(editor, &1))
     end
 
+    test ":encryption, and each algorithm it accepts" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      accepts_each!(@encryption_opts, &Editor.to_binary(editor, encryption: &1))
+
+      for algorithm <- [:aes128, :rc4_128] do
+        accepts!(algorithm, fn ->
+          Editor.to_binary(editor, encryption: [algorithm: algorithm])
+        end)
+      end
+    end
+
+    test ":encryption's nested :permissions" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      accepts_each!(
+        @permission_opts,
+        &Editor.to_binary(editor, encryption: [permissions: &1])
+      )
+    end
+
     test "Table.to_markdown/2" do
       doc = Document.open!(@table_pdf)
       on_exit(fn -> Document.close(doc) end)
@@ -319,6 +360,8 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.spans(doc, 0, span_merging: [adaptive: opts]) end,
         fn opts -> Editor.to_binary(editor, opts) end,
         fn opts -> Editor.save(editor, "/dev/null", opts) end,
+        fn opts -> Editor.to_binary(editor, encryption: opts) end,
+        fn opts -> Editor.to_binary(editor, encryption: [permissions: opts]) end,
         fn opts -> Document.Table.to_markdown(table, opts) end,
         fn opts -> Document.Image.to_binary(image, opts) end,
         fn opts -> Document.Image.save(image, "out.png", opts) end,

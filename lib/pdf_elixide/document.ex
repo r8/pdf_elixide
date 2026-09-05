@@ -538,7 +538,8 @@ defmodule PdfElixide.Document do
   Returns `{:ok, %PdfElixide.Document.Permissions{}}` for an encrypted document,
   or `{:ok, nil}` when the document is not encrypted (no permission dictionary).
 
-  Per the PDF specification these flags are advisory; see
+  Per the PDF specification these flags are advisory, and on a revision-2
+  document four of them do not carry the meaning their names suggest; see
   `PdfElixide.Document.Permissions`.
   """
   @spec permissions(t()) :: {:ok, Permissions.t() | nil} | {:error, Error.t()}
@@ -1168,15 +1169,12 @@ defmodule PdfElixide.Document do
     * `:extract_tables` — detect tables and render them as
       `<table>`/`<thead>`/`<tbody>` markup, with `colspan` and `rowspan` on
       the cells. Defaults to `true`.
-    * `:include_images` — emit `<img>` elements. Defaults to `false`, since
-      embedded images can add hundreds of kilobytes per page. Images are
-      appended to the end of the page in a `<div class="page-images">`
-      rather than placed at their position in the content.
-    * `:embed_images` — when `true`, images are inlined as base64 data
-      URIs and `:image_output_dir` is ignored. When `false`, they are
-      written to `:image_output_dir` and referenced by path — and if that
-      option is `nil`, no image is emitted at all. Only applies when
-      `:include_images` is `true`. Defaults to `true`.
+    * `:include_images` — emit `<img>` elements. Defaults to `false` for the
+      reason given in `t:markdown_opts/0`. Images are appended to the end of
+      the page in a `<div class="page-images">` rather than placed at their
+      position in the content.
+    * `:embed_images` — behaves exactly as it does for Markdown; see
+      `t:markdown_opts/0`. Defaults to `true`.
     * `:image_output_dir` — directory to write extracted images to, used
       only when `:include_images` is `true` and `:embed_images` is `false`.
       Behaves exactly as it does for Markdown, including the
@@ -1191,14 +1189,11 @@ defmodule PdfElixide.Document do
       "Escaping" section of `to_html/2`.
     * `:include_form_fields` — inline AcroForm field values at their
       positions on the page. Defaults to `true`.
-    * `:max_image_pixels` — skip images whose width times height exceeds
-      this count. `nil` means the built-in 16 MP limit, not "no
-      limit" — pass a large integer to lift it, or `0` to skip every
-      image. Defaults to `nil`.
-    * `:reading_order` — how text blocks are ordered:
-      `:structure_tree` (follow a tagged PDF's structure tree, falling
-      back to an XY-cut), `:column_aware`, or `:top_to_bottom`. Defaults
-      to `:structure_tree`.
+    * `:max_image_pixels` — behaves exactly as it does for Markdown,
+      including `nil` meaning the built-in 16 MP limit rather than "no
+      limit"; see `t:markdown_opts/0`. Defaults to `nil`.
+    * `:reading_order` — behaves exactly as it does for Markdown; see
+      `t:markdown_opts/0`. Defaults to `:structure_tree`.
 
   Calling `to_html/1` is equivalent to `to_html/2` with no options.
   """

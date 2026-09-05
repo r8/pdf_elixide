@@ -753,8 +753,7 @@ defmodule PdfElixide.Document.PageTest do
     test "delegates to Document.fonts/2 for the page" do
       doc = Document.open!(@fonts_pdf)
       page = Document.page!(doc, 0)
-      # Each extraction yields fresh font handles, so compare stable metadata
-      # rather than the structs (whose :ref differ) directly.
+      # Fresh handles again, as for images above.
       {:ok, via_page} = Page.fonts(page)
       {:ok, via_doc} = Document.fonts(doc, 0)
       assert Enum.map(via_page, & &1.base_font) == Enum.map(via_doc, & &1.base_font)
@@ -859,8 +858,7 @@ defmodule PdfElixide.Document.PageTest do
     test "delegates to Document.tables/2 for the page" do
       doc = Document.open!(@table_pdf)
       page = Document.page!(doc, 0)
-      # Each extraction yields fresh table handles, so compare stable data
-      # rather than the structs (whose :ref differ) directly.
+      # Fresh handles again, as for images above.
       {:ok, via_page} = Page.tables(page)
       {:ok, via_doc} = Document.tables(doc, 0)
       assert Enum.map(via_page, & &1.rows) == Enum.map(via_doc, & &1.rows)

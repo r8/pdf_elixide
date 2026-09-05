@@ -33,6 +33,7 @@ high-performance PDF library written in Rust. Built with
   or XFDF, and save edited PDFs to a file or binary
 - Delete, reorder and rotate pages in a mutable editor
 - Attach files to a document, and list the attachments a document carries
+- Write a password-protected PDF, with the permission flags a reader reads back
 - Read what a document's digital signatures claim — signer, time, reason, the
   byte range each covers and the field each sits in — and list the fields still
   waiting for a signature

@@ -113,6 +113,47 @@ defmodule PdfElixide.Editor do
   No media type is written for an attachment. `PdfElixide.Document.EmbeddedFile`
   reads one when another producer declared it, but this editor cannot set one.
 
+  ## Document information is not carried over
+
+  Every write emits a trailer with no `/Info` entry, so
+  `PdfElixide.Document.metadata/1` answers a struct with every field `nil` for
+  the written file, however the source was populated. A full rewrite drops the
+  dictionary; an incremental save leaves it in the original bytes but does not
+  repeat the entry in the update's trailer, which is where a reader looks first.
+
+  XMP metadata is unaffected — `PdfElixide.Document.xmp_metadata/1` reads back
+  what the source carried — unless the write was encrypted, which the
+  [Encryption](guides/encryption.md) guide covers.
+
+  The trailer's `/ID` goes the same way, and a write emits one only when
+  `:encryption` is given.
+
+  ## Encryption
+
+  `save/3` and `to_binary/2` take an `:encryption` option that writes a
+  password-protected PDF, with the permission flags
+  `PdfElixide.Document.permissions/1` reads back:
+
+      "report.pdf"
+      |> PdfElixide.Editor.open!()
+      |> PdfElixide.Editor.save!("locked.pdf",
+        encryption: [user_password: "open-me", owner_password: "admin"]
+      )
+      |> PdfElixide.Editor.close()
+      #=> :ok
+
+  Encryption is a property of the output rather than of the editor, and this
+  only ever *adds* it: `open/1` and `from_binary/1` refuse an already-encrypted
+  document, so existing encryption cannot be changed or removed. Encrypting
+  takes the full-rewrite path, which drops any signatures the source carried.
+
+  The [Encryption](guides/encryption.md) guide covers the algorithms, the
+  password contract, what the permission flags do and do not promise, and the
+  conditions under which an encrypted write can leave content in the clear
+  without reporting it.
+
+  ## Concurrency
+
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
   a single editor serializes. `page_count/1`, `modified?/1`, `rotation/2`,
@@ -151,6 +192,10 @@ defmodule PdfElixide.Editor do
   @doc """
   Opens a PDF document for editing from the specified file path.
 
+  An encrypted document is refused with
+  `{:error, %PdfElixide.Error{reason: :encrypted}}`. Read one with
+  `PdfElixide.Document.open/2`, which takes a password.
+
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
   """
@@ -165,6 +210,8 @@ defmodule PdfElixide.Editor do
   Opens a PDF document for editing from the specified file path,
   raising an error if it fails.
 
+  Raises for an encrypted document; `open/1` describes why.
+
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
   """
@@ -178,6 +225,8 @@ defmodule PdfElixide.Editor do
 
   Takes bytes you already have — an HTTP response body, a database blob — so no
   path is involved; use `open/1` to read a file.
+
+  Encrypted bytes are refused, as in `open/1`.
   """
   @spec from_binary(binary()) :: {:ok, t()} | {:error, Error.t()}
   def from_binary(bytes) when is_binary(bytes) do
@@ -192,6 +241,8 @@ defmodule PdfElixide.Editor do
 
   Takes bytes you already have — an HTTP response body, a database blob — so no
   path is involved; use `open!/1` to read a file.
+
+  Raises for encrypted bytes, as in `open/1`.
   """
   @spec from_binary!(binary()) :: t()
   def from_binary!(bytes) when is_binary(bytes) do
@@ -212,6 +263,9 @@ defmodule PdfElixide.Editor do
   This is the version of the document the editor was opened from, which editing
   does not change. It is read from the struct, so it keeps working after
   `close/1`.
+
+  Encryption does not raise the output version; see
+  [The declared version is not raised to match](guides/encryption.md#the-declared-version-is-not-raised-to-match).
   """
   @spec version(t()) :: {non_neg_integer(), non_neg_integer()}
   def version(%__MODULE__{version: v}), do: v
@@ -295,24 +349,100 @@ defmodule PdfElixide.Editor do
     * `:compress` — compress streams. Defaults to `true`.
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`.
+    * `:encryption` — encrypt the written document, as a `t:encryption_opts/0`
+      keyword list. Defaults to `nil`, which writes an unencrypted PDF.
+      Cannot be combined with `incremental: true`; see the
+      [Encryption](guides/encryption.md) guide.
 
-  An unknown key, or a declared key given a value that is not a boolean,
-  raises `ArgumentError` naming the offending key; see the "Errors versus
+  An unknown key, or a declared key given a value of the wrong type, raises
+  `ArgumentError` naming the offending key; see the "Errors versus
   exceptions" section of `PdfElixide.Error`.
   """
   @type save_opts :: [
           incremental: boolean(),
           compress: boolean(),
-          garbage_collect: boolean()
+          garbage_collect: boolean(),
+          encryption: encryption_opts() | nil
         ]
 
-  @save_opts_keys [:incremental, :compress, :garbage_collect]
+  @save_opts_keys [:incremental, :compress, :garbage_collect, :encryption]
+
+  @typedoc """
+  The `:encryption` option of `t:save_opts/0`.
+
+    * `:user_password` — password required to open the document. Defaults to
+      `""`, which produces a document that opens without a prompt but still
+      carries the permission flags.
+    * `:owner_password` — password granting full access and the right to change
+      security settings. Defaults to `""`, which makes the user password serve
+      as the owner password too.
+    * `:algorithm` — `:aes128` (the default) or `:rc4_128`.
+    * `:permissions` — what a reader may do with the document, as a
+      `t:permission_opts/0` keyword list. Defaults to granting everything.
+
+  Both passwords are UTF-8 `t:String.t/0`, unlike `PdfElixide.Document.open/2`'s
+  `:password`, which is a byte string. See
+  [Passwords](guides/encryption.md#passwords) for their length limit,
+  interoperability and what each empty value means, and
+  [Algorithms](guides/encryption.md#algorithms) for the cipher choice and its
+  consequences for the output.
+
+  An unknown key here or in `:permissions` raises `ArgumentError` naming that
+  key. A declared key given a value of the wrong type raises naming
+  `:encryption`.
+  """
+  @type encryption_opts :: [
+          user_password: String.t(),
+          owner_password: String.t(),
+          algorithm: :aes128 | :rc4_128,
+          permissions: permission_opts()
+        ]
+
+  @encryption_opts_keys [:user_password, :owner_password, :algorithm, :permissions]
+
+  @algorithms [:aes128, :rc4_128]
+
+  @typedoc """
+  The `:permissions` option of `t:encryption_opts/0`.
+
+  The eight keys are those of `PdfElixide.Document.Permissions`, which
+  describes what each one grants. Every key defaults to `true`.
+
+  See [Permissions](guides/encryption.md#permissions) for how they interact
+  and what they do and do not promise.
+  """
+  @type permission_opts :: [
+          print_low_res: boolean(),
+          print_high_res: boolean(),
+          modify: boolean(),
+          copy: boolean(),
+          annotate: boolean(),
+          fill_forms: boolean(),
+          accessibility: boolean(),
+          assemble: boolean()
+        ]
+
+  @permission_opts_keys [
+    :print_low_res,
+    :print_high_res,
+    :modify,
+    :copy,
+    :annotate,
+    :fill_forms,
+    :accessibility,
+    :assemble
+  ]
 
   @doc """
   Writes all in-memory changes to a PDF file at the given path, and returns the
   editor.
 
   Writing does not consume the editor: you can keep editing and write again.
+
+  Pass `:encryption` to write a password-protected PDF. It cannot be combined
+  with `incremental: true`, and a successful return does not by itself prove
+  every object was encrypted — see
+  [A failed encryption is not reported](guides/encryption.md#a-failed-encryption-is-not-reported).
 
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
@@ -355,6 +485,10 @@ defmodule PdfElixide.Editor do
   there is nothing to append to in memory and passing `incremental: true` here
   returns `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`. Use `save/3` for
   an incremental write.
+
+  That includes `:encryption`, which encrypts the returned binary exactly as it
+  encrypts a file — including the caveat in
+  [A failed encryption is not reported](guides/encryption.md#a-failed-encryption-is-not-reported).
 
   The whole document is serialised in native memory before being copied
   into the returned binary, so peak usage is roughly twice the output
@@ -811,17 +945,75 @@ defmodule PdfElixide.Editor do
   defp build_save_options(opts) do
     opts = Keyword.validate!(opts, @save_opts_keys)
 
+    incremental = Keyword.get(opts, :incremental, false)
+    encryption = build_encryption_option(Keyword.get(opts, :encryption))
+
+    validate_encryption_target!(incremental, encryption)
+
     %{
-      incremental: Keyword.get(opts, :incremental, false),
+      incremental: incremental,
       compress: Keyword.get(opts, :compress, true),
-      garbage_collect: Keyword.get(opts, :garbage_collect, true)
+      garbage_collect: Keyword.get(opts, :garbage_collect, true),
+      encryption: encryption
     }
   end
 
+  # Without this guard an incremental save silently writes plaintext.
+  defp validate_encryption_target!(true, encryption) when not is_nil(encryption) do
+    raise ArgumentError,
+          ":encryption cannot be combined with incremental: true — an incremental " <>
+            "update is appended to the original file and carries no encryption"
+  end
+
+  defp validate_encryption_target!(_incremental, _encryption), do: :ok
+
+  # Pass malformed values to the NIF so its decode error names the option.
+  defp build_encryption_option(nil), do: nil
+
+  defp build_encryption_option(opts) when is_list(opts) do
+    opts = Keyword.validate!(opts, @encryption_opts_keys)
+
+    %{
+      user_password: Keyword.get(opts, :user_password, ""),
+      owner_password: Keyword.get(opts, :owner_password, ""),
+      algorithm: validate_algorithm!(opts),
+      permissions: build_permission_option(Keyword.get(opts, :permissions, []))
+    }
+  end
+
+  defp build_encryption_option(other), do: other
+
+  defp validate_algorithm!(opts) do
+    case Keyword.get(opts, :algorithm, :aes128) do
+      :aes256 ->
+        raise ArgumentError,
+              "invalid :algorithm :aes256 — no reader could decrypt the output, " <>
+                "expected one of #{inspect(@algorithms)}"
+
+      :rc4_40 ->
+        raise ArgumentError,
+              "invalid :algorithm :rc4_40 — it cannot express the permission flags, " <>
+                "expected one of #{inspect(@algorithms)}"
+
+      algorithm ->
+        algorithm
+    end
+  end
+
+  defp build_permission_option(opts) when is_list(opts) do
+    opts = Keyword.validate!(opts, @permission_opts_keys)
+
+    Map.new(@permission_opts_keys, fn key -> {key, Keyword.get(opts, key, true)} end)
+  end
+
+  defp build_permission_option(other), do: other
+
   @doc false
-  @spec __option_defaults__(:save | :embed) :: map()
+  @spec __option_defaults__(:save | :embed | :encryption | :permissions) :: map()
   def __option_defaults__(:save), do: build_save_options([])
   def __option_defaults__(:embed), do: build_embed_options([])
+  def __option_defaults__(:encryption), do: build_encryption_option([])
+  def __option_defaults__(:permissions), do: build_permission_option([])
 
   defimpl Inspect do
     import Inspect.Algebra

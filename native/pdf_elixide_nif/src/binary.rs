@@ -12,7 +12,7 @@ pub fn owned_binary(bytes: &[u8], label: &str) -> NifResult<OwnedBinary> {
     Ok(bin)
 }
 
-// Same as [`owned_binary`], released into a term for a NIF that builds its own
+// Same as `owned_binary`, released into a term for a NIF that builds its own
 // return value. A bare `Vec<u8>`/`&[u8]` would encode as a list of integers, so
 // everything binary-shaped goes through here.
 pub fn binary_term<'a>(env: Env<'a>, bytes: &[u8], label: &str) -> NifResult<Term<'a>> {

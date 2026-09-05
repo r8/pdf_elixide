@@ -152,7 +152,7 @@ fn font_data<'a>(env: Env<'a>, resource: ResourceArc<FontResource>) -> NifResult
 // BEAM to garbage-collect it. Idempotent. The embedded font program is freed
 // once no other extracted handle still references the same font. Takes the
 // handle's lock exclusively, so it waits for an in-flight read on the same
-// handle to return — see [`Closable::close`](crate::resource::Closable::close).
+// handle to return — see `Closable::close`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn font_close(resource: ResourceArc<FontResource>) -> rustler::Atom {
     resource.font.close();

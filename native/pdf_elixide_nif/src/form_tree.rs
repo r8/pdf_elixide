@@ -294,7 +294,6 @@ struct Walked {
     field_types: Vec<FieldType>,
 }
 
-// Resolves the inheritable attributes, validating the tree on the way.
 fn walk(doc: &PdfDocument, strictness: Strictness) -> Result<Walked, Refused> {
     let Some(fields) = root_fields(doc, strictness)? else {
         return Ok(Walked::default());
@@ -419,7 +418,6 @@ impl Walker<'_> {
         }
     }
 
-    // Interns one `/FT` name and hands back its index.
     fn intern_field_type(&mut self, name: &str) -> usize {
         if let Some(&id) = self.field_type_ids.get(name) {
             return id;
@@ -434,8 +432,7 @@ impl Walker<'_> {
         id
     }
 
-    // Decodes one `/Opt` array into the pool and hands back its index, reusing
-    // the entry already decoded for the same declaring object.
+    // Reuses the entry already decoded for the same declaring object.
     fn intern_options(
         &mut self,
         raw: &Object,
@@ -519,9 +516,7 @@ impl Walker<'_> {
         result
     }
 
-    // Classifies the node and recurses into its `/Kids`.
-    //
-    // Split from [`Self::node`] so the ancestor stack is popped on every exit
+    // Split from `node` so the ancestor stack is popped on every exit
     // without a `?` in sight having to remember to do it.
     fn kids(
         &mut self,

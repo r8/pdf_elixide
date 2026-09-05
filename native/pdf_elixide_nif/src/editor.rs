@@ -4,10 +4,13 @@ use std::sync::{
 };
 
 use pdf_oxide::{
-    editor::{DocumentEditor, EditableDocument, SaveOptions},
+    editor::{
+        DocumentEditor, EditableDocument, EncryptionAlgorithm, EncryptionConfig, Permissions,
+        SaveOptions,
+    },
     writer::EmbeddedFile,
 };
-use rustler::{Atom, Binary, Env, NifMap, NifResult, OwnedBinary, ResourceArc};
+use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc};
 
 use crate::{
     atoms,
@@ -27,11 +30,79 @@ use crate::{
     EditorResource,
 };
 
+// Variant spelling determines the public atom: `Rc4_128` yields `:rc4_128`.
+#[allow(non_camel_case_types)]
+#[derive(NifUnitEnum, Debug)]
+pub enum EncryptionAlgorithmNif {
+    Rc4_128,
+    Aes128,
+}
+
+impl From<EncryptionAlgorithmNif> for EncryptionAlgorithm {
+    fn from(a: EncryptionAlgorithmNif) -> Self {
+        match a {
+            EncryptionAlgorithmNif::Rc4_128 => EncryptionAlgorithm::Rc4_128,
+            EncryptionAlgorithmNif::Aes128 => EncryptionAlgorithm::Aes128,
+        }
+    }
+}
+
+// The two print fields are renamed: upstream's bare `print` is the low-res bit,
+// which the public names say and its own do not.
 #[derive(NifMap, Debug)]
+pub struct PermissionFlagsNif {
+    pub print_low_res: bool,
+    pub print_high_res: bool,
+    pub modify: bool,
+    pub copy: bool,
+    pub annotate: bool,
+    pub fill_forms: bool,
+    pub accessibility: bool,
+    pub assemble: bool,
+}
+
+impl From<PermissionFlagsNif> for Permissions {
+    fn from(p: PermissionFlagsNif) -> Self {
+        Permissions {
+            print: p.print_low_res,
+            print_high_quality: p.print_high_res,
+            modify: p.modify,
+            copy: p.copy,
+            annotate: p.annotate,
+            fill_forms: p.fill_forms,
+            accessibility: p.accessibility,
+            assemble: p.assemble,
+        }
+    }
+}
+
+// Do not derive `Debug` for this or containing types: they hold passwords.
+#[derive(NifMap)]
+pub struct EncryptionNif {
+    pub user_password: String,
+    pub owner_password: String,
+    pub algorithm: EncryptionAlgorithmNif,
+    pub permissions: PermissionFlagsNif,
+}
+
+impl From<EncryptionNif> for EncryptionConfig {
+    fn from(e: EncryptionNif) -> Self {
+        EncryptionConfig {
+            user_password: e.user_password,
+            owner_password: e.owner_password,
+            algorithm: e.algorithm.into(),
+            permissions: e.permissions.into(),
+        }
+    }
+}
+
+// No `Debug`: this is a containing type in the sense of `EncryptionNif` above.
+#[derive(NifMap)]
 pub struct SaveOptionsNif {
     pub incremental: bool,
     pub compress: bool,
     pub garbage_collect: bool,
+    pub encryption: Option<EncryptionNif>,
 }
 
 impl From<SaveOptionsNif> for SaveOptions {
@@ -42,7 +113,7 @@ impl From<SaveOptionsNif> for SaveOptions {
             // Upstream reads this nowhere; spelled out so the literal stays exhaustive.
             linearize: false,
             garbage_collect: o.garbage_collect,
-            encryption: None,
+            encryption: o.encryption.map(Into::into),
         }
     }
 }
@@ -88,9 +159,27 @@ fn seed_pages(resource: &EditorResource) -> NifResult<()> {
     })
 }
 
+// Upstream's writer copies stream payloads out through `load_object` without
+// decrypting them, so a save would emit ciphertext under a `/Filter` dict, omit
+// `/Encrypt`, and report success. Nothing upstream guards it:
+// `require_authenticated` is never called from `src/editor/`.
+fn ensure_not_encrypted(editor: &DocumentEditor) -> NifResult<()> {
+    if editor.source().is_encrypted() {
+        return Err(tagged_err(
+            atoms::encrypted(),
+            "This document is encrypted. The editor cannot decrypt it, and saving it \
+             would write unreadable content streams. Read it with PdfElixide.Document, \
+             which takes a password.",
+        ));
+    }
+
+    Ok(())
+}
+
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::open(path_arg(path)?).map_err(to_nif_err)?;
+    ensure_not_encrypted(&editor)?;
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
@@ -108,6 +197,7 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
     let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
+    ensure_not_encrypted(&editor)?;
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
@@ -618,7 +708,11 @@ fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<V
 
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::{editor::form_fields::FormFieldValue, PdfDocument};
+    use pdf_oxide::{
+        editor::form_fields::FormFieldValue,
+        encryption::{Algorithm, EncryptionWriteHandler},
+        PdfDocument,
+    };
 
     use super::*;
 
@@ -963,6 +1057,165 @@ mod tests {
         assert!(
             !fdf.contains("Jane Roe"),
             "upstream's editor export now sees pending edits: {fdf}"
+        );
+    }
+
+    fn encryption_config(algorithm: EncryptionAlgorithm) -> EncryptionConfig {
+        EncryptionConfig::new("secret", "owner").with_algorithm(algorithm)
+    }
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "pdf_elixide_encryption_drift_{name}_{}.pdf",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn upstream_still_encrypts_aes256_with_a_key_it_does_not_publish() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        let bytes = editor
+            .save_to_bytes_with_options(SaveOptions::with_encryption(encryption_config(
+                EncryptionAlgorithm::Aes256,
+            )))
+            .expect("full rewrite");
+
+        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+        assert!(
+            doc.authenticate(b"secret").expect("authenticates"),
+            "the /U hash is self-consistent even though the body key is not"
+        );
+
+        let text = doc.extract_text(0).unwrap_or_default();
+        assert!(
+            !text.contains("Page One"),
+            "upstream now encrypts an AES-256 body with the key it publishes: {text:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_still_ignores_encryption_on_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        let path = temp_path("incremental");
+
+        editor
+            .save_with_options(
+                &path,
+                SaveOptions {
+                    incremental: true,
+                    ..SaveOptions::with_encryption(encryption_config(EncryptionAlgorithm::Aes128))
+                },
+            )
+            .expect("incremental save");
+
+        let bytes = std::fs::read(&path).expect("reads back");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            !bytes.windows(8).any(|w| w == b"/Encrypt"),
+            "upstream now carries encryption into an incremental update"
+        );
+    }
+
+    // `sample.pdf` declares PDF 1.4, below AESV2's PDF 1.6 requirement.
+    #[test]
+    fn upstream_still_writes_the_source_version_when_encrypting() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        let bytes = editor
+            .save_to_bytes_with_options(SaveOptions::with_encryption(encryption_config(
+                EncryptionAlgorithm::Aes128,
+            )))
+            .expect("full rewrite");
+
+        assert!(
+            bytes.starts_with(b"%PDF-1.4"),
+            "upstream now raises the header version when encrypting"
+        );
+        assert!(
+            bytes.windows(11).any(|w| w == b"/CFM /AESV2"),
+            "the write really did use the PDF 1.6 crypt filter"
+        );
+        assert!(
+            !bytes.windows(8).any(|w| w == b"/Version"),
+            "upstream now writes a catalog /Version override"
+        );
+    }
+
+    // A short base key forces an AES failure without replacing the process-global
+    // crypto provider. Normal saves always derive a valid-length key.
+    #[test]
+    fn upstream_still_returns_plaintext_when_an_object_cannot_be_encrypted() {
+        const PROBE: &[u8] = b"the quick brown fox jumps over it";
+
+        let broken = EncryptionWriteHandler::from_key(vec![0u8; 4], Algorithm::Aes128, true);
+
+        assert_eq!(
+            broken.encrypt_stream(PROBE, 1, 0),
+            PROBE,
+            "upstream now reports a failed stream encryption instead of \
+             returning the plaintext"
+        );
+        assert_eq!(
+            broken.encrypt_string(PROBE, 1, 0),
+            PROBE,
+            "upstream now reports a failed string encryption instead of \
+             returning the plaintext"
+        );
+
+        // A valid-key control prevents a no-op cipher from passing this test.
+        let working = EncryptionWriteHandler::from_key(vec![0u8; 16], Algorithm::Aes128, true);
+
+        assert_ne!(
+            working.encrypt_stream(PROBE, 1, 0),
+            PROBE,
+            "a correct-length key no longer encrypts, so the assertions above prove nothing"
+        );
+    }
+
+    // `Aes128` is set explicitly: `EncryptionConfig`'s `Default` is `Aes256`, whose
+    // body key is never published, so a default-built config would measure that
+    // defect instead of this one.
+    #[test]
+    fn upstream_still_writes_ciphertext_from_an_encrypted_source() {
+        let mut source = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        let locked = source
+            .save_to_bytes_with_options(SaveOptions::with_encryption(encryption_config(
+                EncryptionAlgorithm::Aes128,
+            )))
+            .expect("encrypts");
+
+        let mut editor = DocumentEditor::from_bytes(locked).expect("reopens for editing");
+        assert!(
+            editor
+                .source()
+                .authenticate(b"secret")
+                .expect("authenticates"),
+            "the password no longer opens the document, so the read below proves nothing"
+        );
+
+        // Without this the assertion beneath it passes whenever authentication
+        // silently failed, which is the same observable as the defect.
+        assert!(
+            editor
+                .source()
+                .extract_text(0)
+                .expect("reads the source")
+                .contains("Page One"),
+            "an authenticated source no longer reads, so the write below is untested"
+        );
+
+        let written = editor
+            .save_to_bytes_with_options(SaveOptions::full_rewrite())
+            .expect("full rewrite");
+        let reopened = PdfDocument::from_bytes(written).expect("reopens");
+
+        assert!(
+            !reopened
+                .extract_text(0)
+                .unwrap_or_default()
+                .contains("Page One"),
+            "upstream now decrypts stream payloads on the write path: bind a password \
+             option through DocumentEditor::from_document and drop ensure_not_encrypted"
         );
     }
 }

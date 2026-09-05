@@ -160,8 +160,8 @@ defmodule PdfElixide.OptionDefaultsTest do
     end
 
     test ":table_detection, the nested form" do
-      # Reached with `[]`, not `nil`: unset means "no config at all", and only
-      # the list form builds a map to have defaults in.
+      # Reached with `[]`, not `nil`: for every nested option, unset means "no
+      # config at all", and only the list form builds a map to have defaults in.
       assert Document.__option_defaults__(:table_detection) == @table_detection_defaults
     end
 
@@ -205,7 +205,40 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Editor.__option_defaults__(:save) == %{
                incremental: false,
                compress: true,
-               garbage_collect: true
+               garbage_collect: true,
+               encryption: nil
+             }
+    end
+
+    test ":encryption, the nested form" do
+      # `[]` rather than `nil`, as for `:table_detection` above.
+      assert Editor.__option_defaults__(:encryption) == %{
+               user_password: "",
+               owner_password: "",
+               algorithm: :aes128,
+               permissions: %{
+                 print_low_res: true,
+                 print_high_res: true,
+                 modify: true,
+                 copy: true,
+                 annotate: true,
+                 fill_forms: true,
+                 accessibility: true,
+                 assemble: true
+               }
+             }
+    end
+
+    test ":encryption's nested :permissions" do
+      assert Editor.__option_defaults__(:permissions) == %{
+               print_low_res: true,
+               print_high_res: true,
+               modify: true,
+               copy: true,
+               annotate: true,
+               fill_forms: true,
+               accessibility: true,
+               assemble: true
              }
     end
 
@@ -257,6 +290,16 @@ defmodule PdfElixide.OptionDefaultsTest do
 
       assert byte_size(Editor.to_binary!(editor, compress: false)) >
                byte_size(Editor.to_binary!(editor))
+    end
+
+    test ":encryption nil writes an unencrypted document" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      doc = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(doc) end)
+
+      refute Document.encrypted?(doc)
     end
   end
 end

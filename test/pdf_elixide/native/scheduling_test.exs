@@ -19,8 +19,8 @@ defmodule PdfElixide.Native.SchedulingTest do
     assert offenders == [],
            """
            These NIFs run on a normal scheduler yet take a resource lock, so they
-           can block a scheduler thread behind a concurrent extraction (see
-           review §1.1). Add `schedule = "DirtyCpu"` to each:
+           can block a scheduler thread behind a concurrent extraction. Add
+           `schedule = "DirtyCpu"` to each:
 
            #{Enum.map_join(offenders, "\n", &"  - #{&1}")}
            """

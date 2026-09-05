@@ -19,6 +19,8 @@ defmodule PdfElixide.EditorTest do
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
   @attachments_pdf Path.join(@fixtures, "attachments.pdf")
   @attachments_cyclic_pdf Path.join(@fixtures, "attachments_cyclic.pdf")
+  @metadata_pdf Path.join(@fixtures, "metadata.pdf")
+  @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
 
   describe "open/1" do
     test "returns {:ok, %Editor{}} for a valid PDF file" do
@@ -30,6 +32,15 @@ defmodule PdfElixide.EditorTest do
     test "returns {:error, reason} for a file that is not a valid PDF" do
       assert {:error, %Error{reason: :invalid_pdf}} = Editor.open(@invalid_pdf)
     end
+
+    # Saving one writes still-encrypted stream bytes under a `/Filter` dict and
+    # reports success, so the refusal is what keeps the corruption unreachable.
+    test "refuses an encrypted document rather than editing it into corruption" do
+      assert {:error, %Error{reason: :encrypted, message: message}} =
+               Editor.open(@encrypted_pdf)
+
+      assert message =~ "PdfElixide.Document"
+    end
   end
 
   describe "open!/1" do
@@ -39,6 +50,10 @@ defmodule PdfElixide.EditorTest do
 
     test "raises for a file that is not a valid PDF" do
       assert_raise Error, fn -> Editor.open!(@invalid_pdf) end
+    end
+
+    test "raises for an encrypted document" do
+      assert_raise Error, ~r/encrypted/, fn -> Editor.open!(@encrypted_pdf) end
     end
   end
 
@@ -55,6 +70,11 @@ defmodule PdfElixide.EditorTest do
 
     test "returns {:error, reason} for empty binary" do
       assert {:error, %Error{reason: :invalid_pdf}} = Editor.from_binary(<<>>)
+    end
+
+    test "refuses encrypted bytes" do
+      assert {:error, %Error{reason: :encrypted}} =
+               Editor.from_binary(File.read!(@encrypted_pdf))
     end
   end
 
@@ -303,6 +323,222 @@ defmodule PdfElixide.EditorTest do
 
       assert {:ok, %Editor{}} = Editor.from_binary(File.read!(out_path))
       assert {:ok, %Editor{}} = Editor.from_binary(File.read!(second_path))
+    end
+  end
+
+  describe ":encryption on a write" do
+    setup do
+      path =
+        Path.join(System.tmp_dir!(), "pdf_elixide_enc_#{System.unique_integer([:positive])}.pdf")
+
+      on_exit(fn -> File.rm(path) end)
+      {:ok, out_path: path}
+    end
+
+    for algorithm <- [:aes128, :rc4_128] do
+      test "#{algorithm} writes a file whose content survives the round trip",
+           %{out_path: out_path} do
+        editor = Editor.open!(@valid_pdf)
+
+        Editor.save!(editor, out_path,
+          encryption: [
+            user_password: "secret",
+            owner_password: "owner",
+            algorithm: unquote(algorithm)
+          ]
+        )
+
+        assert Document.encrypted?(Document.open!(out_path))
+
+        doc = Document.open!(out_path, password: "secret")
+
+        assert Enum.map(0..2, &String.trim(Document.text!(doc, &1))) ==
+                 ["Page One", "Page Two", "Page Three"]
+      end
+    end
+
+    test "the default algorithm is :aes128", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      Editor.save!(editor, out_path, encryption: [user_password: "secret"])
+
+      # `/V 4 /R 4` is AES-128; the `/Encrypt` dictionary is written unencrypted,
+      # so it can be read out of the raw bytes.
+      bytes = File.read!(out_path)
+      assert bytes =~ "/V 4"
+      assert bytes =~ "/R 4"
+    end
+
+    test "a wrong password is refused", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      Editor.save!(editor, out_path, encryption: [user_password: "secret"])
+
+      assert {:error, %Error{reason: :wrong_password}} =
+               Document.open(out_path, password: "wrong")
+    end
+
+    test "an empty user password opens without one but still carries the flags",
+         %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      Editor.save!(editor, out_path, encryption: [permissions: [copy: false]])
+
+      doc = Document.open!(out_path)
+      assert Document.encrypted?(doc)
+      assert String.trim(Document.text!(doc, 0)) == "Page One"
+      refute Document.permissions!(doc).copy
+    end
+
+    test "the flags read back the way they were written", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+
+      Editor.save!(editor, out_path,
+        encryption: [
+          user_password: "secret",
+          permissions: [print_low_res: false, print_high_res: false, copy: false]
+        ]
+      )
+
+      doc = Document.open!(out_path, password: "secret")
+
+      assert %Document.Permissions{
+               print_low_res: false,
+               print_high_res: false,
+               copy: false,
+               modify: true,
+               annotate: true,
+               fill_forms: true,
+               accessibility: true,
+               assemble: true
+             } = Document.permissions!(doc)
+    end
+
+    test "to_binary/2 encrypts too" do
+      editor = Editor.open!(@valid_pdf)
+      bytes = Editor.to_binary!(editor, encryption: [user_password: "secret"])
+
+      assert {:error, %Error{reason: :wrong_password}} =
+               Document.from_binary(bytes, password: "wrong")
+
+      doc = Document.from_binary!(bytes, password: "secret")
+      assert String.trim(Document.text!(doc, 0)) == "Page One"
+    end
+
+    test "an unencrypted save leaves no permission dictionary", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      Editor.save!(editor, out_path)
+
+      doc = Document.open!(out_path)
+      refute Document.encrypted?(doc)
+      assert Document.permissions!(doc) == nil
+    end
+
+    test ":aes256 raises, naming the algorithm" do
+      editor = Editor.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:aes256/, fn ->
+        Editor.to_binary(editor, encryption: [algorithm: :aes256])
+      end
+    end
+
+    test ":rc4_40 raises, naming the algorithm" do
+      editor = Editor.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:rc4_40/, fn ->
+        Editor.to_binary(editor, encryption: [algorithm: :rc4_40])
+      end
+    end
+
+    test "incremental: true with :encryption raises rather than writing plaintext",
+         %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:encryption/, fn ->
+        Editor.save(editor, out_path, incremental: true, encryption: [user_password: "secret"])
+      end
+
+      refute File.exists?(out_path)
+    end
+
+    test "incremental: true on its own is still accepted", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      assert {:ok, ^editor} = Editor.save(editor, out_path, incremental: true)
+    end
+
+    test "the owner password opens the document too", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+
+      Editor.save!(editor, out_path,
+        encryption: [user_password: "user-pw", owner_password: "owner-pw"]
+      )
+
+      doc = Document.open!(out_path, password: "owner-pw")
+      assert String.trim(Document.text!(doc, 0)) == "Page One"
+    end
+
+    test "one editor alternates encrypted and unencrypted writes", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+      plain = out_path <> ".plain"
+      second = out_path <> ".second"
+      on_exit(fn -> Enum.each([plain, second], &File.rm/1) end)
+
+      Editor.save!(editor, out_path, encryption: [user_password: "first"])
+      Editor.save!(editor, plain)
+      Editor.save!(editor, second, encryption: [user_password: "second"])
+
+      refute Document.encrypted?(Document.open!(plain))
+      assert String.trim(Document.text!(Document.open!(plain), 0)) == "Page One"
+
+      assert String.trim(Document.text!(Document.open!(out_path, password: "first"), 0)) ==
+               "Page One"
+
+      assert String.trim(Document.text!(Document.open!(second, password: "second"), 0)) ==
+               "Page One"
+
+      assert {:error, %Error{reason: :wrong_password}} =
+               Document.open(out_path, password: "second")
+    end
+
+    # The non-ASCII filename exercises the encrypted UTF-16BE `/UF` string.
+    test "an attachment survives an encrypted save", %{out_path: out_path} do
+      editor = Editor.open!(@valid_pdf)
+
+      editor
+      |> Editor.embed_file!("résumé.txt", "body")
+      |> Editor.save!(out_path, encryption: [user_password: "secret"])
+
+      doc = Document.open!(out_path, password: "secret")
+
+      assert [%EmbeddedFile{name: "résumé.txt", data: "body"}] = Document.embedded_files!(doc)
+    end
+
+    # Disable compression and check a plaintext control so absence of these
+    # bytes demonstrates encryption rather than deflate.
+    test "metadata is encrypted along with everything else" do
+      editor = Editor.open!(@metadata_pdf)
+
+      plain = Editor.to_binary!(editor, compress: false)
+      assert plain =~ "xmpmeta"
+      assert plain =~ "Test Title"
+
+      encrypted =
+        Editor.to_binary!(editor, compress: false, encryption: [user_password: "secret"])
+
+      refute encrypted =~ "xmpmeta"
+      refute encrypted =~ "Test Title"
+
+      assert Document.encrypted?(Document.from_binary!(encrypted))
+      assert {:ok, _} = Document.from_binary(encrypted, password: "secret")
+    end
+
+    test "a wrong-typed value inside :encryption raises, naming :encryption" do
+      editor = Editor.open!(@valid_pdf)
+
+      assert_raise ArgumentError, ~r/:encryption/, fn ->
+        Editor.to_binary(editor, encryption: [user_password: 1])
+      end
+
+      assert_raise ArgumentError, ~r/:encryption/, fn ->
+        Editor.to_binary(editor, encryption: [permissions: [copy: "yes"]])
+      end
     end
   end
 

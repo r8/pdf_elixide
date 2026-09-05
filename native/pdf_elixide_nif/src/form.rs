@@ -829,9 +829,8 @@ mod tests {
         }
     }
 
-    // Every kind is derived from these two, and upstream's own annotation parser
-    // reads them the other way round (`src/annotations.rs`, the /Btn arm), so a
-    // "correction" there could reach the constants module too.
+    // Every button kind is derived from these two bits, so a drift in either
+    // silently retypes every one of them.
     #[test]
     fn upstream_field_flag_constants_still_match_table_227() {
         assert_eq!(field_flags::RADIO, 0x8000);

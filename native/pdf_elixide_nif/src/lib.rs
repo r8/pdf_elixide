@@ -58,7 +58,6 @@ pub(crate) mod atoms {
     }
 }
 
-//
 // Every resource wraps its value in a `Closable`, which owns the locking and
 // supports releasing the value early (see resource.rs and the `*_close` NIFs).
 

@@ -420,7 +420,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [{first_word_x, 48.0} | _] = origins(Document.words!(doc, @rotate_180))
       assert_in_delta first_word_x, mirrored_x, 0.001
 
-      # Said plainly: the same line, two frames.
       refute origins(Document.text_lines!(doc, @rotate_180)) == [origin(span)]
     end
 
@@ -752,6 +751,42 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert Enum.map(doc, &Page.rotation!/1) == [90, 180, 270, 0],
              "upstream now carries page properties into an incremental update"
+    end
+  end
+
+  describe "whether a configured encryption actually reaches the file" do
+    @tag :tmp_dir
+    test "a full rewrite encrypts, despite upstream calling it a placeholder", %{
+      tmp_dir: tmp_dir
+    } do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "encrypted_full_rewrite.pdf")
+
+      Editor.save!(editor, path, encryption: [user_password: "secret"])
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.encrypted?(doc),
+             "upstream now saves without encryption, as its own comment claims"
+
+      assert {:ok, false} = Document.authenticate(doc, "wrong")
+      assert {:ok, true} = Document.authenticate(doc, "secret")
+      assert String.trim(Document.text!(doc, 0)) == "Page One"
+    end
+
+    test "so does an in-memory write" do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      bytes = Editor.to_binary!(editor, encryption: [user_password: "secret"])
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.encrypted?(doc),
+             "upstream now saves without encryption, as its own comment claims"
     end
   end
 

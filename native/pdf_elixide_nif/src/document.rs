@@ -196,7 +196,6 @@ impl From<HtmlOptionsNif> for ConversionOptions {
             include_form_fields: o.include_form_fields,
             max_image_pixels: o.max_image_pixels,
             reading_order_mode: match o.reading_order {
-                // `mcid_order` is an extraction-time detail upstream fills in.
                 ReadingOrderNif::StructureTree => {
                     ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
                 }
@@ -224,7 +223,6 @@ impl From<PlainTextOptionsNif> for ConversionOptions {
             table_detection_config: o.table_detection.map(Into::into),
             include_form_fields: o.include_form_fields,
             reading_order_mode: match o.reading_order {
-                // `mcid_order` is an extraction-time detail upstream fills in.
                 ReadingOrderNif::StructureTree => {
                     ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
                 }
@@ -974,8 +972,6 @@ fn document_all_lines(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
     })
 }
 
-// Searches a single page (zero-indexed) for `pattern`.
-//
 // Reaches the page through `page_range` rather than `TextSearcher::search_page`,
 // which takes a pre-built `regex::Regex` and ignores every option but
 // `max_results`.
@@ -1078,11 +1074,9 @@ fn document_all_annotations(
     })
 }
 
-// Extracts raster images (photos, logos, scanned pictures) from a single page
-// (zero-indexed). Each one carries its metadata plus a handle to the image
-// itself; the pixel data is *encoded* lazily, by `image_to_binary` /
-// `image_save`, but it is resident in the handle from extraction onward — see
-// `image_to_nif`.
+// The pixel data behind each returned handle is *encoded* lazily, by
+// `image_to_binary` / `image_save`, but it is resident from extraction onward —
+// see `image_to_nif`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_images(
     resource: ResourceArc<DocumentResource>,

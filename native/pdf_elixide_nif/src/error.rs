@@ -13,7 +13,7 @@ pub fn tagged_err(reason: Atom, message: impl Into<String>) -> Error {
 }
 
 // Converts a `pdf_oxide::Error` into a tagged Rustler error, mapping the
-// variant to one of the stable reason atoms (see [`classify`]).
+// variant to one of the stable reason atoms (see `classify`).
 pub fn to_nif_err(e: PdfError) -> Error {
     tagged_err(classify(&e), e.to_string())
 }
@@ -26,7 +26,7 @@ pub fn to_nif_page_err(page_index: usize, e: PdfError) -> Error {
 // The prefix `TextSearcher::build_regex` puts on a rejected pattern.
 const INVALID_PATTERN_PREFIX: &str = "Invalid regex pattern: ";
 
-// Same as [`to_nif_err`], but reports a rejected search pattern as
+// Same as `to_nif_err`, but reports a rejected search pattern as
 // `:invalid_pattern`. Upstream raises it as an `InvalidPdf` like any other, so
 // the message is the only thing separating the two; a reworded one degrades to
 // `:invalid_pdf`.
@@ -42,10 +42,10 @@ pub fn to_search_err(e: PdfError) -> Error {
 // The prefix `set_form_field_value` puts on an unknown field name.
 const FIELD_NOT_FOUND_PREFIX: &str = "Form field not found: ";
 
-// Same as [`to_nif_err`], but reports an unknown form field name as
+// Same as `to_nif_err`, but reports an unknown form field name as
 // `:not_found`, which is what `PdfElixide.Form.field/2` answers for the same
 // condition. Told apart by message prefix, with the same trade-off as
-// [`to_search_err`] above.
+// `to_search_err` above.
 pub fn to_form_err(e: PdfError) -> Error {
     match &e {
         PdfError::InvalidPdf(message) if message.starts_with(FIELD_NOT_FOUND_PREFIX) => {

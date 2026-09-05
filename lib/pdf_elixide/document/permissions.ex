@@ -11,6 +11,12 @@ defmodule PdfElixide.Document.Permissions do
   not required to enforce them. They are surfaced so that callers who wish to
   honor them can.
 
+  On a **revision 2** document, `:fill_forms`, `:accessibility`, `:assemble`
+  and `:print_high_res` report bits that do not define separate permissions at
+  that revision. Accessibility follows `:copy`; use `:print_low_res`, `:modify`,
+  `:copy` and `:annotate` to interpret the restrictions. This affects documents
+  from other producers only — `PdfElixide.Editor` writes no revision-2 document.
+
   ## Fields
 
     * `:print_low_res` — print (low resolution).
@@ -22,7 +28,9 @@ defmodule PdfElixide.Document.Permissions do
     * `:assemble` — insert, rotate, or delete pages (revision ≥ 3).
     * `:print_high_res` — print at high resolution (revision ≥ 3).
     * `:raw` — the raw two's-complement `/P` integer, for callers that need the
-      undecoded value.
+      undecoded value. The specification requires the unused high bits to be
+      set, so a permissive document reads as a large negative number rather
+      than as zero.
   """
 
   @enforce_keys [

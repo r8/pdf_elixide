@@ -14,7 +14,8 @@ defmodule PdfElixide.Error do
 
   ## Reasons
 
-    * `:encrypted` — the PDF is encrypted and needs a password first.
+    * `:encrypted` — the PDF is encrypted. Reading it needs a password first;
+      `PdfElixide.Editor` refuses it outright, taking no password.
     * `:wrong_password` — the supplied password was rejected. Comes only from
       the `:password` option of `PdfElixide.Document.open/2`,
       `PdfElixide.Document.open!/2`, `PdfElixide.Document.from_binary/2` and
@@ -43,8 +44,7 @@ defmodule PdfElixide.Error do
       or with the counterpart on whichever handle it is.
     * `:other` — any error not covered above; `message` is preserved verbatim.
 
-  `:message` is a human-readable description. `:details` is reserved for future
-  structured payloads and is currently always `nil`.
+  `:message` is a human-readable description. `:details` is always `nil`.
 
   ## Errors versus exceptions
 
