@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_elixide_nif"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cms 0.2.3",
  "der 0.7.10",

@@ -5,6 +5,23 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.17.0](https://github.com/r8/pdf_elixide/compare/v0.16.0...v0.17.0) (2026-09-06)
+
+
+
+
+### Features:
+
+* add region erasing by [@r8](https://github.com/r8)
+
+* add structured page extraction with typed regions by [@r8](https://github.com/r8)
+
+* add PDF encryption on save by [@r8](https://github.com/r8)
+
+* add PDF file attachment support by [@r8](https://github.com/r8)
+
+* add AcroForm data export as FDF or XFDF by [@r8](https://github.com/r8)
+
 ## [v0.16.0](https://github.com/r8/pdf_elixide/compare/v0.15.1...v0.16.0) (2026-08-31)
 
 
