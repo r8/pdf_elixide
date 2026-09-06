@@ -8,9 +8,11 @@ defmodule PdfElixide.EditorTest do
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form
+  alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
+  @indirect_contents_pdf Path.join(@fixtures, "contents_indirect_array.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @invalid_pdf Path.join(@fixtures, "invalid.bin")
@@ -233,9 +235,6 @@ defmodule PdfElixide.EditorTest do
     test "to_binary/2 with a non-boolean option raises, naming the option" do
       editor = Editor.open!(@form_pdf)
 
-      # The NIF reports an undecodable option map as a message string naming
-      # the field; `Native.Wrap.call/1` turns that into an `ArgumentError`,
-      # since a bad option is a caller bug rather than a document failure.
       assert_raise ArgumentError, ~r/:compress/, fn ->
         Editor.to_binary(editor, compress: "yes")
       end
@@ -316,8 +315,6 @@ defmodule PdfElixide.EditorTest do
 
       editor = Editor.open!(@form_pdf)
 
-      # Writing does not consume the editor, which is what makes returning it
-      # from `save/3` safe rather than merely convenient.
       assert {:ok, editor} = Editor.save(editor, out_path)
       assert {:ok, _editor} = Editor.save(editor, second_path)
 
@@ -1127,6 +1124,229 @@ defmodule PdfElixide.EditorTest do
       editor |> Editor.delete_page!(0) |> Editor.rotate_page_by!(0, 90)
 
       assert saved_rotations(editor) == [270, 270, 0]
+    end
+  end
+
+  @erase_rect %Rect{x: 72.0, y: 700.0, width: 200.0, height: 40.0}
+
+  defp saved_whiteouts(editor) do
+    doc = Document.from_binary!(Editor.to_binary!(editor))
+
+    pages =
+      Enum.map(doc, fn page ->
+        rects = page |> Document.Page.rects!() |> Enum.map(&{&1.bbox, &1.fill_color})
+        {String.trim(Document.Page.text!(page)), rects}
+      end)
+
+    Document.close(doc)
+
+    pages
+  end
+
+  describe "erase_region/3" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.erase_region(editor, 0, @erase_rect)
+      assert Editor.modified?(editor)
+    end
+
+    test "paints a white rectangle over the region and leaves the text beneath it" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.erase_region!(editor, 0, @erase_rect)
+
+      white = %PdfElixide.Color.RGB{r: 1.0, g: 1.0, b: 1.0}
+
+      assert saved_whiteouts(editor) == [
+               {"Page One", [{@erase_rect, white}]},
+               {"Page Two", []},
+               {"Page Three", []}
+             ]
+    end
+
+    test "normalizes reversed corners" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.erase_region!(editor, 0, %Rect{x: 272.0, y: 740.0, width: -200.0, height: -40.0})
+
+      assert [{_, [{@erase_rect, _}]} | _] = saved_whiteouts(editor)
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.erase_region(editor, 3, @erase_rect)
+    end
+
+    # The fixture's `/Contents` refers to an array object rather than a stream.
+    test "returns {:error, :unsupported} for a page whose content streams are an indirect array" do
+      editor = Editor.open!(@indirect_contents_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      plain = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(plain) end)
+      assert Document.text!(plain, 0) =~ "Indirect"
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.erase_region(editor, 0, @erase_rect)
+
+      assert message =~ "indirect array"
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.erase_region(editor, -1, @erase_rect) end
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@valid_pdf)
+      Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.erase_region(editor, 0, @erase_rect)
+    end
+  end
+
+  describe "erase_regions/3" do
+    test "paints every rectangle in the list" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      other = %Rect{x: 72.0, y: 600.0, width: 100.0, height: 20.0}
+      Editor.erase_regions!(editor, 0, [@erase_rect, other])
+
+      assert [{"Page One", rects} | _] = saved_whiteouts(editor)
+      assert Enum.map(rects, &elem(&1, 0)) == [@erase_rect, other]
+    end
+
+    test "raises for an empty list" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/at least one region/, fn ->
+        Editor.erase_regions(editor, 0, [])
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a wrong-typed field, naming it" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/Could not decode field :x/, fn ->
+        Editor.erase_regions(editor, 0, [%Rect{x: "72", y: 700.0, width: 200.0, height: 40.0}])
+      end
+    end
+
+    # In the first two only the far corner overflows; each field fits on its own.
+    test "raises for a region whose corner overflows a 32-bit float" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/corners must fit a 32-bit float/, fn ->
+        Editor.erase_regions(editor, 0, [%Rect{x: 2.0e38, y: 0.0, width: 2.0e38, height: 10.0}])
+      end
+
+      assert_raise ArgumentError, ~r/corners must fit a 32-bit float/, fn ->
+        Editor.erase_region(editor, 0, %Rect{x: 0.0, y: -2.0e38, width: 10.0, height: -2.0e38})
+      end
+
+      assert_raise ArgumentError, ~r/corners must fit a 32-bit float/, fn ->
+        Editor.erase_regions(editor, 0, [%Rect{x: 1.0e300, y: 0.0, width: 10.0, height: 10.0}])
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Editor.erase_regions(editor, 3, [@erase_rect])
+    end
+  end
+
+  describe "clear_erase_regions/2" do
+    test "drops the pending regions so the written page is untouched" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.erase_region!(0, @erase_rect) |> Editor.clear_erase_regions!(0)
+
+      assert [{"Page One", []} | _] = saved_whiteouts(editor)
+    end
+
+    test "leaves the other pages' regions alone" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.erase_region!(0, @erase_rect)
+      |> Editor.erase_region!(1, @erase_rect)
+      |> Editor.clear_erase_regions!(0)
+
+      assert [{"Page One", []}, {"Page Two", [_]}, {"Page Three", []}] = saved_whiteouts(editor)
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.clear_erase_regions(editor, 3)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.clear_erase_regions(editor, -1) end
+    end
+  end
+
+  describe "erased regions and the page operations" do
+    test "a region follows its page through a move" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.erase_region!(0, @erase_rect) |> Editor.move_page!(0, 2)
+
+      assert [{"Page Two", []}, {"Page Three", []}, {"Page One", [_]}] = saved_whiteouts(editor)
+    end
+
+    test "erasing after a deletion paints the page that survived" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.delete_page!(0) |> Editor.erase_region!(0, @erase_rect)
+
+      assert [{"Page Two", [_]}, {"Page Three", []}] = saved_whiteouts(editor)
+    end
+  end
+
+  describe "erased regions and flattening" do
+    test "covers a flattened annotation once the flattened document is reopened" do
+      flattened = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(flattened) end)
+
+      bytes = flattened |> Editor.flatten_annotations!() |> Editor.to_binary!()
+
+      editor = Editor.from_binary!(bytes)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.erase_region!(editor, 0, %Rect{x: 0.0, y: 0.0, width: 612.0, height: 792.0})
+
+      assert editor |> Editor.to_binary!(compress: false) |> PdfElixide.ContentOrder.page0() ==
+               [:original, :flattened, :whiteout]
     end
   end
 

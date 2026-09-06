@@ -126,6 +126,8 @@ defmodule PdfElixide.Native do
   def editor_set_page_rotation(_editor, _page_index, _degrees), do: err()
   def editor_rotate_page_by(_editor, _page_index, _degrees), do: err()
   def editor_rotate_all_pages_by(_editor, _degrees), do: err()
+  def editor_erase_regions(_editor, _page_index, _rects), do: err()
+  def editor_clear_erase_regions(_editor, _page_index), do: err()
   def editor_flatten_forms(_editor), do: err()
   def editor_flatten_forms_on_page(_editor, _page_index), do: err()
   def editor_flatten_all_annotations(_editor), do: err()

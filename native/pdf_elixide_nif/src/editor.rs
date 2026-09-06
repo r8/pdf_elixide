@@ -8,6 +8,7 @@ use pdf_oxide::{
         DocumentEditor, EditableDocument, EncryptionAlgorithm, EncryptionConfig, Permissions,
         SaveOptions,
     },
+    object::Object,
     writer::EmbeddedFile,
 };
 use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc};
@@ -26,6 +27,7 @@ use crate::{
     },
     form_tree::{self, Resolved},
     fs_path::path_arg,
+    geometry::{rect_from_nif, RectNif},
     resource::Closable,
     EditorResource,
 };
@@ -460,6 +462,48 @@ fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> Ni
     Ok(())
 }
 
+// Reject indirect content arrays before recording an erase: the writer nests
+// their reference in another array, corrupting the page. Use the mirror to
+// check the source page after moves or deletions.
+fn ensure_contents_spliceable(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<()> {
+    // Drop the mirror guard before source lookup, as `effective_rotation` does.
+    let source = {
+        let pages = page_rotations(resource);
+        let count = pages.len();
+        pages
+            .get(page_index)
+            .map(|page| page.source)
+            .ok_or_else(|| out_of_range(page_index, count))?
+    };
+
+    let page = editor.source().get_page(source).map_err(to_nif_err)?;
+    let contents = page.as_dict().and_then(|dict| dict.get("Contents"));
+
+    if let Some(Object::Reference(reference)) = contents {
+        let target = editor
+            .source()
+            .load_object(*reference)
+            .map_err(to_nif_err)?;
+
+        if target.as_array().is_some() {
+            return Err(tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page_index} stores its content streams as an indirect array, \
+                     which an erase overlay cannot be appended to without corrupting \
+                     the page. The page can still be saved unchanged."
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_delete_page(resource: ResourceArc<EditorResource>, page_index: usize) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
@@ -624,6 +668,63 @@ fn editor_rotate_all_pages_by(
         for (page_index, rotation) in rotations.into_iter().enumerate() {
             write_rotation(&resource, editor, page_index, rotation)?;
         }
+
+        Ok(atoms::ok())
+    })
+}
+
+// Check sums as well as fields: upstream writes non-finite corners unchecked.
+// Return the offending rect so atom construction stays at the NIF boundary.
+fn erase_corners(rects: Vec<RectNif>) -> Result<Vec<[f32; 4]>, RectNif> {
+    rects
+        .into_iter()
+        .map(|nif| {
+            let r = rect_from_nif(nif);
+            let corners = [r.x, r.y, r.x + r.width, r.y + r.height];
+            if corners.iter().all(|c| c.is_finite()) {
+                Ok(corners)
+            } else {
+                Err(nif)
+            }
+        })
+        .collect()
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_erase_regions(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+    rects: Vec<RectNif>,
+) -> NifResult<Atom> {
+    let corners = erase_corners(rects).map_err(|rect| {
+        tagged_err(
+            atoms::other(),
+            format!("invalid region {rect:?}: its corners must fit a 32-bit float"),
+        )
+    })?;
+
+    resource.editor.with_lock(|editor| {
+        ensure_editor_page_in_range(editor, page_index)?;
+        ensure_contents_spliceable(&resource, editor, page_index)?;
+
+        editor
+            .erase_regions(page_index, &corners)
+            .map_err(to_nif_err)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+// Upstream does not bounds-check this one, so the check here is the only one.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_clear_erase_regions(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        ensure_editor_page_in_range(editor, page_index)?;
+
+        editor.clear_erase_regions(page_index);
 
         Ok(atoms::ok())
     })
@@ -1216,6 +1317,60 @@ mod tests {
                 .contains("Page One"),
             "upstream now decrypts stream payloads on the write path: bind a password \
              option through DocumentEditor::from_document and drop ensure_not_encrypted"
+        );
+    }
+
+    #[test]
+    fn erase_corners_refuses_a_sum_that_overflows() {
+        let rect = |x, y, width, height| RectNif {
+            x,
+            y,
+            width,
+            height,
+        };
+
+        assert_eq!(
+            erase_corners(vec![rect(1.0, 2.0, 3.0, 4.0)]),
+            Ok(vec![[1.0, 2.0, 4.0, 6.0]])
+        );
+        assert!(erase_corners(vec![rect(2.0e38, 0.0, 2.0e38, 10.0)]).is_err());
+        assert!(erase_corners(vec![rect(0.0, -2.0e38, 10.0, -2.0e38)]).is_err());
+    }
+
+    #[test]
+    fn upstream_still_nests_an_indirect_content_array() {
+        let mut editor =
+            DocumentEditor::open(fixture("contents_indirect_array.pdf")).expect("fixture opens");
+
+        assert!(
+            editor
+                .source()
+                .extract_text(0)
+                .expect("reads the source")
+                .contains("Indirect"),
+            "the source page no longer reads, so the write below proves nothing"
+        );
+
+        editor
+            .erase_regions(0, &[[0.0, 0.0, 10.0, 10.0]])
+            .expect("records the region");
+        let written = editor.save_to_bytes().expect("full rewrite");
+        let reopened = PdfDocument::from_bytes(written).expect("reopens");
+
+        let page = reopened.get_page(0).expect("page 0");
+        let contents = page
+            .as_dict()
+            .and_then(|dict| dict.get("Contents"))
+            .and_then(|contents| contents.as_array())
+            .expect("the overlay splice rebuilds /Contents as an array");
+        let first = contents[0]
+            .as_reference()
+            .and_then(|reference| reopened.load_object(reference).ok())
+            .expect("the first entry is still a reference to a live object");
+
+        assert!(
+            first.as_array().is_some(),
+            "upstream now resolves an indirect /Contents array before splicing"
         );
     }
 }

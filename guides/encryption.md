@@ -162,9 +162,8 @@ appending to it. Three consequences are worth knowing:
     cannot read the result back. It reports a stream decoding error even when
     given the correct password, so read XMP from the source document rather
     than from the encrypted output.
-  * The `/Info` dictionary is dropped, as it is on every write. The "Document
-    information is not carried over" section of `PdfElixide.Editor` has that in
-    full.
+  * The `/Info` dictionary is dropped, as it is on every write. See
+    [Document information is not carried over](editing.md#document-information-is-not-carried-over).
 
 Existing digital signatures do not survive a rewrite — encrypted or not — since
 a signature covers the exact bytes of the file it was made over.

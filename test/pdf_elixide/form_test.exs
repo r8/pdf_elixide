@@ -1112,10 +1112,7 @@ defmodule PdfElixide.FormTest do
     test "answer :not_found from every function that takes a name" do
       editor = Editor.open!(@signature_pdf)
 
-      # The uniformity is the point of the atom: a signature field is not a form
-      # field this API has, and all four say so the same way. `put_value/3` is
-      # the one that has to be made to — the name stays addressable upstream, so
-      # without its guard the write would land and destroy the signature.
+      # A direct write must reject a signature name even though reads omit it.
       assert {:error, %Error{reason: :not_found}} = Form.field(editor, "signature")
       assert {:error, %Error{reason: :not_found}} = Form.value(editor, "signature")
 
@@ -1127,8 +1124,6 @@ defmodule PdfElixide.FormTest do
                  Form.put_value(editor, "signature", value)
       end
 
-      # The strongest available statement that nothing was written: a refused
-      # call leaves the editor with nothing to save.
       refute Editor.modified?(editor)
     end
 

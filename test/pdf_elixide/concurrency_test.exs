@@ -52,8 +52,6 @@ defmodule PdfElixide.ConcurrencyTest do
     end
 
     test "concurrent mixed extractors on one handle match their serial results", %{doc: doc} do
-      # Each of these reaches a different upstream loader over the same shared
-      # document, which is the combination only a shared lock ever produces.
       calls = [
         text: &Document.text!/1,
         spans: &Document.spans!/1,
@@ -272,7 +270,6 @@ defmodule PdfElixide.ConcurrencyTest do
       assert length(write_results) == 2 * @writes
       assert Enum.all?(write_results, &match?({:ok, %Editor{}}, &1))
 
-      # Neither writer's last write was lost behind the other's.
       final = Map.new(Form.fields!(editor), &{&1.name, &1.value})
       assert final["full_name"] == "a-#{@writes}"
       assert final["subscribe"] == even?(@writes)
@@ -293,8 +290,7 @@ defmodule PdfElixide.ConcurrencyTest do
 
       written = Enum.map(1..@concurrency, &"v-#{&1}")
 
-      # The original value is allowed too: a snapshot taken before any write
-      # still carries it.
+      # A snapshot may precede the first write.
       allowed = MapSet.new(["John Doe" | written])
 
       work =

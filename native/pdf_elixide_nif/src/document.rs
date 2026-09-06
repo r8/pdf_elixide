@@ -432,11 +432,6 @@ fn extract_all_text_pages(doc: &PdfDocument, options: &TextOptions) -> NifResult
         }
         match extract_text_page(doc, page_index, options) {
             Ok(page_text) => text.push_str(&page_text),
-            // The default: a failed page contributes nothing and does not fail
-            // the document, as upstream `extract_all_text` swallows it (it logs
-            // the error, which this crate cannot — no logging dependency). Only
-            // `:halt` diverges, and then the message names the page, since the
-            // silent skip is what leaves the caller nothing to go on.
             Err(_) if options.on_page_error == OnPageErrorNif::Skip => {}
             Err(e) => return Err(to_nif_page_err(page_index, e)),
         }

@@ -234,27 +234,20 @@ defmodule PdfElixide.Document.PageTest do
   end
 
   describe "has_text_layer/1" do
-    # One test per branch of upstream's two-stage probe. `text_layer.pdf` is the
-    # only fixture that can answer `false` at all: every other one declares a
-    # font, either on the page or on an ancestor /Pages node.
+    # text_layer.pdf includes pages with and without text-layer resources.
     test "answers true for a page with fonts and a text object" do
       doc = Document.open!(@text_layer_pdf)
       assert {:ok, true} = Page.has_text_layer(Document.page!(doc, 0))
     end
 
     test "answers false for an image-only page, though its stream contains Do" do
-      # The sharpest case, and the one OCR routing turns on. Page 1 draws its
-      # image with `/Im1 Do`, so the content-stream byte scan would say "may
-      # contain text" — but the resource check settles it first: no /Font, and
-      # the sole XObject is an image rather than a form.
+      # Page 1 uses Do to draw an image, but has neither a font nor a Form XObject.
       doc = Document.open!(@text_layer_pdf)
       assert {:ok, false} = Page.has_text_layer(Document.page!(doc, 1))
     end
 
     test "answers false for a page declaring fonts it never uses" do
-      # Page 2 passes the resource check on the strength of its /Font entry and
-      # is then rejected by the content scan: the stream fills a rectangle and
-      # contains neither BT nor Do. Nothing but this page reaches that stage.
+      # Page 2 declares a font but its stream contains neither BT nor Do.
       doc = Document.open!(@text_layer_pdf)
       assert {:ok, false} = Page.has_text_layer(Document.page!(doc, 2))
     end
@@ -314,10 +307,6 @@ defmodule PdfElixide.Document.PageTest do
       assert Enum.map(doc, &Page.has_text_layer?/1) == [true, false, false, true, false]
     end
 
-    # Unlike `Document.has_structure_tree?/1` and `Document.has_xfa?/1`, this
-    # predicate degrades nothing — every error raises, not just a failure of the
-    # handle. Each of the three reachable shapes is asserted separately, because
-    # that difference is the whole of its contract.
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
 
@@ -753,7 +742,6 @@ defmodule PdfElixide.Document.PageTest do
     test "delegates to Document.fonts/2 for the page" do
       doc = Document.open!(@fonts_pdf)
       page = Document.page!(doc, 0)
-      # Fresh handles again, as for images above.
       {:ok, via_page} = Page.fonts(page)
       {:ok, via_doc} = Document.fonts(doc, 0)
       assert Enum.map(via_page, & &1.base_font) == Enum.map(via_doc, & &1.base_font)
@@ -858,7 +846,6 @@ defmodule PdfElixide.Document.PageTest do
     test "delegates to Document.tables/2 for the page" do
       doc = Document.open!(@table_pdf)
       page = Document.page!(doc, 0)
-      # Fresh handles again, as for images above.
       {:ok, via_page} = Page.tables(page)
       {:ok, via_doc} = Document.tables(doc, 0)
       assert Enum.map(via_page, & &1.rows) == Enum.map(via_doc, & &1.rows)

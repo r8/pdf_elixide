@@ -15,10 +15,10 @@ defmodule PdfElixide.Document.Page do
       for page <- doc, do: PdfElixide.Document.Page.text!(page)
 
   Every extractor `PdfElixide.Document` offers is available here for a single
-  page, taking the same options. Working a page at a time is also the way to
-  bound memory on a large document, since only one page's results are live at
-  once — see the "Whole-document extraction and memory" section of
-  `PdfElixide.Document`.
+  page, taking the same options. The comprehension above collects every page's
+  result. To bound memory used by results, consume pages without accumulating
+  their results — see the streaming example and handle-release guidance in the
+  "Whole-document extraction and memory" section of `PdfElixide.Document`.
 
   A page whose `:index` is not a page of the document — only reachable from a
   hand-built `%Page{}` — yields

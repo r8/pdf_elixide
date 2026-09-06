@@ -1,7 +1,7 @@
 use pdf_oxide::geometry::Rect;
 use rustler::NifStruct;
 
-#[derive(NifStruct, Debug)]
+#[derive(NifStruct, Debug, Clone, Copy, PartialEq)]
 #[module = "PdfElixide.Geometry.Rect"]
 pub struct RectNif {
     pub x: f32,

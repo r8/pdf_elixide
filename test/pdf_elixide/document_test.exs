@@ -2281,8 +2281,6 @@ defmodule PdfElixide.DocumentTest do
       assert image.format == :jpeg
       assert {:ok, <<255, 216, 255, _::binary>>} = Document.Image.to_binary(image, format: :jpeg)
 
-      # Byte-identical to the stored blob: the NIF hands back a borrow of it
-      # rather than re-encoding or cloning.
       assert {:ok, {:jpeg, stored}} = Document.Image.data(image)
       assert {:ok, ^stored} = Document.Image.to_binary(image, format: :jpeg)
     end

@@ -12,8 +12,6 @@ pub fn tagged_err(reason: Atom, message: impl Into<String>) -> Error {
     Error::Term(Box::new((reason, message.into())))
 }
 
-// Converts a `pdf_oxide::Error` into a tagged Rustler error, mapping the
-// variant to one of the stable reason atoms (see `classify`).
 pub fn to_nif_err(e: PdfError) -> Error {
     tagged_err(classify(&e), e.to_string())
 }
@@ -61,8 +59,6 @@ pub fn lock_err() -> Error {
     tagged_err(atoms::lock_poisoned(), "Lock is poisoned")
 }
 
-// Carries the panic message when it is a string, which it is for `panic!` and
-// `expect`/`unwrap`.
 pub fn panic_err(payload: &(dyn Any + Send)) -> Error {
     tagged_err(
         atoms::panic(),

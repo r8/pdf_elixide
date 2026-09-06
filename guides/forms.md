@@ -355,6 +355,9 @@ field-value updates and leaves the original AcroForm structure as it was:
 {:ok, editor} = Editor.save(editor, "path/to/filled.pdf", incremental: true)
 ```
 
+For changes beyond field values, see
+[Saving edits](editing.md#saving-edits) for the incremental-save limitations.
+
 `to_binary/2` clears `PdfElixide.Editor.modified?/1` even though it writes no
 file; an incremental `save/3` leaves it set.
 

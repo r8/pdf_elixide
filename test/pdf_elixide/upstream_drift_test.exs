@@ -35,6 +35,9 @@ defmodule PdfElixide.UpstreamDriftTest do
   @ecdsa_p521_pdf Path.join(@fixtures, "form_signature_ecdsa_p521.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
   @sample_pdf Path.join(@fixtures, "sample.pdf")
+  @leaked_cm_pdf Path.join(@fixtures, "leaked_cm.pdf")
+  @leaked_clip_pdf Path.join(@fixtures, "leaked_clip.pdf")
+  @leaked_path_pdf Path.join(@fixtures, "leaked_path.pdf")
   @structured_pdf Path.join(@fixtures, "structured.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
 
@@ -164,10 +167,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     test "a region query still does not silently relax the config", %{doc: doc} do
       [table] = Document.tables!(doc, @ruleless)
 
-      # Upstream's `extract_tables_in_rect` substitutes
-      # `TableDetectionConfig::relaxed()`; this binding passes the caller's
-      # config through, matching what the Python bindings do. A `:strict`
-      # preset must therefore still reject inside a region.
       assert Document.tables!(doc, @ruleless, region: table.bbox, preset: :strict) == []
       assert length(Document.tables!(doc, @ruleless, region: table.bbox)) == 1
     end
@@ -177,10 +176,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     setup do: %{doc: open(@extraction_pdf)}
 
     test "a gap threshold still reaches the span merger", %{doc: doc} do
-      # `SpanMergingConfig` is the one upstream type this binding exposes that
-      # no other binding does, so nothing else would notice it going inert.
-      # The gap fields only govern gaps *inside* one text run, which is why
-      # this uses the TJ-kerned page rather than the Tm-placed ones.
+      # Gap settings affect spacing inside a text run, so use the TJ-kerned page.
       assert texts(Document.spans!(doc, @kerned, span_merging: [])) !=
                texts(
                  Document.spans!(doc, @kerned,
@@ -196,10 +192,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test "an adaptive sub-config is still accepted with its documented default", %{doc: doc} do
-      # `AdaptiveThresholdConfig`'s doc comment says `max_threshold_pt`
-      # defaults to 1.0pt while its `Default` impl sets 100.0 — a live
-      # mismatch upstream could resolve in either direction. Passing both the
-      # documented and the actual value must keep working either way.
+      # 1.0 is the documented threshold; 100.0 is the actual config default.
       for max <- [1.0, 100.0] do
         assert is_list(
                  Document.spans!(doc, @kerned,
@@ -446,10 +439,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
     test "a match's boxes cover whole spans, not the matched characters",
          %{doc: doc} do
-      # `compute_match_bbox` (`src/search/text_search.rs`) selects spans by byte
-      # overlap and takes each one's whole `bbox`; upstream carries
-      # `char_widths` and `char_x_offsets` on the span and never consults them.
-      # So a one-word match inside a long line reports the whole line's box.
+      # The one-word query occupies only part of a span wider than 200pt.
       assert [span] = Document.spans!(doc, 0) |> Enum.filter(&(&1.text =~ "Widgets"))
       assert [match] = Document.search!(doc, "Widgets")
 
@@ -460,26 +450,18 @@ defmodule PdfElixide.UpstreamDriftTest do
 
     test "spans are joined with a space, so a match can cross a line",
          %{doc: doc} do
-      # `build_text_with_positions` concatenates a page's spans into one string,
-      # pushing a `' '` after any span not already ending in one — no newline
-      # anywhere. "Quarterly" and "Report" are on separate lines and still match
-      # as one phrase.
+      # "Quarterly" and "Report" are on separate lines in the fixture.
       assert [match] = Document.search!(doc, "Quarterly Report")
       assert [%{y: 640.0}, %{y: 600.0}] = match.span_boxes
     end
 
     test "matches are leftmost-first and non-overlapping", %{doc: doc} do
-      # `find_iter` semantics: "aa" occurs twice in "aaa" by inspection, but the
-      # second overlaps the first and is never reported.
+      # The fixture contains "aaa", whose two "aa" substrings overlap.
       assert length(Document.search!(doc, "aa")) == 1
     end
 
     test "whole_word wraps the pattern without grouping it", %{doc: doc} do
-      # `build_regex` builds `\b{pattern}\b`, not `\b(?:{pattern})\b`, so an
-      # alternation binds as `(\bcat)|(Report\b)`. A correctly grouped pattern
-      # would match "cat" and "Report" only; the leading `\b` alone also admits
-      # "category". This is the whole reason `:literal` defaults to `true`
-      # here — `regex::escape` makes the trap unreachable on the default path.
+      # Without grouping the alternation, the leading boundary also admits "category".
       matched = Document.search!(doc, "cat|Report", literal: false, whole_word: true)
 
       assert Enum.map(matched, & &1.text) == ["Report", "cat", "cat"]
@@ -754,6 +736,28 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Enum.map(doc, &Page.rotation!/1) == [90, 180, 270, 0],
              "upstream now carries page properties into an incremental update"
     end
+
+    @tag :tmp_dir
+    test "an erased region goes missing too", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_erase.pdf")
+
+      Editor.erase_region!(editor, 0, %PdfElixide.Geometry.Rect{
+        x: 0.0,
+        y: 0.0,
+        width: 612.0,
+        height: 792.0
+      })
+
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.rects!(doc, 0) == [],
+             "upstream now carries erase overlays into an incremental update"
+    end
   end
 
   describe "whether a configured encryption actually reaches the file" do
@@ -948,6 +952,24 @@ defmodule PdfElixide.UpstreamDriftTest do
   end
 
   describe "flattening" do
+    test "a flatten on the same editor paints above the whiteout" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.flatten_annotations!()
+      |> Editor.erase_region!(0, %PdfElixide.Geometry.Rect{
+        x: 0.0,
+        y: 0.0,
+        width: 612.0,
+        height: 792.0
+      })
+
+      assert editor |> Editor.to_binary!(compress: false) |> PdfElixide.ContentOrder.page0() ==
+               [:original, :whiteout, :flattened],
+             "upstream now draws the erase overlay after the flattened appearances"
+    end
+
     # Only the whole-document path removes the AcroForm.
     test "the whole-document flatten drops the AcroForm, the per-page one rebuilds it" do
       whole = Editor.open!(@flatten_pdf)
@@ -1046,6 +1068,96 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert Document.annotations!(doc, 0) == []
       assert Editor.flatten_warnings!(editor) == []
+    end
+  end
+
+  describe "where the erase overlay lands" do
+    # The fixture's content stream ends with `1 0 0 1 100 50 cm` outside any
+    # `q`/`Q`; the word beneath reads at (110, 70) in the raw frame.
+    test "the whiteout is drawn in the graphics state the content leaves behind" do
+      editor = Editor.open!(@leaked_cm_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.erase_region!(editor, 0, %PdfElixide.Geometry.Rect{
+        x: 110.0,
+        y: 70.0,
+        width: 50.0,
+        height: 20.0
+      })
+
+      doc = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Enum.map(Document.rects!(doc, 0), & &1.bbox) == [
+               %PdfElixide.Geometry.Rect{x: 210.0, y: 120.0, width: 50.0, height: 20.0}
+             ],
+             "upstream now resets the graphics state before the erase overlay"
+    end
+
+    # The fixture ends with `0 0 1 1 re W n` outside any `q`/`Q`, leaving a
+    # 1×1 clip at the origin that excludes the word's rectangle.
+    test "the whiteout is reported at its requested position even when a clip left active hides it" do
+      editor = Editor.open!(@leaked_clip_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      source = Document.open!(@leaked_clip_pdf)
+      on_exit(fn -> Document.close(source) end)
+      [word] = Document.words!(source, 0)
+      assert word.text == "Clipped"
+
+      Editor.erase_region!(editor, 0, word.bbox)
+      bytes = Editor.to_binary!(editor, compress: false)
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [rect] = Document.rects!(doc, 0)
+      assert_in_delta rect.bbox.x, word.bbox.x, 0.01
+      assert_in_delta rect.bbox.y, word.bbox.y, 0.01
+      assert_in_delta rect.bbox.width, word.bbox.width, 0.01
+      assert_in_delta rect.bbox.height, word.bbox.height, 0.01
+
+      assert [original, whiteout] = PdfElixide.ContentOrder.page0_bodies(bytes),
+             "upstream changed the erase overlay's content stream layout"
+
+      assert original |> String.trim_trailing() |> String.ends_with?("re W n")
+
+      assert String.starts_with?(whiteout, "q\n1 1 1 rg\n"),
+             "upstream changed the erase overlay's initial graphics state operators"
+    end
+
+    # The fixture ends with `0 0 999 999 re` outside any `q`/`Q`, leaving
+    # a page-sized path unfinished.
+    test "the whiteout fills a path the content left unfinished" do
+      editor = Editor.open!(@leaked_path_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.erase_region!(editor, 0, %PdfElixide.Geometry.Rect{
+        x: 110.0,
+        y: 700.0,
+        width: 10.0,
+        height: 10.0
+      })
+
+      bytes = Editor.to_binary!(editor, compress: false)
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [path] = Document.paths!(doc, 0)
+      assert path.fill_color == %PdfElixide.Color.RGB{r: 1.0, g: 1.0, b: 1.0}
+
+      assert path.operations == [
+               {:rectangle, 0.0, 0.0, 999.0, 999.0},
+               {:rectangle, 110.0, 700.0, 10.0, 10.0}
+             ],
+             "upstream now ends the page's pending path before the erase overlay"
+
+      assert Document.rects!(doc, 0) == []
+
+      assert [original, whiteout] = PdfElixide.ContentOrder.page0_bodies(bytes)
+      assert original |> String.trim_trailing() |> String.ends_with?("999 re")
+      assert String.starts_with?(whiteout, "q\n1 1 1 rg\n")
     end
   end
 

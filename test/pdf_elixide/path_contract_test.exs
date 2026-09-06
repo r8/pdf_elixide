@@ -15,19 +15,10 @@ defmodule PdfElixide.PathContractTest do
   @bad_name <<0xFF>> <> ".pdf"
   @missing_path Path.join(System.tmp_dir!(), "pdf_elixide_absent_" <> @bad_name)
 
-  # The platform, because `fs_path.rs` decodes a path differently on Windows —
-  # which holds whatever the filesystem would accept, and is why the probe below
-  # cannot answer this on its own.
   @windows match?({:win32, _}, :os.type())
 
-  # Evaluated once at compile time: whether a byte-named path can round-trip
-  # through *this library* here. Two independent reasons it cannot, and the
-  # platform is folded in ahead of the filesystem probe rather than checked
-  # beside it — on Windows the probe answers `true`, since the VM translates the
-  # stray byte into a legal NTFS name and writes it, while the NIF is handed the
-  # raw binary and requires UTF-8. macOS fails the probe instead: APFS rejects
-  # the name outright. Keeping it one expression also keeps the probe off the
-  # platform that would answer it misleadingly.
+  # Exclude Windows before probing: File can store byte names there that the
+  # NIF cannot decode. On Unix, the filesystem decides whether they round-trip.
   @byte_names_round_trip not @windows and
                            (fn ->
                               probe =
@@ -61,10 +52,6 @@ defmodule PdfElixide.PathContractTest do
   describe "a path with no UTF-8 spelling, on Windows" do
     @describetag skip: not @windows and "only Windows rejects a byte path"
 
-    # The executable half of the claim `PdfElixide`'s "File paths" section and
-    # `fs_path.rs` otherwise make only in prose. It is an `ArgumentError` rather
-    # than an `%Error{}` because the rejection happens at argument decode, which
-    # makes it a caller bug in the sense `PdfElixide.Error` documents.
     test "Document.open/2 raises ArgumentError" do
       assert_raise ArgumentError, fn -> Document.open(@missing_path) end
     end
@@ -127,11 +114,7 @@ defmodule PdfElixide.PathContractTest do
   end
 
   describe "inspecting a handle opened from a byte-named file" do
-    # Needs no such file to exist: `Inspect` reads the struct field. Validity is
-    # the whole bar, and it is exactly the condition `IO.puts/1` checks — it
-    # raises `:no_translation` on a binary with no UTF-8 spelling, so an
-    # unescaped basename here would turn a log line or an IEx prompt into a
-    # crash.
+    # No file is needed: Inspect reads the struct field, and its output must be UTF-8.
     test "Document renders a printable result" do
       doc = %Document{ref: make_ref(), version: {1, 4}, page_count: 3, source_path: @bad_name}
 

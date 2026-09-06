@@ -21,8 +21,8 @@ defmodule PdfElixide.Document.EmbeddedFile do
     * `:data` — the decoded file contents.
     * `:description` — the entry's `/Desc`, or `nil`.
     * `:mime_type` — the media type the attachment declares (`"text/csv"`), or
-      `nil`. See the "Attachments" section of `PdfElixide.Editor` for why an
-      attachment this library writes declares none.
+      `nil`. Attachments written by this library declare none; see
+      [Attachments](guides/editing.md#attachments).
     * `:relationship` — how the attachment relates to the document, see
       `t:relationship/0`, or `nil` when the entry declares none or declares one
       outside that set.

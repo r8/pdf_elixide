@@ -67,17 +67,12 @@ defmodule PdfElixide.MixProject do
       source_url: @source,
       source_ref: "v#{@version}",
       main: "readme",
-      # Guides live in `guides/` and are deliberately absent from `files/0`:
-      # `mix hex.publish` builds ExDoc from the working tree and uploads the
-      # generated HTML as its own docs tarball, so a guide never travels in the
-      # package source. Nothing else reads this list, which is why CI runs
-      # `mix docs --warnings-as-errors` — ExDoc warns on a path that is missing
-      # here or on disk, and on a moduledoc link to a renamed guide.
       extras: [
         "README.md": [title: "Overview"],
         "guides/text-extraction.md": [],
         "guides/concurrency.md": [],
         "guides/forms.md": [],
+        "guides/editing.md": [],
         "guides/signatures.md": [],
         "guides/encryption.md": [],
         # `filename:` because ExDoc reserves `search.html` for its own search

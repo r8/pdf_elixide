@@ -1,6 +1,3 @@
-// Decoding of filesystem path arguments. Named `fs_path` and not `path`
-// because `paths.rs` beside it is vector *graphics* path extraction.
-
 use std::path::PathBuf;
 
 use rustler::{Binary, NifResult};
@@ -22,11 +19,7 @@ fn decode(bytes: &[u8]) -> Option<PathBuf> {
     decode_utf8_only(bytes)
 }
 
-// The branch Windows takes, which has no choice: `OsStringExt::from_wide`
-// consumes `u16`, so there is no bytes-to-path mapping to use.
-//
-// Compiled unconditionally rather than behind `#[cfg(windows)]` so the unit
-// test below reaches it on every host, not only the Windows CI leg.
+// Compiled on every host so the UTF-8 decoder is tested outside Windows too.
 #[cfg_attr(unix, allow(dead_code))]
 fn decode_utf8_only(bytes: &[u8]) -> Option<PathBuf> {
     std::str::from_utf8(bytes).ok().map(PathBuf::from)
@@ -35,9 +28,6 @@ fn decode_utf8_only(bytes: &[u8]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Both branches run on every host here, which no other gate manages: the
-    // Elixir contract test can only ever assert the one its own platform takes.
 
     #[test]
     fn utf8_only_rejects_bytes_with_no_utf8_spelling() {

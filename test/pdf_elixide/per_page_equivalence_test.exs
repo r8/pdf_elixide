@@ -7,14 +7,8 @@ defmodule PdfElixide.PerPageEquivalenceTest do
 
   @fixtures_dir Path.join([__DIR__, "..", "fixtures"])
 
-  # Chosen for coverage of the extractors rather than of each other: `table.pdf`
-  # is the only one with rules for `paths` and `lines`, `vector_shapes.pdf` the
-  # only one drawing a rectangle, `annotations.pdf` and `markdown.pdf` the only
-  # ones with annotations, `image.pdf` and `markdown.pdf` the only ones with
-  # images.
   @fixtures ~w(sample.pdf extraction.pdf table.pdf annotations.pdf image.pdf fonts.pdf markdown.pdf vector_shapes.pdf)
 
-  # Plain data — comparable with ==.
   @plain [:chars, :words, :text_lines, :spans, :paths, :rects, :lines, :annotations]
 
   # Each returned struct carries a handle; compare with :ref dropped.

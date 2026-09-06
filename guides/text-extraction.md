@@ -133,13 +133,20 @@ text has a `---` line between two paragraphs emits the same bytes and splits
 into an extra part, shifting every page after it. Enumerate pages when page
 boundaries must be unambiguous.
 
-Neither bounds memory: each builds the whole result before returning. Working a
-page at a time does, and needs no extra API, since a document is enumerable over
-its pages and `PdfElixide.Document.Page` offers both functions:
+Neither bounds memory: each builds the whole result before returning. A document
+is enumerable over its pages, so process each page's result without accumulating
+it to bound memory used by results:
 
 ```elixir
-Stream.map(doc, &PdfElixide.Document.Page.to_plain_text!/1)
+doc
+|> Stream.map(&PdfElixide.Document.Page.to_plain_text!/1)
+|> Stream.each(&IO.puts/1)
+|> Stream.run()
 ```
+
+Collecting this stream into a list retains every page's text. See
+"Whole-document extraction and memory" in `PdfElixide.Document` for the memory
+and handle-release guidance shared by the extractors.
 
 Use the same page-wise shape for concurrent extraction; see the
 [Concurrency](concurrency.md) guide.

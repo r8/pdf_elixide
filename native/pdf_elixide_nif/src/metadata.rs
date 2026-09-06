@@ -12,10 +12,6 @@ use rustler::{NifMap, NifResult, NifUnitEnum, ResourceArc};
 
 use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource};
 
-// Document Info dictionary metadata. Every field is optional; a document with
-// no `/Info` dictionary yields an all-`nil` map. Dates are the raw PDF date
-// strings (e.g. `D:20230101120000+00'00'`); `trapped` is the `/Trapped` name
-// (`True` / `False` / `Unknown`) when present.
 #[derive(NifMap, Debug)]
 pub struct MetadataNif {
     title: Option<String>,
@@ -79,9 +75,6 @@ fn document_info(resource: ResourceArc<DocumentResource>) -> NifResult<MetadataN
     resource.doc.with_read(|doc| Ok(read_metadata(doc)))
 }
 
-// XMP (Extensible Metadata Platform) metadata. Field names drop the upstream
-// namespace prefixes (`dc_` / `xmp_` / `pdf_` / `xmp_rights_`); `raw_xml`
-// carries the original XMP packet as an escape hatch.
 #[derive(NifMap, Debug)]
 pub struct XmpMetadataNif {
     title: Option<String>,

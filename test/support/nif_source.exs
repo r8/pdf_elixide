@@ -14,10 +14,7 @@ defmodule PdfElixide.NifSource do
   @doc false
   def src_dir, do: @src
 
-  # Splits a source at each attribute: the chunk before the first one is
-  # preamble, and every chunk after it opens with the attribute's own arguments
-  # and runs to the next attribute (or end of file), which is the body a caller
-  # searches for calls.
+  # Discard the preamble before the first NIF attribute.
   defp parse_file(path) do
     file = Path.basename(path)
 

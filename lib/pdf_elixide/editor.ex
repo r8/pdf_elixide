@@ -2,8 +2,7 @@ defmodule PdfElixide.Editor do
   @moduledoc """
   Mutable, in-memory PDF editor.
 
-  Where `PdfElixide.Document` only reads, an editor accumulates changes in
-  memory and writes them out on demand. The shape is open, mutate, write:
+  Open a document, apply changes, and write the result:
 
       "form.pdf"
       |> PdfElixide.Editor.open!()
@@ -13,144 +12,54 @@ defmodule PdfElixide.Editor do
       #=> :ok
 
   Nothing is written until `save/3` or `to_binary/2` runs, and neither consumes
-  the editor — you can keep editing and write again. `close/1` **discards
-  unsaved edits**, so write before you close. Flattening is deferred to that same
-  write: `flatten_annotations/1,2` and `PdfElixide.Form.flatten/1,2` mark what to
-  flatten and the drawing happens as the file is written.
+  the editor. Mutating calls return the editor so they compose in a pipeline.
+  `close/1` **discards unsaved edits**.
 
-  Every function that changes an editor returns the editor, as above, and the
-  tuple-returning half is uniform in the same way, so both compose as one
-  pipeline. `to_binary/2` and `close/1` are the two ways such a pipeline ends.
-
-  **An editor is a mutable handle, not a value, and rebinding does not fork it**
-  — the editor a mutating call returns is the one that went in, so an earlier
-  binding will not give you the document as it was before the edit. The
-  [Forms](guides/forms.md) guide has both shapes and the full account.
+  **An editor is a mutable handle: rebinding does not fork it.** Earlier bindings
+  see later edits too. The [Forms](guides/forms.md) guide covers both bang
+  pipelines and tuple-returning calls, plus filling and deferred flattening.
 
   ## Page structure
 
-  `delete_page/2` and `move_page/3` change which pages the document has and in
-  what order. Indices are zero-based and count the pages as currently edited, so
-  `page_count/1` is what they are bounded by, and it moves as soon as a page is
-  deleted rather than waiting for a save:
+  `delete_page/2` and `move_page/3` use zero-based indices in the current page
+  order. **Deleting a page is not redaction**, and bookmarks and links are not
+  remapped. See [Page structure](guides/editing.md#page-structure).
 
-      "report.pdf"
-      |> PdfElixide.Editor.open!()
-      |> PdfElixide.Editor.move_page!(0, 2)
-      |> PdfElixide.Editor.delete_page!(0)
-      |> PdfElixide.Editor.save!("reordered.pdf")
-      |> PdfElixide.Editor.close()
-      #=> :ok
-
-  Three things they do not do, none of them visible from the call:
-
-  **Deleting a page is not redaction.** It removes the page from the document's
-  page tree, so the written file has one fewer page and nothing displays it —
-  but the page's objects and content stream are still in that file as
-  unreferenced data, with `garbage_collect: true` as much as without. Anyone
-  reading the bytes can recover them. Do not use `delete_page/2` to remove
-  confidential content; write the pages you want to keep to a new document
-  instead. If every page is deleted, reopening the written file can discover
-  those orphaned page objects again, so this is not a way to create a safely
-  page-less PDF either.
-
-  **Bookmarks and links are not remapped.** Nothing updates the outline, link
-  annotations, named destinations, page labels, the structure tree or a form
-  field's widget references, so entries pointing at a page that was deleted or
-  moved are left pointing where they were.
-
-  **An incremental save carries none of them — not a deletion, a move, a
-  rotation or an attachment.** `save(editor, path, incremental: true)` appends an
-  update to the original file, whose page tree and catalog are both still there,
-  so the written file has the pages it started with, in the order and at the
-  rotation it started with, carrying the attachments it started with — and
-  reports no error. Write with `save/3` without `:incremental`, or with
-  `to_binary/2`.
+  **Incremental saves omit page edits and attachments.** Use a full rewrite;
+  [Saving edits](guides/editing.md#saving-edits) lists the limitations.
 
   ## Page rotation
 
-  `set_rotation/3` turns a page to an absolute angle, `rotate_page_by/3` adds a
-  relative rotation, and `rotate_all_by/2` does that to every page. `rotation/2`
-  reads the angle back, pending changes included:
+  `set_rotation/3`, `rotate_page_by/3` and `rotate_all_by/2` change how a viewer
+  displays pages; `rotation/2` includes pending changes. See
+  [Page rotation](guides/editing.md#page-rotation) for examples and page geometry.
 
-      "scan.pdf"
-      |> PdfElixide.Editor.open!()
-      |> PdfElixide.Editor.rotate_all_by!(90)
-      |> PdfElixide.Editor.set_rotation!(0, 0)
-      |> PdfElixide.Editor.save!("upright.pdf")
-      |> PdfElixide.Editor.close()
-      #=> :ok
+  ## Erasing regions
 
-  A rotation belongs to the page rather than to the position, so it follows the
-  page through `move_page/3` and survives the deletion of another page.
-
-  Rotation only turns the page as a viewer displays it. Nothing re-lays out the
-  content, and the page's `/MediaBox` is not swapped, so a `90`-rotated portrait
-  page still reports portrait dimensions. The "Page structure" section above
-  describes the incremental-save limitation.
+  `erase_region/3` and `erase_regions/3` paint white rectangles when the document
+  is written. **Erasing is not redaction**: covered content remains recoverable.
+  Annotations remain above the overlay, and the page's graphics state can change
+  its coverage even when the call succeeds. See
+  [Erasing regions](guides/editing.md#erasing-regions) for coordinates, unsupported
+  pages, verifying coverage, and flattening before erasing.
 
   ## Attachments
 
-  `embed_file/4` attaches a file to the document — a spreadsheet behind a
-  report, the source data behind a chart — and `embedded_files/1` lists what the
-  document will carry, pending attachments included:
-
-      "report.pdf"
-      |> PdfElixide.Editor.open!()
-      |> PdfElixide.Editor.embed_file!("figures.csv", csv, description: "Chart data")
-      |> PdfElixide.Editor.save!("report-with-data.pdf")
-      |> PdfElixide.Editor.close()
-      #=> :ok
-
-  **A document that already has a name tree is refused** with
-  `{:error, %PdfElixide.Error{reason: :unsupported}}`, because attaching a file
-  cannot preserve that tree's existing attachments, named destinations or
-  document-level JavaScript. To attach several files, add them in the same
-  editing session.
-
-  The "Page structure" section above describes the incremental-save limitation.
-
-  No media type is written for an attachment. `PdfElixide.Document.EmbeddedFile`
-  reads one when another producer declared it, but this editor cannot set one.
+  `embed_file/4` adds an attachment and `embedded_files/1` includes pending ones.
+  Attaching to a document with an existing name tree is refused. See
+  [Attachments](guides/editing.md#attachments) for the workflow and metadata limits.
 
   ## Document information is not carried over
 
-  Every write emits a trailer with no `/Info` entry, so
-  `PdfElixide.Document.metadata/1` answers a struct with every field `nil` for
-  the written file, however the source was populated. A full rewrite drops the
-  dictionary; an incremental save leaves it in the original bytes but does not
-  repeat the entry in the update's trailer, which is where a reader looks first.
-
-  XMP metadata is unaffected — `PdfElixide.Document.xmp_metadata/1` reads back
-  what the source carried — unless the write was encrypted, which the
-  [Encryption](guides/encryption.md) guide covers.
-
-  The trailer's `/ID` goes the same way, and a write emits one only when
-  `:encryption` is given.
+  Every write loses the source `/Info` metadata. See
+  [Document information is not carried over](guides/editing.md#document-information-is-not-carried-over)
+  for XMP and document identifiers.
 
   ## Encryption
 
-  `save/3` and `to_binary/2` take an `:encryption` option that writes a
-  password-protected PDF, with the permission flags
-  `PdfElixide.Document.permissions/1` reads back:
-
-      "report.pdf"
-      |> PdfElixide.Editor.open!()
-      |> PdfElixide.Editor.save!("locked.pdf",
-        encryption: [user_password: "open-me", owner_password: "admin"]
-      )
-      |> PdfElixide.Editor.close()
-      #=> :ok
-
-  Encryption is a property of the output rather than of the editor, and this
-  only ever *adds* it: `open/1` and `from_binary/1` refuse an already-encrypted
-  document, so existing encryption cannot be changed or removed. Encrypting
-  takes the full-rewrite path, which drops any signatures the source carried.
-
-  The [Encryption](guides/encryption.md) guide covers the algorithms, the
-  password contract, what the permission flags do and do not promise, and the
-  conditions under which an encrypted write can leave content in the clear
-  without reporting it.
+  `save/3` and `to_binary/2` accept `:encryption`. Existing encrypted documents
+  cannot be edited. See the [Encryption](guides/encryption.md) guide for the
+  workflow, supported algorithms, and limitations of a successful write.
 
   ## Concurrency
 
@@ -165,12 +74,10 @@ defmodule PdfElixide.Editor do
 
   alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Error
+  alias PdfElixide.Geometry.Rect
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
-  # Spelled out rather than `defstruct @enforce_keys`, unlike the value structs:
-  # `:source_path` is nil for an editor built from a binary, so it cannot be
-  # enforced.
   @enforce_keys [:ref, :version]
   defstruct [:ref, :version, :source_path]
 
@@ -345,7 +252,8 @@ defmodule PdfElixide.Editor do
   Options accepted by `save/3`, `save!/3`, `to_binary/2`, and `to_binary!/2`.
 
     * `:incremental` — write an incremental update instead of a full
-      rewrite. Defaults to `false`.
+      rewrite. Defaults to `false`. See
+      [Saving edits](guides/editing.md#saving-edits) for the changes it omits.
     * `:compress` — compress streams. Defaults to `true`.
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`.
@@ -434,8 +342,10 @@ defmodule PdfElixide.Editor do
   ]
 
   @doc """
-  Writes all in-memory changes to a PDF file at the given path, and returns the
-  editor.
+  Writes the editor to a PDF file at the given path, and returns the editor.
+
+  A full rewrite is the default. Incremental saves omit page edits, attachments
+  and flattening; see [Saving edits](guides/editing.md#saving-edits).
 
   Writing does not consume the editor: you can keep editing and write again.
 
@@ -452,10 +362,6 @@ defmodule PdfElixide.Editor do
       when is_binary(path) and is_list(opts) do
     options = build_save_options(opts)
 
-    # The payload is bound loosely rather than as `{:ok, :ok}`: the NIF's only
-    # success value is a bare `:ok`, which `Wrap.call/1` wraps, so pinning the
-    # literal would not be exhaustive and a NIF that stopped returning it would
-    # raise a `CaseClauseError` from inside the library.
     case Wrap.call(fn -> Native.editor_save(ref, path, options) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -463,7 +369,10 @@ defmodule PdfElixide.Editor do
   end
 
   @doc """
-  Writes all in-memory changes to a PDF file at the given path, raising an error if it fails.
+  Writes the editor to a PDF file at the given path, raising an error if it fails.
+
+  Uses the same write modes and limitations as `save/3`; see
+  [Saving edits](guides/editing.md#saving-edits).
 
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
@@ -513,8 +422,9 @@ defmodule PdfElixide.Editor do
   Deletes the page at the given zero-based index, and returns the editor.
 
   Every later page moves down one index, and `page_count/1` reflects the removal
-  at once — no save is needed. See the "Page structure" section of this module
-  for the deletion's security and writing limitations.
+  at once — no save is needed. See [Page structure](guides/editing.md#page-structure)
+  and [Saving edits](guides/editing.md#saving-edits) for the deletion's security
+  and writing limitations.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
   not exist.
@@ -522,7 +432,6 @@ defmodule PdfElixide.Editor do
   @spec delete_page(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
   def delete_page(%__MODULE__{ref: ref} = editor, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_delete_page(ref, page_index) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -547,14 +456,14 @@ defmodule PdfElixide.Editor do
   The pages it passes over shift by one to fill the gap; nothing else changes.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if either index
-  does not exist. See the "Page structure" section of this module for what a move
-  does not update, and why an incremental `save/3` does not carry it.
+  does not exist. See [Page structure](guides/editing.md#page-structure) for what
+  a move does not update and [Saving edits](guides/editing.md#saving-edits) for
+  the incremental-save limitation.
   """
   @spec move_page(t(), non_neg_integer(), non_neg_integer()) ::
           {:ok, t()} | {:error, Error.t()}
   def move_page(%__MODULE__{ref: ref} = editor, from, to)
       when is_integer(from) and from >= 0 and is_integer(to) and to >= 0 do
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_move_page(ref, from, to) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -613,7 +522,6 @@ defmodule PdfElixide.Editor do
           {:ok, t()} | {:error, Error.t()}
   def set_rotation(%__MODULE__{ref: ref} = editor, page_index, degrees)
       when is_integer(page_index) and page_index >= 0 and degrees in [0, 90, 180, 270] do
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_set_page_rotation(ref, page_index, degrees) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -645,7 +553,6 @@ defmodule PdfElixide.Editor do
   @spec rotate_page_by(t(), non_neg_integer(), integer()) :: {:ok, t()} | {:error, Error.t()}
   def rotate_page_by(%__MODULE__{ref: ref} = editor, page_index, degrees)
       when is_integer(page_index) and page_index >= 0 and is_integer(degrees) do
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_rotate_page_by(ref, page_index, delta(degrees)) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -679,7 +586,6 @@ defmodule PdfElixide.Editor do
   """
   @spec rotate_all_by(t(), integer()) :: {:ok, t()} | {:error, Error.t()}
   def rotate_all_by(%__MODULE__{ref: ref} = editor, degrees) when is_integer(degrees) do
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_rotate_all_pages_by(ref, delta(degrees)) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -696,6 +602,114 @@ defmodule PdfElixide.Editor do
 
   # Reduce before the NIF so arbitrary-size Elixir integers fit `i32`.
   defp delta(degrees), do: rem(degrees, 360)
+
+  @doc """
+  Paints a white rectangle over `rect` on the page at the given zero-based index
+  when the document is written, and returns the editor.
+
+  See [Erasing regions](guides/editing.md#erasing-regions) for the coordinate
+  system and coverage limitations.
+  Reversed corners are normalized. A rectangle whose corners do not fit a
+  32-bit float raises `ArgumentError`.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist, and `{:error, %PdfElixide.Error{reason: :unsupported}}` if the
+  page stores its content streams as an indirect array. Nothing is recorded
+  in the latter case.
+  """
+  @spec erase_region(t(), non_neg_integer(), Rect.t()) :: {:ok, t()} | {:error, Error.t()}
+  def erase_region(%__MODULE__{} = editor, page_index, %Rect{} = rect)
+      when is_integer(page_index) and page_index >= 0 do
+    erase_regions(editor, page_index, [rect])
+  end
+
+  @doc """
+  Paints a white rectangle over `rect` on the page at the given zero-based
+  index, raising an error if it fails.
+  """
+  @spec erase_region!(t(), non_neg_integer(), Rect.t()) :: t()
+  def erase_region!(%__MODULE__{} = editor, page_index, %Rect{} = rect)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> erase_region(page_index, rect) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Paints a white rectangle over each of `rects` on the page at the given
+  zero-based index when the document is written, and returns the editor.
+
+  Accepts a nonempty list of `PdfElixide.Geometry.Rect` with the same
+  validation, errors and coverage limitations as `erase_region/3`.
+  An empty list raises `ArgumentError`.
+  """
+  @spec erase_regions(t(), non_neg_integer(), [Rect.t(), ...]) ::
+          {:ok, t()} | {:error, Error.t()}
+  def erase_regions(%__MODULE__{ref: ref} = editor, page_index, rects)
+      when is_integer(page_index) and page_index >= 0 and is_list(rects) do
+    # An empty list must not reach the NIF: upstream records it, and its writer
+    # then references an overlay stream it never emits.
+    if rects == [] do
+      raise ArgumentError, "erase_regions/3 needs at least one region, got []"
+    end
+
+    Enum.each(rects, &validate_region!/1)
+
+    case Wrap.call(fn -> Native.editor_erase_regions(ref, page_index, rects) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  # Finite fields can still overflow when added. Validate here to raise
+  # ArgumentError before the NIF; leave type errors to its field decoder.
+  @max_f32 3.402_823_466_385_288_6e38
+
+  defp validate_region!(%Rect{x: x, y: y, width: width, height: height} = rect)
+       when is_number(x) and is_number(y) and is_number(width) and is_number(height) do
+    if Enum.any?([x, y, x + width, y + height], &(abs(&1) > @max_f32)) do
+      raise ArgumentError, "invalid region #{inspect(rect)}: its corners must fit a 32-bit float"
+    end
+
+    :ok
+  end
+
+  defp validate_region!(_rect), do: :ok
+
+  @doc """
+  Paints a white rectangle over each of `rects` on the page at the given
+  zero-based index, raising an error if it fails.
+  """
+  @spec erase_regions!(t(), non_neg_integer(), [Rect.t(), ...]) :: t()
+  def erase_regions!(%__MODULE__{} = editor, page_index, rects)
+      when is_integer(page_index) and page_index >= 0 and is_list(rects) do
+    editor |> erase_regions(page_index, rects) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Discards the regions pending on the page at the given zero-based index, so
+  the next write paints nothing over it, and returns the editor.
+
+  `modified?/1` is left as it was. Returns
+  `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does not
+  exist. See [Erasing regions](guides/editing.md#erasing-regions).
+  """
+  @spec clear_erase_regions(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
+  def clear_erase_regions(%__MODULE__{ref: ref} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case Wrap.call(fn -> Native.editor_clear_erase_regions(ref, page_index) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Discards the regions pending on the page at the given zero-based index,
+  raising an error if it fails.
+  """
+  @spec clear_erase_regions!(t(), non_neg_integer()) :: t()
+  def clear_erase_regions!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> clear_erase_regions(page_index) |> Wrap.unwrap!()
+  end
 
   @typedoc """
   Options for `embed_file/4`.
@@ -754,7 +768,6 @@ defmodule PdfElixide.Editor do
     name = validate_name!(name)
     %{description: description, relationship: relationship} = build_embed_options(opts)
 
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn ->
            Native.editor_embed_file(ref, name, data, description, relationship)
          end) do
@@ -824,7 +837,6 @@ defmodule PdfElixide.Editor do
   """
   @spec flatten_annotations(t()) :: {:ok, t()} | {:error, Error.t()}
   def flatten_annotations(%__MODULE__{ref: ref} = editor) do
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_flatten_all_annotations(ref) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -852,7 +864,6 @@ defmodule PdfElixide.Editor do
   @spec flatten_annotations(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
   def flatten_annotations(%__MODULE__{ref: ref} = editor, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    # Loosely bound for the same reason as `save/3`.
     case Wrap.call(fn -> Native.editor_flatten_page_annotations(ref, page_index) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err

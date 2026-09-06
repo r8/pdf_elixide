@@ -43,13 +43,20 @@ defmodule PdfElixide.Document do
   ### Working a page at a time
 
   `PdfElixide.Document` implements `Enumerable` over its pages, and
-  `PdfElixide.Document.Page` offers every extractor, so bounding memory needs no
-  extra API — only one page's results are live at a time, and one page is the
-  floor:
+  `PdfElixide.Document.Page` offers every extractor. Process results as they
+  arrive without accumulating them to keep only one page's extraction results
+  at a time:
 
-      Stream.flat_map(doc, &Page.chars!/1)
+      doc
+      |> Stream.flat_map(&Page.chars!/1)
+      |> Stream.each(&IO.write(&1.text))
+      |> Stream.run()
 
-  Concatenating pages this way reproduces the whole-document arity exactly for
+  Collecting the stream with `Enum.to_list/1`, `Enum.map/2` or a comprehension
+  retains the results across pages. Close image, font and table handles after
+  processing them, as above; lazy enumeration does not release them for you.
+
+  Concatenating per-page results reproduces the whole-document arity exactly for
   the list-returning extractors, and `Enum.map(doc, &Page.structured!/1)`
   reproduces `structured/1`. The four that return one value do **not**,
   since each joins pages itself: `text/1` separates them with a form feed and
@@ -170,10 +177,6 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Native.Wrap
   alias PdfElixide.Predicate
 
-  # Spelled out rather than `defstruct @enforce_keys`, unlike the value structs:
-  # `:page_count` is nil for a document whose page tree was unreadable at open,
-  # and `:source_path` is nil for one built from a binary, so neither can be
-  # enforced.
   @enforce_keys [:ref, :version]
   defstruct [:ref, :version, :page_count, :source_path]
 
