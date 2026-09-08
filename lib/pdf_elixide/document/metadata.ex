@@ -4,7 +4,8 @@ defmodule PdfElixide.Document.Metadata do
 
   Every field is optional and defaults to `nil`; a document with no `/Info`
   dictionary yields a struct with all fields `nil`. Obtain it with
-  `PdfElixide.Document.metadata/1`.
+  `PdfElixide.Document.metadata/1`, or with `PdfElixide.Editor.metadata/1` for a
+  document being edited, which also has the setters.
 
   For richer, XML-based metadata (which many modern PDFs carry instead of, or in
   addition to, the Info dictionary) see `PdfElixide.Document.xmp_metadata/1`.

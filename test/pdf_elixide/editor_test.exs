@@ -22,6 +22,7 @@ defmodule PdfElixide.EditorTest do
   @attachments_pdf Path.join(@fixtures, "attachments.pdf")
   @attachments_cyclic_pdf Path.join(@fixtures, "attachments_cyclic.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
+  @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
   @crop_box_pdf Path.join(@fixtures, "crop_box.pdf")
@@ -525,7 +526,8 @@ defmodule PdfElixide.EditorTest do
       refute encrypted =~ "Test Title"
 
       assert Document.encrypted?(Document.from_binary!(encrypted))
-      assert {:ok, _} = Document.from_binary(encrypted, password: "secret")
+      assert {:ok, doc} = Document.from_binary(encrypted, password: "secret")
+      assert Document.metadata!(doc).title == "Test Title"
     end
 
     test "a wrong-typed value inside :encryption raises, naming :encryption" do
@@ -2016,5 +2018,282 @@ defmodule PdfElixide.EditorTest do
 
       assert {:error, %Error{reason: :closed}} = Editor.embedded_files(editor)
     end
+  end
+
+  describe "metadata/1" do
+    test "reads the source's /Info before any edit" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      doc = Document.open!(@metadata_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:ok, %Document.Metadata{trapped: "True"} = metadata} = Editor.metadata(editor)
+      assert metadata == Document.metadata!(doc)
+    end
+
+    test "reflects a pending setter and keeps the source's /Trapped" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_title!(editor, "Pending")
+
+      assert %Document.Metadata{title: "Pending", author: "Jane Doe", trapped: "True"} =
+               Editor.metadata!(editor)
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@metadata_pdf)
+      :ok = Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.metadata(editor)
+      assert_raise Error, fn -> Editor.metadata!(editor) end
+    end
+  end
+
+  describe "the text setters" do
+    for field <- ~w(title author subject keywords creator producer)a do
+      @field field
+
+      test "set_#{field}/2 returns the same editor and marks it modified" do
+        editor = Editor.open!(@valid_pdf)
+        on_exit(fn -> Editor.close(editor) end)
+
+        refute Editor.modified?(editor)
+        assert {:ok, ^editor} = set_info(editor, @field, "value")
+        assert Editor.modified?(editor)
+        assert Map.fetch!(Editor.metadata!(editor), @field) == "value"
+      end
+
+      test "set_#{field}!/2 writes non-ASCII text that reads back unchanged" do
+        editor = Editor.open!(@valid_pdf)
+        on_exit(fn -> Editor.close(editor) end)
+
+        bytes = editor |> set_info!(@field, "Título 🙂") |> Editor.to_binary!()
+
+        assert bytes =~ "EFBBBF"
+        assert Map.fetch!(saved_metadata(bytes), @field) == "Título 🙂"
+      end
+
+      test "set_#{field}/2 raises ArgumentError naming the key for a non-string" do
+        editor = Editor.open!(@valid_pdf)
+        on_exit(fn -> Editor.close(editor) end)
+
+        assert_raise ArgumentError, ~r/:#{@field}/, fn -> set_info(editor, @field, 42) end
+        assert_raise ArgumentError, ~r/:#{@field}/, fn -> set_info(editor, @field, <<0xFF>>) end
+      end
+
+      test "set_#{field}!/2 raises for a closed editor" do
+        editor = Editor.open!(@valid_pdf)
+        :ok = Editor.close(editor)
+
+        assert {:error, %Error{reason: :closed}} = set_info(editor, @field, "value")
+        assert_raise Error, fn -> set_info!(editor, @field, "value") end
+      end
+    end
+
+    test "nil removes an entry the source had and the rest survive" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      metadata = editor |> Editor.set_author!(nil) |> Editor.to_binary!() |> saved_metadata()
+
+      assert %Document.Metadata{
+               title: "Test Title",
+               author: nil,
+               subject: "Testing",
+               keywords: "alpha, beta",
+               creator: "pdf_elixide test",
+               producer: "pdf_elixide",
+               creation_date: "D:20240115120000Z"
+             } = metadata
+    end
+
+    test "a whitespace-only value reads back as nil on both handles" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_subject!(editor, "   ")
+
+      assert Editor.metadata!(editor).subject == nil
+      assert (editor |> Editor.to_binary!() |> saved_metadata()).subject == nil
+    end
+  end
+
+  describe "set_creation_date/2 and set_mod_date/2" do
+    test "formats a UTC DateTime as a PDF date, dropping fractional seconds" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.set_creation_date(editor, ~U[2024-01-15 12:00:00.123Z])
+      Editor.set_mod_date!(editor, ~U[2024-02-29 23:59:59Z])
+
+      assert %Document.Metadata{
+               creation_date: "D:20240115120000Z",
+               mod_date: "D:20240229235959Z"
+             } = editor |> Editor.to_binary!() |> saved_metadata()
+    end
+
+    test "writes a non-zero offset as +HH'mm'" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # No time zone database is available, so build the offsets by hand.
+      utc = ~U[2024-01-15 12:00:00Z]
+      east = %{utc | utc_offset: 19_800, time_zone: "Asia/Kolkata", zone_abbr: "IST"}
+      west = %{utc | utc_offset: -18_000, time_zone: "America/New_York", zone_abbr: "EST"}
+
+      editor |> Editor.set_creation_date!(east) |> Editor.set_mod_date!(west)
+
+      assert %Document.Metadata{
+               creation_date: "D:20240115120000+05'30'",
+               mod_date: "D:20240115120000-05'00'"
+             } = Editor.metadata!(editor)
+    end
+
+    test "writes a sub-minute offset in UTC, keeping the instant" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      utc = ~U[2024-01-15 12:00:00Z]
+      # Amsterdam local mean time, +00:19:32, which no PDF offset can spell.
+      lmt = %{utc | utc_offset: 1_172, time_zone: "Europe/Amsterdam", zone_abbr: "LMT"}
+
+      Editor.set_creation_date!(editor, lmt)
+
+      assert Editor.metadata!(editor).creation_date == "D:20240115114028Z"
+    end
+
+    test "passes a well-formed PDF date string through unchanged" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_creation_date!(editor, "D:20240115120000+02'00'")
+      Editor.set_mod_date!(editor, "D:2024")
+
+      assert %Document.Metadata{
+               creation_date: "D:20240115120000+02'00'",
+               mod_date: "D:2024"
+             } = editor |> Editor.to_binary!() |> saved_metadata()
+    end
+
+    test "raises ArgumentError naming the key for anything else" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for bad <- [
+            "2024-01-15",
+            "D:20240231000000Z",
+            "D:20240115120000Zжж",
+            "D:20240115120000Zgarbage",
+            "D:20240115120000+03'00'x",
+            42,
+            ~D[2024-01-15]
+          ] do
+        assert_raise ArgumentError, ~r/:creation_date/, fn ->
+          Editor.set_creation_date(editor, bad)
+        end
+
+        assert_raise ArgumentError, ~r/:mod_date/, fn -> Editor.set_mod_date!(editor, bad) end
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "nil removes the entry" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_creation_date!(editor, nil)
+
+      assert Editor.metadata!(editor).creation_date == nil
+      assert (editor |> Editor.to_binary!() |> saved_metadata()).creation_date == nil
+    end
+  end
+
+  describe "document information on a full write" do
+    test "carries the source's entries across an untouched rewrite, except /Trapped" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      doc = Document.open!(@metadata_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      bytes = Editor.to_binary!(editor)
+
+      refute Editor.modified?(editor)
+      assert saved_metadata(bytes) == %{Document.metadata!(doc) | trapped: nil}
+    end
+
+    test "re-encodes every text-string encoding the source used" do
+      editor = Editor.open!(@metadata_encodings_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      doc = Document.open!(@metadata_encodings_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert %Document.Metadata{title: "Título 🙂", trapped: "Unknown"} =
+               source = Document.metadata!(doc)
+
+      assert editor |> Editor.to_binary!() |> saved_metadata() == %{source | trapped: nil}
+    end
+
+    test "writes no /Info for a document that had none" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      bytes = Editor.to_binary!(editor)
+
+      refute bytes =~ "/Info"
+      refute Editor.modified?(editor)
+    end
+
+    test "a second write carries the same entries" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      first = editor |> Editor.set_title!("Twice") |> Editor.to_binary!() |> saved_metadata()
+
+      assert first.title == "Twice"
+      assert editor |> Editor.to_binary!() |> saved_metadata() == first
+    end
+
+    @tag :tmp_dir
+    test "an untouched incremental save carries the entries too", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_untouched_info.pdf")
+
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert %Document.Metadata{title: "Test Title", author: "Jane Doe", trapped: nil} =
+               Document.metadata!(doc)
+    end
+
+    @tag :tmp_dir
+    test "an incremental save after a full write repeats the dictionary", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "repeated_info.pdf")
+
+      Editor.to_binary!(editor)
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert %Document.Metadata{title: "Test Title", trapped: nil} = Document.metadata!(doc)
+    end
+  end
+
+  defp set_info(editor, field, value), do: apply(Editor, :"set_#{field}", [editor, value])
+  defp set_info!(editor, field, value), do: apply(Editor, :"set_#{field}!", [editor, value])
+
+  defp saved_metadata(bytes) do
+    doc = Document.from_binary!(bytes)
+    metadata = Document.metadata!(doc)
+    Document.close(doc)
+
+    metadata
   end
 end

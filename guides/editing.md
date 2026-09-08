@@ -231,17 +231,66 @@ See [Saving edits](#saving-edits) for the incremental-save limitation.
 No media type is written for an attachment. `PdfElixide.Document.EmbeddedFile` reads one
 when another producer declared it, but this editor cannot set one.
 
-## Document information is not carried over
+## Document information
 
-Every write emits a trailer with no `/Info` entry, so `PdfElixide.Document.metadata/1`
-answers a struct with every field `nil` for the written file, however the source was
-populated. A full rewrite drops the dictionary; an incremental save leaves it in the
-original bytes but does not repeat the entry in the update's trailer, which is where a
-reader looks first.
+`PdfElixide.Editor.set_title/2`, `PdfElixide.Editor.set_author/2`,
+`PdfElixide.Editor.set_subject/2`, `PdfElixide.Editor.set_keywords/2`,
+`PdfElixide.Editor.set_creator/2`, `PdfElixide.Editor.set_producer/2`,
+`PdfElixide.Editor.set_creation_date/2` and `PdfElixide.Editor.set_mod_date/2`
+change the `/Info` dictionary, and `PdfElixide.Editor.metadata/1` reads it with
+pending changes applied:
 
-XMP metadata is unaffected — `PdfElixide.Document.xmp_metadata/1` reads back what the
-source carried — unless the write was encrypted, which the [Encryption](encryption.md)
-guide covers.
+    "report.pdf"
+    |> PdfElixide.Editor.open!()
+    |> PdfElixide.Editor.set_title!("Quarterly report")
+    |> PdfElixide.Editor.set_author!("Ada Lovelace")
+    |> PdfElixide.Editor.set_mod_date!(DateTime.utc_now())
+    |> PdfElixide.Editor.save!("titled.pdf")
 
-The trailer's `/ID` goes the same way, and a write emits one only when `:encryption` is
-given.
+Passing `nil` removes an entry. Each setter takes one string; keywords are stored
+as a single comma-separated string, which is how `PdfElixide.Document.Metadata`
+reads them back.
+
+### What a write carries
+
+Every write, full rewrite or incremental, carries the source's title, author,
+subject, keywords, creator, producer and both dates whether or not you set any
+of them, re-encoded as described below. Two things do not survive: `/Trapped`,
+which cannot be set — `PdfElixide.Editor.metadata/1` still reports the source's
+value — and any non-standard `/Info` key. Nothing is stamped for you: the
+producer stays whatever the source named, and `/ModDate` is only what you set,
+so set it yourself when a reader will look at it. A whitespace-only value is
+written but reads back as `nil`.
+
+### Text encoding
+
+ASCII is written as it stands. Anything else is written as UTF-8 behind a
+byte-order mark, the PDF 2.0 spelling (ISO 32000-2 §7.9.2.2), which
+`PdfElixide.Document.metadata/1` decodes and PDF 2.0-aware readers such as
+Poppler decode too. The file's declared version is not raised, so a reader that
+predates PDF 2.0 may show the mark and the raw bytes instead. UTF-16 cannot be
+produced.
+
+### Dates
+
+`PdfElixide.Editor.set_creation_date/2` and `PdfElixide.Editor.set_mod_date/2`
+take a `DateTime` or a PDF date string.
+
+A `DateTime` is written as `D:YYYYMMDDHHMMSS` followed by `Z` for UTC or by the
+offset as `+HH'mm'` / `-HH'mm'`. Fractional seconds are dropped. An offset that
+is not a whole number of minutes cannot be spelled, so such a value is written
+in UTC and the instant is preserved rather than the wall clock.
+
+A string must be a well-formed PDF date in full; a value read from
+`PdfElixide.Editor.metadata/1` qualifies. A malformed string, or one with
+anything after the date, raises `ArgumentError`.
+
+### XMP and document identifiers
+
+The XMP packet is not updated: `PdfElixide.Document.xmp_metadata/1` reads back
+what the source carried, and a viewer that prefers XMP over `/Info` shows those
+values rather than the ones you set. The exception is an encrypted write, which
+the [Encryption](encryption.md) guide covers.
+
+The trailer's `/ID` is dropped by a full rewrite, and a write emits one only when
+`:encryption` is given.

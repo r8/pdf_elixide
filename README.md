@@ -32,6 +32,8 @@ high-performance PDF library written in Rust. Built with
 - Fill AcroForm fields, flatten forms and annotations, export field data as FDF
   or XFDF, and save edited PDFs to a file or binary
 - Delete, reorder, rotate and crop pages, and paint over regions, in a mutable editor
+- Set a document's title, author, subject, keywords, creator, producer and
+  dates, and keep the ones it has through a rewrite
 - Attach files to a document, and list the attachments a document carries
 - Write a password-protected PDF, with the permission flags a reader reads back
 - Read what a document's digital signatures claim — signer, time, reason, the

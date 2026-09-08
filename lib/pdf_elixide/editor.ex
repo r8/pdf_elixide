@@ -57,11 +57,13 @@ defmodule PdfElixide.Editor do
   Attaching to a document with an existing name tree is refused. See
   [Attachments](guides/editing.md#attachments) for the workflow and metadata limits.
 
-  ## Document information is not carried over
+  ## Document information
 
-  Every write loses the source `/Info` metadata. See
-  [Document information is not carried over](guides/editing.md#document-information-is-not-carried-over)
-  for XMP and document identifiers.
+  `set_title/2`, `set_author/2`, `set_subject/2`, `set_keywords/2`,
+  `set_creator/2`, `set_producer/2`, `set_creation_date/2` and `set_mod_date/2`
+  change the `/Info` dictionary; `metadata/1` reads it with pending changes.
+  See [Document information](guides/editing.md#document-information) for what
+  writes preserve and how text, dates, XMP and document identifiers behave.
 
   ## Encryption
 
@@ -74,14 +76,15 @@ defmodule PdfElixide.Editor do
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
   a single editor serializes. `page_count/1`, `modified?/1`, `rotation/2`,
-  `media_box/2`, `crop_box/2`, `embedded_files/1`, `flatten_warnings/1` and
-  `closed?/1` take the lock shared,
+  `media_box/2`, `crop_box/2`, `metadata/1`, `embedded_files/1`,
+  `flatten_warnings/1` and `closed?/1` take the lock shared,
   as do the `PdfElixide.Signature` reads given an editor, which reach the
   document it was opened from. Give each process its own editor if you need them
   to work at once; see the [Concurrency](guides/concurrency.md) guide.
   """
 
   alias PdfElixide.Document.EmbeddedFile
+  alias PdfElixide.Document.Metadata
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
   alias PdfElixide.Native
@@ -973,6 +976,235 @@ defmodule PdfElixide.Editor do
   @spec embedded_files!(t()) :: [EmbeddedFile.t()]
   def embedded_files!(%__MODULE__{} = editor) do
     embedded_files(editor) |> Wrap.unwrap!()
+  end
+
+  @typedoc """
+  A `DateTime` or complete PDF date string for `set_creation_date/2` and
+  `set_mod_date/2`. See [Dates](guides/editing.md#dates) for formatting details.
+  """
+  @type info_date :: DateTime.t() | String.t()
+
+  @doc """
+  Reads the document information the edited document will carry: values given
+  to the setters below over the source's `/Info` dictionary.
+
+  `:trapped` is always the source's value. It cannot be set, and any write that
+  emits `/Info` drops it. See
+  [Document information](guides/editing.md#document-information).
+  """
+  @spec metadata(t()) :: {:ok, Metadata.t()} | {:error, Error.t()}
+  def metadata(%__MODULE__{ref: ref}) do
+    with {:ok, map} <- Wrap.call(fn -> Native.editor_info(ref) end) do
+      {:ok, Metadata.from_nif(map)}
+    end
+  end
+
+  @doc """
+  Reads the document information the edited document will carry, raising an
+  error if it fails.
+  """
+  @spec metadata!(t()) :: Metadata.t()
+  def metadata!(%__MODULE__{} = editor) do
+    metadata(editor) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/Title` and returns the editor. `nil` removes the entry.
+
+  Anything but a string or `nil` raises `ArgumentError`. See
+  [Document information](guides/editing.md#document-information).
+  """
+  @spec set_title(t(), String.t() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_title(%__MODULE__{} = editor, title) do
+    set_info_field(editor, :title, validate_text!(:title, title))
+  end
+
+  @doc """
+  Sets the document's `/Title`, raising an error if it fails.
+  """
+  @spec set_title!(t(), String.t() | nil) :: t()
+  def set_title!(%__MODULE__{} = editor, title) do
+    editor |> set_title(title) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/Author` and returns the editor. `nil` removes the
+  entry.
+  """
+  @spec set_author(t(), String.t() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_author(%__MODULE__{} = editor, author) do
+    set_info_field(editor, :author, validate_text!(:author, author))
+  end
+
+  @doc """
+  Sets the document's `/Author`, raising an error if it fails.
+  """
+  @spec set_author!(t(), String.t() | nil) :: t()
+  def set_author!(%__MODULE__{} = editor, author) do
+    editor |> set_author(author) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/Subject` and returns the editor. `nil` removes the
+  entry.
+  """
+  @spec set_subject(t(), String.t() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_subject(%__MODULE__{} = editor, subject) do
+    set_info_field(editor, :subject, validate_text!(:subject, subject))
+  end
+
+  @doc """
+  Sets the document's `/Subject`, raising an error if it fails.
+  """
+  @spec set_subject!(t(), String.t() | nil) :: t()
+  def set_subject!(%__MODULE__{} = editor, subject) do
+    editor |> set_subject(subject) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/Keywords` and returns the editor. `nil` removes the
+  entry.
+
+  PDF stores keywords as one string, comma-separated by convention, and
+  `PdfElixide.Document.Metadata` reads it back unsplit.
+  """
+  @spec set_keywords(t(), String.t() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_keywords(%__MODULE__{} = editor, keywords) do
+    set_info_field(editor, :keywords, validate_text!(:keywords, keywords))
+  end
+
+  @doc """
+  Sets the document's `/Keywords`, raising an error if it fails.
+  """
+  @spec set_keywords!(t(), String.t() | nil) :: t()
+  def set_keywords!(%__MODULE__{} = editor, keywords) do
+    editor |> set_keywords(keywords) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/Creator`, the application that made the original
+  document, and returns the editor. `nil` removes the entry.
+  """
+  @spec set_creator(t(), String.t() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_creator(%__MODULE__{} = editor, creator) do
+    set_info_field(editor, :creator, validate_text!(:creator, creator))
+  end
+
+  @doc """
+  Sets the document's `/Creator`, raising an error if it fails.
+  """
+  @spec set_creator!(t(), String.t() | nil) :: t()
+  def set_creator!(%__MODULE__{} = editor, creator) do
+    editor |> set_creator(creator) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/Producer`, the application that produced the PDF, and
+  returns the editor. `nil` removes the entry.
+  """
+  @spec set_producer(t(), String.t() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_producer(%__MODULE__{} = editor, producer) do
+    set_info_field(editor, :producer, validate_text!(:producer, producer))
+  end
+
+  @doc """
+  Sets the document's `/Producer`, raising an error if it fails.
+  """
+  @spec set_producer!(t(), String.t() | nil) :: t()
+  def set_producer!(%__MODULE__{} = editor, producer) do
+    editor |> set_producer(producer) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/CreationDate` and returns the editor.
+
+  Takes a `t:info_date/0` or `nil`, which removes the entry. A malformed date
+  string, or anything else, raises `ArgumentError`.
+  """
+  @spec set_creation_date(t(), info_date() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_creation_date(%__MODULE__{} = editor, date) do
+    set_info_field(editor, :creation_date, pdf_date(:creation_date, date))
+  end
+
+  @doc """
+  Sets the document's `/CreationDate`, raising an error if it fails.
+  """
+  @spec set_creation_date!(t(), info_date() | nil) :: t()
+  def set_creation_date!(%__MODULE__{} = editor, date) do
+    editor |> set_creation_date(date) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the document's `/ModDate` and returns the editor.
+
+  Takes a `t:info_date/0` or `nil`, which removes the entry. A malformed date
+  string, or anything else, raises `ArgumentError`.
+  """
+  @spec set_mod_date(t(), info_date() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_mod_date(%__MODULE__{} = editor, date) do
+    set_info_field(editor, :mod_date, pdf_date(:mod_date, date))
+  end
+
+  @doc """
+  Sets the document's `/ModDate`, raising an error if it fails.
+  """
+  @spec set_mod_date!(t(), info_date() | nil) :: t()
+  def set_mod_date!(%__MODULE__{} = editor, date) do
+    editor |> set_mod_date(date) |> Wrap.unwrap!()
+  end
+
+  defp set_info_field(%__MODULE__{ref: ref} = editor, field, value) do
+    case Wrap.call(fn -> Native.editor_set_info_field(ref, field, value) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp pdf_date(_key, nil), do: nil
+
+  # A PDF date offset has minute resolution, so a sub-minute offset keeps the
+  # instant rather than the wall clock.
+  defp pdf_date(key, %DateTime{calendar: Calendar.ISO} = datetime) do
+    datetime =
+      if rem(datetime.utc_offset + datetime.std_offset, 60) == 0,
+        do: datetime,
+        else: datetime |> DateTime.to_unix() |> DateTime.from_unix!()
+
+    validate_date!(key, Calendar.strftime(datetime, "D:%Y%m%d%H%M%S") <> pdf_offset(datetime))
+  end
+
+  defp pdf_date(key, date) when is_binary(date), do: validate_date!(key, date)
+
+  defp pdf_date(key, other) do
+    raise ArgumentError,
+          "invalid #{inspect(key)}, expected a DateTime or a PDF date string: #{inspect(other)}"
+  end
+
+  defp pdf_offset(%DateTime{utc_offset: utc_offset, std_offset: std_offset}) do
+    case utc_offset + std_offset do
+      0 ->
+        "Z"
+
+      offset ->
+        sign = if offset < 0, do: "-", else: "+"
+        hours = offset |> abs() |> div(3600) |> two_digits()
+        minutes = offset |> abs() |> rem(3600) |> div(60) |> two_digits()
+        "#{sign}#{hours}'#{minutes}'"
+    end
+  end
+
+  defp two_digits(value), do: value |> Integer.to_string() |> String.pad_leading(2, "0")
+
+  # The grammar lives in the NIF, shared with signature dates; checking here is
+  # what lets the error name the key.
+  defp validate_date!(key, date) do
+    if String.valid?(date) and Wrap.call!(fn -> Native.pdf_date_writable(date) end) do
+      date
+    else
+      raise ArgumentError,
+            "invalid #{inspect(key)}, expected a PDF date string such as " <>
+              "\"D:20240115120000Z\": #{inspect(date)}"
+    end
   end
 
   @doc """

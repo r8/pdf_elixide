@@ -35,6 +35,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @ecdsa_p521_pdf Path.join(@fixtures, "form_signature_ecdsa_p521.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
   @sample_pdf Path.join(@fixtures, "sample.pdf")
+  @metadata_pdf Path.join(@fixtures, "metadata.pdf")
   @leaked_cm_pdf Path.join(@fixtures, "leaked_cm.pdf")
   @leaked_clip_pdf Path.join(@fixtures, "leaked_clip.pdf")
   @leaked_path_pdf Path.join(@fixtures, "leaked_path.pdf")
@@ -785,6 +786,23 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert Document.rects!(doc, 0) == [],
              "upstream now carries erase overlays into an incremental update"
+    end
+
+    @tag :tmp_dir
+    test "a metadata edit survives, unlike everything above", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_info.pdf")
+
+      Editor.set_title!(editor, "Updated")
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert %Document.Metadata{title: "Updated", author: "Jane Doe", trapped: nil} =
+               Document.metadata!(doc),
+             "upstream's incremental writer no longer emits /Info; document the loss"
     end
   end
 

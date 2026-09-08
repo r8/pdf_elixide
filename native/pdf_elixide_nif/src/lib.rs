@@ -5,7 +5,7 @@ use pdf_oxide::{
     structure::table_extractor::Table, writer::EmbeddedFile, PdfDocument,
 };
 
-use crate::{editor::PageEdits, form_tree::Resolved, resource::Closable};
+use crate::{editor::PageEdits, form_tree::Resolved, metadata::MetadataNif, resource::Closable};
 
 mod annotations;
 mod binary;
@@ -80,6 +80,9 @@ struct EditorResource {
     pages: Mutex<Vec<PageEdits>>,
     // Re-supplied after full writes drain the editor's pending list.
     embedded: RwLock<Vec<EmbeddedFile>>,
+    // Caller-visible `/Info` values once a setter has run; `None` answers from
+    // the source.
+    info: Mutex<Option<MetadataNif>>,
 }
 
 #[rustler::resource_impl]

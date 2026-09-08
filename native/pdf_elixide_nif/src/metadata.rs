@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use pdf_oxide::{
+    editor::DocumentInfo,
     encryption::PdfPermissions,
     extractors::{
         page_labels::{PageLabelExtractor, PageLabelRange, PageLabelStyle},
@@ -12,17 +13,18 @@ use rustler::{NifMap, NifResult, NifUnitEnum, ResourceArc};
 
 use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource};
 
-#[derive(NifMap, Debug)]
-pub struct MetadataNif {
-    title: Option<String>,
-    author: Option<String>,
-    subject: Option<String>,
-    keywords: Option<String>,
-    creator: Option<String>,
-    producer: Option<String>,
-    creation_date: Option<String>,
-    mod_date: Option<String>,
-    trapped: Option<String>,
+// Shared by document reads and the editor's pending `/Info` values.
+#[derive(NifMap, Debug, Clone)]
+pub(crate) struct MetadataNif {
+    pub(crate) title: Option<String>,
+    pub(crate) author: Option<String>,
+    pub(crate) subject: Option<String>,
+    pub(crate) keywords: Option<String>,
+    pub(crate) creator: Option<String>,
+    pub(crate) producer: Option<String>,
+    pub(crate) creation_date: Option<String>,
+    pub(crate) mod_date: Option<String>,
+    pub(crate) trapped: Option<String>,
 }
 
 // The shared decoder handles UTF-16, UTF-8 and PDFDocEncoding. Strip PDF 2.0's
@@ -37,9 +39,60 @@ pub(crate) fn decode_pdf_text_string(bytes: &[u8]) -> String {
     pdf_oxide::optional_content::decode_pdf_text_string(body)
 }
 
+// `DocumentInfo` writes string bytes verbatim, so non-ASCII needs a UTF-8 BOM.
+pub(crate) fn encode_pdf_text_string(value: &str) -> String {
+    if value.is_ascii() {
+        value.to_string()
+    } else {
+        format!("\u{FEFF}{value}")
+    }
+}
+
+// Whitespace-only reads as absent, on the document and on the editor alike.
+pub(crate) fn normalize_text(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let trimmed = value.trim();
+
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+// The eight fields upstream's struct has; `/Trapped` has no slot and is dropped
+// by any write that emits `/Info`. Dates are ASCII-checked before they get
+// here, so the encoder's BOM branch never touches one.
+pub(crate) fn to_document_info(info: &MetadataNif) -> DocumentInfo {
+    let encode = |value: &Option<String>| value.as_deref().map(encode_pdf_text_string);
+
+    DocumentInfo {
+        title: encode(&info.title),
+        author: encode(&info.author),
+        subject: encode(&info.subject),
+        keywords: encode(&info.keywords),
+        creator: encode(&info.creator),
+        producer: encode(&info.producer),
+        creation_date: encode(&info.creation_date),
+        mod_date: encode(&info.mod_date),
+    }
+}
+
+// Whether a write would emit anything: `/Trapped` alone does not count.
+pub(crate) fn has_info_text(info: &MetadataNif) -> bool {
+    [
+        &info.title,
+        &info.author,
+        &info.subject,
+        &info.keywords,
+        &info.creator,
+        &info.producer,
+        &info.creation_date,
+        &info.mod_date,
+    ]
+    .into_iter()
+    .any(Option::is_some)
+}
+
 // Decode every `/Info` field through one path so `/Producer` and `/Creator` do
 // not use a different, UTF-8-unaware helper.
-fn read_metadata(doc: &PdfDocument) -> MetadataNif {
+pub(crate) fn read_metadata(doc: &PdfDocument) -> MetadataNif {
     let info = doc
         .trailer()
         .as_dict()
@@ -52,9 +105,9 @@ fn read_metadata(doc: &PdfDocument) -> MetadataNif {
         let value = resolved
             .as_string()
             .map(decode_pdf_text_string)
-            .or_else(|| resolved.as_name().map(str::to_string))?;
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
+            .or_else(|| resolved.as_name().map(str::to_string));
+
+        normalize_text(value)
     };
 
     MetadataNif {
@@ -254,7 +307,10 @@ fn document_page_label_ranges(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_pdf_text_string as decode, read_metadata, PdfDocument};
+    use super::{
+        decode_pdf_text_string as decode, encode_pdf_text_string as encode, has_info_text,
+        normalize_text, read_metadata, to_document_info, MetadataNif, PdfDocument,
+    };
 
     fn fixture(name: &str) -> String {
         format!(
@@ -352,5 +408,95 @@ mod tests {
     #[test]
     fn decodes_raw_utf8_without_a_bom() {
         assert_eq!(decode(b"Caf\xC3\xA9"), "Café");
+    }
+
+    #[test]
+    fn encodes_ascii_unchanged() {
+        assert_eq!(encode("Test Title"), "Test Title");
+        assert_eq!(encode(""), "");
+        assert_eq!(encode("D:20240115120000Z"), "D:20240115120000Z");
+    }
+
+    #[test]
+    fn prefixes_non_ascii_with_the_utf8_bom() {
+        let encoded = encode("Título");
+
+        assert!(encoded.as_bytes().starts_with(b"\xEF\xBB\xBF"));
+        assert_eq!(&encoded[3..], "Título");
+    }
+
+    #[test]
+    fn round_trips_through_the_shared_decoder() {
+        for value in ["Test Title", "Título", "Café ✓", "Título 🙂", "  padded  "] {
+            assert_eq!(decode(encode(value).as_bytes()), value);
+        }
+    }
+
+    #[test]
+    fn to_document_info_encodes_every_field_and_drops_trapped() {
+        let info = MetadataNif {
+            title: Some("Título".into()),
+            author: Some("Jane".into()),
+            subject: None,
+            keywords: Some("a, b".into()),
+            creator: Some("Créateur".into()),
+            producer: Some("pdf_elixide ✓".into()),
+            creation_date: Some("D:20240115120000Z".into()),
+            mod_date: None,
+            trapped: Some("True".into()),
+        };
+
+        let document_info = to_document_info(&info);
+
+        assert_eq!(document_info.title.as_deref(), Some("\u{FEFF}Título"));
+        assert_eq!(document_info.author.as_deref(), Some("Jane"));
+        assert_eq!(document_info.subject, None);
+        assert_eq!(document_info.keywords.as_deref(), Some("a, b"));
+        assert_eq!(document_info.creator.as_deref(), Some("\u{FEFF}Créateur"));
+        assert_eq!(
+            document_info.producer.as_deref(),
+            Some("\u{FEFF}pdf_elixide ✓")
+        );
+        assert_eq!(
+            document_info.creation_date.as_deref(),
+            Some("D:20240115120000Z")
+        );
+        assert_eq!(document_info.mod_date, None);
+        assert!(!document_info
+            .to_object()
+            .as_dict()
+            .unwrap()
+            .contains_key("Trapped"));
+    }
+
+    #[test]
+    fn has_info_text_ignores_trapped() {
+        let empty = MetadataNif {
+            title: None,
+            author: None,
+            subject: None,
+            keywords: None,
+            creator: None,
+            producer: None,
+            creation_date: None,
+            mod_date: None,
+            trapped: Some("True".into()),
+        };
+        assert!(!has_info_text(&empty));
+
+        let dated = MetadataNif {
+            mod_date: Some("D:2024".into()),
+            trapped: None,
+            ..empty
+        };
+        assert!(has_info_text(&dated));
+    }
+
+    #[test]
+    fn normalize_text_maps_whitespace_to_none() {
+        assert_eq!(normalize_text(None), None);
+        assert_eq!(normalize_text(Some("   ".into())), None);
+        assert_eq!(normalize_text(Some("".into())), None);
+        assert_eq!(normalize_text(Some("  x ".into())), Some("x".into()));
     }
 }

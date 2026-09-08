@@ -553,8 +553,16 @@ fn signature_signing_time(signing_time: Option<String>) -> Option<i64> {
 
 // Reject values upstream would normalize into a different date while preserving
 // its accepted PDF date spellings.
-fn well_formed_pdf_date(date: &str) -> bool {
-    let bytes = date.strip_prefix("D:").unwrap_or(date).as_bytes();
+pub(crate) fn well_formed_pdf_date(date: &str) -> bool {
+    well_formed_pdf_date_len(date).is_some()
+}
+
+// The length of the well-formed prefix, `D:` included. Bytes past it are
+// tolerated here because real producers append to a `Z`; a writer compares
+// this against the whole input instead.
+pub(crate) fn well_formed_pdf_date_len(date: &str) -> Option<usize> {
+    let prefix = if date.starts_with("D:") { 2 } else { 0 };
+    let bytes = &date.as_bytes()[prefix..];
 
     // Every field after the year is optional (ISO 32000-1 §7.9.4).
     let field = |start: usize, absent: u32| match bytes.len() {
@@ -563,51 +571,57 @@ fn well_formed_pdf_date(date: &str) -> bool {
         _ => two_digits(&bytes[start..start + 2]),
     };
 
-    let (Some(year), Some(month), Some(day)) = (
-        bytes.get(..4).and_then(four_digits),
-        field(4, 1),
-        field(6, 1),
-    ) else {
-        return false;
-    };
-    let (Some(hour), Some(minute), Some(second)) = (field(8, 0), field(10, 0), field(12, 0)) else {
-        return false;
-    };
+    let year = bytes.get(..4).and_then(four_digits)?;
+    let (month, day) = (field(4, 1)?, field(6, 1)?);
+    let (hour, minute, second) = (field(8, 0)?, field(10, 0)?, field(12, 0)?);
 
-    (1..=12).contains(&month)
+    let in_range = (1..=12).contains(&month)
         && (1..=days_in_month(year, month)).contains(&day)
         && hour <= 23
         && minute <= 59
-        && second <= 59
-        && well_formed_offset(bytes)
-}
+        && second <= 59;
 
-// Do not let an unknown marker silently become UTC.
-fn well_formed_offset(bytes: &[u8]) -> bool {
-    let Some(marker) = bytes.get(14) else {
-        return true;
+    if !in_range {
+        return None;
+    }
+
+    // A body shorter than the offset marker has no offset and, past the field
+    // parse above, no trailing bytes either.
+    let consumed = if bytes.len() <= 14 {
+        bytes.len()
+    } else {
+        well_formed_offset(bytes)?
     };
 
-    match marker {
-        b'Z' => true,
+    Some(prefix + consumed)
+}
+
+// Do not let an unknown marker silently become UTC. Returns the index just
+// past the offset.
+fn well_formed_offset(bytes: &[u8]) -> Option<usize> {
+    match bytes.get(14)? {
+        b'Z' => Some(15),
         b'+' | b'-' => {
-            let Some(hours) = bytes.get(15..17).and_then(two_digits) else {
-                return false;
-            };
+            let hours = bytes.get(15..17).and_then(two_digits)?;
             // The apostrophe is optional in the wild, and so are the minutes.
             let minutes_at = if bytes.get(17) == Some(&b'\'') {
                 18
             } else {
                 17
             };
-            let minutes = match bytes.get(minutes_at..minutes_at + 2) {
-                Some(field) => two_digits(field),
-                None => Some(0),
+            let (minutes, end) = match bytes.get(minutes_at..minutes_at + 2) {
+                Some(field) => (two_digits(field)?, minutes_at + 2),
+                None => (0, minutes_at),
+            };
+            let end = if bytes.get(end) == Some(&b'\'') {
+                end + 1
+            } else {
+                end
             };
 
-            hours <= 23 && minutes.is_some_and(|minutes| minutes <= 59)
+            (hours <= 23 && minutes <= 59).then_some(end)
         }
-        _ => false,
+        _ => None,
     }
 }
 
@@ -1324,6 +1338,31 @@ mod tests {
     }
 
     // No fixture carries a malformed `/M`: a signer writes the date from a clock.
+    #[test]
+    fn reports_the_length_of_the_well_formed_prefix() {
+        let full = "D:20240115120000";
+
+        for (date, len) in [
+            ("D:2024", 6),
+            ("20240115120000", 14),
+            (full, 16),
+            (&format!("{full}Z"), 17),
+            (&format!("{full}+03"), 19),
+            (&format!("{full}+03'"), 20),
+            (&format!("{full}+0300"), 21),
+            (&format!("{full}+03'00"), 22),
+            (&format!("{full}+03'00'"), 23),
+            // The leniency is a prefix: what follows a `Z` is not consumed.
+            ("D:20240421120000Z00'00'", 17),
+            ("D:20240115120000Zgarbage", 17),
+        ] {
+            assert_eq!(well_formed_pdf_date_len(date), Some(len), "{date}");
+        }
+
+        assert_eq!(well_formed_pdf_date_len("D:2024011512000"), None);
+        assert_eq!(well_formed_pdf_date_len("D:20240115120000+3"), None);
+    }
+
     #[test]
     fn accepts_the_date_shapes_the_grammar_allows() {
         for date in [

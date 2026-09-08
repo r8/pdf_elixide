@@ -29,7 +29,9 @@ use crate::{
     form_tree::{self, Resolved},
     fs_path::path_arg,
     geometry::{rect_from_corners, rect_from_nif, RectNif},
+    metadata::{has_info_text, normalize_text, read_metadata, to_document_info, MetadataNif},
     resource::Closable,
+    signatures::well_formed_pdf_date_len,
     EditorResource,
 };
 
@@ -142,6 +144,11 @@ fn page_edits(resource: &EditorResource) -> MutexGuard<'_, Vec<PageEdits>> {
     resource.pages.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+// Same poisoning rule as `page_edits`; written only under the exclusive guard.
+fn info_edits(resource: &EditorResource) -> MutexGuard<'_, Option<MetadataNif>> {
+    resource.info.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 // The editor guard provides exclusion; this lock provides interior mutability
 // and recovers poisoning like `page_edits`.
 fn embedded_files(resource: &EditorResource) -> RwLockReadGuard<'_, Vec<EmbeddedFile>> {
@@ -197,6 +204,7 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
         pages_deleted: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
         embedded: RwLock::new(Vec::new()),
+        info: Mutex::new(None),
     });
     seed_pages(&resource)?;
     let version = cached_version(&resource)?;
@@ -215,6 +223,7 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
         pages_deleted: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
         embedded: RwLock::new(Vec::new()),
+        info: Mutex::new(None),
     });
     seed_pages(&resource)?;
     let version = cached_version(&resource)?;
@@ -243,6 +252,7 @@ fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
     resource.editor.close();
     page_edits(&resource).clear();
     embedded_files_mut(&resource).clear();
+    *info_edits(&resource) = None;
 
     atoms::ok()
 }
@@ -325,6 +335,23 @@ fn resupply_embedded(resource: &EditorResource, editor: &mut DocumentEditor) -> 
     Ok(())
 }
 
+// The writers emit `/Info` only from pending metadata, so supply the source's
+// values when no setter has populated the mirror.
+fn resupply_info(resource: &EditorResource, editor: &mut DocumentEditor) -> NifResult<()> {
+    if info_edits(resource).is_some() {
+        return Ok(());
+    }
+
+    let info = read_metadata(editor.source());
+    if has_info_text(&info) {
+        editor
+            .set_info(to_document_info(&info))
+            .map_err(to_nif_err)?;
+    }
+
+    Ok(())
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_embed_file(
     resource: ResourceArc<EditorResource>,
@@ -379,8 +406,11 @@ fn editor_to_bytes(
     options: SaveOptionsNif,
 ) -> NifResult<OwnedBinary> {
     resource.editor.with_lock(|editor| {
+        // Incremental output is refused below before writing, so resupplying
+        // for it would only move the modified flag.
         if !options.incremental {
             resupply_embedded(&resource, editor)?;
+            resupply_info(&resource, editor)?;
         }
 
         let bytes = editor
@@ -405,12 +435,114 @@ fn editor_save(
         if !options.incremental {
             resupply_embedded(&resource, editor)?;
         }
+        resupply_info(&resource, editor)?;
 
         editor
             .save_with_options(&path, options.into())
             .map_err(to_nif_err)?;
 
         Ok(atoms::ok())
+    })
+}
+
+#[derive(NifUnitEnum, Clone, Copy, Debug)]
+pub enum InfoFieldNif {
+    Title,
+    Author,
+    Subject,
+    Keywords,
+    Creator,
+    Producer,
+    CreationDate,
+    ModDate,
+}
+
+fn info_slot(info: &mut MetadataNif, field: InfoFieldNif) -> &mut Option<String> {
+    match field {
+        InfoFieldNif::Title => &mut info.title,
+        InfoFieldNif::Author => &mut info.author,
+        InfoFieldNif::Subject => &mut info.subject,
+        InfoFieldNif::Keywords => &mut info.keywords,
+        InfoFieldNif::Creator => &mut info.creator,
+        InfoFieldNif::Producer => &mut info.producer,
+        InfoFieldNif::CreationDate => &mut info.creation_date,
+        InfoFieldNif::ModDate => &mut info.mod_date,
+    }
+}
+
+// The shared grammar is prefix-lenient for the signature reader's sake; a
+// write must match in full so nothing unvalidated reaches the file.
+fn writable_pdf_date(date: &str) -> bool {
+    well_formed_pdf_date_len(date) == Some(date.len())
+}
+
+// A short, lock-free check does not warrant dirty scheduling.
+#[rustler::nif]
+fn pdf_date_writable(date: String) -> bool {
+    writable_pdf_date(&date)
+}
+
+// Seed from `read_metadata`, never upstream's `get_info`: that decodes
+// `/Info` lossily and would mangle every field the caller did not touch.
+fn seeded_info(resource: &EditorResource, editor: &DocumentEditor) -> MetadataNif {
+    let pending = info_edits(resource).clone();
+
+    pending.unwrap_or_else(|| read_metadata(editor.source()))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_set_info_field(
+    resource: ResourceArc<EditorResource>,
+    field: InfoFieldNif,
+    value: Option<String>,
+) -> NifResult<Atom> {
+    if matches!(field, InfoFieldNif::CreationDate | InfoFieldNif::ModDate) {
+        if let Some(date) = value.as_deref().filter(|date| !writable_pdf_date(date)) {
+            return Err(tagged_err(
+                atoms::other(),
+                format!("invalid {field:?}, expected a PDF date string: {date:?}"),
+            ));
+        }
+    }
+
+    resource.editor.with_lock(|editor| {
+        let mut info = seeded_info(&resource, editor);
+        *info_slot(&mut info, field) = value;
+
+        // Upstream first: it owns `is_modified`, and the mirror must not record
+        // a value the editor rejected. Always the whole struct, so clearing the
+        // last field replaces the earlier dictionary rather than keeping it.
+        editor
+            .set_info(to_document_info(&info))
+            .map_err(to_nif_err)?;
+        *info_edits(&resource) = Some(info);
+
+        Ok(atoms::ok())
+    })
+}
+
+// Shared because it reaches only `source()` and the mirror. Pending values are
+// normalized the way `read_metadata` normalizes, so the answer predicts what a
+// reader gets from the written file.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_info(resource: ResourceArc<EditorResource>) -> NifResult<MetadataNif> {
+    resource.editor.with_read(|editor| {
+        let pending = info_edits(&resource).clone();
+
+        Ok(match pending {
+            Some(info) => MetadataNif {
+                title: normalize_text(info.title),
+                author: normalize_text(info.author),
+                subject: normalize_text(info.subject),
+                keywords: normalize_text(info.keywords),
+                creator: normalize_text(info.creator),
+                producer: normalize_text(info.producer),
+                creation_date: normalize_text(info.creation_date),
+                mod_date: normalize_text(info.mod_date),
+                trapped: info.trapped,
+            },
+            None => read_metadata(editor.source()),
+        })
     })
 }
 
@@ -1027,12 +1159,93 @@ fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<V
 #[cfg(test)]
 mod tests {
     use pdf_oxide::{
-        editor::form_fields::FormFieldValue,
+        editor::{form_fields::FormFieldValue, DocumentInfo},
         encryption::{Algorithm, EncryptionWriteHandler},
         PdfDocument,
     };
 
     use super::*;
+
+    #[test]
+    fn writable_pdf_date_holds_the_shared_grammar_to_the_whole_input() {
+        for date in [
+            "D:2024",
+            "D:20240115120000",
+            "D:20240115120000Z",
+            "D:20240115120000+03",
+            "D:20240115120000+03'",
+            "D:20240115120000+0300",
+            "D:20240115120000+03'00",
+            "D:20240115120000-05'00'",
+        ] {
+            assert!(writable_pdf_date(date), "{date}");
+        }
+        for date in [
+            "D:20240115120000Zgarbage",
+            "D:20240421120000Z00'00'",
+            "D:20240115120000+03'00'x",
+            "D:20240115120000+03x",
+            "D:20240115120000Zжж",
+            "2024-01-15",
+            "D:20240231000000Z",
+            "",
+        ] {
+            assert!(!writable_pdf_date(date), "{date}");
+        }
+    }
+
+    // Justifies `encode_pdf_text_string`: upstream writes a `String`'s bytes
+    // raw, which a conforming reader takes for PDFDocEncoding.
+    #[test]
+    fn upstream_still_writes_info_text_strings_without_a_bom() {
+        let object = DocumentInfo::new().title("Título").to_object();
+        let bytes = object
+            .as_dict()
+            .and_then(|dict| dict.get("Title"))
+            .and_then(|title| title.as_string())
+            .expect("a /Title string");
+
+        assert!(
+            !bytes.starts_with(b"\xEF\xBB\xBF") && !bytes.starts_with(b"\xFE\xFF"),
+            "upstream now encodes /Info text strings"
+        );
+        assert_eq!(bytes, "Título".as_bytes());
+    }
+
+    // Justifies seeding from `read_metadata` rather than upstream's `get_info`.
+    #[test]
+    fn upstream_still_decodes_info_lossily() {
+        let mut editor =
+            DocumentEditor::open(fixture("metadata_encodings.pdf")).expect("fixture opens");
+
+        assert_eq!(
+            read_metadata(editor.source()).title.as_deref(),
+            Some("Título 🙂")
+        );
+        assert_ne!(
+            editor.get_info().expect("info").title.as_deref(),
+            Some("Título 🙂"),
+            "upstream now decodes a UTF-16BE /Title"
+        );
+    }
+
+    // Justifies `resupply_info`.
+    #[test]
+    fn upstream_still_drops_info_on_an_untouched_full_rewrite() {
+        let mut editor = DocumentEditor::open(fixture("metadata.pdf")).expect("fixture opens");
+        assert_eq!(
+            read_metadata(editor.source()).title.as_deref(),
+            Some("Test Title")
+        );
+
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+        let written = PdfDocument::from_bytes(bytes).expect("output opens");
+
+        assert!(
+            read_metadata(&written).title.is_none(),
+            "upstream now carries /Info across a full rewrite"
+        );
+    }
 
     fn fixture(name: &str) -> String {
         format!(
