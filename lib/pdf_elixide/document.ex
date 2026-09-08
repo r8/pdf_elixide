@@ -115,14 +115,15 @@ defmodule PdfElixide.Document do
   dimensions, none is turned to match a rotated page (see below), and a page
   with no `/MediaBox` anywhere above it is an
   `%PdfElixide.Error{reason: :invalid_pdf}` rather than an assumed page size.
-  There is no reader for `/CropBox`, `/BleedBox`, `/TrimBox` or `/ArtBox` on a
-  read-only document.
+  `PdfElixide.Document.Page.crop_box/1` reads the `/CropBox` — the part of
+  that sheet a viewer shows — on the same terms, answering `nil` when there is
+  none. There is no reader for `/BleedBox`, `/TrimBox` or `/ArtBox`.
 
   ### Which ancestor an inherited box comes from
 
-  `/MediaBox` and `/Rotate` are inheritable: a page declaring neither takes them
-  from an ancestor `/Pages` node, unambiguously where exactly one ancestor
-  declares the entry. Where **two** nested ancestors declare it, which wins is
+  `/MediaBox`, `/CropBox` and `/Rotate` are inheritable: a page declaring none
+  of them takes them from an ancestor `/Pages` node, unambiguously where exactly
+  one ancestor declares the entry. Where **two** nested ancestors declare it, which wins is
   not stable: the same page can report a different box, and a different
   rotation, on a later call. Almost all documents declare each entry at one
   level only and are unaffected.

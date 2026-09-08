@@ -25,6 +25,7 @@ defmodule PdfElixide.Document.PageTest do
   @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
+  @crop_box_pdf Path.join(@fixtures, "crop_box.pdf")
   @text_layer_pdf Path.join(@fixtures, "text_layer.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
@@ -124,6 +125,91 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert_raise Error, fn -> Page.media_box!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "crop_box/1" do
+    test "returns the box declared on the page" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: 10.0, y: 20.0, width: 200.0, height: 300.0}} =
+               Page.crop_box(Document.page!(doc, 0))
+    end
+
+    test "inherits the box from an ancestor /Pages node" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: 50.0, y: 50.0, width: 250.0, height: 350.0}} =
+               Page.crop_box(Document.page!(doc, 1))
+    end
+
+    test "resolves an indirect /CropBox reference" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 100.0, height: 100.0}} =
+               Page.crop_box(Document.page!(doc, 2))
+    end
+
+    test "resolves an indirect reference in each element of the array" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 150.0, height: 150.0}} =
+               Page.crop_box(Document.page!(doc, 3))
+    end
+
+    test "returns nil for a page with no /CropBox above it" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, nil} = Page.crop_box(Document.page!(doc, 4))
+      assert {:ok, nil} = Page.crop_box(Document.page!(Document.open!(@valid_pdf), 0))
+    end
+
+    test "reports an array of fewer than four elements as :invalid_pdf" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Page.crop_box(Document.page!(doc, 5))
+    end
+
+    test "reads a /CropBox written as null as none" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, nil} = Page.crop_box(Document.page!(doc, 7))
+    end
+
+    test "normalizes a box whose corners are written in reverse" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 200.0, height: 300.0}} =
+               Page.crop_box(Document.page!(doc, 6))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert {:error, %Error{reason: :out_of_range}} = Page.crop_box(%Page{doc: doc, index: 99})
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 0)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Page.crop_box(page)
+    end
+  end
+
+  describe "crop_box!/1" do
+    test "returns the rect or nil directly" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert Page.crop_box!(Document.page!(doc, 0)) ==
+               %Rect{x: 10.0, y: 20.0, width: 200.0, height: 300.0}
+
+      assert Page.crop_box!(Document.page!(doc, 4)) == nil
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.crop_box!(%Page{doc: doc, index: 99}) end
     end
   end
 

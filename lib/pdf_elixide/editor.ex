@@ -34,6 +34,14 @@ defmodule PdfElixide.Editor do
   displays pages; `rotation/2` includes pending changes. See
   [Page rotation](guides/editing.md#page-rotation) for examples and page geometry.
 
+  ## Page boxes
+
+  `media_box/2` and `crop_box/2` read a page's boxes, pending changes included;
+  `set_media_box/3`, `set_crop_box/3` and `crop_margins/2` change them. Setting
+  the media box leaves an existing crop box alone. See
+  [Page boxes](guides/editing.md#page-boxes) for what a viewer does with each box
+  and the limitations.
+
   ## Erasing regions
 
   `erase_region/3` and `erase_regions/3` paint white rectangles when the document
@@ -66,7 +74,8 @@ defmodule PdfElixide.Editor do
   Every call that writes or mutates takes the handle's lock exclusively — and so
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
   a single editor serializes. `page_count/1`, `modified?/1`, `rotation/2`,
-  `embedded_files/1`, `flatten_warnings/1` and `closed?/1` take the lock shared,
+  `media_box/2`, `crop_box/2`, `embedded_files/1`, `flatten_warnings/1` and
+  `closed?/1` take the lock shared,
   as do the `PdfElixide.Signature` reads given an editor, which reach the
   document it was opened from. Give each process its own editor if you need them
   to work at once; see the [Concurrency](guides/concurrency.md) guide.
@@ -711,6 +720,158 @@ defmodule PdfElixide.Editor do
     editor |> clear_erase_regions(page_index) |> Wrap.unwrap!()
   end
 
+  @doc """
+  Returns the `/MediaBox` of the page at the given zero-based index — the sheet
+  it is imposed on — including pending changes. For an unchanged page it
+  behaves like `PdfElixide.Document.Page.media_box/1`.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist. See [Page boxes](guides/editing.md#page-boxes).
+  """
+  @spec media_box(t(), non_neg_integer()) :: {:ok, Rect.t()} | {:error, Error.t()}
+  def media_box(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    Wrap.call(fn -> Native.editor_page_media_box(ref, page_index) end)
+  end
+
+  @doc """
+  Returns the `/MediaBox` of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec media_box!(t(), non_neg_integer()) :: Rect.t()
+  def media_box!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    media_box(editor, page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns the `/CropBox` of the page at the given zero-based index — the region
+  a viewer displays and prints — including pending changes. For an unchanged
+  page it behaves like `PdfElixide.Document.Page.crop_box/1` and may return
+  `nil`.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist. See [Page boxes](guides/editing.md#page-boxes).
+  """
+  @spec crop_box(t(), non_neg_integer()) :: {:ok, Rect.t() | nil} | {:error, Error.t()}
+  def crop_box(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    Wrap.call(fn -> Native.editor_page_crop_box(ref, page_index) end)
+  end
+
+  @doc """
+  Returns the `/CropBox` of the page at the given zero-based index, or `nil`,
+  raising an error if it fails.
+  """
+  @spec crop_box!(t(), non_neg_integer()) :: Rect.t() | nil
+  def crop_box!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    crop_box(editor, page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the `/MediaBox` of the page at the given zero-based index to `rect`, and
+  returns the editor.
+
+  Reversed corners are normalized. A rectangle whose corners do not fit a
+  32-bit float raises `ArgumentError`.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist. See [Page boxes](guides/editing.md#page-boxes).
+  """
+  @spec set_media_box(t(), non_neg_integer(), Rect.t()) :: {:ok, t()} | {:error, Error.t()}
+  def set_media_box(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect)
+      when is_integer(page_index) and page_index >= 0 do
+    validate_region!(rect)
+
+    case Wrap.call(fn -> Native.editor_set_page_media_box(ref, page_index, rect) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Sets the `/MediaBox` of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec set_media_box!(t(), non_neg_integer(), Rect.t()) :: t()
+  def set_media_box!(%__MODULE__{} = editor, page_index, %Rect{} = rect)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> set_media_box(page_index, rect) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Sets the `/CropBox` of the page at the given zero-based index to `rect`, and
+  returns the editor.
+
+  Reversed corners are normalized. A rectangle whose corners do not fit a
+  32-bit float raises `ArgumentError`.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist. See [Page boxes](guides/editing.md#page-boxes).
+  """
+  @spec set_crop_box(t(), non_neg_integer(), Rect.t()) :: {:ok, t()} | {:error, Error.t()}
+  def set_crop_box(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect)
+      when is_integer(page_index) and page_index >= 0 do
+    validate_region!(rect)
+
+    case Wrap.call(fn -> Native.editor_set_page_crop_box(ref, page_index, rect) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Sets the `/CropBox` of the page at the given zero-based index, raising an
+  error if it fails.
+  """
+  @spec set_crop_box!(t(), non_neg_integer(), Rect.t()) :: t()
+  def set_crop_box!(%__MODULE__{} = editor, page_index, %Rect{} = rect)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> set_crop_box(page_index, rect) |> Wrap.unwrap!()
+  end
+
+  @typedoc """
+  Margins for `crop_margins/2`, in points.
+
+    * `:left`, `:right`, `:top`, `:bottom` — how far the crop box is inset from
+      that edge of the media box. Each is a non-negative number that fits a
+      32-bit float, and defaults to `0`.
+
+  Unknown keys and invalid values raise `ArgumentError` naming the key.
+  """
+  @type margins :: [left: number(), right: number(), top: number(), bottom: number()]
+
+  @crop_margins_keys [:left, :right, :top, :bottom]
+
+  @doc """
+  Sets every page's `/CropBox` to its media box inset by `margins`, and returns
+  the editor.
+
+  It uses the normalized boxes from `media_box/2`, including pending changes,
+  and replaces existing crop boxes. All results are computed before any page is
+  changed, so a failure leaves every page unchanged. See
+  [Page boxes](guides/editing.md#page-boxes).
+  """
+  @spec crop_margins(t(), margins()) :: {:ok, t()} | {:error, Error.t()}
+  def crop_margins(%__MODULE__{ref: ref} = editor, margins) when is_list(margins) do
+    margins = build_crop_margins(margins)
+
+    case Wrap.call(fn -> Native.editor_crop_margins(ref, margins) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Sets every page's `/CropBox` to its media box inset by `margins`, raising an
+  error if it fails.
+  """
+  @spec crop_margins!(t(), margins()) :: t()
+  def crop_margins!(%__MODULE__{} = editor, margins) when is_list(margins) do
+    editor |> crop_margins(margins) |> Wrap.unwrap!()
+  end
+
   @typedoc """
   Options for `embed_file/4`.
 
@@ -953,6 +1114,22 @@ defmodule PdfElixide.Editor do
           "invalid :relationship, expected one of #{inspect(@relationships)}: #{inspect(other)}"
   end
 
+  # See `__option_defaults__/1` for why every key is emitted.
+  defp build_crop_margins(opts) do
+    opts = Keyword.validate!(opts, Enum.map(@crop_margins_keys, &{&1, 0}))
+
+    Map.new(opts, fn {key, value} -> {key, validate_margin!(key, value)} end)
+  end
+
+  # Range only; a value that is not a number is left to the NIF's field decoder.
+  defp validate_margin!(key, value) when is_number(value) and (value < 0 or value > @max_f32) do
+    raise ArgumentError,
+          "invalid #{inspect(key)}, expected a non-negative number that fits a " <>
+            "32-bit float: #{inspect(value)}"
+  end
+
+  defp validate_margin!(_key, value), do: value
+
   defp build_save_options(opts) do
     opts = Keyword.validate!(opts, @save_opts_keys)
 
@@ -1020,9 +1197,10 @@ defmodule PdfElixide.Editor do
   defp build_permission_option(other), do: other
 
   @doc false
-  @spec __option_defaults__(:save | :embed | :encryption | :permissions) :: map()
+  @spec __option_defaults__(:save | :embed | :encryption | :permissions | :crop_margins) :: map()
   def __option_defaults__(:save), do: build_save_options([])
   def __option_defaults__(:embed), do: build_embed_options([])
+  def __option_defaults__(:crop_margins), do: build_crop_margins([])
   def __option_defaults__(:encryption), do: build_encryption_option([])
   def __option_defaults__(:permissions), do: build_permission_option([])
 

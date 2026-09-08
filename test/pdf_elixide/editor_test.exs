@@ -23,6 +23,8 @@ defmodule PdfElixide.EditorTest do
   @attachments_cyclic_pdf Path.join(@fixtures, "attachments_cyclic.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
+  @media_box_pdf Path.join(@fixtures, "media_box.pdf")
+  @crop_box_pdf Path.join(@fixtures, "crop_box.pdf")
 
   describe "open/1" do
     test "returns {:ok, %Editor{}} for a valid PDF file" do
@@ -1124,6 +1126,388 @@ defmodule PdfElixide.EditorTest do
       editor |> Editor.delete_page!(0) |> Editor.rotate_page_by!(0, 90)
 
       assert saved_rotations(editor) == [270, 270, 0]
+    end
+  end
+
+  @letter %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}
+  @small_box %Rect{x: +0.0, y: +0.0, width: 100.0, height: 50.0}
+  @all_sides [left: 10, right: 10, top: 10, bottom: 10]
+
+  # A malformed crop box reports its reason so the whole document stays listable.
+  defp saved_boxes(editor) do
+    doc = Document.from_binary!(Editor.to_binary!(editor))
+    boxes = Enum.map(doc, &{Document.Page.media_box!(&1), saved_crop(&1)})
+    Document.close(doc)
+
+    boxes
+  end
+
+  defp saved_crop(page) do
+    case Document.Page.crop_box(page) do
+      {:ok, rect} -> rect
+      {:error, %Error{reason: reason}} -> reason
+    end
+  end
+
+  defp boxes(editor) do
+    for page <- 0..(Editor.page_count!(editor) - 1) do
+      {Editor.media_box!(editor, page), Editor.crop_box!(editor, page)}
+    end
+  end
+
+  describe "media_box/2" do
+    test "answers what the read side answers for the same page" do
+      editor = Editor.open!(@media_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      doc = Document.open!(@media_box_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      for page <- 0..4 do
+        assert Editor.media_box!(editor, page) ==
+                 Document.Page.media_box!(Document.page!(doc, page))
+      end
+
+      assert %Rect{width: 300.0, height: 500.0} = Editor.media_box!(editor, 2)
+    end
+
+    test "reports a page with no /MediaBox above it as :invalid_pdf, not Letter" do
+      editor = Editor.open!(@media_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.media_box(editor, 5)
+    end
+
+    test "reflects a pending box before any save" do
+      editor = Editor.open!(@media_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 5, @small_box)
+
+      assert Editor.media_box!(editor, 5) == @small_box
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.media_box(editor, 3)
+      assert_raise Error, fn -> Editor.media_box!(editor, 3) end
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.media_box(editor, -1) end
+    end
+  end
+
+  describe "crop_box/2" do
+    test "answers what the read side answers for the same page" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      doc = Document.open!(@crop_box_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      for page <- [0, 1, 2, 3, 4, 6, 7] do
+        assert Editor.crop_box!(editor, page) ==
+                 Document.Page.crop_box!(Document.page!(doc, page))
+      end
+
+      assert %Rect{x: 50.0, y: 50.0, width: 250.0, height: 350.0} = Editor.crop_box!(editor, 1)
+      assert Editor.crop_box!(editor, 2) == %Rect{x: 0.0, y: 0.0, width: 100.0, height: 100.0}
+      assert Editor.crop_box!(editor, 4) == nil
+      assert Editor.crop_box!(editor, 7) == nil
+    end
+
+    test "reports a malformed /CropBox as :invalid_pdf" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.crop_box(editor, 5)
+    end
+
+    test "reflects a pending box before any save" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_crop_box!(editor, 4, @small_box)
+
+      assert Editor.crop_box!(editor, 4) == @small_box
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.crop_box(editor, 3)
+    end
+  end
+
+  describe "set_media_box/3" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      refute Editor.modified?(editor)
+      assert {:ok, ^editor} = Editor.set_media_box(editor, 0, @small_box)
+      assert Editor.modified?(editor)
+    end
+
+    test "writes the box into the saved document" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 1, @small_box)
+
+      assert saved_boxes(editor) == [{@letter, nil}, {@small_box, nil}, {@letter, nil}]
+    end
+
+    test "gives a page with no /MediaBox one that reads back after a save" do
+      editor = Editor.open!(@media_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 5, @small_box)
+
+      assert saved_boxes(editor) |> Enum.at(5) == {@small_box, nil}
+    end
+
+    test "normalizes reversed corners and reports the box as it will be written" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 0, %Rect{x: 100.0, y: 50.0, width: -100.0, height: -50.0})
+
+      assert Editor.media_box!(editor, 0) == @small_box
+      assert saved_boxes(editor) |> hd() == {@small_box, nil}
+    end
+
+    test "leaves an existing /CropBox alone" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 0, @small_box)
+
+      crop = %Rect{x: 10.0, y: 20.0, width: 200.0, height: 300.0}
+      assert Editor.crop_box!(editor, 0) == crop
+      assert saved_boxes(editor) |> hd() == {@small_box, crop}
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.set_media_box(editor, 3, @small_box)
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a box whose corner overflows a 32-bit float" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/32-bit float/, fn ->
+        Editor.set_media_box(editor, 0, %Rect{x: 2.0e38, y: 0.0, width: 2.0e38, height: 10.0})
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.set_media_box(editor, -1, @small_box) end
+    end
+  end
+
+  describe "set_crop_box/3" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.set_crop_box(editor, 0, @small_box)
+      assert Editor.modified?(editor)
+    end
+
+    test "writes the box into the saved document without touching the media box" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_crop_box!(editor, 2, @small_box)
+
+      assert saved_boxes(editor) == [{@letter, nil}, {@letter, nil}, {@letter, @small_box}]
+    end
+
+    test "replaces an inherited crop box on the page alone" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_crop_box!(editor, 1, @small_box)
+
+      assert Editor.crop_box!(editor, 1) == @small_box
+      assert saved_boxes(editor) |> Enum.at(1) == {@letter, @small_box}
+    end
+
+    test "is not checked against the media box" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      outside = %Rect{x: 1000.0, y: 1000.0, width: 10.0, height: 10.0}
+      Editor.set_crop_box!(editor, 0, outside)
+
+      assert saved_boxes(editor) |> hd() == {@letter, outside}
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.set_crop_box(editor, 3, @small_box)
+    end
+
+    test "raises for a box whose corner overflows a 32-bit float" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/32-bit float/, fn ->
+        Editor.set_crop_box(editor, 0, %Rect{x: 0.0, y: -2.0e38, width: 10.0, height: -2.0e38})
+      end
+    end
+  end
+
+  describe "crop_margins/2" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.crop_margins(editor, @all_sides)
+      assert Editor.modified?(editor)
+    end
+
+    test "insets every page's media box, inherited and reversed ones included" do
+      editor = Editor.open!(@media_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.set_media_box!(5, %Rect{x: 0.0, y: 0.0, width: 200.0, height: 100.0})
+      |> Editor.crop_margins!(left: 10, right: 20, top: 30, bottom: 40)
+
+      assert Enum.map(saved_boxes(editor), &elem(&1, 1)) == [
+               %Rect{x: 20.0, y: 60.0, width: 582.0, height: 722.0},
+               %Rect{x: 10.0, y: 40.0, width: 582.0, height: 722.0},
+               %Rect{x: 10.0, y: 40.0, width: 270.0, height: 430.0},
+               %Rect{x: 10.0, y: 40.0, width: 270.0, height: 330.0},
+               %Rect{x: 10.0, y: 40.0, width: 270.0, height: 330.0},
+               %Rect{x: 10.0, y: 40.0, width: 170.0, height: 30.0}
+             ]
+    end
+
+    test "defaults an omitted side to zero" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.crop_margins!(editor, left: 100)
+
+      assert Editor.crop_box!(editor, 0) == %Rect{x: 100.0, y: 0.0, width: 512.0, height: 792.0}
+      assert Editor.crop_box!(Editor.crop_margins!(editor, []), 0) == @letter
+    end
+
+    test "replaces the crop box a page already has" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.crop_margins!(editor, @all_sides)
+
+      inset = %Rect{x: 10.0, y: 10.0, width: 592.0, height: 772.0}
+      assert Enum.map(boxes(editor), &elem(&1, 1)) == List.duplicate(inset, 8)
+    end
+
+    test "changes nothing on a document with no pages" do
+      editor = Editor.open!(@no_pages_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.crop_margins(editor, @all_sides)
+      refute Editor.modified?(editor)
+    end
+
+    test "crops no page at all when one page's media box cannot be read" do
+      editor = Editor.open!(@broken_page_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.crop_margins(editor, @all_sides)
+      assert Editor.crop_box!(editor, 0) == nil
+      refute Editor.modified?(editor)
+    end
+
+    test "crops no page at all when the margins leave one page with no area" do
+      editor = Editor.open!(@media_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 5, @small_box)
+      Editor.to_binary!(editor)
+      refute Editor.modified?(editor)
+
+      assert {:error, %Error{reason: :other, message: message}} =
+               Editor.crop_margins(editor, left: 50, right: 50)
+
+      assert message =~ "page 5"
+      assert Editor.crop_box!(editor, 0) == nil
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for an unknown key, a negative margin, an oversized one or a non-number" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/:lef/, fn -> Editor.crop_margins(editor, lef: 1) end
+      assert_raise ArgumentError, ~r/:top/, fn -> Editor.crop_margins(editor, top: -1) end
+      assert_raise ArgumentError, ~r/:right/, fn -> Editor.crop_margins(editor, right: 1.0e39) end
+      assert_raise ArgumentError, ~r/:bottom/, fn -> Editor.crop_margins(editor, bottom: "1") end
+      refute Editor.modified?(editor)
+    end
+  end
+
+  describe "page boxes and the page operations" do
+    test "a crop box follows its page through a move" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 0, 6)
+
+      leaf = %Rect{x: 10.0, y: 20.0, width: 200.0, height: 300.0}
+      assert Editor.crop_box!(editor, 6) == leaf
+      assert saved_boxes(editor) |> Enum.at(6) == {@letter, leaf}
+    end
+
+    test "a box set before a move travels with the page" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.set_media_box!(0, @small_box) |> Editor.move_page!(0, 2)
+
+      assert Editor.media_box!(editor, 2) == @small_box
+      assert saved_boxes(editor) == [{@letter, nil}, {@letter, nil}, {@small_box, nil}]
+    end
+
+    test "deleting a page does not shift the boxes of the survivors" do
+      editor = Editor.open!(@crop_box_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 0)
+
+      inherited = %Rect{x: 50.0, y: 50.0, width: 250.0, height: 350.0}
+      assert Editor.crop_box!(editor, 0) == inherited
+      assert Editor.crop_box!(editor, 3) == nil
+      assert saved_boxes(editor) |> hd() == {@letter, inherited}
+    end
+
+    test "setting a box after a deletion changes the page that survived" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.delete_page!(0) |> Editor.set_crop_box!(0, @small_box)
+
+      assert saved_boxes(editor) == [{@letter, @small_box}, {@letter, nil}]
     end
   end
 

@@ -1,7 +1,7 @@
 # Editing PDFs
 
-`PdfElixide.Editor` changes page structure, rotates pages, covers regions and adds
-attachments. Changes stay in memory until you write the document. The [Forms](forms.md)
+`PdfElixide.Editor` changes page structure, rotates and crops pages, covers regions
+and adds attachments. Changes stay in memory until you write the document. The [Forms](forms.md)
 guide covers filling fields and flattening annotations; the [Encryption](encryption.md)
 guide covers password-protected output.
 
@@ -11,11 +11,11 @@ Use `PdfElixide.Editor.save/3` with its default `incremental: false`, or
 `PdfElixide.Editor.to_binary/2`, to write page edits and attachments. Writing leaves the
 editor open for further changes; `PdfElixide.Editor.close/1` discards any unsaved edits.
 
-**An incremental save omits page deletions, moves, rotations, erased regions,
-attachments and flattening.** `PdfElixide.Editor.save(editor, path, incremental: true)`
+**An incremental save omits page deletions, moves, rotations, page boxes, erased
+regions, attachments and flattening.** `PdfElixide.Editor.save(editor, path, incremental: true)`
 appends field-value updates to the original file. The output keeps the original pages,
-their order, rotation and content, and the original attachments and unflattened
-annotations. The call reports no error for those omitted changes. See
+their order, rotation, boxes and content, and the original attachments and
+unflattened annotations. The call reports no error for those omitted changes. See
 [Saving](forms.md#saving) for the form-filling workflow.
 
 `PdfElixide.Editor.to_binary/2` refuses `incremental: true` with
@@ -80,6 +80,60 @@ Rotation only turns the page as a viewer displays it. Nothing re-lays out the co
 and the page's `/MediaBox` is not swapped, so a `90`-rotated portrait page still reports
 portrait dimensions. See [Saving edits](#saving-edits) for the incremental-save
 limitation.
+
+## Page boxes
+
+A page has two boxes that matter to a viewer: the `/MediaBox` is the sheet the page
+is imposed on, and the optional `/CropBox` is the part of that sheet a viewer displays
+and prints. `PdfElixide.Editor.media_box/2` and `PdfElixide.Editor.crop_box/2` read
+them, pending changes included; `PdfElixide.Editor.set_media_box/3` and
+`PdfElixide.Editor.set_crop_box/3` set one page's, and
+`PdfElixide.Editor.crop_margins/2` sets every page's crop box by insetting its media
+box:
+
+```elixir
+"scan.pdf"
+|> PdfElixide.Editor.open!()
+|> PdfElixide.Editor.crop_margins!(left: 36, right: 36, top: 24, bottom: 24)
+|> PdfElixide.Editor.save!("trimmed.pdf")
+|> PdfElixide.Editor.close()
+#=> :ok
+```
+
+Every box is a `PdfElixide.Geometry.Rect` in the page's raw, unrotated user space, so
+a box read from `PdfElixide.Document.Page.media_box/1`, or a `bbox` from an extractor
+that reports in that space, can be handed straight back. On a rotated page some
+extractors report displayed coordinates instead, and a box taken from one of them
+crops the wrong region; "Rotated pages and extracted geometry" in
+`PdfElixide.Document` says which is which. A reversed rectangle is normalized before
+it is written, and the getters report the box as it will land in the file.
+
+**Cropping hides content; it does not remove it.** Whatever lies outside the crop box
+is still in the written file and still extracted by `PdfElixide.Document.text/1`. A
+viewer clips the crop box to the media box, so a crop box larger than the media box
+shows the whole page, and nothing here checks one against the other.
+
+**Setting the media box leaves an existing crop box alone.** A page whose crop box was
+declared by the document keeps it after `PdfElixide.Editor.set_media_box/3`, wherever
+the new media box lands; call `PdfElixide.Editor.set_crop_box/3` as well when both
+should change. Once a page has a crop box it cannot be removed — set it equal to the
+media box to show the whole page. The page's content is neither moved nor scaled by
+either setter.
+
+`PdfElixide.Editor.crop_margins/2` measures from each page's media box as
+`PdfElixide.Editor.media_box/2` reports it, so a media box set earlier in the same
+session counts, and it replaces any crop box a page already has. It reads every page
+before changing any: if one page has no readable `/MediaBox` the call returns
+`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`, and if the margins would leave a
+page with no area it returns `{:error, %PdfElixide.Error{reason: :other}}` naming the
+page — in both cases with nothing changed. Give such a page a media box with
+`PdfElixide.Editor.set_media_box/3` first.
+
+A box belongs to the page rather than to the position, so it follows the page through
+`PdfElixide.Editor.move_page/3` and survives the deletion of another page. Where a
+box is inherited from the page tree, see "Page boxes and the coordinate origin" in
+`PdfElixide.Document` for which ancestor it comes from. See
+[Saving edits](#saving-edits) for the incremental-save limitation.
 
 ## Erasing regions
 

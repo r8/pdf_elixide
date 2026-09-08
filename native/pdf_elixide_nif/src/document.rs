@@ -2,8 +2,9 @@ use std::collections::HashSet;
 
 use pdf_oxide::{
     converters::{BoldMarkerBehavior, ConversionOptions, ReadingOrderMode},
-    error::Result,
+    error::{Error, Result},
     layout::SpatialCollectionFiltering,
+    object::Object,
     search::{SearchOptions, TextSearcher},
     PdfDocument,
 };
@@ -1200,6 +1201,58 @@ fn document_get_page_media_box(
             urx.into(),
             ury.into(),
         ))
+    })
+}
+
+// Read the merged page dictionary and resolve the box and its elements so
+// inherited and indirect spellings behave like `/MediaBox`; `null` is absent.
+pub(crate) fn read_crop_box(doc: &PdfDocument, page_index: usize) -> Result<Option<[f32; 4]>> {
+    let page = doc.get_page(page_index)?;
+    let dict = page
+        .as_dict()
+        .ok_or_else(|| Error::InvalidPdf("Page is not a dictionary".to_string()))?;
+
+    let Some(raw) = dict.get("CropBox") else {
+        return Ok(None);
+    };
+    let resolved = doc.resolve_object(raw)?;
+    if matches!(resolved, Object::Null) {
+        return Ok(None);
+    }
+    let elements = resolved
+        .as_array()
+        .ok_or_else(|| Error::InvalidPdf("CropBox is not an array".to_string()))?;
+    if elements.len() < 4 {
+        return Err(Error::InvalidPdf(
+            "CropBox must have at least 4 elements".to_string(),
+        ));
+    }
+
+    let mut corners = [0.0f32; 4];
+    for (corner, element) in corners.iter_mut().zip(elements) {
+        *corner = match doc.resolve_object(element)? {
+            Object::Integer(v) => v as f32,
+            Object::Real(v) => v as f32,
+            _ => 0.0,
+        };
+    }
+
+    Ok(Some(corners))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_get_page_crop_box(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<Option<RectNif>> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        Ok(read_crop_box(doc, page_index)
+            .map_err(to_nif_err)?
+            .map(|[llx, lly, urx, ury]| {
+                rect_from_corners(llx.into(), lly.into(), urx.into(), ury.into())
+            }))
     })
 }
 

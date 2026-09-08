@@ -5,7 +5,7 @@ use pdf_oxide::{
     structure::table_extractor::Table, writer::EmbeddedFile, PdfDocument,
 };
 
-use crate::{editor::PageRotation, form_tree::Resolved, resource::Closable};
+use crate::{editor::PageEdits, form_tree::Resolved, resource::Closable};
 
 mod annotations;
 mod binary;
@@ -76,8 +76,8 @@ struct EditorResource {
     // Set after a deletion so whole-document flattens re-mark surviving pages
     // through the mapped per-page methods.
     pages_deleted: AtomicBool,
-    // Visible pages in output order, including pending rotations.
-    pages: Mutex<Vec<PageRotation>>,
+    // Visible pages in output order, including pending rotations and boxes.
+    pages: Mutex<Vec<PageEdits>>,
     // Re-supplied after full writes drain the editor's pending list.
     embedded: RwLock<Vec<EmbeddedFile>>,
 }

@@ -16,6 +16,7 @@ use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, Re
 use crate::{
     atoms,
     binary::owned_binary,
+    document::read_crop_box,
     embedded_files::{
         embedded_file, ensure_no_name_tree, pending_to_nif, read_embedded_files, EmbeddedFileNif,
         RelationshipNif,
@@ -27,7 +28,7 @@ use crate::{
     },
     form_tree::{self, Resolved},
     fs_path::path_arg,
-    geometry::{rect_from_nif, RectNif},
+    geometry::{rect_from_corners, rect_from_nif, RectNif},
     resource::Closable,
     EditorResource,
 };
@@ -128,19 +129,21 @@ fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
 }
 
-// A visible page's source identity and optional pending rotation.
-pub struct PageRotation {
+// A visible page's source identity and pending properties in output order.
+pub struct PageEdits {
     source: usize,
-    set: Option<i32>,
+    rotation: Option<i32>,
+    media_box: Option<[f32; 4]>,
+    crop_box: Option<[f32; 4]>,
 }
 
 // Recover poisoning like `Closable`; a contained panic must not prevent close.
-fn page_rotations(resource: &EditorResource) -> MutexGuard<'_, Vec<PageRotation>> {
+fn page_edits(resource: &EditorResource) -> MutexGuard<'_, Vec<PageEdits>> {
     resource.pages.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 // The editor guard provides exclusion; this lock provides interior mutability
-// and recovers poisoning like `page_rotations`.
+// and recovers poisoning like `page_edits`.
 fn embedded_files(resource: &EditorResource) -> RwLockReadGuard<'_, Vec<EmbeddedFile>> {
     resource.embedded.read().unwrap_or_else(|e| e.into_inner())
 }
@@ -153,8 +156,13 @@ fn embedded_files_mut(resource: &EditorResource) -> RwLockWriteGuard<'_, Vec<Emb
 // At open, visible and source page indices are identical.
 fn seed_pages(resource: &EditorResource) -> NifResult<()> {
     resource.editor.with_read(|editor| {
-        *page_rotations(resource) = (0..editor.current_page_count())
-            .map(|source| PageRotation { source, set: None })
+        *page_edits(resource) = (0..editor.current_page_count())
+            .map(|source| PageEdits {
+                source,
+                rotation: None,
+                media_box: None,
+                crop_box: None,
+            })
             .collect();
 
         Ok(())
@@ -233,7 +241,7 @@ fn editor_is_modified(resource: ResourceArc<EditorResource>) -> NifResult<bool> 
 fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
     // Close first so no later call can observe the cleared mirror.
     resource.editor.close();
-    page_rotations(&resource).clear();
+    page_edits(&resource).clear();
     embedded_files_mut(&resource).clear();
 
     atoms::ok()
@@ -470,15 +478,7 @@ fn ensure_contents_spliceable(
     editor: &DocumentEditor,
     page_index: usize,
 ) -> NifResult<()> {
-    // Drop the mirror guard before source lookup, as `effective_rotation` does.
-    let source = {
-        let pages = page_rotations(resource);
-        let count = pages.len();
-        pages
-            .get(page_index)
-            .map(|page| page.source)
-            .ok_or_else(|| out_of_range(page_index, count))?
-    };
+    let (source, _) = pending(resource, page_index, |_| None::<()>)?;
 
     let page = editor.source().get_page(source).map_err(to_nif_err)?;
     let contents = page.as_dict().and_then(|dict| dict.get("Contents"));
@@ -516,7 +516,7 @@ fn editor_delete_page(resource: ResourceArc<EditorResource>, page_index: usize) 
         // Relaxed because the flatten NIFs load it under the same exclusive
         // guard, so the lock already orders this against every reader.
         resource.pages_deleted.store(true, Ordering::Relaxed);
-        page_rotations(&resource).remove(page_index);
+        page_edits(&resource).remove(page_index);
 
         Ok(atoms::ok())
     })
@@ -538,12 +538,48 @@ fn editor_move_page(
 
         // The mirror is indexed by visible position, so it takes the same
         // permutation the editor just took.
-        let mut pages = page_rotations(&resource);
+        let mut pages = page_edits(&resource);
         let page = pages.remove(from);
         pages.insert(to, page);
 
         Ok(atoms::ok())
     })
+}
+
+// Drop the mirror guard before source lookup so shared reads stay concurrent.
+fn pending<T: Copy>(
+    resource: &EditorResource,
+    page_index: usize,
+    pick: impl FnOnce(&PageEdits) -> Option<T>,
+) -> NifResult<(usize, Option<T>)> {
+    let pages = page_edits(resource);
+    let count = pages.len();
+    let page = pages
+        .get(page_index)
+        .ok_or_else(|| out_of_range(page_index, count))?;
+
+    Ok((page.source, pick(page)))
+}
+
+// Record only after a successful write while page operations remain excluded.
+fn record<T: Copy>(
+    resource: &EditorResource,
+    editor: &mut DocumentEditor,
+    page_index: usize,
+    value: T,
+    write: impl FnOnce(&mut DocumentEditor, usize, T) -> pdf_oxide::error::Result<()>,
+    slot: impl FnOnce(&mut PageEdits) -> &mut Option<T>,
+) -> NifResult<()> {
+    let mut pages = page_edits(resource);
+    let count = pages.len();
+    let page = pages
+        .get_mut(page_index)
+        .ok_or_else(|| out_of_range(page_index, count))?;
+
+    write(editor, page_index, value).map_err(to_nif_err)?;
+    *slot(page) = Some(value);
+
+    Ok(())
 }
 
 // `source()` is the pre-edit document, so an unchanged rotation must be read at
@@ -553,16 +589,7 @@ fn effective_rotation(
     editor: &DocumentEditor,
     page_index: usize,
 ) -> NifResult<i32> {
-    // Drop the mirror guard before source lookup so shared reads stay concurrent.
-    let (source, set) = {
-        let pages = page_rotations(resource);
-        let count = pages.len();
-        let page = pages
-            .get(page_index)
-            .ok_or_else(|| out_of_range(page_index, count))?;
-
-        (page.source, page.set)
-    };
+    let (source, set) = pending(resource, page_index, |page| page.rotation)?;
 
     match set {
         Some(rotation) => Ok(rotation),
@@ -573,25 +600,83 @@ fn effective_rotation(
     }
 }
 
-// Update the mirror only after the upstream write succeeds.
 fn write_rotation(
     resource: &EditorResource,
     editor: &mut DocumentEditor,
     page_index: usize,
     degrees: i32,
 ) -> NifResult<()> {
-    let mut pages = page_rotations(resource);
-    let count = pages.len();
-    let page = pages
-        .get_mut(page_index)
-        .ok_or_else(|| out_of_range(page_index, count))?;
+    record(
+        resource,
+        editor,
+        page_index,
+        degrees,
+        DocumentEditor::set_page_rotation,
+        |page| &mut page.rotation,
+    )
+}
 
-    editor
-        .set_page_rotation(page_index, degrees)
-        .map_err(to_nif_err)?;
-    page.set = Some(degrees);
+// Read unchanged boxes from the source to preserve inheritance and indirection.
+fn effective_media_box(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<[f32; 4]> {
+    let (source, set) = pending(resource, page_index, |page| page.media_box)?;
 
-    Ok(())
+    match set {
+        Some(media_box) => Ok(media_box),
+        None => editor
+            .source()
+            .get_page_media_box(source)
+            .map(|(llx, lly, urx, ury)| [llx, lly, urx, ury])
+            .map_err(to_nif_err),
+    }
+}
+
+fn effective_crop_box(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<Option<[f32; 4]>> {
+    let (source, set) = pending(resource, page_index, |page| page.crop_box)?;
+
+    match set {
+        Some(crop_box) => Ok(Some(crop_box)),
+        None => read_crop_box(editor.source(), source).map_err(to_nif_err),
+    }
+}
+
+fn write_media_box(
+    resource: &EditorResource,
+    editor: &mut DocumentEditor,
+    page_index: usize,
+    corners: [f32; 4],
+) -> NifResult<()> {
+    record(
+        resource,
+        editor,
+        page_index,
+        corners,
+        DocumentEditor::set_page_media_box,
+        |page| &mut page.media_box,
+    )
+}
+
+fn write_crop_box(
+    resource: &EditorResource,
+    editor: &mut DocumentEditor,
+    page_index: usize,
+    corners: [f32; 4],
+) -> NifResult<()> {
+    record(
+        resource,
+        editor,
+        page_index,
+        corners,
+        DocumentEditor::set_page_crop_box,
+        |page| &mut page.crop_box,
+    )
 }
 
 // Reduce before adding to avoid i32 overflow; keep upstream's quadrant buckets.
@@ -654,7 +739,7 @@ fn editor_rotate_all_pages_by(
     resource.editor.with_lock(|editor| {
         // The mirror's length, not `current_page_count`: every write below is
         // bounded by the mirror.
-        let count = page_rotations(&resource).len();
+        let count = page_edits(&resource).len();
 
         // Resolve bases first so a read failure leaves the editor unchanged.
         let rotations = (0..count)
@@ -675,19 +760,156 @@ fn editor_rotate_all_pages_by(
 
 // Check sums as well as fields: upstream writes non-finite corners unchecked.
 // Return the offending rect so atom construction stays at the NIF boundary.
+fn corners(nif: RectNif) -> Result<[f32; 4], RectNif> {
+    let r = rect_from_nif(nif);
+    let corners = [r.x, r.y, r.x + r.width, r.y + r.height];
+    if corners.iter().all(|c| c.is_finite()) {
+        Ok(corners)
+    } else {
+        Err(nif)
+    }
+}
+
 fn erase_corners(rects: Vec<RectNif>) -> Result<Vec<[f32; 4]>, RectNif> {
-    rects
-        .into_iter()
-        .map(|nif| {
-            let r = rect_from_nif(nif);
-            let corners = [r.x, r.y, r.x + r.width, r.y + r.height];
-            if corners.iter().all(|c| c.is_finite()) {
-                Ok(corners)
-            } else {
-                Err(nif)
-            }
-        })
-        .collect()
+    rects.into_iter().map(corners).collect()
+}
+
+fn unrepresentable(rect: RectNif) -> rustler::Error {
+    tagged_err(
+        atoms::other(),
+        format!("invalid region {rect:?}: its corners must fit a 32-bit float"),
+    )
+}
+
+#[derive(NifMap, Debug, Clone, Copy)]
+pub struct MarginsNif {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+#[derive(Debug, PartialEq)]
+enum CropRefusal {
+    NotFinite,
+    Empty,
+}
+
+// Normalize first so margins always inset a corner-reversed media box.
+fn crop_from_margins(media_box: [f32; 4], margins: MarginsNif) -> Result<[f32; 4], CropRefusal> {
+    let [llx, lly, urx, ury] = media_box;
+    let r = rect_from_corners(llx.into(), lly.into(), urx.into(), ury.into());
+    let crop = [
+        r.x + margins.left,
+        r.y + margins.bottom,
+        r.x + r.width - margins.right,
+        r.y + r.height - margins.top,
+    ];
+
+    if !crop.iter().all(|c| c.is_finite()) {
+        return Err(CropRefusal::NotFinite);
+    }
+    if crop[0] >= crop[2] || crop[1] >= crop[3] {
+        return Err(CropRefusal::Empty);
+    }
+
+    Ok(crop)
+}
+
+// Shared for the same reason as `editor_page_rotation`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_page_media_box(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+) -> NifResult<RectNif> {
+    resource.editor.with_read(|editor| {
+        let [llx, lly, urx, ury] = effective_media_box(&resource, editor, page_index)?;
+
+        Ok(rect_from_corners(
+            llx.into(),
+            lly.into(),
+            urx.into(),
+            ury.into(),
+        ))
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_page_crop_box(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+) -> NifResult<Option<RectNif>> {
+    resource.editor.with_read(|editor| {
+        Ok(
+            effective_crop_box(&resource, editor, page_index)?.map(|[llx, lly, urx, ury]| {
+                rect_from_corners(llx.into(), lly.into(), urx.into(), ury.into())
+            }),
+        )
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_set_page_media_box(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+    rect: RectNif,
+) -> NifResult<Atom> {
+    let corners = corners(rect).map_err(unrepresentable)?;
+
+    resource.editor.with_lock(|editor| {
+        write_media_box(&resource, editor, page_index, corners)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_set_page_crop_box(
+    resource: ResourceArc<EditorResource>,
+    page_index: usize,
+    rect: RectNif,
+) -> NifResult<Atom> {
+    let corners = corners(rect).map_err(unrepresentable)?;
+
+    resource.editor.with_lock(|editor| {
+        write_crop_box(&resource, editor, page_index, corners)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+// Resolve every crop before writing so a failure leaves all pages unchanged.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_crop_margins(
+    resource: ResourceArc<EditorResource>,
+    margins: MarginsNif,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        let count = page_edits(&resource).len();
+
+        let crops = (0..count)
+            .map(|page_index| {
+                let media_box = effective_media_box(&resource, editor, page_index)?;
+
+                crop_from_margins(media_box, margins).map_err(|refusal| {
+                    let why = match refusal {
+                        CropRefusal::NotFinite => "the corners must fit a 32-bit float",
+                        CropRefusal::Empty => "the margins leave no area",
+                    };
+                    tagged_err(
+                        atoms::other(),
+                        format!("page {page_index}: {why} inside its media box {media_box:?}"),
+                    )
+                })
+            })
+            .collect::<NifResult<Vec<_>>>()?;
+
+        for (page_index, crop) in crops.into_iter().enumerate() {
+            write_crop_box(&resource, editor, page_index, crop)?;
+        }
+
+        Ok(atoms::ok())
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -696,12 +918,7 @@ fn editor_erase_regions(
     page_index: usize,
     rects: Vec<RectNif>,
 ) -> NifResult<Atom> {
-    let corners = erase_corners(rects).map_err(|rect| {
-        tagged_err(
-            atoms::other(),
-            format!("invalid region {rect:?}: its corners must fit a 32-bit float"),
-        )
-    })?;
+    let corners = erase_corners(rects).map_err(unrepresentable)?;
 
     resource.editor.with_lock(|editor| {
         ensure_editor_page_in_range(editor, page_index)?;
@@ -1317,6 +1534,140 @@ mod tests {
                 .contains("Page One"),
             "upstream now decrypts stream payloads on the write path: bind a password \
              option through DocumentEditor::from_document and drop ensure_not_encrypted"
+        );
+    }
+
+    const REVERSED: usize = 1;
+    const INHERITED_BOX: usize = 2;
+    const MISSING_BOX: usize = 5;
+    const LETTER: [f32; 4] = [0.0, 0.0, 612.0, 792.0];
+
+    #[test]
+    fn upstream_still_reads_a_media_box_off_the_leaf_dictionary() {
+        let mut editor = DocumentEditor::open(fixture("media_box.pdf")).expect("fixture opens");
+        let doc = PdfDocument::open(fixture("media_box.pdf")).expect("fixture opens");
+
+        assert_eq!(
+            doc.get_page_media_box(INHERITED_BOX)
+                .expect("the document reads"),
+            (0.0, 0.0, 300.0, 500.0)
+        );
+        assert!(doc.get_page_media_box(MISSING_BOX).is_err());
+
+        assert_eq!(
+            editor
+                .get_page_media_box(INHERITED_BOX)
+                .expect("the editor reads"),
+            LETTER,
+            "the editor now resolves an inherited /MediaBox"
+        );
+        assert_eq!(
+            editor
+                .get_page_media_box(MISSING_BOX)
+                .expect("the editor reads"),
+            LETTER,
+            "the editor now reports a missing /MediaBox instead of substituting Letter"
+        );
+    }
+
+    #[test]
+    fn upstream_still_reads_a_crop_box_off_the_leaf_dictionary() {
+        let mut editor = DocumentEditor::open(fixture("crop_box.pdf")).expect("fixture opens");
+        let doc = PdfDocument::open(fixture("crop_box.pdf")).expect("fixture opens");
+
+        assert_eq!(
+            read_crop_box(&doc, 1).expect("reads"),
+            Some([50.0, 50.0, 300.0, 400.0])
+        );
+        assert_eq!(
+            read_crop_box(&doc, 2).expect("reads"),
+            Some([0.0, 0.0, 100.0, 100.0])
+        );
+
+        assert_eq!(
+            (
+                editor.get_page_crop_box(1).expect("reads"),
+                editor.get_page_crop_box(2).expect("reads")
+            ),
+            (None, None),
+            "the editor now resolves an inherited or indirect /CropBox"
+        );
+    }
+
+    #[test]
+    fn upstream_still_crops_a_reversed_box_outward() {
+        let mut editor = DocumentEditor::open(fixture("media_box.pdf")).expect("fixture opens");
+
+        editor.crop_margins(10.0, 10.0, 10.0, 10.0).expect("crops");
+
+        assert_eq!(
+            editor.get_page_crop_box(REVERSED).expect("reads"),
+            Some([622.0, 802.0, -10.0, -10.0]),
+            "upstream now normalizes the media box before measuring margins"
+        );
+    }
+
+    #[test]
+    fn upstream_still_crops_earlier_pages_before_failing() {
+        let mut editor = DocumentEditor::open(fixture("broken_page.pdf")).expect("fixture opens");
+
+        assert!(
+            editor.crop_margins(10.0, 10.0, 10.0, 10.0).is_err(),
+            "the unreadable page no longer fails the loop, so nothing below is tested"
+        );
+        assert!(
+            editor.get_page_crop_box(0).expect("reads").is_some(),
+            "upstream now reads every page before cropping any"
+        );
+    }
+
+    #[test]
+    fn crop_from_margins_measures_from_the_normalized_box() {
+        let margins = MarginsNif {
+            left: 10.0,
+            right: 20.0,
+            top: 30.0,
+            bottom: 40.0,
+        };
+
+        assert_eq!(
+            crop_from_margins([0.0, 0.0, 612.0, 792.0], margins),
+            Ok([10.0, 40.0, 592.0, 762.0])
+        );
+        assert_eq!(
+            crop_from_margins([612.0, 792.0, 0.0, 0.0], margins),
+            Ok([10.0, 40.0, 592.0, 762.0])
+        );
+        assert_eq!(
+            crop_from_margins([10.0, 20.0, 622.0, 812.0], margins),
+            Ok([20.0, 60.0, 602.0, 782.0])
+        );
+    }
+
+    #[test]
+    fn crop_from_margins_refuses_an_empty_or_unrepresentable_crop() {
+        let all = |m| MarginsNif {
+            left: m,
+            right: m,
+            top: m,
+            bottom: m,
+        };
+
+        assert_eq!(
+            crop_from_margins([0.0, 0.0, 100.0, 100.0], all(50.0)),
+            Err(CropRefusal::Empty)
+        );
+        assert_eq!(
+            crop_from_margins([0.0, 0.0, 100.0, 300.0], all(50.0)),
+            Err(CropRefusal::Empty)
+        );
+        assert_eq!(
+            crop_from_margins([0.0, 0.0, 100.0, 100.0], all(49.0)),
+            Ok([49.0, 49.0, 51.0, 51.0])
+        );
+        assert_eq!(
+            crop_from_margins([-3.0e38, 0.0, 3.0e38, 10.0], all(0.0)),
+            Err(CropRefusal::NotFinite)
         );
     }
 

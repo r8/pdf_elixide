@@ -330,6 +330,13 @@ defmodule PdfElixide.OptionKeysTest do
         &Editor.embed_file(editor, "data.csv", "a,b", &1)
       )
     end
+
+    test "Editor.crop_margins/2" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      accepts_each!([left: 1, right: 1.5, top: 2, bottom: 0], &Editor.crop_margins(editor, &1))
+    end
   end
 
   describe "an undeclared key is rejected" do
@@ -376,7 +383,8 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.Image.save(image, "out.png", opts) end,
         fn opts -> Form.export(form_doc, :fdf, opts) end,
         fn opts -> Form.export(form_editor, :xfdf, opts) end,
-        fn opts -> Editor.embed_file(editor, "data.csv", "a,b", opts) end
+        fn opts -> Editor.embed_file(editor, "data.csv", "a,b", opts) end,
+        fn opts -> Editor.crop_margins(editor, opts) end
       ]
 
       for call <- calls do

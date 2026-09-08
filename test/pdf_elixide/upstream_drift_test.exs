@@ -501,6 +501,14 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert %{width: 300.0, height: 500.0} = Page.media_box!(page)
       assert Page.rotation!(page) == 180
     end
+
+    test "the editor answers what a cold read answers, instability included" do
+      editor = Editor.open!(@inherited_boxes_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert %{width: 200.0, height: 100.0} = Editor.media_box!(editor, 0)
+      assert Editor.rotation!(editor, 0) == 90
+    end
   end
 
   describe "inks the deep walk deliberately skips" do
@@ -734,6 +742,26 @@ defmodule PdfElixide.UpstreamDriftTest do
       on_exit(fn -> Document.close(doc) end)
 
       assert Enum.map(doc, &Page.rotation!/1) == [90, 180, 270, 0],
+             "upstream now carries page properties into an incremental update"
+    end
+
+    @tag :tmp_dir
+    test "a page box goes missing too", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_boxes.pdf")
+
+      small = %PdfElixide.Geometry.Rect{x: 0.0, y: 0.0, width: 100.0, height: 50.0}
+      editor |> Editor.set_media_box!(0, small) |> Editor.set_crop_box!(1, small)
+
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert %{width: 612.0, height: 792.0} = Page.media_box!(Document.page!(doc, 0))
+
+      assert Page.crop_box!(Document.page!(doc, 1)) == nil,
              "upstream now carries page properties into an incremental update"
     end
 

@@ -72,7 +72,7 @@ defmodule PdfElixide.Document.Page do
   `%PdfElixide.Error{reason: :invalid_pdf}` — no default page size is
   substituted. One malformation is *not* reported: an element that is not a
   number reads as `0.0`, so such a page reports a smaller box rather than
-  failing.
+  failing. See `crop_box/1` for the part of the sheet a viewer shows.
   """
   @spec media_box(t()) :: {:ok, Rect.t()} | {:error, Error.t()}
   def media_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -85,6 +85,28 @@ defmodule PdfElixide.Document.Page do
   @spec media_box!(t()) :: Rect.t()
   def media_box!(page) do
     media_box(page) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns the page's `/CropBox` — the region a viewer displays and prints — as
+  a normalized `PdfElixide.Geometry.Rect` in unrotated user space. It is
+  inherited and reported unclipped, on the same terms as `media_box/1`.
+
+  Returns `nil` when the box is absent or `null`; a malformed box yields
+  `%PdfElixide.Error{reason: :invalid_pdf}`. See "Page boxes and the coordinate
+  origin" in `PdfElixide.Document`.
+  """
+  @spec crop_box(t()) :: {:ok, Rect.t() | nil} | {:error, Error.t()}
+  def crop_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
+    Wrap.call(fn -> Native.document_get_page_crop_box(ref, index) end)
+  end
+
+  @doc """
+  Same as `crop_box/1` but raises an error if it fails.
+  """
+  @spec crop_box!(t()) :: Rect.t() | nil
+  def crop_box!(page) do
+    crop_box(page) |> Wrap.unwrap!()
   end
 
   @doc """
