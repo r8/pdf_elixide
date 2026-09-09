@@ -35,7 +35,7 @@ use crate::{
     error::{tagged_err, to_nif_err},
     form_tree,
     metadata::decode_pdf_text_string,
-    DocumentResource, EditorResource,
+    warnings, DocumentResource, EditorResource,
 };
 
 #[derive(NifUnitEnum, Debug, PartialEq)]
@@ -302,7 +302,7 @@ fn editor_unsigned_signature_fields(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_signature_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
-    resource.doc.with_read(signature_count)
+    resource.doc.with_read(|doc| signature_count(doc))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -905,6 +905,10 @@ fn digest_matches(algorithm: HashAlgorithm, bytes: &[u8], imprint: &[u8]) -> boo
 // A damaged candidate is an absence, not a document error, so a decoy cannot
 // hide a valid archival timestamp elsewhere. Only an unreadable PDF is an error.
 fn document_timestamp(pdf_data: &[u8]) -> NifResult<Option<Timestamp>> {
+    warnings::drained(|| sweep_for_document_timestamp(pdf_data))
+}
+
+fn sweep_for_document_timestamp(pdf_data: &[u8]) -> NifResult<Option<Timestamp>> {
     let doc = PdfDocument::from_bytes(pdf_data.to_vec()).map_err(to_nif_err)?;
 
     // Try likely later objects first, but inspect the entire object inventory.

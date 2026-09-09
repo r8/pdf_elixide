@@ -32,7 +32,7 @@ use crate::{
     metadata::{has_info_text, normalize_text, read_metadata, to_document_info, MetadataNif},
     resource::Closable,
     signatures::well_formed_pdf_date_len,
-    EditorResource,
+    warnings, EditorResource,
 };
 
 // Variant spelling determines the public atom: `Rc4_128` yields `:rc4_128`.
@@ -195,8 +195,13 @@ fn ensure_not_encrypted(editor: &DocumentEditor) -> NifResult<()> {
 
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
-    let editor = DocumentEditor::open(path_arg(path)?).map_err(to_nif_err)?;
-    ensure_not_encrypted(&editor)?;
+    let path = path_arg(path)?;
+    let editor = warnings::drained(|| {
+        let editor = DocumentEditor::open(path).map_err(to_nif_err)?;
+        ensure_not_encrypted(&editor)?;
+
+        Ok(editor)
+    })?;
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),
@@ -214,8 +219,12 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
-    let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
-    ensure_not_encrypted(&editor)?;
+    let editor = warnings::drained(|| {
+        let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
+        ensure_not_encrypted(&editor)?;
+
+        Ok(editor)
+    })?;
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", editor),

@@ -48,7 +48,8 @@ high-performance PDF library written in Rust. Built with
 - Restrict extraction by region and configure artifacts, layers, inks, reading
   order, table detection, and span merging
 - Capture diagnostics for content a damaged page drops without failing, and
-  forward them to `Logger`
+  forward them to `Logger`, or read the conditions the reader tolerated as
+  structured warnings
 - Share one open document across processes for concurrent native reads
 - Release document, editor, image, font, and table resources explicitly when
   desired

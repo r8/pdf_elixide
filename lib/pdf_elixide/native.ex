@@ -103,6 +103,7 @@ defmodule PdfElixide.Native do
   def document_layers(_doc), do: err()
   def document_page_inks(_doc, _page_index, _options), do: err()
   def document_embedded_files(_doc), do: err()
+  def document_structured_warnings(_doc), do: err()
 
   def editor_open(_path), do: err()
   def editor_from_bytes(_bytes), do: err()
@@ -161,6 +162,9 @@ defmodule PdfElixide.Native do
   def log_drain, do: err()
   def log_pending, do: err()
   def log_enabled, do: err()
+
+  def warnings_snapshot, do: err()
+  def warnings_take, do: err()
 
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

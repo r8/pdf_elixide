@@ -13,13 +13,20 @@ use crate::error::{closed_err, lock_err, panic_err};
 pub struct Closable<T> {
     label: &'static str,
     value: RwLock<Option<T>>,
+    // Runs after each access while the value guard is held.
+    after_access: fn(&T),
 }
 
 impl<T> Closable<T> {
     pub fn new(label: &'static str, value: T) -> Self {
+        Self::with_hook(label, value, |_| {})
+    }
+
+    pub fn with_hook(label: &'static str, value: T, after_access: fn(&T)) -> Self {
         Self {
             label,
             value: RwLock::new(Some(value)),
+            after_access,
         }
     }
 
@@ -29,15 +36,28 @@ impl<T> Closable<T> {
         // closure — that is what keeps a panic from poisoning the lock (see
         // `contain_panic`).
         let mut guard = self.lock()?;
+        let result = contain_panic(|| f(&mut guard));
+        self.run_hook(&guard);
+        crate::warnings::collect_global();
 
-        contain_panic(|| f(&mut guard))
+        result
     }
 
     // Shared access is the default and still excludes `close`.
     pub fn with_read<R>(&self, f: impl FnOnce(&T) -> NifResult<R>) -> NifResult<R> {
         let guard = self.read()?;
+        let result = contain_panic(|| f(&guard));
+        self.run_hook(&guard);
+        // Drain even when the caller never reads warnings.
+        crate::warnings::collect_global();
 
-        contain_panic(|| f(&guard))
+        result
+    }
+
+    // Run even after a caught panic; contain hook panics to avoid poisoning
+    // the held lock or replacing the caller's result.
+    fn run_hook(&self, value: &T) {
+        let _ = catch_unwind(AssertUnwindSafe(|| (self.after_access)(value)));
     }
 
     fn lock(&self) -> NifResult<ExclusiveGuard<'_, T>> {
@@ -109,11 +129,39 @@ impl<T> Deref for SharedGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, thread, time::Duration};
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
+        thread,
+        time::Duration,
+    };
 
     use super::*;
 
     const TIMEOUT: Duration = Duration::from_secs(5);
+
+    static HOOK_RUNS: AtomicUsize = AtomicUsize::new(0);
+
+    fn count_hook(_: &u8) {
+        HOOK_RUNS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    // Not the panic path: `contain_panic` would build an atom there, which
+    // aborts without a BEAM.
+    #[test]
+    fn the_hook_runs_after_ok_and_err_closures_alike() {
+        let closable = Closable::with_hook("Test", 0_u8, count_hook);
+        let before = HOOK_RUNS.load(Ordering::SeqCst);
+
+        assert!(closable.with_read(|_| Ok(())).is_ok());
+        assert!(closable
+            .with_lock(|_| Err::<(), _>(rustler::Error::BadArg))
+            .is_err());
+
+        assert_eq!(HOOK_RUNS.load(Ordering::SeqCst) - before, 2);
+    }
 
     #[test]
     fn two_with_read_calls_overlap() {

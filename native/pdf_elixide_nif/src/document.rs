@@ -34,6 +34,7 @@ use crate::{
     span::{span_to_nif, SpanNif},
     table::{table_to_nif, TableNif},
     text_line::{text_line_to_nif, TextLineNif},
+    warnings::{self, OpenDocument, WarningNif},
     word::{word_to_nif, WordNif},
     DocumentResource,
 };
@@ -269,11 +270,16 @@ fn cached_fields(resource: &DocumentResource) -> NifResult<((u8, u8), Option<usi
 
 #[rustler::nif(schedule = "DirtyIo")]
 fn document_open(path: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedDocument> {
-    let doc = PdfDocument::open(path_arg(path)?).map_err(to_nif_err)?;
-    options.apply(&doc)?;
+    let path = path_arg(path)?;
+    let doc = warnings::drained(|| {
+        let doc = PdfDocument::open(path).map_err(to_nif_err)?;
+        options.apply(&doc)?;
+
+        Ok(doc)
+    })?;
 
     let resource = ResourceArc::new(DocumentResource {
-        doc: Closable::new("Document", doc),
+        doc: Closable::with_hook("Document", OpenDocument::new(doc), OpenDocument::drain),
     });
     let (version, page_count) = cached_fields(&resource)?;
 
@@ -282,11 +288,15 @@ fn document_open(path: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedD
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedDocument> {
-    let doc = PdfDocument::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
-    options.apply(&doc)?;
+    let doc = warnings::drained(|| {
+        let doc = PdfDocument::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
+        options.apply(&doc)?;
+
+        Ok(doc)
+    })?;
 
     let resource = ResourceArc::new(DocumentResource {
-        doc: Closable::new("Document", doc),
+        doc: Closable::with_hook("Document", OpenDocument::new(doc), OpenDocument::drain),
     });
     let (version, page_count) = cached_fields(&resource)?;
 
@@ -374,15 +384,31 @@ fn document_authenticate(
         // drops them. The fresh document is authenticated *before* the swap, so
         // a failure leaves the handle exactly as it was.
         let fresh = PdfDocument::from_bytes(doc.source_bytes.clone()).map_err(to_nif_err)?;
-        let ok = fresh
-            .authenticate(password.as_slice())
-            .map_err(to_nif_err)?;
+        let result = fresh.authenticate(password.as_slice());
 
+        // Preserve old-then-new warning order, including failed authentication;
+        // absorb before `?` can discard the fresh document.
+        doc.warnings.absorb(|| doc.doc.take_structured_warnings());
+        doc.warnings.absorb(|| fresh.take_structured_warnings());
+
+        let ok = result.map_err(to_nif_err)?;
         if ok {
-            *doc = fresh;
+            doc.doc = fresh;
         }
 
         Ok(ok)
+    })
+}
+
+// The mirror lock makes collection atomic across shared handle readers.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_structured_warnings(
+    resource: ResourceArc<DocumentResource>,
+) -> NifResult<(Vec<WarningNif>, usize)> {
+    resource.doc.with_read(|doc| {
+        let (collected, dropped) = doc.warnings.collect(|| doc.doc.take_structured_warnings());
+
+        Ok((warnings::to_nif(collected), dropped))
     })
 }
 

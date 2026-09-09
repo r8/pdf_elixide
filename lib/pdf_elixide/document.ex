@@ -174,9 +174,11 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.XmpMetadata
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.Logging
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
   alias PdfElixide.Predicate
+  alias PdfElixide.Warning
 
   @enforce_keys [:ref, :version]
   defstruct [:ref, :version, :page_count, :source_path]
@@ -329,7 +331,8 @@ defmodule PdfElixide.Document do
   document whose count was determined at open. Any
   `PdfElixide.Document.Image`, `PdfElixide.Document.Font` or
   `PdfElixide.Document.Table` handles already extracted from the document remain
-  valid, owning their data independently.
+  valid, owning their data independently. Closing also releases the document's
+  internal warning list.
 
       doc = Document.open!("sample.pdf")
       text = Document.text!(doc, 0)
@@ -472,7 +475,9 @@ defmodule PdfElixide.Document do
   `text/2` answers `""`, `search/2` answers `[]`. A first successful
   authentication reloads the document, so everything after it answers as though
   the handle had been opened with `open/2`'s `:password`, and it costs about what
-  opening the document cost — a rejected password too.
+  opening the document cost — a rejected password too. What that re-read
+  records is listed by `structured_warnings/1`, whether the password was
+  accepted, rejected, or the check failed with an error.
 
   Like `clear_search_index/1` and `close/1`, and unlike every other read here,
   this takes the document's lock *exclusively*, so it waits for in-flight calls
@@ -607,6 +612,40 @@ defmodule PdfElixide.Document do
   @spec page_label_ranges!(t()) :: [PageLabelRange.t()]
   def page_label_ranges!(%__MODULE__{} = doc) do
     page_label_ranges(doc) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Lists the warnings recorded while reading this document, oldest first.
+
+  The list is per handle and reading it does not empty it. Warnings remain
+  recorded whether the call that produced them succeeded or failed; see
+  `PdfElixide.Warning` for fields and `t:PdfElixide.Warning.category/0` for
+  which conditions are recorded here or process-wide. Warnings appear as
+  objects are read, often during extraction rather than opening.
+
+  Entries survive `authenticate/2`, whose re-read may add its own. After
+  `close/1`, returns `{:error, %PdfElixide.Error{reason: :closed}}`.
+
+  The list is bounded and discards the oldest entries when full. The next
+  listing logs one `Logger` warning with the number discarded since the
+  previous listing.
+  """
+  @spec structured_warnings(t()) :: {:ok, [Warning.t()]} | {:error, Error.t()}
+  def structured_warnings(%__MODULE__{ref: ref}) do
+    with {:ok, {warnings, dropped}} <-
+           Wrap.call(fn -> Native.document_structured_warnings(ref) end) do
+      Logging.report_discarded(dropped, "the document's list")
+      {:ok, Enum.map(warnings, &Warning.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Lists the warnings recorded while reading this document, raising an error if
+  it fails.
+  """
+  @spec structured_warnings!(t()) :: [Warning.t()]
+  def structured_warnings!(%__MODULE__{} = doc) do
+    structured_warnings(doc) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -806,7 +845,12 @@ defmodule PdfElixide.Document do
   stream, missing fonts, a scan with no text layer and an undecryptable
   document all extract as `""`. All it can catch is a page whose page-tree entry
   does not resolve at all, which the other whole-document extractors fail on
-  unconditionally, except `fonts/1`, which skips it.
+  unconditionally, except `fonts/1`, which skips it. Nor do those conditions
+  leave a warning behind: neither `structured_warnings/1` nor
+  `PdfElixide.Logging.structured_warnings/0` records them, and only
+  `PdfElixide.Logging` capture makes them visible. The one exception is a
+  page whose object ran into the end of the file before it could be read: it
+  extracts as `""` *and* records an `:eof_premature` warning on the document.
 
   ## Layer and ink filtering drops the other options
 

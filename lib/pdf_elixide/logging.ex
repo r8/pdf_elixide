@@ -49,11 +49,23 @@ defmodule PdfElixide.Logging do
   enabled but no further calls made — the oldest records are discarded, and a
   single warning reports how many were lost so a truncated capture cannot be
   mistaken for a complete one.
+
+  ## Structured warnings
+
+  Some tolerated conditions are recorded as `t:PdfElixide.Warning.t/0`
+  values, independently of capture and without explicit enablement.
+  `PdfElixide.Document.structured_warnings/1` lists per-document warnings;
+  `structured_warnings/0` and `take_structured_warnings/0` read the process-wide
+  feed. See `t:PdfElixide.Warning.category/0` for the category-to-feed mapping.
+
+  Under concurrent use an entry may come from any handle in the VM; see the
+  [Concurrency](guides/concurrency.md) guide.
   """
 
   require Logger
 
   alias PdfElixide.Native
+  alias PdfElixide.Warning
 
   @levels [:off, :error, :warning, :info, :debug, :trace]
 
@@ -122,6 +134,46 @@ defmodule PdfElixide.Logging do
     after
       Logger.reset_metadata(saved)
     end
+  end
+
+  @doc """
+  Lists the warnings recorded process-wide, oldest first, without emptying the
+  list.
+
+  See "Structured warnings" in the module documentation for which conditions
+  are recorded here and how they are attributed.
+  """
+  @spec structured_warnings() :: [Warning.t()]
+  def structured_warnings do
+    Enum.map(Native.warnings_snapshot(), &Warning.from_nif/1)
+  end
+
+  @doc """
+  Returns the warnings recorded process-wide, oldest first, and empties the
+  list.
+
+  The list is bounded and discards the oldest entries when full. If it
+  overflowed since it was last emptied, a single `Logger` warning
+  reports how many entries were discarded, so a truncated list cannot be
+  mistaken for a complete one.
+  """
+  @spec take_structured_warnings() :: [Warning.t()]
+  def take_structured_warnings do
+    {warnings, dropped} = Native.warnings_take()
+    report_discarded(dropped, "the process-wide list")
+
+    Enum.map(warnings, &Warning.from_nif/1)
+  end
+
+  @doc false
+  @spec report_discarded(non_neg_integer(), String.t()) :: :ok
+  def report_discarded(0, _what), do: :ok
+
+  def report_discarded(dropped, what) do
+    Logger.warning(
+      "pdf_elixide discarded #{dropped} structured warning(s); #{what} is incomplete",
+      pdf_elixide: true
+    )
   end
 
   # This runs from an `after` clause, so it must never replace the call's result.

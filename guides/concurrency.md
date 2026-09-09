@@ -68,6 +68,14 @@ Diagnostics capture is global to the VM, and a captured record is forwarded by
 whichever process next returns from a library call, so it carries no `Logger`
 metadata identifying the work that produced it. See `PdfElixide.Logging`.
 
+The process-wide structured warnings feed, `PdfElixide.Logging.structured_warnings/0`,
+is global in the same way: an entry may have been recorded by a call on any
+handle in the VM, and it becomes visible when the call that recorded it
+returns, whether that call succeeded or failed.
+`PdfElixide.Document.structured_warnings/1` is the per-handle half —
+an ordinary shared read that lists only what reading that document recorded,
+and does not empty the list, so several processes can read it.
+
 ## The other handles
 
 `PdfElixide.Editor` is different in kind, because it mutates. Every call that

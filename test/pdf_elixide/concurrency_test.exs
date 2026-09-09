@@ -65,7 +65,8 @@ defmodule PdfElixide.ConcurrencyTest do
         # the same reasoning `per_page_equivalence_test.exs` gives.
         fonts: fn d -> d |> Document.fonts!() |> Enum.map(&Map.delete(&1, :ref)) end,
         page_count: &Document.page_count/1,
-        has_xfa?: &Document.has_xfa?/1
+        has_xfa?: &Document.has_xfa?/1,
+        structured_warnings: &Document.structured_warnings!/1
       ]
 
       expected = Map.new(calls, fn {name, call} -> {name, call.(doc)} end)

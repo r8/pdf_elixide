@@ -9,7 +9,9 @@ defmodule PdfElixide.UpstreamDriftTest do
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form
+  alias PdfElixide.Logging
   alias PdfElixide.Signature
+  alias PdfElixide.Warning
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
@@ -41,6 +43,8 @@ defmodule PdfElixide.UpstreamDriftTest do
   @leaked_path_pdf Path.join(@fixtures, "leaked_path.pdf")
   @structured_pdf Path.join(@fixtures, "structured.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
+  @missing_endobj_pdf Path.join(@fixtures, "warnings_missing_endobj.pdf")
+  @stream_cr_pdf Path.join(@fixtures, "warnings_stream_cr.pdf")
 
   @columns 0
   @artifacts 1
@@ -1292,6 +1296,38 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert %{width: 622.0, height: 812.0} = Document.structured!(doc, @offset_box)
       assert Page.width!(page) == 612.0
       assert Page.height!(page) == 792.0
+    end
+  end
+
+  # Async modules may add unrelated entries to the process-wide feed.
+  describe "which sink a structured warning reaches" do
+    test "the per-document read still excludes the process-wide sink" do
+      doc = open(@stream_cr_pdf)
+      Document.text!(doc, 0)
+
+      assert Document.structured_warnings!(doc) == []
+
+      assert Enum.any?(Logging.structured_warnings(), fn warning ->
+               warning.category == :spec_violation and warning.spec_section == "7.3.8.1" and
+                 warning.message =~ "CR alone"
+             end)
+    end
+
+    test "no condition reports a page yet" do
+      doc = open(@missing_endobj_pdf)
+      Document.text!(doc, 0)
+
+      recorded = Document.structured_warnings!(doc) ++ Logging.structured_warnings()
+
+      assert [%Warning{category: :eof_premature} | _] = Document.structured_warnings!(doc)
+      assert Enum.all?(recorded, &is_nil(&1.page))
+    end
+
+    test "a page that resolves through neither lookup records nothing on its document" do
+      doc = open(@broken_page_pdf)
+
+      assert {:ok, _} = Document.text(doc)
+      assert Document.structured_warnings!(doc) == []
     end
   end
 

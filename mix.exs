@@ -106,6 +106,7 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Document,
         PdfElixide.Document.Page,
         PdfElixide.Error,
+        PdfElixide.Warning,
         PdfElixide.Logging
       ],
       "Document metadata": [

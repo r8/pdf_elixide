@@ -2,10 +2,13 @@ use std::sync::{atomic::AtomicBool, Arc, Mutex, OnceLock, RwLock};
 
 use pdf_oxide::{
     editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo,
-    structure::table_extractor::Table, writer::EmbeddedFile, PdfDocument,
+    structure::table_extractor::Table, writer::EmbeddedFile,
 };
 
-use crate::{editor::PageEdits, form_tree::Resolved, metadata::MetadataNif, resource::Closable};
+use crate::{
+    editor::PageEdits, form_tree::Resolved, metadata::MetadataNif, resource::Closable,
+    warnings::OpenDocument,
+};
 
 mod annotations;
 mod binary;
@@ -34,6 +37,7 @@ mod span;
 mod structured;
 mod table;
 mod text_line;
+mod warnings;
 mod word;
 
 pub(crate) mod atoms {
@@ -63,7 +67,7 @@ pub(crate) mod atoms {
 // supports releasing the value early (see resource.rs and the `*_close` NIFs).
 
 struct DocumentResource {
-    doc: Closable<PdfDocument>,
+    doc: Closable<OpenDocument>,
 }
 
 #[rustler::resource_impl]
