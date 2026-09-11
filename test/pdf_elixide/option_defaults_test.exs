@@ -50,6 +50,23 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.__option_defaults__(:inks) == %{deep: false}
     end
 
+    test "render/3" do
+      assert Document.__option_defaults__(:render) == %{
+               dpi: 150,
+               format: :png,
+               background: {1.0, 1.0, 1.0, 1.0},
+               render_annotations: true,
+               jpeg_quality: 85,
+               exclude_layers: [],
+               fit: nil,
+               region: nil
+             }
+    end
+
+    test "separations/3, separation/4 and rasterize/2" do
+      assert Document.__option_defaults__(:dpi) == %{dpi: 150}
+    end
+
     test "text/2,3" do
       assert Document.__option_defaults__(:text) == %{
                extract_tables: true,

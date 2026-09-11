@@ -10,6 +10,8 @@ defmodule PdfElixide.ConcurrencyTest do
   alias PdfElixide.Error
   alias PdfElixide.Form
   alias PdfElixide.Form.Field
+  alias PdfElixide.Native
+  alias PdfElixide.Native.Wrap
 
   @fixtures_dir Path.join([__DIR__, "..", "fixtures"])
 
@@ -19,6 +21,7 @@ defmodule PdfElixide.ConcurrencyTest do
   @table_pdf Path.join(@fixtures_dir, "table.pdf")
   @form_pdf Path.join(@fixtures_dir, "form.pdf")
   @attachments_pdf Path.join(@fixtures_dir, "attachments.pdf")
+  @layers_pdf Path.join(@fixtures_dir, "layers_and_inks.pdf")
 
   @concurrency 16
 
@@ -97,6 +100,81 @@ defmodule PdfElixide.ConcurrencyTest do
         timeout: @timeout
       )
       |> Enum.each(fn {:ok, actual} -> assert actual == expected end)
+    end
+
+    test "concurrent renders of one handle match the serial rasters", %{doc: doc} do
+      pages = Enum.to_list(0..(doc.page_count - 1))
+      expected = Map.new(pages, fn page -> {page, Document.render!(doc, page, dpi: 36).data} end)
+
+      assert map_size(expected) == 3
+      assert expected |> Map.values() |> Enum.uniq() |> length() == 3
+
+      1..@concurrency
+      |> Task.async_stream(
+        fn _ ->
+          Map.new(pages, fn page -> {page, Document.render!(doc, page, dpi: 36).data} end)
+        end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, actual} -> assert actual == expected end)
+    end
+
+    test "concurrent separations on one handle match the serial plates" do
+      doc = Document.open!(@layers_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      expected = Document.separations!(doc, 0, dpi: 24)
+
+      assert Enum.any?(expected, fn plate -> Enum.max(:binary.bin_to_list(plate.data)) > 0 end)
+
+      1..@concurrency
+      |> Task.async_stream(fn _ -> Document.separations!(doc, 0, dpi: 24) end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, actual} -> assert actual == expected end)
+    end
+
+    test "concurrent rasterize calls each produce their own document", %{doc: doc} do
+      expected = Document.rasterize!(doc, dpi: 24)
+
+      1..@concurrency
+      |> Task.async_stream(
+        fn _ ->
+          flat = Document.rasterize!(doc, dpi: 24)
+          rasterized = Document.from_binary!(flat)
+          count = Document.page_count!(rasterized)
+          Document.close(rasterized)
+          {byte_size(flat), count}
+        end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, {size, count}} ->
+        assert count == doc.page_count
+        assert size == byte_size(expected)
+      end)
+    end
+
+    # Bypass the BEAM lock to exercise contention on the NIF mutex.
+    test "the NIF serializes callers that bypass the Elixir lock", %{doc: doc} do
+      expected = Document.rasterize!(doc, dpi: 24)
+
+      1..@concurrency
+      |> Task.async_stream(
+        fn _ ->
+          {:ok, flat} = Wrap.call(fn -> Native.document_rasterize(doc.ref, %{dpi: 24}) end)
+          byte_size(flat)
+        end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, size} -> assert size == byte_size(expected) end)
     end
   end
 

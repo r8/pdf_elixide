@@ -75,6 +75,7 @@ defmodule PdfElixide.MixProject do
         "guides/editing.md": [],
         "guides/signatures.md": [],
         "guides/encryption.md": [],
+        "guides/rendering.md": [],
         # `filename:` because ExDoc reserves `search.html` for its own search
         # page and refuses an extra that would generate it.
         "guides/search.md": [filename: "text-search"],
@@ -133,6 +134,10 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Document.Font,
         PdfElixide.Document.Annotation,
         PdfElixide.Document.Annotation.Flags
+      ],
+      Rendering: [
+        PdfElixide.Document.RenderedPage,
+        PdfElixide.Document.SeparationPlate
       ],
       "Geometry and color": [
         PdfElixide.Geometry.Rect,

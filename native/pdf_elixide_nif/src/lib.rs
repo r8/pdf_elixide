@@ -30,6 +30,7 @@ mod metadata;
 mod optional_content;
 mod outline;
 mod paths;
+mod rendering;
 mod resource;
 mod search;
 mod signatures;

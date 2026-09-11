@@ -44,6 +44,14 @@ in-flight native calls on that handle and block new ones for their duration.
     a crash. A worker racing a close may therefore return this error. Close only
     once the workers are done.
 
+`PdfElixide.Document.rasterize/2` runs one at a time **across the whole node**,
+whatever document each caller uses. Other work on the same handle is unaffected.
+Queued callers wait in their own processes without occupying scheduler threads;
+under contention, the wait can add a few seconds beyond the rendering time.
+Calling `rasterize/2` from one process avoids this contention. The other
+[Rendering](rendering.md) operations take ordinary shared reads and can run
+concurrently by page.
+
 ## The `/ActualText` hazard
 
 Some tagged PDFs declare competing `/ActualText` replacements for the same

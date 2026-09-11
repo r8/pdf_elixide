@@ -6,12 +6,14 @@ defmodule PdfElixide.Document do
 
   A `%Document{}` is safe to pass to other processes. Operations that read the
   native document take its handle lock shared, so N processes extracting from
-  one document do not queue on that lock. `version/1`, `source_path/1` and,
-  normally, `page_count/1` read cached struct fields instead and take no native
-  lock. `authenticate/2`, `clear_search_index/1` and `close/1` take the handle
-  lock exclusively. The [Concurrency](guides/concurrency.md) guide has the rest,
-  including contention inside the PDF reader and the tagged-PDF hazard that
-  makes fanning out *by page* the shape to prefer.
+  one document — or rendering different pages of it — do not queue on that
+  lock. `version/1`, `source_path/1` and, normally, `page_count/1` read cached
+  struct fields instead and take no native lock. `authenticate/2`,
+  `clear_search_index/1` and `close/1` take the handle lock exclusively, and
+  `rasterize/2` serializes against itself across the node. The
+  [Concurrency](guides/concurrency.md) guide has the rest, including contention
+  inside the PDF reader and the tagged-PDF hazard that makes fanning out *by
+  page* the shape to prefer.
 
   ## Whole-document extraction and memory
 
@@ -138,8 +140,9 @@ defmodule PdfElixide.Document do
     * `chars/1`, `spans/1`, `structured/1`, `paths/1` — with `rects/1` and
       `lines/1`, which are the same values narrowed — and `images/1` stay in
       raw, unrotated user space, whatever the rotation.
-    * `words/1`, `text_lines/1`, the cell boxes of `tables/1` and the boxes on a
-      `search/2` match are mapped into the **displayed** frame.
+    * `words/1`, `text_lines/1`, every box `tables/1` reports — each table's own
+      and its cells' — and the boxes on a `search/2` match are mapped into the
+      **displayed** frame.
       The mapping is selective: a `180`-degree page maps everything, while a
       `90`- or `270`-degree page maps only text whose own text matrix is
       rotated, leaving a horizontal run raw.
@@ -155,6 +158,7 @@ defmodule PdfElixide.Document do
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
   # unaliased: a bare `Path` alias shadows `Elixir.Path`, silently turning every
   # filesystem-path `Path.t()` in this module into the struct type.
+  alias PdfElixide.Color
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.EmbeddedFile
@@ -165,7 +169,9 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.PageLabelRange
   alias PdfElixide.Document.Permissions
+  alias PdfElixide.Document.RenderedPage
   alias PdfElixide.Document.SearchMatch
+  alias PdfElixide.Document.SeparationPlate
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.StructuredPage
   alias PdfElixide.Document.Table
@@ -766,6 +772,322 @@ defmodule PdfElixide.Document do
   defp build_inks_options(opts) do
     opts = Keyword.validate!(opts, @inks_opts_keys)
     %{deep: Keyword.get(opts, :deep, false)}
+  end
+
+  @typedoc """
+  Options for `render/3`.
+
+    * `:dpi` — positive resolution in dots per inch. Defaults to `150`.
+    * `:format` — `:png` (the default), `:jpeg`, or `:rgba8` for bare
+      premultiplied pixels; see `PdfElixide.Document.RenderedPage` for the layout.
+    * `:background` — a `PdfElixide.Color.RGB` with components in `0.0..1.0`,
+      or `nil` for transparent untouched areas. Defaults to opaque white.
+      With `:jpeg`, `nil` leaves untouched areas **black**.
+    * `:render_annotations` — paint annotation appearances (form fields, stamps,
+      highlights) over the page content. Defaults to `true`.
+    * `:jpeg_quality` — `1..100`, defaulting to `85`. Inert unless `:format` is
+      `:jpeg`.
+    * `:exclude_layers` — names of optional-content groups to leave unpainted,
+      from `layers/1`. Defaults to `[]`.
+    * `:fit` — `{width, height}` in pixels to scale the page into, preserving
+      its aspect ratio, so the result is no larger than the box on either axis.
+      Both dimensions must be positive.
+    * `:region` — a `PdfElixide.Geometry.Rect` in PDF points in the page's raw,
+      unrotated user space, clipped to the page. An empty intersection returns
+      `{:error, %PdfElixide.Error{reason: :out_of_range}}`. There is no
+      `:region_mode`. See [Cropping with `:region`](guides/rendering.md#cropping-with-region)
+      for using extractor boxes on rotated pages.
+
+  Cropping still renders the full page, so `:region` does not reduce rendering
+  cost or the size limit.
+
+  `:region` cannot be combined with `format: :rgba8`, and `:fit` cannot be
+  combined with `:dpi` or `:region`. These combinations raise `ArgumentError`.
+  """
+  @type render_opts :: [
+          dpi: pos_integer(),
+          format: RenderedPage.format(),
+          background: Color.RGB.t() | nil,
+          render_annotations: boolean(),
+          jpeg_quality: 1..100,
+          exclude_layers: [String.t()],
+          fit: {pos_integer(), pos_integer()} | nil,
+          region: Rect.t() | nil
+        ]
+
+  @render_opts_keys [
+    :dpi,
+    :format,
+    :background,
+    :render_annotations,
+    :jpeg_quality,
+    :exclude_layers,
+    :fit,
+    :region
+  ]
+
+  @doc """
+  Renders the page at the given zero-based index to a `PdfElixide.Document.RenderedPage`.
+  See `t:render_opts/0` for options.
+
+      {:ok, rendered} = PdfElixide.Document.render(doc, 0, dpi: 150)
+      File.write!("page0.png", rendered.data)
+
+  Renders the **MediaBox**, with US Letter substituted if it is unreadable;
+  a `:region` render instead returns an `:invalid_pdf` error for that page.
+  Default layer visibility is honoured and output depends on available fonts.
+
+  Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` when the requested
+  size exceeds the pixel limit. Lower `:dpi` or use a smaller `:fit` box.
+  See the [Rendering](guides/rendering.md) guide for sizing, page coverage,
+  fonts and differences from text extraction.
+
+  Takes the document lock shared; see [Concurrency](guides/concurrency.md).
+  """
+  @spec render(t(), non_neg_integer(), render_opts()) ::
+          {:ok, RenderedPage.t()} | {:error, Error.t()}
+  def render(%__MODULE__{ref: ref}, page_index, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_render_options(opts)
+
+    with {:ok, rendered} <-
+           Wrap.call(fn -> Native.document_render_page(ref, page_index, options) end) do
+      {:ok, RenderedPage.from_nif(rendered)}
+    end
+  end
+
+  @doc """
+  Renders the page to a raster image, raising an error if it fails.
+  """
+  @spec render!(t(), non_neg_integer(), render_opts()) :: RenderedPage.t()
+  def render!(doc, page_index, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    render(doc, page_index, opts) |> Wrap.unwrap!()
+  end
+
+  @typedoc """
+  Options for `separations/3`, `separation/4` and `rasterize/2`.
+
+    * `:dpi` — resolution in dots per inch. Defaults to `150`, and must be
+      positive.
+  """
+  @type dpi_opts :: [dpi: pos_integer()]
+
+  @dpi_opts_keys [:dpi]
+
+  @doc """
+  Renders ink plates for the page at the given zero-based index as
+  `PdfElixide.Document.SeparationPlate` structs. See `t:dpi_opts/0` for options.
+
+      {:ok, plates} = PdfElixide.Document.separations(doc, 0, dpi: 300)
+      Enum.map(plates, &{&1.ink, &1.width, &1.height})
+
+  Includes the four process inks and the page's spot inks; declared but unpainted
+  inks yield all-zero plates. See "Separation plates" in the
+  [Rendering](guides/rendering.md) guide for ordering and ink discovery.
+
+  Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` when the whole
+  plate set exceeds the pixel limit; lower `:dpi`. Use `separation/4` for one ink.
+  """
+  @spec separations(t(), non_neg_integer(), dpi_opts()) ::
+          {:ok, [SeparationPlate.t()]} | {:error, Error.t()}
+  def separations(%__MODULE__{ref: ref}, page_index, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    options = build_dpi_options(opts)
+
+    with {:ok, plates} <-
+           Wrap.call(fn -> Native.document_render_separations(ref, page_index, options) end) do
+      {:ok, Enum.map(plates, &SeparationPlate.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Renders every ink plate for the page, raising an error if it fails.
+  """
+  @spec separations!(t(), non_neg_integer(), dpi_opts()) :: [SeparationPlate.t()]
+  def separations!(doc, page_index, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
+    separations(doc, page_index, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Renders a single named ink's plate for the page at the given zero-based index.
+  See `t:dpi_opts/0` for options.
+
+  Use a name reported by `inks/3` or `separations/3`, such as `"Cyan"` or
+  `"PANTONE 185 C"`. An unpainted ink yields an all-zero plate.
+
+  Faster than `separations/3` for one ink, but the whole ink set still counts
+  toward the pixel limit and can return an `:unsupported` error. Use
+  `separations/3` for several inks; see "Separation plates" in the
+  [Rendering](guides/rendering.md) guide for the cost of each call.
+  """
+  @spec separation(t(), non_neg_integer(), String.t(), dpi_opts()) ::
+          {:ok, SeparationPlate.t()} | {:error, Error.t()}
+  def separation(%__MODULE__{ref: ref}, page_index, ink, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 and is_binary(ink) and is_list(opts) do
+    options = build_dpi_options(opts)
+
+    with {:ok, plate} <-
+           Wrap.call(fn -> Native.document_render_separation(ref, page_index, ink, options) end) do
+      {:ok, SeparationPlate.from_nif(plate)}
+    end
+  end
+
+  @doc """
+  Renders one named ink's plate, raising an error if it fails.
+  """
+  @spec separation!(t(), non_neg_integer(), String.t(), dpi_opts()) :: SeparationPlate.t()
+  def separation!(doc, page_index, ink, opts \\ [])
+      when is_integer(page_index) and page_index >= 0 and is_binary(ink) and is_list(opts) do
+    separation(doc, page_index, ink, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Renders every page to an image and returns a new PDF built from those images.
+  See `t:dpi_opts/0` for options.
+
+      {:ok, flat} = PdfElixide.Document.rasterize(doc, dpi: 200)
+      File.write!("flat.pdf", flat)
+
+  Removes the text layer, fields, annotations, links, outline and tagging.
+  Visible content remains in the pixels, so this is not redaction.
+
+  **Every output page is US Letter with one-inch margins.** Source page sizes
+  are not preserved; rotation is baked into the image and `/Rotate` resets to
+  `0`.
+
+  Memory grows with page count and compressed image size; the render size limit
+  applies per page. See "Rasterizing a whole document" in the
+  [Rendering](guides/rendering.md) guide.
+
+  Calls are **serialized across the node**; see [Concurrency](guides/concurrency.md).
+  """
+  @spec rasterize(t(), dpi_opts()) :: {:ok, binary()} | {:error, Error.t()}
+  def rasterize(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_dpi_options(opts)
+
+    # Queue in the BEAM so waiting callers do not occupy dirty scheduler threads.
+    :global.trans(
+      {{__MODULE__, :rasterize}, self()},
+      fn -> Wrap.call(fn -> Native.document_rasterize(ref, options) end) end,
+      [node()],
+      :infinity
+    )
+  end
+
+  @doc """
+  Renders the whole document to a raster PDF, raising an error if it fails.
+  """
+  @spec rasterize!(t(), dpi_opts()) :: binary()
+  def rasterize!(%__MODULE__{} = doc, opts \\ []) when is_list(opts) do
+    rasterize(doc, opts) |> Wrap.unwrap!()
+  end
+
+  # Option contract: see `__option_defaults__/1`.
+  defp build_render_options(opts) do
+    opts = Keyword.validate!(opts, @render_opts_keys)
+    validate_render_exclusivity!(opts)
+
+    %{
+      dpi: validate_dpi!(opts),
+      format: Keyword.get(opts, :format, :png),
+      background: validate_background!(opts),
+      render_annotations: Keyword.get(opts, :render_annotations, true),
+      jpeg_quality: validate_jpeg_quality!(opts),
+      exclude_layers: Keyword.get(opts, :exclude_layers, []),
+      fit: validate_fit!(opts),
+      region: Keyword.get(opts, :region)
+    }
+  end
+
+  # Option contract: see `__option_defaults__/1`.
+  defp build_dpi_options(opts) do
+    opts = Keyword.validate!(opts, @dpi_opts_keys)
+    %{dpi: validate_dpi!(opts)}
+  end
+
+  # Fit overrides DPI; region cropping requires encoded output and cannot use fit.
+  defp validate_render_exclusivity!(opts) do
+    fit? = given?(opts, :fit)
+    region? = given?(opts, :region)
+
+    cond do
+      fit? and region? ->
+        raise ArgumentError, ":fit and :region cannot be given together"
+
+      fit? and given?(opts, :dpi) ->
+        raise ArgumentError, ":dpi has no effect with :fit; give one or the other"
+
+      region? and Keyword.get(opts, :format, :png) == :rgba8 ->
+        raise ArgumentError, ":region cannot be given with format: :rgba8"
+
+      true ->
+        :ok
+    end
+  end
+
+  # Treat nil as absent here; `validate_dpi!` still rejects it for :dpi.
+  defp given?(opts, key), do: not is_nil(Keyword.get(opts, key))
+
+  defp validate_dpi!(opts) do
+    case Keyword.get(opts, :dpi, 150) do
+      dpi when is_integer(dpi) and dpi > 0 ->
+        dpi
+
+      other ->
+        raise ArgumentError, ":dpi must be a positive integer, got: #{inspect(other)}"
+    end
+  end
+
+  defp validate_jpeg_quality!(opts) do
+    case Keyword.get(opts, :jpeg_quality, 85) do
+      quality when is_integer(quality) and quality in 1..100 ->
+        quality
+
+      other ->
+        raise ArgumentError, ":jpeg_quality must be an integer in 1..100, got: #{inspect(other)}"
+    end
+  end
+
+  defp validate_background!(opts) do
+    case Keyword.get(opts, :background, %Color.RGB{r: 1.0, g: 1.0, b: 1.0}) do
+      nil ->
+        nil
+
+      %Color.RGB{r: r, g: g, b: b} = color ->
+        unless in_unit_range?(r) and in_unit_range?(g) and in_unit_range?(b) do
+          raise ArgumentError,
+                ":background components must each be in 0.0..1.0, got: #{inspect(color)}"
+        end
+
+        # `/ 1` coerces an integer component: `in_unit_range?` admits one and
+        # `BackgroundNif` decodes `f32`, which Rustler refuses for an integer term.
+        {r / 1, g / 1, b / 1, 1.0}
+
+      other ->
+        raise ArgumentError,
+              ":background must be a PdfElixide.Color.RGB struct or nil, got: #{inspect(other)}"
+    end
+  end
+
+  defp in_unit_range?(component) do
+    is_number(component) and component >= 0.0 and component <= 1.0
+  end
+
+  defp validate_fit!(opts) do
+    case Keyword.get(opts, :fit) do
+      nil ->
+        nil
+
+      {width, height}
+      when is_integer(width) and width > 0 and is_integer(height) and height > 0 ->
+        {width, height}
+
+      other ->
+        raise ArgumentError,
+              ":fit must be a {width, height} tuple of positive integers, got: #{inspect(other)}"
+    end
   end
 
   @typedoc """
@@ -2463,6 +2785,8 @@ defmodule PdfElixide.Document do
   @spec __option_defaults__(atom()) :: map()
   def __option_defaults__(:open), do: build_open_options([])
   def __option_defaults__(:inks), do: build_inks_options([])
+  def __option_defaults__(:render), do: build_render_options([])
+  def __option_defaults__(:dpi), do: build_dpi_options([])
   def __option_defaults__(:text), do: build_text_options([])
   def __option_defaults__(:markdown), do: build_markdown_options([])
   def __option_defaults__(:html), do: build_html_options([])

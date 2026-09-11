@@ -43,6 +43,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @leaked_path_pdf Path.join(@fixtures, "leaked_path.pdf")
   @structured_pdf Path.join(@fixtures, "structured.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
+  @render_layers_pdf Path.join(@fixtures, "render_layers.pdf")
   @missing_endobj_pdf Path.join(@fixtures, "warnings_missing_endobj.pdf")
   @stream_cr_pdf Path.join(@fixtures, "warnings_stream_cr.pdf")
 
@@ -76,6 +77,11 @@ defmodule PdfElixide.UpstreamDriftTest do
   @rotate_90 0
   @rotate_180 1
   @rotate_0 3
+
+  defp pixel(rendered, col, row) do
+    <<r, g, b, a>> = binary_part(rendered.data, (row * rendered.width + col) * 4, 4)
+    {r, g, b, a}
+  end
 
   defp open(path) do
     doc = Document.open!(path)
@@ -513,6 +519,52 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert %{width: 200.0, height: 100.0} = Editor.media_box!(editor, 0)
       assert Editor.rotation!(editor, 0) == 90
+    end
+  end
+
+  describe "what a render does with a page box it cannot read" do
+    test "an unreadable /MediaBox renders at US Letter instead of failing" do
+      doc = open(@media_box_pdf)
+      boxless = Document.page!(doc, doc.page_count - 1)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Page.media_box(boxless)
+
+      rendered = Page.render!(boxless, dpi: 72)
+      assert {rendered.width, rendered.height} == {612, 792}
+    end
+
+    test "a readable box is the control" do
+      doc = open(@media_box_pdf)
+      page = Document.page!(doc, 0)
+      box = Page.media_box!(page)
+
+      rendered = Page.render!(page, dpi: 72)
+      assert {rendered.width, rendered.height} == {trunc(box.width), trunc(box.height)}
+    end
+  end
+
+  describe "layer visibility on a render and on extracted text" do
+    test "a group marked off by default is unpainted but still extracted" do
+      doc = open(@render_layers_pdf)
+      rendered = Document.render!(doc, 0, dpi: 72, format: :rgba8)
+
+      # The default-off layer's filled rectangle, and the default-on one's.
+      assert {255, 255, 255, 255} = pixel(rendered, 50, 140)
+      assert {0, 0, 0, 255} = pixel(rendered, 50, 30)
+
+      text = Document.text!(doc, 0)
+      assert text =~ "Hidden"
+      assert text =~ "Shown"
+    end
+
+    test "naming the same layer to both surfaces makes them agree" do
+      doc = open(@render_layers_pdf)
+
+      rendered =
+        Document.render!(doc, 0, dpi: 72, format: :rgba8, exclude_layers: ["Shown Layer"])
+
+      assert {255, 255, 255, 255} = pixel(rendered, 50, 30)
+      refute Document.text!(doc, 0, exclude_layers: ["Shown Layer"]) =~ "Shown"
     end
   end
 

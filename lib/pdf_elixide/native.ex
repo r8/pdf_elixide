@@ -102,6 +102,10 @@ defmodule PdfElixide.Native do
   def document_page_label_ranges(_doc), do: err()
   def document_layers(_doc), do: err()
   def document_page_inks(_doc, _page_index, _options), do: err()
+  def document_render_page(_doc, _page_index, _options), do: err()
+  def document_render_separations(_doc, _page_index, _options), do: err()
+  def document_render_separation(_doc, _page_index, _ink, _options), do: err()
+  def document_rasterize(_doc, _options), do: err()
   def document_embedded_files(_doc), do: err()
   def document_structured_warnings(_doc), do: err()
 

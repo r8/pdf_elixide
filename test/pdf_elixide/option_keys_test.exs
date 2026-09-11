@@ -256,6 +256,37 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!([deep: true], &Document.inks(doc, 0, &1))
     end
 
+    test "render/3" do
+      doc = doc()
+
+      # Use `fit: nil` to avoid conflicts with `:dpi` and `:region`;
+      # test a real fit separately.
+      accepts_each!(
+        [
+          dpi: 72,
+          format: :jpeg,
+          background: %PdfElixide.Color.RGB{r: 0.5, g: 0.5, b: 0.5},
+          render_annotations: false,
+          jpeg_quality: 50,
+          exclude_layers: ["Watermark"],
+          fit: nil,
+          region: %PdfElixide.Geometry.Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0}
+        ],
+        &Document.render(doc, 0, &1)
+      )
+
+      accepts!(:fit, fn -> Document.render(doc, 0, fit: {32, 32}) end)
+      accepts!(:background, fn -> Document.render(doc, 0, background: nil) end)
+      accepts!(:format, fn -> Document.render(doc, 0, format: :rgba8, dpi: 20) end)
+    end
+
+    test "separations/3, separation/4 and rasterize/2" do
+      doc = doc()
+      accepts_each!([dpi: 36], &Document.separations(doc, 0, &1))
+      accepts_each!([dpi: 36], &Document.separation(doc, 0, "Cyan", &1))
+      accepts_each!([dpi: 36], &Document.rasterize(doc, &1))
+    end
+
     test "search/3,4" do
       doc = doc()
       accepts_each!(@search_opts, &Document.search(doc, "Page", &1))
@@ -369,6 +400,10 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.structured(doc, 0, opts) end,
         fn opts -> Document.tables(doc, 0, opts) end,
         fn opts -> Document.inks(doc, 0, opts) end,
+        fn opts -> Document.render(doc, 0, opts) end,
+        fn opts -> Document.separations(doc, 0, opts) end,
+        fn opts -> Document.separation(doc, 0, "Cyan", opts) end,
+        fn opts -> Document.rasterize(doc, opts) end,
         fn opts -> Document.search(doc, "Page", opts) end,
         fn opts -> Document.search(doc, "Page", 0, opts) end,
         fn opts -> Document.text(doc, 0, table_detection: opts) end,

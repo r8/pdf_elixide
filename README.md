@@ -27,6 +27,8 @@ high-performance PDF library written in Rust. Built with
 - Detect tables and render them as Markdown, HTML, or plain text
 - Extract vector paths, rectangles, straight lines, raster images, and embedded
   fonts
+- Render pages to PNG, JPEG or raw RGBA at a chosen resolution or into a
+  thumbnail box, render prepress ink separations, and rasterize a whole document
 - Read annotations and AcroForm fields, with check boxes, radio groups, combo
   boxes and the rest classified from their field flags
 - Fill AcroForm fields, flatten forms and annotations, export field data as FDF

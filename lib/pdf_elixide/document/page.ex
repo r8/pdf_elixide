@@ -33,7 +33,9 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
+  alias PdfElixide.Document.RenderedPage
   alias PdfElixide.Document.SearchMatch
+  alias PdfElixide.Document.SeparationPlate
   alias PdfElixide.Document.Span
   alias PdfElixide.Document.StructuredPage
   alias PdfElixide.Document.Table
@@ -550,6 +552,72 @@ defmodule PdfElixide.Document.Page do
   @spec images!(t()) :: [Image.t()]
   def images!(page) do
     images(page) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Renders the page to a raster image.
+
+  See `PdfElixide.Document.render/3` for what the raster covers and
+  `t:PdfElixide.Document.render_opts/0` for resolution, format, background,
+  annotations and layer filtering.
+
+      rendered = PdfElixide.Document.Page.render!(page, fit: {240, 320})
+      File.write!("thumb.png", rendered.data)
+
+  See the [Rendering](guides/rendering.md) guide for rendering each page of a document.
+  """
+  @spec render(t(), Document.render_opts()) :: {:ok, RenderedPage.t()} | {:error, Error.t()}
+  def render(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.render(doc, index, opts)
+  end
+
+  @doc """
+  Same as `render/2` but raises an error if it fails.
+  """
+  @spec render!(t(), Document.render_opts()) :: RenderedPage.t()
+  def render!(page, opts \\ []) when is_list(opts) do
+    render(page, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Renders one grayscale plate per ink used by the page.
+
+  See `PdfElixide.Document.separations/3` for which inks a page yields and
+  `PdfElixide.Document.SeparationPlate` for how to read a plate.
+  """
+  @spec separations(t(), Document.dpi_opts()) ::
+          {:ok, [SeparationPlate.t()]} | {:error, Error.t()}
+  def separations(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
+    Document.separations(doc, index, opts)
+  end
+
+  @doc """
+  Same as `separations/2` but raises an error if it fails.
+  """
+  @spec separations!(t(), Document.dpi_opts()) :: [SeparationPlate.t()]
+  def separations!(page, opts \\ []) when is_list(opts) do
+    separations(page, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Renders a single named ink's plate for the page.
+
+  See `PdfElixide.Document.separation/4`, including why an ink the page never
+  paints still yields a plate.
+  """
+  @spec separation(t(), String.t(), Document.dpi_opts()) ::
+          {:ok, SeparationPlate.t()} | {:error, Error.t()}
+  def separation(%__MODULE__{doc: doc, index: index}, ink, opts \\ [])
+      when is_binary(ink) and is_list(opts) do
+    Document.separation(doc, index, ink, opts)
+  end
+
+  @doc """
+  Same as `separation/3` but raises an error if it fails.
+  """
+  @spec separation!(t(), String.t(), Document.dpi_opts()) :: SeparationPlate.t()
+  def separation!(page, ink, opts \\ []) when is_binary(ink) and is_list(opts) do
+    separation(page, ink, opts) |> Wrap.unwrap!()
   end
 
   @doc """
