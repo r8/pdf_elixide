@@ -32,6 +32,7 @@ mod outline;
 mod paths;
 mod rendering;
 mod resource;
+mod ring;
 mod search;
 mod signatures;
 mod span;

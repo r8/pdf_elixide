@@ -2,22 +2,15 @@
 // them. Sending directly would panic because records are emitted on dirty
 // scheduler threads.
 
-use std::{
-    collections::VecDeque,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Mutex, OnceLock,
-    },
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Mutex, OnceLock,
 };
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use rustler::{Atom, Encoder, Env, NifResult, Term};
 
-use crate::atoms;
-
-// Bounds the buffer for a caller who enables capture and then never calls
-// through `Wrap.call/1` again, so nothing drains it.
-const MAX_BUFFERED: usize = 4096;
+use crate::{atoms, ring::Ring};
 
 struct Buffered {
     level: Level,
@@ -25,20 +18,9 @@ struct Buffered {
     message: String,
 }
 
-// Records and the drop count move together, so a drained batch always carries
-// the count of what was dropped from that same batch.
-#[derive(Default)]
-struct Capture {
-    records: VecDeque<Buffered>,
-    dropped: usize,
-}
-
-static CAPTURE: Mutex<Capture> = Mutex::new(Capture {
-    records: VecDeque::new(),
-    dropped: 0,
-});
+static CAPTURE: Mutex<Ring<Buffered>> = Mutex::new(Ring::new());
 static ENABLED: AtomicBool = AtomicBool::new(false);
-// Mirrors `CAPTURE.records.len()`, written under the lock and read without it
+// Mirrors `CAPTURE`'s length, written under the lock and read without it
 // by `log_pending`, which runs on every wrapped call and must not contend.
 static PENDING: AtomicUsize = AtomicUsize::new(0);
 static LOGGER: OnceLock<()> = OnceLock::new();
@@ -67,17 +49,12 @@ impl Log for BufferLogger {
             return;
         }
 
-        if capture.records.len() >= MAX_BUFFERED {
-            capture.records.pop_front();
-            capture.dropped += 1;
-        }
-
-        capture.records.push_back(Buffered {
+        capture.push(Buffered {
             level: record.level(),
             target: record.target().to_string(),
             message: record.args().to_string(),
         });
-        PENDING.store(capture.records.len(), Ordering::Relaxed);
+        PENDING.store(capture.len(), Ordering::Relaxed);
     }
 
     fn flush(&self) {}
@@ -132,7 +109,7 @@ fn log_set_level(level: Atom) -> NifResult<Atom> {
 
     if filter == LevelFilter::Off {
         if let Ok(mut capture) = CAPTURE.lock() {
-            *capture = Capture::default();
+            capture.clear();
         }
         PENDING.store(0, Ordering::Relaxed);
     }
@@ -144,16 +121,15 @@ fn log_set_level(level: Atom) -> NifResult<Atom> {
 // each record's byte length is bounded by anything a caller controls.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn log_drain(env: Env<'_>) -> NifResult<Term<'_>> {
-    let taken = match CAPTURE.lock() {
+    let (records, dropped) = match CAPTURE.lock() {
         Ok(mut capture) => {
             PENDING.store(0, Ordering::Relaxed);
-            std::mem::take(&mut *capture)
+            capture.take()
         }
-        Err(_) => Capture::default(),
+        Err(_) => (Vec::new(), 0),
     };
 
-    let records: Vec<Term<'_>> = taken
-        .records
+    let records: Vec<Term<'_>> = records
         .into_iter()
         .map(|record| {
             (
@@ -165,7 +141,7 @@ fn log_drain(env: Env<'_>) -> NifResult<Term<'_>> {
         })
         .collect();
 
-    Ok((records, taken.dropped).encode(env))
+    Ok((records, dropped).encode(env))
 }
 
 // Must stay off a dirty scheduler: it runs after every wrapped call, so it has
@@ -189,7 +165,7 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn reset() {
-        *CAPTURE.lock().unwrap() = Capture::default();
+        CAPTURE.lock().unwrap().clear();
         PENDING.store(0, Ordering::Relaxed);
     }
 
@@ -211,7 +187,7 @@ mod tests {
 
         push("ignored");
 
-        assert!(CAPTURE.lock().unwrap().records.is_empty());
+        assert_eq!(CAPTURE.lock().unwrap().len(), 0);
         assert_eq!(PENDING.load(Ordering::Relaxed), 0);
     }
 
@@ -225,24 +201,7 @@ mod tests {
         ENABLED.store(false, Ordering::Relaxed);
         push("raced a disable");
 
-        assert!(CAPTURE.lock().unwrap().records.is_empty());
-    }
-
-    #[test]
-    fn buffer_is_bounded_and_carries_its_own_drop_count() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset();
-        ENABLED.store(true, Ordering::Relaxed);
-
-        for i in 0..(MAX_BUFFERED + 10) {
-            push(&format!("record {i}"));
-        }
-        ENABLED.store(false, Ordering::Relaxed);
-
-        let taken = std::mem::take(&mut *CAPTURE.lock().unwrap());
-        assert_eq!(taken.records.len(), MAX_BUFFERED);
-        assert_eq!(taken.dropped, 10);
-        assert_eq!(taken.records[0].message, "record 10");
+        assert_eq!(CAPTURE.lock().unwrap().len(), 0);
     }
 
     #[test]

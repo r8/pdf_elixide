@@ -1,7 +1,6 @@
 // Bounded per-document and process-wide structured warning buffers.
 
 use std::{
-    collections::VecDeque,
     ops::{Deref, DerefMut},
     sync::{Mutex, MutexGuard},
 };
@@ -12,8 +11,7 @@ use pdf_oxide::{
 };
 use rustler::{NifMap, NifResult, NifUnitEnum};
 
-// Same bound as the log buffer, for a caller who never reads the feed.
-const MAX_BUFFERED: usize = 4096;
+use crate::ring::Ring;
 
 #[derive(NifUnitEnum, Debug)]
 enum WarningCategoryNif {
@@ -63,36 +61,16 @@ impl From<Warning> for WarningNif {
     }
 }
 
-// Entries and their drop count are read and reset together.
-struct Ring {
-    warnings: VecDeque<Warning>,
-    dropped: usize,
-}
-
-impl Ring {
-    fn push(&mut self, warning: Warning) {
-        if self.warnings.len() >= MAX_BUFFERED {
-            self.warnings.pop_front();
-            self.dropped += 1;
-        }
-
-        self.warnings.push_back(warning);
-    }
-}
-
 // A bounded, poison-tolerant store, used both process-wide and per document
 // handle. Nothing in it may panic: it runs after every native call.
-pub(crate) struct Buffer(Mutex<Ring>);
+pub(crate) struct Buffer(Mutex<Ring<Warning>>);
 
 impl Buffer {
     pub(crate) const fn new() -> Self {
-        Self(Mutex::new(Ring {
-            warnings: VecDeque::new(),
-            dropped: 0,
-        }))
+        Self(Mutex::new(Ring::new()))
     }
 
-    fn lock(&self) -> MutexGuard<'_, Ring> {
+    fn lock(&self) -> MutexGuard<'_, Ring<Warning>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -112,21 +90,17 @@ impl Buffer {
         for warning in fetch() {
             ring.push(warning);
         }
-        let dropped = std::mem::take(&mut ring.dropped);
+        let dropped = ring.take_dropped();
 
-        (ring.warnings.iter().cloned().collect(), dropped)
+        (ring.iter().cloned().collect(), dropped)
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Warning> {
-        self.lock().warnings.iter().cloned().collect()
+        self.lock().iter().cloned().collect()
     }
 
     pub(crate) fn take(&self) -> (Vec<Warning>, usize) {
-        let mut ring = self.lock();
-        let warnings = std::mem::take(&mut ring.warnings).into();
-        let dropped = std::mem::take(&mut ring.dropped);
-
-        (warnings, dropped)
+        self.lock().take()
     }
 }
 
@@ -201,6 +175,7 @@ mod tests {
     use pdf_oxide::extractors::warnings::push_global_warning;
 
     use super::*;
+    use crate::ring::MAX_BUFFERED;
 
     fn warning(message: &str) -> Warning {
         Warning {
@@ -213,25 +188,6 @@ mod tests {
 
     fn messages(warnings: &[Warning]) -> Vec<&str> {
         warnings.iter().map(|w| w.message.as_str()).collect()
-    }
-
-    #[test]
-    fn buffer_is_bounded_and_carries_its_own_drop_count() {
-        let buffer = Buffer::new();
-        buffer.absorb(|| {
-            (0..MAX_BUFFERED + 10)
-                .map(|i| warning(&format!("warning {i}")))
-                .collect()
-        });
-
-        let (warnings, dropped) = buffer.take();
-        assert_eq!(warnings.len(), MAX_BUFFERED);
-        assert_eq!(dropped, 10);
-        assert_eq!(warnings[0].message, "warning 10");
-
-        let (warnings, dropped) = buffer.take();
-        assert!(warnings.is_empty());
-        assert_eq!(dropped, 0);
     }
 
     #[test]
