@@ -381,8 +381,9 @@ defmodule PdfElixide.Signature do
 
   `pdf_bytes` must be the exact bytes of the file the signature came from —
   `File.read!/1` for a document opened from a path, or the binary given to
-  `PdfElixide.Document.from_binary/2` or `PdfElixide.Editor.from_binary/1`. A
-  handle does not carry them.
+  `PdfElixide.Document.from_binary/2` or `PdfElixide.Editor.from_binary/1`. The
+  check reads the struct and these bytes and touches no handle, so it works
+  after the document is closed.
 
       doc = PdfElixide.Document.open!("signed.pdf")
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
@@ -772,8 +773,11 @@ defmodule PdfElixide.Signature do
   `size`. This checks coverage only; `verify/2` checks the signature, and
   answers only about the range this reports on.
 
-  The size has to come from you: a document handle does not carry the length of
-  the bytes behind it.
+  `size` is the length of the file being checked — `File.stat!/1` for a path,
+  `byte_size/1` for a binary. The check reads the struct alone and touches no
+  handle. Measure the file you mean to check: after an incremental
+  `PdfElixide.Editor.save/3` that is the file just written, not the one the
+  editor opened, and `false` there means content was appended after signing.
 
       size = File.stat!("signed.pdf").size
       PdfElixide.Signature.covers_whole_document?(signature, size)

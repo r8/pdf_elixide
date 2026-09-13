@@ -78,9 +78,10 @@ without building their metadata.
 
 ## Verifying one
 
-`verify/2` needs the bytes of the file the signature came from. A handle does
-not carry them, so read them yourself — `File.read!/1` for a document opened
-from a path, or the binary you handed `from_binary/2`.
+`verify/2` needs the bytes of the file the signature came from — `File.read!/1`
+for a document opened from a path, or the binary you handed `from_binary/2`. It
+reads the struct and those bytes and never a handle, which is why it still works
+after the document is closed.
 
 ```elixir
 case Signature.verify(signature, bytes) do
