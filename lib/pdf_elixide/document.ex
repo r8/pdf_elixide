@@ -2969,8 +2969,13 @@ defmodule PdfElixide.Document do
       expression. Defaults to `true`; see the [Search](guides/search.md) guide
       for the regular expression syntax `literal: false` accepts.
     * `:case_insensitive` — match regardless of case. Defaults to `false`.
-    * `:whole_word` — require a word boundary at each end of the match.
-      Defaults to `false`.
+    * `:whole_word` — require a word boundary at each end of the match, so
+      `"cat"` finds *cat* but not *category*. Defaults to `false`. The
+      boundaries enclose the whole pattern: under `literal: false`,
+      `"cat|dog"` finds *cat* and *dog* as whole words. A word boundary needs
+      a word character on the inside, so a pattern that begins or ends in
+      punctuation or whitespace — `"(a)"` on either path — matches only where
+      the text has a word character right against it.
     * `:max_results` — stop after this many matches, counted across pages.
       Defaults to `0`, meaning no limit. This bounds the work as well as the
       list: searching the whole document stops at the page that reaches the

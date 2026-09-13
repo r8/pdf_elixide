@@ -5,7 +5,7 @@ use pdf_oxide::{
     error::{Error, Result},
     layout::SpatialCollectionFiltering,
     object::Object,
-    search::{SearchOptions, TextSearcher},
+    search::TextSearcher,
     PdfDocument,
 };
 use rustler::{Atom, Binary, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc};
@@ -18,8 +18,9 @@ use crate::{
     error::{tagged_err, to_nif_err, to_nif_page_err, to_search_err},
     extract_options::{
         CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, OnPageErrorNif, RegionFilter,
-        SearchOptionsNif, SpansOptions, SpansOptionsNif, TableDetectionNif, TablesOptions,
-        TablesOptionsNif, TextOptions, TextOptionsNif, WordsOptions, WordsOptionsNif,
+        SearchOptionsNif, SearchRequest, SpansOptions, SpansOptionsNif, TableDetectionNif,
+        TablesOptions, TablesOptionsNif, TextOptions, TextOptionsNif, WordsOptions,
+        WordsOptionsNif,
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, export_bytes, is_exportable, FieldNif, FormDataFormatNif},
@@ -1007,9 +1008,11 @@ fn document_search(
     resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
-        let options = SearchOptions::from(options).with_page_range(page_index, page_index);
-        let hits = TextSearcher::search(doc, &pattern, &options).map_err(to_search_err)?;
-        Ok(hits.into_iter().map(search_match_to_nif).collect())
+        run_search(
+            doc,
+            options.into_request(pattern),
+            Some((page_index, page_index)),
+        )
     })
 }
 
@@ -1020,20 +1023,50 @@ fn document_all_search(
     options: SearchOptionsNif,
 ) -> NifResult<Vec<SearchMatchNif>> {
     resource.doc.with_read(|doc| {
-        let mut options = SearchOptions::from(options);
-
         // A document with no pages must answer `[]` like every sibling
         // extractor, but not by returning early: `TextSearcher::search` compiles
         // the pattern before it reads the page count, so an early return would
         // accept an unparseable one. An inverted range keeps the call and still
         // visits nothing — `start..=end` is empty when `start > end`.
-        if doc.page_count().map_err(to_nif_err)? == 0 {
-            options = options.with_page_range(1, 0);
-        }
+        let page_range = if doc.page_count().map_err(to_nif_err)? == 0 {
+            Some(EMPTY_PAGE_RANGE)
+        } else {
+            None
+        };
 
-        let hits = TextSearcher::search(doc, &pattern, &options).map_err(to_search_err)?;
-        Ok(hits.into_iter().map(search_match_to_nif).collect())
+        run_search(doc, options.into_request(pattern), page_range)
     })
+}
+
+// Inverted, so `start..=end` visits no page: upstream clamps the end to the
+// last page and never the start, which is what keeps this empty on every
+// document.
+const EMPTY_PAGE_RANGE: (usize, usize) = (1, 0);
+
+fn run_search(
+    doc: &PdfDocument,
+    request: SearchRequest,
+    page_range: Option<(usize, usize)>,
+) -> NifResult<Vec<SearchMatchNif>> {
+    // A grouped pattern compiles iff the caller's does, so compiling theirs
+    // first — over the empty range, since `TextSearcher::search` compiles
+    // before it reads a page — reports a bad pattern as they wrote it, and the
+    // real search below can no longer fail on the pattern.
+    if let Some(raw_pattern) = &request.raw_pattern {
+        let probe = request
+            .options
+            .clone()
+            .with_page_range(EMPTY_PAGE_RANGE.0, EMPTY_PAGE_RANGE.1);
+        TextSearcher::search(doc, raw_pattern, &probe).map_err(to_search_err)?;
+    }
+
+    let mut options = request.options;
+    if let Some((start, end)) = page_range {
+        options = options.with_page_range(start, end);
+    }
+
+    let hits = TextSearcher::search(doc, &request.pattern, &options).map_err(to_search_err)?;
+    Ok(hits.into_iter().map(search_match_to_nif).collect())
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -1348,7 +1381,7 @@ fn document_export_form_data(
 
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::{geometry::Rect, layout::RectFilterMode};
+    use pdf_oxide::{geometry::Rect, layout::RectFilterMode, search::SearchOptions};
 
     use super::*;
 
@@ -1378,6 +1411,38 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    // When the first assertion fails, upstream has added the group: delete the
+    // grouping branch of `SearchOptionsNif::into_request` and the raw-pattern
+    // probe in `run_search`, not this assertion.
+    #[test]
+    fn upstream_still_wraps_whole_word_without_grouping() {
+        let doc = PdfDocument::open(fixture("search.pdf")).expect("fixture opens");
+        let texts = |hits: Vec<pdf_oxide::search::SearchResult>| {
+            hits.into_iter().map(|hit| hit.text).collect::<Vec<_>>()
+        };
+
+        // Ungrouped, the leading boundary also admits the "cat" in "category".
+        let upstream = SearchOptions::new()
+            .with_literal(false)
+            .with_whole_word(true);
+        assert_eq!(
+            texts(TextSearcher::search(&doc, "cat|Report", &upstream).expect("upstream")),
+            ["Report", "cat", "cat"]
+        );
+
+        let request = SearchOptionsNif {
+            case_insensitive: false,
+            literal: false,
+            whole_word: true,
+            max_results: 0,
+        }
+        .into_request("cat|Report".into());
+        assert_eq!(
+            texts(TextSearcher::search(&doc, &request.pattern, &request.options).expect("grouped")),
+            ["Report", "cat"]
+        );
     }
 
     #[test]

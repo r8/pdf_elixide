@@ -47,24 +47,28 @@ PCRE. The important differences are:
 A pattern that does not parse comes back as
 `%PdfElixide.Error{reason: :invalid_pattern}` — and `search!/2` raises it, the
 same split `Regex.compile/1` and `Regex.compile!/1` make. It is only reachable
-under `literal: false`, since the default path escapes the pattern first.
+under `literal: false`, since the default path escapes the pattern first. The
+error message quotes the pattern as you wrote it, whatever other options are
+set.
 
-### `:whole_word` and alternation
+### `:whole_word`
 
 `whole_word: true` requires a word boundary at each end of the match, so `"cat"`
 finds *cat* but not *category*.
 
-The option wraps the complete pattern rather than each alternative. With
-`literal: false`, `"cat|dog"` becomes `\bcat|dog\b`: *cat* must start at a word
-boundary, while *dog* must end at one. Add explicit boundaries when combining
-the option with alternation:
+The boundaries enclose the whole pattern. With `literal: false`, `"cat|dog"`
+finds *cat* and *dog* as whole words — there is no need to write the `\b`
+yourself:
 
 ```elixir
-Document.search!(doc, ~S"\b(?:cat|dog)\b", literal: false)
+Document.search!(doc, "cat|dog", literal: false, whole_word: true)
 ```
 
-With the default `literal: true` the pattern is escaped before wrapping, so there
-are no alternatives to misbind and the option means what it says.
+A word boundary sits between a word character and a non-word character, so it
+needs a word character on the inside of the match. A pattern that begins or
+ends in punctuation or whitespace therefore matches only where the text has a
+word character right against it: `"(a)"` with `whole_word: true` does not find
+the *(a)* in *Fig. 3 (a)*, on either path, because a space precedes it.
 
 ## What a match covers
 

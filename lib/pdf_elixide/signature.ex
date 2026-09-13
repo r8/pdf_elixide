@@ -774,8 +774,8 @@ defmodule PdfElixide.Signature do
   answers only about the range this reports on.
 
   `size` is the length of the file being checked — `File.stat!/1` for a path,
-  `byte_size/1` for a binary. The check reads the struct alone and touches no
-  handle. Measure the file you mean to check: after an incremental
+  `Kernel.byte_size/1` for a binary. The check reads the struct alone and
+  touches no handle. Measure the file you mean to check: after an incremental
   `PdfElixide.Editor.save/3` that is the file just written, not the one the
   editor opened, and `false` there means content was appended after signing.
 

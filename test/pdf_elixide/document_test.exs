@@ -1764,6 +1764,26 @@ defmodule PdfElixide.DocumentTest do
       assert length(Document.search!(doc, "cat", whole_word: true)) == 1
     end
 
+    test ":whole_word bounds the whole pattern, so an alternation binds as one" do
+      doc = Document.open!(@search_pdf)
+
+      # Ungrouped boundaries would admit the "cat" in "category" (4 matches
+      # without the option: "Report" plus three "cat"s).
+      assert length(Document.search!(doc, "cat|Report", literal: false)) == 4
+
+      assert Document.search!(doc, "cat|Report", literal: false, whole_word: true)
+             |> Enum.map(& &1.text) == ["Report", "cat"]
+    end
+
+    test ":whole_word needs a word character against a pattern that ends in a non-word one" do
+      doc = Document.open!(@search_pdf)
+
+      # "See Fig. 3 (a) below": a space, not a word character, precedes "(a)".
+      assert Document.search!(doc, "(a)") |> Enum.map(& &1.text) == ["(a)"]
+      assert Document.search!(doc, "(a)", whole_word: true) == []
+      assert Document.search!(doc, ~S"\(a\)", literal: false, whole_word: true) == []
+    end
+
     test "the pattern is literal by default, so regex metacharacters match themselves" do
       doc = Document.open!(@search_pdf)
 
@@ -1789,6 +1809,19 @@ defmodule PdfElixide.DocumentTest do
       # …and is unreachable on the default path, where the pattern is escaped
       # and the same character is matched as itself.
       assert Document.search!(doc, "(") |> Enum.map(& &1.text) == ["("]
+    end
+
+    test "an unparseable pattern under :whole_word is reported as written" do
+      doc = Document.open!(@search_pdf)
+
+      assert {:error, %Error{reason: :invalid_pattern, message: plain}} =
+               Document.search(doc, "(", literal: false)
+
+      assert {:error, %Error{reason: :invalid_pattern, message: bounded}} =
+               Document.search(doc, "(", literal: false, whole_word: true)
+
+      refute bounded =~ ~S"(?:"
+      assert bounded == plain
     end
 
     test ":max_results caps the total across pages" do

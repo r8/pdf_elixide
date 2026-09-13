@@ -471,14 +471,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert length(Document.search!(doc, "aa")) == 1
     end
 
-    test "whole_word wraps the pattern without grouping it", %{doc: doc} do
-      # Without grouping the alternation, the leading boundary also admits "category".
-      matched = Document.search!(doc, "cat|Report", literal: false, whole_word: true)
-
-      assert Enum.map(matched, & &1.text) == ["Report", "cat", "cat"]
-      assert length(Document.search!(doc, "cat|Report", literal: false)) == 4
-    end
-
     test "an unparseable pattern arrives as InvalidPdf with a known prefix",
          %{doc: doc} do
       assert {:error, %Error{reason: :invalid_pattern, message: message}} =
