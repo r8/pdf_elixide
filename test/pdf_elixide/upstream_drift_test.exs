@@ -141,28 +141,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  describe "documented routing drops" do
-    setup do: %{doc: open(@table_pdf)}
-
-    test "layer/ink filtering still discards the sibling text options", %{doc: doc} do
-      plain = Document.text!(doc, 0)
-      without_tables = Document.text!(doc, 0, extract_tables: false)
-      filtered = Document.text!(doc, 0, exclude_layers: ["NoSuchLayer"], extract_tables: false)
-
-      # Precondition: the option does something when it is not being dropped.
-      assert without_tables != plain
-
-      assert filtered == plain
-    end
-
-    test ":span_merging still discards :reading_order", %{doc: doc} do
-      merging = [merge_tm_tj_runs: false]
-
-      assert texts(Document.spans!(doc, 0, span_merging: merging)) ==
-               texts(Document.spans!(doc, 0, span_merging: merging, reading_order: :column_aware))
-    end
-  end
-
   describe "table detection asymmetries" do
     setup do: %{doc: open(@extraction_pdf)}
 

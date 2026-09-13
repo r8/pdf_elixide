@@ -62,8 +62,8 @@ defmodule PdfElixide.OptionKeysTest do
     region_mode: :intersects,
     exclude_regions: [@rect],
     exclude_regions_mode: :fully_contained,
-    exclude_layers: ["Watermark"],
-    exclude_inks: ["SpotRed"],
+    exclude_layers: [],
+    exclude_inks: [],
     on_page_error: :skip
   ]
 
@@ -120,7 +120,7 @@ defmodule PdfElixide.OptionKeysTest do
 
   @spans_opts [
     reading_order: :top_to_bottom,
-    span_merging: @span_merging_opts,
+    span_merging: nil,
     region: @rect,
     region_mode: :intersects,
     exclude_layers: ["Watermark"],
@@ -195,6 +195,13 @@ defmodule PdfElixide.OptionKeysTest do
       doc = doc()
       accepts_each!(@text_opts, &Document.text(doc, &1))
       accepts_each!(@text_opts, &Document.text(doc, 0, &1))
+
+      # The filters refuse the other non-default keys, so `@text_opts` leaves
+      # them empty; test real values on their own.
+      for opts <- [[exclude_layers: ["Watermark"]], [exclude_inks: ["SpotRed"]]] do
+        accepts!(hd(Keyword.keys(opts)), fn -> Document.text(doc, opts) end)
+        accepts!(hd(Keyword.keys(opts)), fn -> Document.text(doc, 0, opts) end)
+      end
     end
 
     test "to_markdown/2,3" do
@@ -237,6 +244,11 @@ defmodule PdfElixide.OptionKeysTest do
       doc = doc()
       accepts_each!(@spans_opts, &Document.spans(doc, &1))
       accepts_each!(@spans_opts, &Document.spans(doc, 0, &1))
+
+      # `:span_merging` refuses the other non-default keys, so `@spans_opts`
+      # leaves it nil; test a real config on its own.
+      accepts!(:span_merging, fn -> Document.spans(doc, span_merging: @span_merging_opts) end)
+      accepts!(:span_merging, fn -> Document.spans(doc, 0, span_merging: @span_merging_opts) end)
     end
 
     test "structured/2,3" do

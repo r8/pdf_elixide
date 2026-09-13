@@ -413,8 +413,8 @@ fn document_structured_warnings(
     })
 }
 
-// Filtered extraction accepts only region options; its conversion options are
-// constructed internally, so all other caller settings fall back to defaults.
+// This route drops every setting but the region; Elixir refuses a non-default
+// sibling before the call reaches here, so the fallback is never observable.
 fn extract_text_page(
     doc: &PdfDocument,
     page_index: usize,
@@ -833,7 +833,8 @@ fn document_all_chars(
 }
 
 // Configured span merging cannot take reading-order or layer/ink filters;
-// region still composes because it is applied afterward.
+// Elixir refuses those combinations, and region still composes because it is
+// applied afterward.
 fn extract_spans_page(
     doc: &PdfDocument,
     page_index: usize,
@@ -1443,6 +1444,34 @@ mod tests {
             texts(TextSearcher::search(&doc, &request.pattern, &request.options).expect("grouped")),
             ["Report", "cat"]
         );
+    }
+
+    // A filter given alone promises the default text, which holds only while
+    // the filtered extractor's own conversion options match the binding's.
+    #[test]
+    fn upstream_filtered_text_still_matches_the_default_conversion() {
+        let doc = PdfDocument::open(fixture("table.pdf")).expect("fixture opens");
+        let plain = doc.extract_text(0).expect("plain text");
+
+        // Precondition: the compared option changes the output when honoured.
+        let without_tables = ConversionOptions {
+            extract_tables: false,
+            ..Default::default()
+        };
+        assert_ne!(
+            doc.extract_text_with_options(0, &without_tables)
+                .expect("text without tables"),
+            plain
+        );
+
+        let filtered = doc
+            .extract_text_filtered(
+                0,
+                HashSet::from(["NoSuchLayer".to_string()]),
+                HashSet::new(),
+            )
+            .expect("filtered text");
+        assert_eq!(filtered, plain);
     }
 
     #[test]

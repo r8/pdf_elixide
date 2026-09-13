@@ -497,6 +497,85 @@ defmodule PdfElixide.ExtractionOptionsTest do
     end
   end
 
+  describe "routing exclusivities" do
+    setup do: %{doc: open(@extraction_pdf)}
+
+    @rect %Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0}
+
+    test "a text filter refuses every option it would drop", %{doc: doc} do
+      for {key, value} <- [
+            extract_tables: false,
+            expand_ligatures: true,
+            table_detection: [preset: :strict],
+            exclude_regions: [@rect],
+            exclude_regions_mode: :fully_contained
+          ],
+          filter <- [:exclude_layers, :exclude_inks] do
+        opts = [{filter, ["Watermark"]}, {key, value}]
+
+        error = assert_raise(ArgumentError, fn -> Document.text(doc, @markup, opts) end)
+        assert Exception.message(error) =~ inspect(key)
+        assert Exception.message(error) =~ inspect(filter)
+
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn -> Document.text(doc, opts) end
+
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
+          doc |> Document.page!(@markup) |> Page.text(opts)
+        end
+      end
+    end
+
+    test "a text filter still combines with its region and explicit defaults", %{doc: doc} do
+      assert {:ok, _} =
+               Document.text(doc, @markup,
+                 exclude_inks: ["SpotRed"],
+                 region: @rect,
+                 region_mode: :fully_contained,
+                 extract_tables: true,
+                 expand_ligatures: false,
+                 table_detection: nil,
+                 exclude_regions: [],
+                 exclude_regions_mode: :intersects
+               )
+    end
+
+    test "an empty text filter is not a route", %{doc: doc} do
+      assert Document.text!(doc, @markup, exclude_layers: [], extract_tables: false) ==
+               Document.text!(doc, @markup, extract_tables: false)
+    end
+
+    test ":span_merging refuses every option it would drop", %{doc: doc} do
+      for {key, value} <- [
+            reading_order: :column_aware,
+            exclude_layers: ["Watermark"],
+            exclude_inks: ["SpotRed"]
+          ] do
+        opts = [{:span_merging, [merge_tm_tj_runs: false]}, {key, value}]
+
+        error = assert_raise(ArgumentError, fn -> Document.spans(doc, @markup, opts) end)
+        assert Exception.message(error) =~ inspect(key)
+        assert Exception.message(error) =~ ":span_merging"
+
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn -> Document.spans(doc, opts) end
+
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
+          doc |> Document.page!(@markup) |> Page.spans(opts)
+        end
+      end
+    end
+
+    test ":span_merging still combines with its region and explicit defaults", %{doc: doc} do
+      assert {:ok, _} =
+               Document.spans(doc, @markup,
+                 span_merging: [],
+                 region: @rect,
+                 reading_order: :top_to_bottom,
+                 exclude_layers: [],
+                 exclude_inks: []
+               )
+    end
+  end
+
   describe "option errors" do
     setup do: %{doc: open(@valid_pdf)}
 

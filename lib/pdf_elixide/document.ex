@@ -1030,6 +1030,34 @@ defmodule PdfElixide.Document do
   # Treat nil as absent here; `validate_dpi!` still rejects it for :dpi.
   defp given?(opts, key), do: not is_nil(Keyword.get(opts, key))
 
+  # A route key's extractor cannot take the dropped keys, so the call would
+  # ignore a setting and report success. `build` is called lazily: an eager
+  # `build_*_options([])` from inside the builder would recurse without end.
+  defp validate_route_exclusivity!(options, route_keys, dropped_keys, build) do
+    case Enum.filter(route_keys, &route_given?(options[&1])) do
+      [] ->
+        options
+
+      routes ->
+        refuse_dropped!(options, dropped_keys, build.([]), routes)
+    end
+  end
+
+  defp refuse_dropped!(options, dropped_keys, defaults, routes) do
+    case Enum.find(dropped_keys, &(options[&1] != defaults[&1])) do
+      nil ->
+        options
+
+      key ->
+        route = Enum.map_join(routes, " or ", &inspect/1)
+
+        raise ArgumentError,
+              "#{inspect(key)} has no effect with #{route}; give one or the other"
+    end
+  end
+
+  defp route_given?(value), do: value not in [nil, []]
+
   defp validate_dpi!(opts) do
     case Keyword.get(opts, :dpi, 150) do
       dpi when is_integer(dpi) and dpi > 0 ->
@@ -1174,13 +1202,13 @@ defmodule PdfElixide.Document do
   page whose object ran into the end of the file before it could be read: it
   extracts as `""` *and* records an `:eof_premature` warning on the document.
 
-  ## Layer and ink filtering drops the other options
+  ## Layer and ink filtering is exclusive with the other options
 
-  When `:exclude_layers` or `:exclude_inks` is non-empty,
-  **only `:region` and `:region_mode` still apply** — `:extract_tables`,
-  `:expand_ligatures`, `:table_detection`, `:exclude_regions` and
-  `:exclude_regions_mode` fall back to their defaults
-  (`:extract_tables` to `true`, the rest to off).
+  When `:exclude_layers` or `:exclude_inks` is non-empty, **only `:region`
+  and `:region_mode` can be combined with it**. Giving `:extract_tables`,
+  `:expand_ligatures`, `:table_detection`, `:exclude_regions` or
+  `:exclude_regions_mode` a value other than its default raises
+  `ArgumentError` naming the key.
 
   `:reading_order`, `:include_form_fields` and
   `:strip_running_headers_footers` are valid for `to_markdown/2` but not here,
@@ -1295,7 +1323,7 @@ defmodule PdfElixide.Document do
   defp build_text_options(opts) do
     opts = Keyword.validate!(opts, @text_opts_keys)
 
-    %{
+    options = %{
       extract_tables: Keyword.get(opts, :extract_tables, true),
       expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
       table_detection: build_table_detection_option(Keyword.get(opts, :table_detection)),
@@ -1307,6 +1335,19 @@ defmodule PdfElixide.Document do
       exclude_inks: Keyword.get(opts, :exclude_inks, []),
       on_page_error: Keyword.get(opts, :on_page_error, :skip)
     }
+
+    validate_route_exclusivity!(
+      options,
+      [:exclude_layers, :exclude_inks],
+      [
+        :extract_tables,
+        :expand_ligatures,
+        :table_detection,
+        :exclude_regions,
+        :exclude_regions_mode
+      ],
+      &build_text_options/1
+    )
   end
 
   @typedoc """
@@ -2319,10 +2360,12 @@ defmodule PdfElixide.Document do
     * `:exclude_inks` — names of Separation/DeviceN inks to suppress, as
       listed by `inks/3`. Defaults to `[]`.
 
-  ## `:span_merging` drops the other options
+  ## `:span_merging` is exclusive with the other options
 
-  When `:span_merging` is set, `:reading_order`, `:exclude_layers` and
-  `:exclude_inks` are ignored. `:region` still applies, being a post-filter.
+  When `:span_merging` is set, **only `:region` and `:region_mode` can be
+  combined with it**. Giving `:reading_order`, `:exclude_layers` or
+  `:exclude_inks` a value other than its default raises `ArgumentError`
+  naming the key.
   """
   @type spans_opts :: [
           reading_order: :top_to_bottom | :column_aware | :structure,
@@ -2421,7 +2464,7 @@ defmodule PdfElixide.Document do
   defp build_spans_options(opts) do
     opts = Keyword.validate!(opts, @spans_opts_keys)
 
-    %{
+    options = %{
       reading_order: Keyword.get(opts, :reading_order, :top_to_bottom),
       span_merging: build_span_merging_option(Keyword.get(opts, :span_merging)),
       region: Keyword.get(opts, :region),
@@ -2429,6 +2472,13 @@ defmodule PdfElixide.Document do
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, [])
     }
+
+    validate_route_exclusivity!(
+      options,
+      [:span_merging],
+      [:reading_order, :exclude_layers, :exclude_inks],
+      &build_spans_options/1
+    )
   end
 
   # The nested option builders below validate their own key list, but a value

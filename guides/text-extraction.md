@@ -107,6 +107,10 @@ rather than being accepted and ignored.
 | `:reading_order` | — | yes |
 | `:include_form_fields` | — | yes (always on for `text/2`) |
 
+`:exclude_layers` and `:exclude_inks` combine only with `:region` and
+`:region_mode`; any other key given a non-default value alongside them raises
+`ArgumentError`. See `t:PdfElixide.Document.text_opts/0`.
+
 On an untagged document, `:reading_order` has three values and two behaviours:
 `:structure_tree` and `:column_aware` both run the column-detecting pass, and
 `:top_to_bottom` sorts blocks by vertical position instead. On a single-column
