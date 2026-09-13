@@ -2,9 +2,12 @@
 // them. Sending directly would panic because records are emitted on dirty
 // scheduler threads.
 
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Mutex, OnceLock,
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Mutex, OnceLock,
+    },
 };
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
@@ -26,12 +29,12 @@ struct Buffered {
 // the count of what was dropped from that same batch.
 #[derive(Default)]
 struct Capture {
-    records: Vec<Buffered>,
+    records: VecDeque<Buffered>,
     dropped: usize,
 }
 
 static CAPTURE: Mutex<Capture> = Mutex::new(Capture {
-    records: Vec::new(),
+    records: VecDeque::new(),
     dropped: 0,
 });
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -65,11 +68,11 @@ impl Log for BufferLogger {
         }
 
         if capture.records.len() >= MAX_BUFFERED {
-            capture.records.remove(0);
+            capture.records.pop_front();
             capture.dropped += 1;
         }
 
-        capture.records.push(Buffered {
+        capture.records.push_back(Buffered {
             level: record.level(),
             target: record.target().to_string(),
             message: record.args().to_string(),
@@ -239,8 +242,6 @@ mod tests {
         let taken = std::mem::take(&mut *CAPTURE.lock().unwrap());
         assert_eq!(taken.records.len(), MAX_BUFFERED);
         assert_eq!(taken.dropped, 10);
-        // The oldest went, not the newest: a truncated capture keeps the
-        // records nearest the failure being diagnosed.
         assert_eq!(taken.records[0].message, "record 10");
     }
 

@@ -2,13 +2,9 @@ defmodule PdfElixide.Logging do
   @moduledoc """
   Diagnostics for content that extraction drops without failing.
 
-  Most damaged pages do not produce an error. A content stream that will not
-  decode, a font that fails to load, a Form XObject that cannot be processed
-  and a character with no usable mapping are all handled by continuing with
-  less content, so `PdfElixide.Document.text/1` returns `{:ok, text}` with
-  material missing and no way to tell that page from a blank one. Each of those
-  is reported internally as a log record. Enable capture and the records reach
-  Elixir's `Logger`, naming the page and the reason.
+  Extraction can omit content and still return `{:ok, text}`. Enable capture
+  to forward diagnostic records to Elixir's `Logger` and help explain missing
+  content.
 
   This is off by default and is a diagnostic aid, not an error channel — a
   captured record does not change what a call returns, and neither does a
@@ -73,10 +69,7 @@ defmodule PdfElixide.Logging do
   Capture level, from `:off` (capture nothing) through `:trace` (capture
   everything).
 
-  `:warning` is the level at which dropped content is reported. `:error` is
-  quieter than it sounds — a failure severe enough to be logged as an error is
-  usually also returned as a `t:PdfElixide.Error.t/0`, so `:warning` is the
-  useful floor for diagnosing missing text.
+  Use `:warning` to diagnose missing content.
   """
   @type level :: :off | :error | :warning | :info | :debug | :trace
 
@@ -106,9 +99,8 @@ defmodule PdfElixide.Logging do
   @doc """
   Forwards every captured record to `Logger` and empties the buffer.
 
-  Called automatically after each library call while capture is enabled, so
-  reach for it directly only to flush records left by a call that raised.
-  Returns the number of records forwarded.
+  Library calls that capture records automatically attempt to forward them,
+  including when a call raises. Returns the number of records forwarded.
 
   Records reach `Logger` without the calling process's own metadata; see
   "Attribution" in the module documentation.
