@@ -5,6 +5,27 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.18.0](https://github.com/r8/pdf_elixide/compare/v0.17.0...v0.18.0) (2026-09-13)
+
+
+
+
+### Features:
+
+* add page rendering, ink separations and whole-document rasterizing by [@r8](https://github.com/r8)
+
+* add structured warnings split by scope by [@r8](https://github.com/r8)
+
+* add document metadata editing by [@r8](https://github.com/r8)
+
+* add page-box editing by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* refuse text and span options the filtered routes would silently drop by [@r8](https://github.com/r8)
+
+* apply word boundaries to all regex alternatives by [@r8](https://github.com/r8)
+
 ## [v0.17.0](https://github.com/r8/pdf_elixide/compare/v0.16.0...v0.17.0) (2026-09-06)
 
 
