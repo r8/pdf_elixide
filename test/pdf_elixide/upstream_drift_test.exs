@@ -485,6 +485,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       page = Document.page!(open(@inherited_boxes_pdf), 0)
 
       assert %{width: 200.0, height: 100.0} = Page.media_box!(page)
+      assert %{width: 180.0, height: 80.0} = Page.crop_box!(page)
       assert Page.rotation!(page) == 90
     end
 
@@ -496,6 +497,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       page = Document.page!(doc, 0)
       assert %{width: 300.0, height: 500.0} = Page.media_box!(page)
+      assert %{width: 260.0, height: 460.0} = Page.crop_box!(page)
       assert Page.rotation!(page) == 180
     end
 
