@@ -19,6 +19,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
   @image_jpx_pdf Path.join(@fixtures, "image_jpx.pdf")
+  @image_pdf Path.join(@fixtures, "image.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
   @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
@@ -29,6 +30,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
   @markdown_pdf Path.join(@fixtures, "markdown.pdf")
   @search_pdf Path.join(@fixtures, "search.pdf")
+  @fonts_pdf Path.join(@fixtures, "fonts.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
   @button_states_pdf Path.join(@fixtures, "form_button_states.pdf")
@@ -43,6 +45,8 @@ defmodule PdfElixide.UpstreamDriftTest do
   @leaked_path_pdf Path.join(@fixtures, "leaked_path.pdf")
   @structured_pdf Path.join(@fixtures, "structured.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
+  @redact_pdf Path.join(@fixtures, "redact.pdf")
+  @annotations_pdf Path.join(@fixtures, "annotations.pdf")
   @render_layers_pdf Path.join(@fixtures, "render_layers.pdf")
   @missing_endobj_pdf Path.join(@fixtures, "warnings_missing_endobj.pdf")
   @stream_cr_pdf Path.join(@fixtures, "warnings_stream_cr.pdf")
@@ -93,6 +97,18 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   defp origin(%{bbox: %{x: x, y: y}}), do: {x, y}
   defp origins(items), do: Enum.map(items, &origin/1)
+
+  # The fill colours page 0 paints, read back off an uncompressed write. A
+  # whiteout is white and a redaction block carries its annotation's `/IC`.
+  defp page0_fills(editor) do
+    doc = editor |> Editor.to_binary!(compress: false) |> Document.from_binary!()
+
+    try do
+      doc |> Document.rects!(0) |> Enum.map(& &1.fill_color)
+    after
+      Document.close(doc)
+    end
+  end
 
   describe "deprecated word and line knobs" do
     setup do: %{doc: open(@extraction_pdf)}
@@ -815,6 +831,25 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     @tag :tmp_dir
+    test "a redaction mark goes missing too", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      path = Path.join(tmp_dir, "incremental_redaction.pdf")
+
+      Editor.mark_redactions!(editor, 0)
+      Editor.save!(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.rects!(doc, 0) == [],
+             "upstream now carries redaction overlays into an incremental update"
+
+      assert doc |> Document.annotations!(0) |> length() == 3,
+             "upstream now drops the annotations in an incremental update too"
+    end
+
+    @tag :tmp_dir
     test "a metadata edit survives, unlike everything above", %{tmp_dir: tmp_dir} do
       editor = Editor.open!(@metadata_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -1020,6 +1055,153 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [signature] = Signature.list!(doc)
       assert Signature.verify(signature, File.read!(@ecdsa_p521_pdf)) == {:ok, :unknown}
       assert Signature.verify_signer(signature) == {:ok, :unknown}
+    end
+  end
+
+  describe "redaction" do
+    # A page carrying both overlays paints the redaction box on top. No fixture
+    # here can show the flatten case: nothing has both a /Redact annotation and
+    # a widget appearance.
+    test "the redaction overlay is drawn above a whiteout on the same page" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.erase_region!(0, %PdfElixide.Geometry.Rect{
+        x: 0.0,
+        y: 0.0,
+        width: 612.0,
+        height: 792.0
+      })
+      |> Editor.mark_redactions!(0)
+
+      assert editor |> Editor.to_binary!(compress: false) |> PdfElixide.ContentOrder.page0() ==
+               [:original, :whiteout, :redaction],
+             "upstream now splices the redaction overlay before the erase overlay"
+    end
+
+    # A destructive pass replaces the page contents rather than appending, so an
+    # overlay spliced before it is dropped from the page.
+    test "a destructive pass drops the whiteout an erase queued on the same page" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.erase_region!(0, %PdfElixide.Geometry.Rect{
+        x: 0.0,
+        y: 0.0,
+        width: 612.0,
+        height: 792.0
+      })
+      |> Editor.mark_redactions!(0)
+
+      # The control: without the pass the whiteout is drawn, so a disappearance
+      # below cannot be the erase never having been recorded.
+      assert %PdfElixide.Color.RGB{r: 1.0, g: 1.0, b: 1.0} in page0_fills(editor)
+
+      Editor.apply_redactions!(editor)
+
+      fills = page0_fills(editor)
+
+      refute %PdfElixide.Color.RGB{r: 1.0, g: 1.0, b: 1.0} in fills,
+             "upstream now carries an erase overlay onto a destructively redacted page"
+
+      # Non-vacuity: the page still has the redaction blocks, so the whiteout is
+      # missing rather than the whole overlay set.
+      assert %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0} in fills
+    end
+
+    # A /Redact annotation's /Rect stands in for its quadrilaterals, and the
+    # pass removes text alone — so an image under a region is covered by the
+    # overlay and left in the file.
+    test "a destructive pass still leaves an image a region covers" do
+      doc = Document.open!(@image_pdf)
+      [image] = Document.images!(doc)
+      original = PdfElixide.Document.Image.to_binary!(image, format: :png)
+      Document.close(doc)
+
+      editor = Editor.open!(@image_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # The whole page, so nothing survives on a geometric technicality.
+      Editor.add_redaction!(editor, 0, %PdfElixide.Geometry.Rect{
+        x: 0.0,
+        y: 0.0,
+        width: 612.0,
+        height: 792.0
+      })
+
+      assert %PdfElixide.RedactionReport{regions: 1} = Editor.apply_redactions!(editor)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      assert [survivor] = Document.images!(written),
+             "upstream now removes an image a redaction region covers"
+
+      assert PdfElixide.Document.Image.to_binary!(survivor, format: :png) == original,
+             "upstream now overwrites the pixels a redaction region covers"
+    end
+
+    test "a redaction annotation still loses its quadrilaterals" do
+      doc = Document.open!(@redact_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      quadded = doc |> Document.annotations!(0) |> Enum.at(1)
+
+      assert quadded.subtype == :redact
+      assert quadded.quad_points == nil, "upstream now parses /QuadPoints on a /Redact annotation"
+
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert Editor.redaction_count!(editor, 0) == 2,
+             "upstream now counts a redaction annotation's quadrilaterals separately"
+    end
+
+    # Marking a page is not what drops its `/Annots`. `annotations.pdf` has
+    # three annotations and no `/Redact`, so it reaches neither wipe.
+    test "a marked page with no region keeps every annotation" do
+      editor = Editor.open!(@annotations_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+
+      # Zeros separate "upstream redacted nothing" from "the page had nothing
+      # to lose": the annotations below are present either way.
+      assert %PdfElixide.RedactionReport{regions: 0, glyphs_removed: 0} =
+               Editor.apply_redactions!(editor)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      assert written |> Document.annotations!(0) |> Enum.map(& &1.subtype) == [
+               :text,
+               :link,
+               :highlight
+             ],
+             "upstream now removes annotations from a page it did not redact"
+    end
+
+    # The `/Annots` wipe leaves every annotation reachable from the source
+    # trailer, so the garbage collection keeps them: redaction unlinks them
+    # rather than erasing them.
+    test "a redacted page's annotation objects survive in the bytes" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      Editor.apply_redactions!(editor)
+
+      bytes = Editor.to_binary!(editor, compress: false)
+
+      # Non-vacuity: the page really did lose its `/Annots` entry.
+      written = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(written) end)
+      assert Document.annotations!(written, 0) == []
+
+      assert :binary.match(bytes, "example.com") != :nomatch,
+             "upstream now garbage-collects an unlinked annotation"
     end
   end
 
@@ -1370,6 +1552,69 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert {:ok, <<137, 80, 78, 71, 13, 10, 26, 10, _::binary>>} =
                Document.Image.to_binary(image)
+    end
+  end
+
+  describe "where the destructive redaction block lands" do
+    # The same leaked `1 0 0 1 100 50 cm` the erase canaries use: the block is
+    # appended after it and inherits the transform, while the glyph boxes and
+    # the queued region are compared in the same frame, so the text still goes.
+    test "the block is drawn in the graphics state the content leaves behind" do
+      source = Document.open!(@leaked_cm_pdf)
+      on_exit(fn -> Document.close(source) end)
+      [word] = Document.words!(source, 0)
+      assert word.text == "Shifted"
+
+      editor = Editor.open!(@leaked_cm_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.add_redaction!(editor, 0, word.bbox)
+
+      assert %PdfElixide.RedactionReport{glyphs_removed: 7} =
+               Editor.apply_redactions!(editor)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      # The removal is correct; only the block marking it is not.
+      assert Document.text!(written, 0) == ""
+
+      assert [rect] = Document.rects!(written, 0)
+      assert_in_delta rect.bbox.x, word.bbox.x + 100.0, 0.01
+      assert_in_delta rect.bbox.y, word.bbox.y + 50.0, 0.01
+      assert_in_delta rect.bbox.width, word.bbox.width, 0.01
+      assert_in_delta rect.bbox.height, word.bbox.height, 0.01
+    end
+  end
+
+  describe "which fonts the destructive redaction engine can measure" do
+    # Horizontal Identity-H is redacted, whose two-byte codes are their own
+    # CIDs; Identity-V, the non-identity CMaps and an undefined font are not.
+    test "still redacts a horizontal Identity-H composite font" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # Page 0 shows an embedded Type 0 /Arial beside a simple /Helvetica. The
+      # refusal is per content stream and fires on any unsupported show while a
+      # region exists, so covering the whole page makes {:ok, _} the assertion:
+      # a refused Type 0 could not return one.
+      Editor.add_redaction!(editor, 0, %PdfElixide.Geometry.Rect{
+        x: 0.0,
+        y: 0.0,
+        width: 612.0,
+        height: 792.0
+      })
+
+      assert {:ok, %PdfElixide.RedactionReport{glyphs_removed: removed}} =
+               Editor.apply_redactions(editor)
+
+      # The two runs are 26 and 19 characters; the Identity-H one is the
+      # larger, so the total is what says it was pruned rather than skipped.
+      assert removed == 45
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+      assert Document.text!(written, 0) == ""
     end
   end
 end

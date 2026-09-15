@@ -4,9 +4,9 @@ use rustler::{NifStruct, NifUntaggedEnum};
 #[derive(NifStruct, Debug)]
 #[module = "PdfElixide.Color.RGB"]
 pub struct RgbNif {
-    r: f32,
-    g: f32,
-    b: f32,
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
 }
 
 #[derive(NifStruct, Debug)]

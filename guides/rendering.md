@@ -44,7 +44,7 @@ Document.Page.render!(page, fit: {240, 320})
 #=> #PdfElixide.Document.RenderedPage<240x311 png>
 ```
 
-A Letter page is proportionally taller than a 240 x 320 box is, so the width
+A Letter page is proportionally wider than a 240 x 320 box is, so the width
 binds and the result stops short of the box's height.
 
 `:dpi` and `:fit` cannot be given together; passing both raises `ArgumentError`
@@ -62,7 +62,8 @@ Document.render(doc, 0, dpi: 20_000)
 
 Match on `:unsupported` and retry with a lower `:dpi` or smaller `:fit` box.
 On 32-bit builds the limit is roughly 64 million pixels. The error message
-reports the applicable limit and buffer count.
+reports the pixels the render would need and the applicable limit, and names
+the buffer count when more than one full-page buffer is budgeted.
 
 The budget includes all full-page buffers, so CMYK-profiled documents with
 spot inks can reach the limit at a lower DPI than ordinary pages of the same size.
@@ -101,12 +102,13 @@ space goes straight back in — render the table you just found, or the image,
 without computing anything:
 
 ```elixir
-[table | _] = Document.tables!(doc, 0)
-Document.render!(doc, 0, region: table.bbox, dpi: 200)
+[%{bbox: %PdfElixide.Geometry.Rect{} = bbox} | _] = Document.tables!(doc, 0)
+Document.render!(doc, 0, region: bbox, dpi: 200)
 ```
 
-Unlike every other `:region` in this library there is no `:region_mode`; the
-rectangle is a crop, not a filter.
+There is no `:region_mode` here; the rectangle is a crop, not a filter. The
+extractors that pair the two are `text`, `words`, `text_lines`, `chars` and
+`spans` — `tables` takes a `:region` without a mode as well.
 
 That space is the page's raw, unrotated user space — what
 `PdfElixide.Document.Page.media_box/1` and

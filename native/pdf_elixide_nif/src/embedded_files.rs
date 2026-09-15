@@ -86,38 +86,50 @@ pub fn embedded_file(
 }
 
 // Reject populated name trees because the writer replaces rather than merges
-// them.
-pub fn ensure_no_name_tree(doc: &PdfDocument) -> NifResult<()> {
+// them. `scrubbed` names the `/Names` entries a sanitization has already dropped
+// from the staged catalog the writer builds on: those cannot be lost twice, so
+// they do not count towards the refusal.
+pub fn ensure_no_name_tree(doc: &PdfDocument, scrubbed: &[&str]) -> NifResult<()> {
     let catalog = doc.catalog().map_err(to_nif_err)?;
     let Some(names) = catalog.as_dict().and_then(|dict| dict.get("Names")) else {
         return Ok(());
     };
 
-    let mut keys = match doc.resolve_object(names) {
+    let mut keys: Vec<String> = match doc.resolve_object(names) {
         Ok(resolved) => match resolved.as_dict() {
-            Some(dict) if dict.is_empty() => return Ok(()),
-            Some(dict) => dict.keys().map(String::from).collect(),
+            Some(dict) => dict
+                .keys()
+                .filter(|key| !scrubbed.contains(&key.as_str()))
+                .map(String::from)
+                .collect(),
             None => return Ok(()),
         },
         // Unreadable is not the same as absent: a tree that cannot be inspected
-        // is one whose loss cannot be ruled out.
-        Err(_) => Vec::new(),
+        // is one whose loss cannot be ruled out. `scrubbed` must not rescue this
+        // arm — a `/Names` that does not resolve is precisely the one upstream's
+        // sanitization leaves in place, so the staged catalog still carries it.
+        Err(_) => {
+            return Err(refusal("unreadable"));
+        }
     };
+
+    if keys.is_empty() {
+        return Ok(());
+    }
     keys.sort_unstable();
 
-    Err(tagged_err(
+    Err(refusal(&keys.join(", ")))
+}
+
+fn refusal(entries: &str) -> rustler::Error {
+    tagged_err(
         atoms::unsupported(),
         format!(
             "Embedding a file rebuilds this document's /Names dictionary and would drop \
-             its existing entries ({}). Write the pages and data you want to a new \
-             document instead.",
-            if keys.is_empty() {
-                "unreadable".to_string()
-            } else {
-                keys.join(", ")
-            }
+             its existing entries ({entries}). Write the pages and data you want to a new \
+             document instead."
         ),
-    ))
+    )
 }
 
 // Refuse rather than silently truncate excessively deep trees.

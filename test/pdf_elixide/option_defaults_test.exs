@@ -271,6 +271,24 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Editor.__option_defaults__(:crop_margins) == %{left: 0, right: 0, top: 0, bottom: 0}
     end
 
+    test "Editor.apply_redactions/2" do
+      assert Editor.__option_defaults__(:redaction) == %{
+               scrub_metadata: true,
+               remove_javascript: true,
+               remove_embedded_files: true,
+               optional_content: :strip_hidden,
+               edge_padding: 0.5,
+               default_fill: %PdfElixide.Color.RGB{r: 0.0, g: 0.0, b: 0.0},
+               draw_default_overlay: true,
+               emit_redaction_artifacts: false
+             }
+    end
+
+    test "Editor.sanitize/2" do
+      assert Editor.__option_defaults__(:sanitize) ==
+               Editor.__option_defaults__(:redaction)
+    end
+
     test "Table.to_markdown/2" do
       assert Document.Table.__option_defaults__(:markdown) == %{bold_markers: :conservative}
     end

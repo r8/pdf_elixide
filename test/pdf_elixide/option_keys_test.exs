@@ -15,6 +15,20 @@ defmodule PdfElixide.OptionKeysTest do
 
   @rect %Rect{x: 0.0, y: 0.0, width: 1000.0, height: 1000.0}
 
+  @redaction_opts [
+    edge_padding: 1.0,
+    default_fill: %PdfElixide.Color.RGB{r: 1.0, g: 1.0, b: 1.0},
+    draw_default_overlay: false
+  ]
+
+  @non_redaction_opts [
+    scrub_metadata: false,
+    remove_javascript: false,
+    remove_embedded_files: false,
+    optional_content: :keep,
+    emit_redaction_artifacts: true
+  ]
+
   @adaptive_opts [
     median_multiplier: 1.5,
     min_threshold_pt: 0.1,
@@ -380,6 +394,26 @@ defmodule PdfElixide.OptionKeysTest do
 
       accepts_each!([left: 1, right: 1.5, top: 2, bottom: 0], &Editor.crop_margins(editor, &1))
     end
+
+    # Reusing an editor would hit the one-pass refusal before exercising options.
+    test "Editor.apply_redactions/2" do
+      accepts_each!(@redaction_opts, fn opts ->
+        editor = Editor.open!(@valid_pdf)
+        on_exit(fn -> Editor.close(editor) end)
+
+        Editor.apply_redactions(editor, opts)
+      end)
+    end
+
+    test "Editor.sanitize/2" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      accepts_each!(
+        [scrub_metadata: false, remove_javascript: false, remove_embedded_files: false],
+        &Editor.sanitize(editor, &1)
+      )
+    end
   end
 
   describe "an undeclared key is rejected" do
@@ -431,12 +465,38 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Form.export(form_doc, :fdf, opts) end,
         fn opts -> Form.export(form_editor, :xfdf, opts) end,
         fn opts -> Editor.embed_file(editor, "data.csv", "a,b", opts) end,
-        fn opts -> Editor.crop_margins(editor, opts) end
+        fn opts -> Editor.crop_margins(editor, opts) end,
+        fn opts -> Editor.apply_redactions(editor, opts) end,
+        fn opts -> Editor.sanitize(editor, opts) end
       ]
 
       for call <- calls do
         assert_raise ArgumentError, ~r/:no_such_option/, fn ->
           call.(no_such_option: true)
+        end
+      end
+    end
+  end
+
+  describe "an option its call does not read is rejected" do
+    test "Editor.apply_redactions/2 takes no sanitize, layer or artifact key" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for {key, value} <- @non_redaction_opts do
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
+          Editor.apply_redactions(editor, [{key, value}])
+        end
+      end
+    end
+
+    test "Editor.sanitize/2 takes no geometric key" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for {key, value} <- @redaction_opts do
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
+          Editor.sanitize(editor, [{key, value}])
         end
       end
     end

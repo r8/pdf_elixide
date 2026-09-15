@@ -79,7 +79,8 @@ without building their metadata.
 ## Verifying one
 
 `verify/2` needs the bytes of the file the signature came from — `File.read!/1`
-for a document opened from a path, or the binary you handed `from_binary/2`. It
+for a document opened from a path, or the binary you handed
+`PdfElixide.Document.from_binary/1,2`. It
 reads the struct and those bytes and never a handle, which is why it still works
 after the document is closed.
 
@@ -273,7 +274,8 @@ end
 ```
 
 A field whose value was cleared is a place left to sign and appears here. A
-field the document gives no name is reported by neither call.
+field the document gives no name is omitted from `unsigned_fields/1`;
+`list/1` still reports a signature sitting in one, with `:field_name` `nil`.
 
 Flattening takes any signature field away with the rest of the AcroForm — the
 "Flattening" section of the [Forms](forms.md) guide has that account.

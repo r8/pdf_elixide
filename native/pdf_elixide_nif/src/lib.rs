@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicBool, Arc, Mutex, OnceLock, RwLock};
+use std::{
+    collections::HashSet,
+    sync::{atomic::AtomicBool, Arc, Mutex, OnceLock, RwLock},
+};
 
 use pdf_oxide::{
     editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo,
@@ -30,6 +33,7 @@ mod metadata;
 mod optional_content;
 mod outline;
 mod paths;
+mod redaction;
 mod rendering;
 mod resource;
 mod ring;
@@ -39,6 +43,7 @@ mod span;
 mod structured;
 mod table;
 mod text_line;
+mod text_state;
 mod warnings;
 mod word;
 
@@ -82,6 +87,23 @@ struct EditorResource {
     // Set after a deletion so whole-document flattens re-mark surviving pages
     // through the mapped per-page methods.
     pages_deleted: AtomicBool,
+    // Set once a destructive redaction or sanitization has rewritten content,
+    // which an incremental save carries none of.
+    redacted: AtomicBool,
+    // Set once a sanitization has scrubbed the catalog, which only a collecting
+    // write completes.
+    sanitized: AtomicBool,
+    // Source pages carrying a queued region — the half of upstream's destructive
+    // page set nothing exposes. It only grows: a region cannot be withdrawn.
+    redaction_regions: Mutex<HashSet<usize>>,
+    // Set once a destructive pass has run; a second one is refused from here on.
+    applied_redactions: AtomicBool,
+    // Set once sanitization dropped the source's embedded-file name tree, which
+    // the editor otherwise keeps listing from `source()`.
+    embedded_scrubbed: AtomicBool,
+    // Set once sanitization dropped the source's JavaScript name tree. With
+    // `embedded_scrubbed`, the whole record of what the staged catalog lost.
+    javascript_scrubbed: AtomicBool,
     // Visible pages in output order, including pending rotations and boxes.
     pages: Mutex<Vec<PageEdits>>,
     // Re-supplied after full writes drain the editor's pending list.

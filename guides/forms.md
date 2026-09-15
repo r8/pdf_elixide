@@ -22,7 +22,7 @@ Form.fields!(doc)
 #    %PdfElixide.Form.Field.Choice{name: "country", kind: :list_box, value: nil, …}]
 ```
 
-The read-only examples through "Field kinds and flags" reuse this `doc`; close
+The read-only examples below reuse this `doc` unless they open their own; close
 it after the last one.
 
 ## Fields and their values
@@ -104,8 +104,6 @@ names for that type, plus `:raw` for anything it does not:
 Form.field!(doc, "notes").flags
 #=> %PdfElixide.Form.Field.Text.Flags{multiline: true, password: false,
 #     read_only: false, required: false, comb: false, …, raw: 4096}
-
-:ok = Document.close(doc)
 ```
 
 Each type has its own flags struct — `PdfElixide.Form.Field.Text.Flags`,
@@ -114,9 +112,11 @@ on different types. `PdfElixide.Form.Field.Unknown` carries
 `PdfElixide.Form.Field.Flags`, which holds the three bits every field has:
 `:read_only`, `:required` and `:no_export`.
 
-`PdfElixide.Document.Annotation` reports the same classification for a widget
-annotation, through its `:field_type`, so the two surfaces agree about a field
-that appears on both.
+`PdfElixide.Document.Annotation` classifies a widget annotation through its
+`:field_type`, and for the three **button** kinds the two surfaces agree — the
+reading comes from the same `/Ff` bits. They do not agree beyond that:
+`:field_type` collapses combo box and list box into one `{:choice, …}` and draws
+no multiline distinction on a text field.
 
 ## What else a field reports
 
@@ -129,6 +129,7 @@ needs to render or validate it. Which keys a struct has depends on its type:
 | `:max_length` | ✓ | | | |
 | `:alignment` | ✓ | | ✓ | |
 | `:options` | | | ✓ | |
+| `:raw_type` | | | | ✓ |
 
 `:max_length` is the `/MaxLen` cap on how many characters may be entered; `0` is
 a declared zero, not an absence. `:alignment` is `:left`, `:center` or `:right`,
@@ -184,7 +185,8 @@ referenced children remain unaffected.
 them:
 
 ```elixir
-Form.field!(doc, "country").options
+field = Form.field!(doc, "country")
+field.options
 #=> ["FR", {"DE", "Germany"}, "IT"]
 ```
 
@@ -295,6 +297,14 @@ end
 such a mutating pipeline ends: one hands back bytes, the other `:ok`. Every
 mutating step before them hands back the editor.
 
+**A damaged field hierarchy is refused rather than read.** Every function in
+`PdfElixide.Form` rejects a form whose fields are cyclic or nested far deeper
+than any real one: a cycle, or a `/Kids` entry that cannot be read, returns
+`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`, and the depth and size
+caps return `{:error, %PdfElixide.Error{reason: :unsupported}}`. Reading such a
+form partially would report a field list that is missing entries with nothing
+to say so.
+
 ## Several fields at once
 
 `PdfElixide.Form.put_values/2` takes a map with string keys, or a list of
@@ -342,8 +352,10 @@ write before you close.
 {:ok, bytes} = Editor.to_binary(editor)
 ```
 
-Both accept `t:PdfElixide.Editor.save_opts/0`: `:incremental`, `:compress`
-and `:garbage_collect`. The exception is `to_binary/2` with
+Both accept `t:PdfElixide.Editor.save_opts/0`: `:incremental`, `:compress`,
+`:garbage_collect` and `:encryption`, which writes the filled form
+password-protected; see [Encryption](encryption.md). `:encryption` cannot be
+combined with `incremental: true`, which raises `ArgumentError`. The exception is `to_binary/2` with
 `incremental: true`, which returns
 `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`: an incremental update must
 be appended to the original file, so use `save/3` for one.
@@ -391,12 +403,12 @@ written but **not yet saved**, so filling and exporting need no write in between
 from a document it reports what the file holds.
 
 ```elixir
-doc = Document.open!("path/to/form.pdf")
+export_doc = Document.open!("path/to/form.pdf")
 
 try do
-  Form.export!(doc, :fdf)
+  Form.export!(export_doc, :fdf)
 after
-  Document.close(doc)
+  Document.close(export_doc)
 end
 ```
 
@@ -462,6 +474,8 @@ that flag for submit-form actions, and this API exports every field it reports.
 
 ```elixir
 Form.fields!(doc) |> Enum.reject(& &1.flags.no_export)
+
+:ok = Document.close(doc)
 ```
 
 ### There is no import
@@ -500,6 +514,13 @@ there. Write with `save/3` without `:incremental`, or with `to_binary/2`.
 **A mark cannot be removed, and it applies to every later write.** There is no
 unflatten; reopen the source if you need an unflattened document. Writing twice
 gives you two flattened files.
+
+**A flatten is drawn above a redaction box on the same page.** A page the write
+actually redacts also loses its widgets — along with every other annotation on
+it — and a flatten on the same editor paints the field appearances over the box.
+A page that was only marked, with no `/Redact` annotation and no queued region,
+keeps them. See
+[Redaction](redaction.md) for the order and the workflow that avoids it.
 
 ### What each one leaves behind
 

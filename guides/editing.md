@@ -12,11 +12,19 @@ Use `PdfElixide.Editor.save/3` with its default `incremental: false`, or
 editor open for further changes; `PdfElixide.Editor.close/1` discards any unsaved edits.
 
 **An incremental save omits page deletions, moves, rotations, page boxes, erased
-regions, attachments and flattening.** `PdfElixide.Editor.save(editor, path, incremental: true)`
+regions, redaction marks, attachments and flattening.** `PdfElixide.Editor.save(editor, path, incremental: true)`
 appends field-value updates to the original file. The output keeps the original pages,
 their order, rotation, boxes and content, and the original attachments and
 unflattened annotations. The call reports no error for those omitted changes. See
 [Saving](forms.md#saving) for the form-filling workflow.
+
+**A destructive redaction is the exception: it is refused, not omitted.** Once
+`PdfElixide.Editor.apply_redactions/1` or `PdfElixide.Editor.sanitize/1` has run,
+`incremental: true` returns `{:error, %PdfElixide.Error{reason: :unsupported}}`
+rather than writing an update that leaves the removed content readable, and a
+write with `garbage_collect: false` after a sanitize is refused the same way. A
+*mark* is not refused — it is one of the omissions above. See
+[What is refused, and why](redaction.md#what-is-refused-and-why).
 
 `PdfElixide.Editor.to_binary/2` refuses `incremental: true` with
 `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`; an incremental update must be
@@ -157,7 +165,17 @@ PdfElixide.Document.close(doc)
 
 **Erasing is not redaction.** Covered text and images remain in the written file;
 `PdfElixide.Document.text/1` still returns the covered words. Do not use it to remove
-confidential content.
+confidential content — `PdfElixide.Editor.apply_redactions/1,2` is the call that
+removes any, and it removes covered *text* only, leaving images and vector
+graphics where they were. The [Redaction](redaction.md) guide covers what each
+one does and does not take.
+
+**An erase on a page that `PdfElixide.Editor.apply_redactions/1,2` then rewrites
+is silently dropped** — the destructive pass replaces the page's content instead
+of appending to it, so the whiteout never reaches the output and whatever it
+covered stays visible. Erase in a separate editor, after the redactions have
+been written; see
+[It discards other pending overlays on the page](redaction.md#it-discards-other-pending-overlays-on-the-page).
 
 The rectangle covers page content only. Annotations — form widgets, stamps, links —
 remain above it, even when flattened on the same editor. To hide an annotation whose
@@ -224,7 +242,21 @@ lists what the document will carry, pending attachments included:
 **A document that already has a name tree is refused** with
 `{:error, %PdfElixide.Error{reason: :unsupported}}`, because attaching a file cannot preserve that
 tree's existing attachments, named destinations or document-level JavaScript. To attach
-several files, add them in the same editing session.
+several files, add them in the same editing session. The error message names the
+entries that would be lost.
+
+A `PdfElixide.Editor.sanitize/1,2` that emptied the name tree lifts the refusal, so a
+document's attachments can be replaced rather than only removed:
+
+```elixir
+editor = PdfElixide.Editor.open!("received.pdf")
+PdfElixide.Editor.sanitize!(editor)
+PdfElixide.Editor.embed_file!(editor, "figures.csv", csv)
+```
+
+This works only when nothing is left in the tree. A sanitize that kept an entry — one
+run with `remove_javascript: false`, say — still refuses, and names the entry it is
+protecting. A name tree that cannot be read is refused either way.
 
 See [Saving edits](#saving-edits) for the incremental-save limitation.
 
@@ -256,8 +288,13 @@ reads them back.
 Every write, full rewrite or incremental, carries the source's title, author,
 subject, keywords, creator, producer and both dates whether or not you set any
 of them, re-encoded as described below. Two things do not survive: `/Trapped`,
-which cannot be set — `PdfElixide.Editor.metadata/1` still reports the source's
-value — and any non-standard `/Info` key. Nothing is stamped for you: the
+which cannot be set — `PdfElixide.Editor.metadata/1` reports the source's value
+until something clears it — and any non-standard `/Info` key.
+
+`PdfElixide.Editor.sanitize/1` is what clears it. With its default
+`scrub_metadata: true` none of those values are carried, `/Trapped` included,
+and `PdfElixide.Editor.metadata/1` answers `nil` for every field afterwards;
+see [Sanitizing](redaction.md#sanitizing). Nothing is stamped for you: the
 producer stays whatever the source named, and `/ModDate` is only what you set,
 so set it yourself when a reader will look at it. A whitespace-only value is
 written but reads back as `nil`.

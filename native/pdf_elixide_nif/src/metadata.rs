@@ -27,6 +27,24 @@ pub(crate) struct MetadataNif {
     pub(crate) trapped: Option<String>,
 }
 
+impl MetadataNif {
+    // Every field absent. Mirrors what upstream's sanitizer leaves behind, so
+    // `editor_info` reports the scrub and `resupply_info` does not undo it.
+    pub(crate) fn scrubbed() -> Self {
+        Self {
+            title: None,
+            author: None,
+            subject: None,
+            keywords: None,
+            creator: None,
+            producer: None,
+            creation_date: None,
+            mod_date: None,
+            trapped: None,
+        }
+    }
+}
+
 // The shared decoder handles UTF-16, UTF-8 and PDFDocEncoding. Strip PDF 2.0's
 // UTF-8 BOM first because the decoder otherwise preserves it as U+FEFF.
 // Shared with signature decoding so all PDF text strings follow one path.

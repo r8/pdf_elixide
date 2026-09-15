@@ -1,9 +1,13 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    },
 };
 
 use pdf_oxide::{
+    annotation_types::AnnotationSubtype,
     editor::{
         DocumentEditor, EditableDocument, EncryptionAlgorithm, EncryptionConfig, Permissions,
         SaveOptions,
@@ -149,6 +153,29 @@ fn info_edits(resource: &EditorResource) -> MutexGuard<'_, Option<MetadataNif>> 
     resource.info.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+// Same poisoning rule as `page_edits`.
+pub fn queued_redactions(resource: &EditorResource) -> MutexGuard<'_, HashSet<usize>> {
+    resource
+        .redaction_regions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+// The visible pages as source indices, in output order — the index space
+// upstream keys its destructive redaction set by.
+pub fn source_pages(resource: &EditorResource) -> Vec<usize> {
+    page_edits(resource)
+        .iter()
+        .map(|page| page.source)
+        .collect()
+}
+
+// Record that upstream cleared `/Info`, so `editor_info` reports the scrub and
+// `resupply_info` does not hand the source dictionary back.
+pub fn scrub_info(resource: &EditorResource) {
+    *info_edits(resource) = Some(MetadataNif::scrubbed());
+}
+
 // The editor guard provides exclusion; this lock provides interior mutability
 // and recovers poisoning like `page_edits`.
 fn embedded_files(resource: &EditorResource) -> RwLockReadGuard<'_, Vec<EmbeddedFile>> {
@@ -158,6 +185,24 @@ fn embedded_files(resource: &EditorResource) -> RwLockReadGuard<'_, Vec<Embedded
 // The write half of `embedded_files`, reached only under the exclusive lock.
 fn embedded_files_mut(resource: &EditorResource) -> RwLockWriteGuard<'_, Vec<EmbeddedFile>> {
     resource.embedded.write().unwrap_or_else(|e| e.into_inner())
+}
+
+// Drop every attachment that has not been written yet, upstream's pending list
+// and the mirror alike: upstream's sanitization removes only the name tree the
+// *source* carried, and `resupply_embedded` would hand the pending files back
+// on the next write. The flag records the scrub for `editor_embedded_files`,
+// which reads `source()` and would otherwise keep listing them.
+pub fn scrub_embedded(resource: &EditorResource, editor: &mut DocumentEditor) {
+    editor.clear_embedded_files();
+    embedded_files_mut(resource).clear();
+    resource.embedded_scrubbed.store(true, Ordering::Relaxed);
+}
+
+// The JavaScript half has no pending list and no mirror: the tree lives only in
+// the source catalog, which sanitization stages around. The flag is the whole
+// record, and `ensure_no_name_tree` is its only reader.
+pub fn scrub_javascript(resource: &EditorResource) {
+    resource.javascript_scrubbed.store(true, Ordering::Relaxed);
 }
 
 // At open, visible and source page indices are identical.
@@ -207,6 +252,12 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
         editor: Closable::new("Editor", editor),
         resolved_fields: OnceLock::new(),
         pages_deleted: AtomicBool::new(false),
+        redacted: AtomicBool::new(false),
+        sanitized: AtomicBool::new(false),
+        redaction_regions: Mutex::new(HashSet::new()),
+        applied_redactions: AtomicBool::new(false),
+        embedded_scrubbed: AtomicBool::new(false),
+        javascript_scrubbed: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
         embedded: RwLock::new(Vec::new()),
         info: Mutex::new(None),
@@ -230,6 +281,12 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
         editor: Closable::new("Editor", editor),
         resolved_fields: OnceLock::new(),
         pages_deleted: AtomicBool::new(false),
+        redacted: AtomicBool::new(false),
+        sanitized: AtomicBool::new(false),
+        redaction_regions: Mutex::new(HashSet::new()),
+        applied_redactions: AtomicBool::new(false),
+        embedded_scrubbed: AtomicBool::new(false),
+        javascript_scrubbed: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
         embedded: RwLock::new(Vec::new()),
         info: Mutex::new(None),
@@ -347,6 +404,9 @@ fn resupply_embedded(resource: &EditorResource, editor: &mut DocumentEditor) -> 
 // The writers emit `/Info` only from pending metadata, so supply the source's
 // values when no setter has populated the mirror.
 fn resupply_info(resource: &EditorResource, editor: &mut DocumentEditor) -> NifResult<()> {
+    // A scrubbing redaction or sanitization leaves the mirror `Some(scrubbed)`,
+    // which stops the resupply here: re-reading the source would write the very
+    // `/Info` the caller just had removed, and report success.
     if info_edits(resource).is_some() {
         return Ok(());
     }
@@ -361,6 +421,21 @@ fn resupply_info(resource: &EditorResource, editor: &mut DocumentEditor) -> NifR
     Ok(())
 }
 
+// The entries a sanitization dropped from the catalog the writer builds on. Read
+// here rather than in `redaction.rs` so the flags and the source catalog are
+// inspected under the same guard.
+fn scrubbed_name_tree_entries(resource: &EditorResource) -> Vec<&'static str> {
+    let mut entries = Vec::new();
+    if resource.embedded_scrubbed.load(Ordering::Relaxed) {
+        entries.push("EmbeddedFiles");
+    }
+    if resource.javascript_scrubbed.load(Ordering::Relaxed) {
+        entries.push("JavaScript");
+    }
+
+    entries
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_embed_file(
     resource: ResourceArc<EditorResource>,
@@ -371,7 +446,7 @@ fn editor_embed_file(
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         // Inside the guard so the check and the push cannot straddle a writer.
-        ensure_no_name_tree(editor.source())?;
+        ensure_no_name_tree(editor.source(), &scrubbed_name_tree_entries(&resource))?;
 
         let file = embedded_file(name, data.as_slice().to_vec(), description, relationship);
 
@@ -393,8 +468,14 @@ fn editor_embedded_files<'a>(
     resource: ResourceArc<EditorResource>,
 ) -> NifResult<Vec<EmbeddedFileNif<'a>>> {
     resource.editor.with_read(|editor| {
-        // The source and pending halves cannot both be populated.
-        let mut files = read_embedded_files(env, editor.source())?;
+        // The source and pending halves cannot both be populated. A sanitize
+        // removes the source's name tree from the *output* only, so once it has
+        // run the source half is no longer what the written document carries.
+        let mut files = if resource.embedded_scrubbed.load(Ordering::Relaxed) {
+            Vec::new()
+        } else {
+            read_embedded_files(env, editor.source())?
+        };
 
         // Match the name order a full write will produce.
         let mirror = embedded_files(&resource);
@@ -415,6 +496,9 @@ fn editor_to_bytes(
     options: SaveOptionsNif,
 ) -> NifResult<OwnedBinary> {
     resource.editor.with_lock(|editor| {
+        // Incremental output upstream refuses on its own; this one it does not.
+        ensure_scrub_survives_save(&resource, &options)?;
+
         // Incremental output is refused below before writing, so resupplying
         // for it would only move the modified flag.
         if !options.incremental {
@@ -430,6 +514,42 @@ fn editor_to_bytes(
     })
 }
 
+// Incremental output copies the original bytes, retaining removed content.
+fn ensure_redaction_survives_save(
+    resource: &EditorResource,
+    options: &SaveOptionsNif,
+) -> NifResult<()> {
+    if options.incremental && resource.redacted.load(Ordering::Relaxed) {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This editor has applied a destructive redaction or sanitization, which an \
+             incremental save does not carry: the update would append to the original \
+             bytes and leave the removed content readable. Save a full rewrite instead.",
+        ));
+    }
+
+    Ok(())
+}
+
+// GC must drop orphaned /ObjStm containers or their scrubbed values survive.
+fn ensure_scrub_survives_save(
+    resource: &EditorResource,
+    options: &SaveOptionsNif,
+) -> NifResult<()> {
+    if !options.garbage_collect && resource.sanitized.load(Ordering::Relaxed) {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This editor has sanitized the document, which a write with \
+             garbage_collect: false does not carry: every object the source holds \
+             is copied out, including the object stream that carried the scrubbed \
+             /Info, JavaScript or embedded file. Write with garbage collection \
+             instead.",
+        ));
+    }
+
+    Ok(())
+}
+
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_save(
     resource: ResourceArc<EditorResource>,
@@ -441,6 +561,9 @@ fn editor_save(
     let path = path_arg(path)?;
 
     resource.editor.with_lock(|editor| {
+        ensure_redaction_survives_save(&resource, &options)?;
+        ensure_scrub_survives_save(&resource, &options)?;
+
         if !options.incremental {
             resupply_embedded(&resource, editor)?;
         }
@@ -602,7 +725,7 @@ fn out_of_range(page_index: usize, count: usize) -> rustler::Error {
 // Upstream bounds-checks every page-taking method but reports a bad index as a
 // generic `InvalidPdf`, so the check is repeated here to reach `:out_of_range`.
 // The editor's count is live rather than cached, so it must be read per call.
-fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> NifResult<()> {
+pub fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> NifResult<()> {
     let count = editor.current_page_count();
     if page_index >= count {
         return Err(out_of_range(page_index, count));
@@ -611,35 +734,198 @@ fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> Ni
     Ok(())
 }
 
-// Reject indirect content arrays before recording an erase: the writer nests
-// their reference in another array, corrupting the page. Use the mirror to
-// check the source page after moves or deletions.
-fn ensure_contents_spliceable(
+// The object a source page's `/Contents` reference resolves to, or `None` when
+// the entry is absent or already direct. Use the mirror to reach the source page
+// after moves or deletions.
+fn indirect_contents_target(
     resource: &EditorResource,
     editor: &DocumentEditor,
     page_index: usize,
-) -> NifResult<()> {
+) -> NifResult<Option<Object>> {
     let (source, _) = pending(resource, page_index, |_| None::<()>)?;
 
     let page = editor.source().get_page(source).map_err(to_nif_err)?;
     let contents = page.as_dict().and_then(|dict| dict.get("Contents"));
 
-    if let Some(Object::Reference(reference)) = contents {
-        let target = editor
-            .source()
-            .load_object(*reference)
-            .map_err(to_nif_err)?;
+    let Some(Object::Reference(reference)) = contents else {
+        return Ok(None);
+    };
 
-        if target.as_array().is_some() {
-            return Err(tagged_err(
-                atoms::unsupported(),
-                format!(
-                    "Page {page_index} stores its content streams as an indirect array, \
-                     which an erase overlay cannot be appended to without corrupting \
-                     the page. The page can still be saved unchanged."
-                ),
-            ));
-        }
+    editor
+        .source()
+        .load_object(*reference)
+        .map(Some)
+        .map_err(to_nif_err)
+}
+
+// Whether the source page's `/Contents` is a reference to an *array* object.
+// Every overlay splice wraps such a reference without resolving it, nesting an
+// array in an array and losing the page content.
+fn contents_is_indirect_array(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<bool> {
+    Ok(indirect_contents_target(resource, editor, page_index)?
+        .is_some_and(|target| target.as_array().is_some()))
+}
+
+// Reject indirect content arrays before recording an erase.
+fn ensure_contents_spliceable(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<()> {
+    if contents_is_indirect_array(resource, editor, page_index)? {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            format!(
+                "Page {page_index} stores its content streams as an indirect array, \
+                 which an erase overlay cannot be appended to without corrupting \
+                 the page. The page can still be saved unchanged."
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+// How a source page's `/Contents` is unusable to a redaction, or `None` when it
+// is absent, direct, or an indirect stream. Wider than the erase splice's
+// array-only test: a destructive pass decodes the *unresolved* `/Contents`, so
+// every indirect non-stream object fails.
+fn unusable_contents_shape(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<Option<&'static str>> {
+    let Some(target) = indirect_contents_target(resource, editor, page_index)? else {
+        return Ok(None);
+    };
+
+    if matches!(target, Object::Stream { .. }) {
+        return Ok(None);
+    }
+
+    // Name the array where it is one: it is the shape a producer actually emits,
+    // and the only one the erase splice refuses.
+    Ok(Some(if target.as_array().is_some() {
+        "an indirect array"
+    } else {
+        "an indirect object that is not a content stream"
+    }))
+}
+
+// The refusal for a *queued* region, and unconditional where the mark's is not:
+// a region only ever reaches the destructive pass, and cannot be withdrawn once
+// added, so accepting one the pass could never apply strands the editor.
+pub fn ensure_contents_redactable(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<()> {
+    let Some(shape) = unusable_contents_shape(resource, editor, page_index)? else {
+        return Ok(());
+    };
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "Page {page_index} stores its content streams as {shape}, \
+             which a destructive redaction cannot read, so a region queued here \
+             could never be applied. The page can still be saved unchanged."
+        ),
+    ))
+}
+
+// Whether a source page contributes any region of its own to a redaction: a
+// `/Redact` annotation carrying a `/Rect`, the condition upstream filters on.
+// It is the difference between a page a mark puts in the destructive set and a
+// page that set actually rewrites.
+pub fn draws_redactions(editor: &DocumentEditor, source: usize) -> NifResult<bool> {
+    let annotations = editor
+        .source()
+        .get_annotations(source)
+        .map_err(to_nif_err)?;
+
+    Ok(annotations
+        .iter()
+        .any(|a| a.subtype_enum == AnnotationSubtype::Redact && a.rect.is_some()))
+}
+
+// The same refusal for a redaction mark, but only where the mark has an effect:
+// with no region of its own a page produces no overlay and rewrites nothing, so
+// marking it is harmless whatever its `/Contents`.
+pub fn ensure_redaction_spliceable(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    page_index: usize,
+) -> NifResult<()> {
+    // The annotation check first: reading a page's `/Contents` clones the whole
+    // stream while `get_annotations` is cheap, and `editor_mark_all_redactions`
+    // runs this over every page.
+    let (source, _) = pending(resource, page_index, |_| None::<()>)?;
+
+    if !draws_redactions(editor, source)? {
+        return Ok(());
+    }
+
+    let Some(shape) = unusable_contents_shape(resource, editor, page_index)? else {
+        return Ok(());
+    };
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "Page {page_index} stores its content streams as {shape}, which a \
+             redaction overlay cannot be appended to without corrupting the page, \
+             and which a destructive redaction cannot read. The page can still be \
+             saved unchanged."
+        ),
+    ))
+}
+
+// Does `obj` reach an indirect object, at any depth within its own structure?
+fn holds_reference(obj: &Object) -> bool {
+    match obj {
+        Object::Reference(_) => true,
+        Object::Array(a) => a.iter().any(holds_reference),
+        Object::Dictionary(d) => d.values().any(holds_reference),
+        Object::Stream { dict, .. } => dict.values().any(holds_reference),
+        _ => false,
+    }
+}
+
+// A scrub drops the `/Info` dictionary's own object id and not its children, so
+// an indirect value is written out with the secret intact. Nothing public can
+// orphan it in turn, so the structure is refused rather than reported scrubbed.
+pub fn ensure_info_is_direct(editor: &DocumentEditor) -> NifResult<()> {
+    let source = editor.source();
+    let Some(info_ref) = source
+        .trailer()
+        .as_dict()
+        .and_then(|d| d.get("Info"))
+        .and_then(|v| v.as_reference())
+    else {
+        return Ok(());
+    };
+    // An `/Info` that cannot be read or is not a dictionary carries nothing to
+    // leave behind, so it is allowed through rather than refused.
+    let Ok(info) = source.load_object(info_ref) else {
+        return Ok(());
+    };
+    let Some(dict) = info.as_dict() else {
+        return Ok(());
+    };
+
+    if dict.values().any(holds_reference) {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This document stores an /Info value as an indirect object, which a \
+             scrub replaces without removing: the value keeps its own object and \
+             is written out. Sanitize with scrub_metadata: false to strip the rest, \
+             or rewrite the document's metadata before sanitizing.",
+        ));
     }
 
     Ok(())
@@ -913,6 +1199,11 @@ fn corners(nif: RectNif) -> Result<[f32; 4], RectNif> {
 
 fn erase_corners(rects: Vec<RectNif>) -> Result<Vec<[f32; 4]>, RectNif> {
     rects.into_iter().map(corners).collect()
+}
+
+// The single-rectangle form, for `add_redaction`. Same guard, same message.
+pub fn redaction_corners(rect: RectNif) -> NifResult<[f32; 4]> {
+    corners(rect).map_err(unrepresentable)
 }
 
 fn unrepresentable(rect: RectNif) -> rustler::Error {

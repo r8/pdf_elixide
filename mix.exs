@@ -73,6 +73,7 @@ defmodule PdfElixide.MixProject do
         "guides/concurrency.md": [],
         "guides/forms.md": [],
         "guides/editing.md": [],
+        "guides/redaction.md": [],
         "guides/signatures.md": [],
         "guides/encryption.md": [],
         "guides/rendering.md": [],
@@ -158,7 +159,9 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Form.Field.Button.Flags,
         PdfElixide.Form.Field.Choice,
         PdfElixide.Form.Field.Choice.Flags,
-        PdfElixide.Form.Field.Unknown
+        PdfElixide.Form.Field.Unknown,
+        PdfElixide.RedactionReport,
+        PdfElixide.SanitizeReport
       ],
       Signatures: [
         PdfElixide.Signature,

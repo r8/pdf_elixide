@@ -39,13 +39,15 @@ in-flight native calls on that handle and block new ones for their duration.
   * `PdfElixide.Document.close/1` waits for every in-flight call to return rather
     than interrupting it — *immediately* means as soon as the handle is idle, not
     preemptively, and an extraction can hold its share of the lock for seconds.
-    Afterwards every reader gets
+    Afterwards every call that reaches the handle gets
     `{:error, %PdfElixide.Error{reason: :closed}}`, an ordinary error rather than
-    a crash. A worker racing a close may therefore return this error. Close only
+    a crash. The values cached on the struct keep answering, as above. A worker racing a close may therefore return this error. Close only
     once the workers are done.
 
 `PdfElixide.Document.rasterize/2` runs one at a time **across the whole node**,
-whatever document each caller uses. Other work on the same handle is unaffected.
+whatever document each caller uses. Other *reads* on the same handle are
+unaffected; it holds that handle's shared guard for the whole render, so the
+three exclusive calls above wait for it.
 Queued callers wait in their own processes without occupying scheduler threads;
 under contention, the wait can add a few seconds beyond the rendering time.
 Calling `rasterize/2` from one process avoids this contention. The other
@@ -95,14 +97,21 @@ The editor's shared reads are `PdfElixide.Editor.page_count/1`,
 `PdfElixide.Editor.modified?/1`, `PdfElixide.Editor.rotation/2`,
 `PdfElixide.Editor.media_box/2`, `PdfElixide.Editor.crop_box/2`,
 `PdfElixide.Editor.metadata/1`, `PdfElixide.Editor.embedded_files/1`,
-`PdfElixide.Editor.flatten_warnings/1` and `PdfElixide.Editor.closed?/1`. They do not wait on each other, but any of them
+`PdfElixide.Editor.flatten_warnings/1`, `PdfElixide.Editor.marked_for_redaction?/2`
+and `PdfElixide.Editor.closed?/1`. They do not wait on each other, but any of them
 will queue behind an in-flight exclusive operation such as a save on the same
 handle. For `flatten_warnings/1`, this ensures an in-flight save finishes before
 the warnings are read.
 
-`PdfElixide.Form.fields/1` inherits whichever source it is handed — a shared read
-on a document, the editor's exclusive lock on an editor — so listing fields from
-an editor serializes even though it only reads.
+`PdfElixide.Editor.redaction_count/2` is the one `PdfElixide.Editor` call that
+reads without sharing: counting a page's redactions has to reach the annotations behind it,
+which takes the handle exclusively. It serializes against every other call on
+that editor even though it changes nothing.
+
+`PdfElixide.Form.fields/1` and `PdfElixide.Form.export/3` inherit whichever
+source they are handed — a shared read on a document, the editor's exclusive
+lock on an editor — so reading fields from an editor serializes even though it
+only reads.
 
 `PdfElixide.Signature.list/1`, `PdfElixide.Signature.unsigned_fields/1`,
 `PdfElixide.Signature.count/1` and `PdfElixide.Signature.dss/1` are shared reads

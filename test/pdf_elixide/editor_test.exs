@@ -22,6 +22,17 @@ defmodule PdfElixide.EditorTest do
   @attachments_pdf Path.join(@fixtures, "attachments.pdf")
   @attachments_cyclic_pdf Path.join(@fixtures, "attachments_cyclic.pdf")
   @metadata_pdf Path.join(@fixtures, "metadata.pdf")
+  @redact_pdf Path.join(@fixtures, "redact.pdf")
+  @redact_indirect_pdf Path.join(@fixtures, "redact_indirect_contents.pdf")
+  @redact_unreadable_contents_pdf Path.join(@fixtures, "redact_unreadable_contents.pdf")
+  @redact_unreadable_annotated_pdf Path.join(@fixtures, "redact_unreadable_annotated.pdf")
+  @redact_unknown_font_pdf Path.join(@fixtures, "redact_unknown_font.pdf")
+  @sanitize_pdf Path.join(@fixtures, "sanitize.pdf")
+  @redact_partial_pdf Path.join(@fixtures, "redact_partial.pdf")
+  @redact_actualtext_pdf Path.join(@fixtures, "redact_actualtext.pdf")
+  @sanitize_indirect_info_pdf Path.join(@fixtures, "sanitize_indirect_info.pdf")
+  @sanitize_objstm_pdf Path.join(@fixtures, "sanitize_objstm.pdf")
+  @redact_qq_text_state_pdf Path.join(@fixtures, "redact_qq_text_state.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
@@ -1736,6 +1747,993 @@ defmodule PdfElixide.EditorTest do
     end
   end
 
+  @redact_rect %Rect{x: 95.0, y: 695.0, width: 105.0, height: 30.0}
+  @quad_rect %Rect{x: 300.0, y: 400.0, width: 100.0, height: 100.0}
+  @red %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}
+  @black %PdfElixide.Color.RGB{r: 0.0, g: 0.0, b: 0.0}
+
+  defp written(editor), do: Document.from_binary!(Editor.to_binary!(editor))
+
+  defp page_text(editor, index) do
+    doc = written(editor)
+    text = doc |> Document.text!(index) |> String.trim()
+    Document.close(doc)
+    text
+  end
+
+  describe "mark_redactions/2" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      refute Editor.modified?(editor)
+      assert {:ok, ^editor} = Editor.mark_redactions(editor, 0)
+      assert Editor.modified?(editor)
+    end
+
+    test "paints each redaction annotation in its own interior color" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+
+      doc = written(editor)
+      rects = doc |> Document.rects!(0) |> Enum.map(&{&1.bbox, &1.fill_color})
+      Document.close(doc)
+
+      # The second annotation declares no /IC, so it falls back to black.
+      assert rects == [{@redact_rect, @red}, {@quad_rect, @black}]
+    end
+
+    test "leaves the covered text extractable" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+
+      assert page_text(editor, 0) == "Secret\n\n\nKept"
+    end
+
+    test "removes every annotation from the page, not only the redactions" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      doc = Document.open!(@redact_pdf)
+
+      assert doc |> Document.annotations!(0) |> Enum.map(& &1.subtype) == [
+               :redact,
+               :redact,
+               :link
+             ]
+
+      Document.close(doc)
+
+      Editor.mark_redactions!(editor, 0)
+
+      written = written(editor)
+      assert Document.annotations!(written, 0) == []
+      Document.close(written)
+    end
+
+    test "leaves an unmarked page alone" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+
+      doc = written(editor)
+      assert Document.rects!(doc, 1) == []
+      Document.close(doc)
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.mark_redactions(editor, 2)
+    end
+
+    test "raises for a negative page index" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.mark_redactions(editor, -1) end
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@redact_pdf)
+      Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.mark_redactions(editor, 0)
+    end
+
+    test "returns {:error, :unsupported} for an indirect content array it would splice" do
+      editor = Editor.open!(@redact_indirect_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # The control: the page must still read, or the refusal proves nothing.
+      plain = Document.open!(@redact_indirect_pdf)
+      assert Document.text!(plain, 0) =~ "Indirect"
+      Document.close(plain)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.mark_redactions(editor, 0)
+
+      assert message =~ "indirect array"
+      refute Editor.modified?(editor)
+    end
+
+    test "allows an indirect content array on a page with no redaction annotations" do
+      editor = Editor.open!(@indirect_contents_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.mark_redactions(editor, 0)
+    end
+
+    # The annotation is what puts the page in the destructive set with a region
+    # to apply, so the mark refuses every indirect /Contents the pass cannot
+    # decode, not only the array the cosmetic splice would nest.
+    test "returns {:error, :unsupported} for an indirect /Contents that is not a stream" do
+      editor = Editor.open!(@redact_unreadable_annotated_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.mark_redactions(editor, 0)
+
+      assert message =~ "not a content stream"
+      refute Editor.modified?(editor)
+
+      # The refusal is the only thing standing between the mark and a pass that
+      # errors with both refusal flags already armed.
+      assert {:ok, %PdfElixide.RedactionReport{regions: 0}} = Editor.apply_redactions(editor)
+    end
+
+    # A page carrying no redaction annotation produces no overlay and contributes
+    # no region, so the mark stays harmless whatever its /Contents — the guard
+    # must not become blanket.
+    test "allows an indirect /Contents that is not a stream with no annotations" do
+      editor = Editor.open!(@redact_unreadable_contents_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.mark_redactions(editor, 0)
+      assert {:ok, %PdfElixide.RedactionReport{regions: 0}} = Editor.apply_redactions(editor)
+    end
+  end
+
+  describe "mark_redactions/1" do
+    test "marks every page" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.mark_redactions(editor)
+
+      assert Editor.marked_for_redaction?(editor, 0)
+      assert Editor.marked_for_redaction?(editor, 1)
+    end
+
+    test "marks the page that survived a deletion" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # Upstream's bulk call marks raw output indices, so without the binding's
+      # per-page loop the surviving source page is left unmarked.
+      editor |> Editor.delete_page!(0) |> Editor.mark_redactions!()
+
+      assert Editor.marked_for_redaction?(editor, 0)
+    end
+
+    test "refuses every page when one would splice an indirect content array" do
+      editor = Editor.open!(@redact_indirect_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.mark_redactions(editor)
+      refute Editor.modified?(editor)
+    end
+  end
+
+  describe "unmark_redactions/2" do
+    test "leaves the next write painting nothing" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.mark_redactions!(0) |> Editor.unmark_redactions!(0)
+
+      doc = written(editor)
+      assert Document.rects!(doc, 0) == []
+      Document.close(doc)
+    end
+
+    test "leaves modified?/1 as it was" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.unmark_redactions(editor, 0)
+      refute Editor.modified?(editor)
+    end
+
+    test "does not withdraw a region added with add_redaction/3" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.add_redaction!(1, %Rect{x: 95.0, y: 695.0, width: 155.0, height: 30.0})
+      |> Editor.unmark_redactions!(1)
+
+      assert %{glyphs_removed: removed} = Editor.apply_redactions!(editor)
+      assert removed > 0
+      assert page_text(editor, 1) == ""
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.unmark_redactions(editor, 2)
+    end
+  end
+
+  describe "marked_for_redaction?/2" do
+    test "answers before and after a mark" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      refute Editor.marked_for_redaction?(editor, 0)
+      Editor.mark_redactions!(editor, 0)
+      assert Editor.marked_for_redaction?(editor, 0)
+      refute Editor.marked_for_redaction?(editor, 1)
+    end
+
+    test "raises :out_of_range for a page past the end" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise Error, fn -> Editor.marked_for_redaction?(editor, 2) end
+    end
+  end
+
+  describe "redaction_count/2" do
+    test "counts one region per redaction annotation, quadrilaterals included" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # The second annotation declares two /QuadPoints quads and still counts
+      # once; see the drift test for why.
+      assert Editor.redaction_count!(editor, 0) == 2
+      assert Editor.redaction_count!(editor, 1) == 0
+    end
+
+    test "rises with each queued region" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.add_redaction!(editor, 1, @redact_rect)
+
+      assert Editor.redaction_count!(editor, 1) == 1
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.redaction_count(editor, 2)
+    end
+  end
+
+  describe "add_redaction/3,4" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.add_redaction(editor, 1, @redact_rect)
+      assert Editor.modified?(editor)
+    end
+
+    test "changes nothing without a destructive apply" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.add_redaction!(editor, 1, @redact_rect, @red)
+
+      doc = written(editor)
+      assert Document.rects!(doc, 1) == []
+      assert String.trim(Document.text!(doc, 1)) == "Second"
+      Document.close(doc)
+    end
+
+    test "normalizes reversed corners" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      reversed = %Rect{x: 250.0, y: 725.0, width: -155.0, height: -30.0}
+      Editor.add_redaction!(editor, 1, reversed)
+
+      assert %{glyphs_removed: removed} = Editor.apply_redactions!(editor)
+      assert removed > 0
+    end
+
+    test "raises for a region whose corner overflows a 32-bit float" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      overflowing = %Rect{x: 2.0e38, y: 0.0, width: 2.0e38, height: 10.0}
+
+      assert_raise ArgumentError, ~r/32-bit float/, fn ->
+        Editor.add_redaction(editor, 1, overflowing)
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a wrong-typed rectangle field, naming it" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/Could not decode field :x/, fn ->
+        Editor.add_redaction(editor, 1, %Rect{x: "95", y: 695.0, width: 10.0, height: 10.0})
+      end
+    end
+
+    test "raises for a fill that is not an RGB color" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn ->
+        Editor.add_redaction(editor, 1, @redact_rect, {1.0, 0.0, 0.0})
+      end
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Editor.add_redaction(editor, 2, @redact_rect)
+    end
+
+    test "marks the page, so a write paints its own redaction annotations" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # Page 0 carries `/Redact` annotations; page 1, used above, carries none,
+      # which is why that test sees a write change nothing.
+      Editor.add_redaction!(editor, 0, @quad_rect, @red)
+
+      assert Editor.marked_for_redaction?(editor, 0)
+
+      doc = written(editor)
+      # The page's own annotation rectangles, not the queued one.
+      assert doc |> Document.rects!(0) |> Enum.map(& &1.bbox) == [@redact_rect, @quad_rect]
+      assert Document.annotations!(doc, 0) == []
+      Document.close(doc)
+    end
+
+    test "returns {:error, :unsupported} for an indirect content array it would splice" do
+      editor = Editor.open!(@redact_indirect_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.add_redaction(editor, 0, @redact_rect)
+
+      assert message =~ "indirect array"
+      refute Editor.modified?(editor)
+    end
+
+    # Stricter than the mark, which `mark_redactions/2` still allows on this
+    # fixture, because a region cannot be withdrawn once added.
+    test "returns {:error, :unsupported} for an indirect content array with no annotations" do
+      editor = Editor.open!(@indirect_contents_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.add_redaction(editor, 0, @redact_rect)
+
+      assert message =~ "indirect array"
+      refute Editor.modified?(editor)
+    end
+
+    # An array is not the only /Contents the pass cannot decode: the entry is
+    # matched unresolved, so every indirect non-stream object fails.
+    test "returns {:error, :unsupported} for an indirect /Contents that is not a stream" do
+      editor = Editor.open!(@redact_unreadable_contents_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.add_redaction(editor, 0, @redact_rect)
+
+      assert message =~ "not a content stream"
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a fill component outside 0.0..1.0" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/fill/, fn ->
+        Editor.add_redaction(editor, 1, @redact_rect, %PdfElixide.Color.RGB{
+          r: 2.0,
+          g: 0.0,
+          b: 0.0
+        })
+      end
+
+      refute Editor.modified?(editor)
+      assert {:ok, ^editor} = Editor.add_redaction(editor, 1, @redact_rect, @red)
+    end
+  end
+
+  describe "apply_redactions/1,2" do
+    test "removes the covered text from the written bytes and keeps the rest" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+
+      assert %PdfElixide.RedactionReport{
+               regions: 2,
+               glyphs_removed: removed,
+               bytes_removed: bytes
+             } =
+               Editor.apply_redactions!(editor)
+
+      assert removed > 0
+      assert bytes > 0
+
+      written = Editor.to_binary!(editor)
+      assert :binary.match(written, "Secret") == :nomatch
+      assert :binary.match(written, "Kept") != :nomatch
+
+      doc = Document.from_binary!(written)
+      assert String.trim(Document.text!(doc, 0)) == "Kept"
+      Document.close(doc)
+    end
+
+    # Page 0 carries a `/Link` beside its two `/Redact` annotations, so the wipe
+    # is visible as more than the redactions disappearing.
+    test "removes every annotation from a page it redacted" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      Editor.apply_redactions!(editor)
+
+      doc = written(editor)
+      assert Document.annotations!(doc, 0) == []
+      Document.close(doc)
+    end
+
+    test "does nothing when no page is marked or queued" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # A /Redact annotation is not a mark: without one of the two the pass has
+      # an empty page set and the report is all zeros.
+      assert Editor.apply_redactions!(editor) == %PdfElixide.RedactionReport{
+               regions: 0,
+               glyphs_removed: 0,
+               bytes_removed: 0
+             }
+
+      assert page_text(editor, 0) == "Secret\n\n\nKept"
+    end
+
+    test "leaves the cleared area blank with draw_default_overlay: false" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.add_redaction!(editor, 1, @redact_rect)
+      Editor.apply_redactions!(editor, draw_default_overlay: false)
+
+      doc = written(editor)
+      assert Document.rects!(doc, 1) == []
+      Document.close(doc)
+    end
+
+    test "draws :default_fill over a region that declares no colour" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.add_redaction!(editor, 1, @redact_rect)
+      Editor.apply_redactions!(editor, default_fill: @red)
+
+      doc = written(editor)
+      assert doc |> Document.rects!(1) |> Enum.map(& &1.fill_color) == [@red]
+      Document.close(doc)
+    end
+
+    test "returns {:error, :unsupported} for a font whose glyphs cannot be measured" do
+      editor = Editor.open!(@redact_unknown_font_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+
+      # The message is upstream's and says "composite" for an undefined font
+      # too, so it is not what this pins.
+      assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
+      assert page_text(editor, 0) == "Unknown"
+    end
+
+    test "raises for a negative :edge_padding" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/:edge_padding/, fn ->
+        Editor.apply_redactions(editor, edge_padding: -1.0)
+      end
+    end
+
+    test "raises for a :default_fill component outside 0.0..1.0" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/:default_fill/, fn ->
+        Editor.apply_redactions(editor,
+          default_fill: %PdfElixide.Color.RGB{r: 2.0, g: 0.0, b: 0.0}
+        )
+      end
+    end
+
+    test "raises for an unknown option" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, fn -> Editor.apply_redactions(editor, scrub: true) end
+    end
+
+    test "returns {:error, :closed} for a closed editor" do
+      editor = Editor.open!(@redact_pdf)
+      Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.apply_redactions(editor)
+    end
+
+    test "refuses a second pass rather than rebuild the pages from the source" do
+      editor = Editor.open!(@redact_actualtext_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      assert %{glyphs_removed: removed} = Editor.apply_redactions!(editor, edge_padding: 150.0)
+      assert removed > 0
+
+      # The padding was wide enough to take `Kept` too. A second pass rebuilds
+      # the page from the unredacted source, so a narrower one would hand it back.
+      assert :binary.match(Editor.to_binary!(editor), "Kept") == :nomatch
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
+      assert :binary.match(Editor.to_binary!(editor), "Kept") == :nomatch
+    end
+
+    test "refuses a second pass after a sanitize, which is not itself a pass" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor)
+      Editor.mark_redactions!(editor, 0)
+
+      assert %{glyphs_removed: removed} = Editor.apply_redactions!(editor)
+      assert removed > 0
+      assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
+    end
+
+    test "leaves the /ActualText of the glyphs it removed in the content stream" do
+      editor = Editor.open!(@redact_actualtext_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      assert %{glyphs_removed: removed} = Editor.apply_redactions!(editor)
+      assert removed > 0
+
+      written = Editor.to_binary!(editor)
+      assert :binary.match(written, "Shown") == :nomatch
+      assert :binary.match(written, "PRIVATE SECRET") != :nomatch
+    end
+
+    test "leaves the pages before a refused one already redacted" do
+      editor = Editor.open!(@redact_partial_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
+
+      # Upstream walks source pages ascending and commits each before the next
+      # one errors, so the refusal is not the all-or-nothing it reads as.
+      doc = written(editor)
+      assert Document.text!(doc, 0) |> String.trim() == ""
+      assert Document.text!(doc, 1) |> String.trim() == "Late"
+      Document.close(doc)
+    end
+  end
+
+  describe "sanitize/1,2" do
+    test "strips metadata, JavaScript and embedded files" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert [%EmbeddedFile{name: "note.txt"}] = Editor.embedded_files!(editor)
+
+      assert %PdfElixide.SanitizeReport{roots_removed: roots, bytes_removed: bytes} =
+               Editor.sanitize!(editor)
+
+      assert roots > 0
+      assert bytes > 0
+
+      written = Editor.to_binary!(editor)
+      assert :binary.match(written, "Sanitize me") == :nomatch
+      assert :binary.match(written, "app.alert") == :nomatch
+      assert :binary.match(written, "note.txt") == :nomatch
+
+      doc = Document.from_binary!(written)
+      assert %{title: nil, author: nil} = Document.metadata!(doc)
+      assert Document.embedded_files!(doc) == []
+      Document.close(doc)
+    end
+
+    test "reports the scrub through metadata/1" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert %{title: "Sanitize me"} = Editor.metadata!(editor)
+      Editor.sanitize!(editor)
+      assert %{title: nil, author: nil} = Editor.metadata!(editor)
+    end
+
+    test "keeps the /Info dictionary with scrub_metadata: false" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor, scrub_metadata: false)
+
+      assert %{title: "Sanitize me"} = Editor.metadata!(editor)
+      assert :binary.match(Editor.to_binary!(editor), "Sanitize me") != :nomatch
+    end
+
+    # `:roots_removed` counts catalog entries only, and `metadata_encodings.pdf`
+    # has an /Info and none of them, so a real scrub reports zero here.
+    test "reports no roots for a document whose only secret is its /Info" do
+      editor = Editor.open!(@metadata_encodings_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      refute Editor.metadata!(editor).title == nil
+
+      assert %PdfElixide.SanitizeReport{roots_removed: 0, bytes_removed: bytes} =
+               Editor.sanitize!(editor)
+
+      assert bytes > 0
+      assert %{title: nil, author: nil} = Editor.metadata!(editor)
+      assert %{title: nil} = editor |> written() |> Document.metadata!()
+    end
+
+    test "refuses a document whose /Info holds an indirect value" do
+      editor = Editor.open!(@sanitize_indirect_info_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # The indirect /Title is what upstream would leave behind in its own
+      # object while reporting a scrub.
+      assert %{title: "INDIRECT SECRET"} = Editor.metadata!(editor)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.sanitize(editor)
+
+      # Nothing changed: the refusal is before the call.
+      assert %{title: "INDIRECT SECRET"} = Editor.metadata!(editor)
+      assert :binary.match(Editor.to_binary!(editor), "INDIRECT SECRET") != :nomatch
+    end
+
+    test "sanitizes a document with an indirect /Info when not scrubbing metadata" do
+      editor = Editor.open!(@sanitize_indirect_info_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert %PdfElixide.SanitizeReport{} = Editor.sanitize!(editor, scrub_metadata: false)
+      assert %{title: "INDIRECT SECRET"} = Editor.metadata!(editor)
+    end
+
+    test "removes no page content" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor)
+
+      assert page_text(editor, 0) == "Body"
+    end
+
+    # `sanitize.pdf` already has a `/Names`, and `embed_file/3` refuses to
+    # rebuild one; `sample.pdf` has none, so the attachment is queueable.
+    test "discards an attachment queued but not yet written" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "secret.txt", "PRIVATE ATTACHMENT")
+      Editor.sanitize!(editor)
+
+      assert Editor.embedded_files!(editor) == []
+
+      bytes = Editor.to_binary!(editor)
+      assert :binary.match(bytes, "secret.txt") == :nomatch
+      assert :binary.match(bytes, "PRIVATE ATTACHMENT") == :nomatch
+    end
+
+    test "stops listing the source's attachments once they are removed" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert [%EmbeddedFile{name: "note.txt"}] = Editor.embedded_files!(editor)
+      Editor.sanitize!(editor)
+
+      assert Editor.embedded_files!(editor) == []
+    end
+
+    test "keeps listing the source's attachments with remove_embedded_files: false" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor, remove_embedded_files: false)
+
+      assert [%EmbeddedFile{name: "note.txt"}] = Editor.embedded_files!(editor)
+    end
+
+    test "keeps a queued attachment when not asked to remove embedded files" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "secret.txt", "PRIVATE ATTACHMENT")
+      Editor.sanitize!(editor, remove_embedded_files: false)
+
+      assert [%EmbeddedFile{name: "secret.txt"}] = Editor.embedded_files!(editor)
+      assert :binary.match(Editor.to_binary!(editor), "PRIVATE ATTACHMENT") != :nomatch
+    end
+
+    test "raises for an option sanitizing does not read" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, fn -> Editor.sanitize(editor, edge_padding: 1.0) end
+    end
+  end
+
+  describe "a destructive pass and an incremental save" do
+    @tag :tmp_dir
+    test "refuses the save rather than write the unredacted original", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      Editor.apply_redactions!(editor)
+
+      path = Path.join(tmp_dir, "incremental.pdf")
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, path, incremental: true)
+
+      assert message =~ "incremental"
+      refute File.exists?(path)
+
+      # The control: a full rewrite does carry the removal.
+      full = Path.join(tmp_dir, "full.pdf")
+      Editor.save!(editor, full)
+      assert :binary.match(File.read!(full), "Secret") == :nomatch
+    end
+
+    @tag :tmp_dir
+    test "refuses it after a sanitization too", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor)
+
+      assert {:error, %Error{reason: :unsupported}} =
+               Editor.save(editor, Path.join(tmp_dir, "incremental.pdf"), incremental: true)
+    end
+
+    @tag :tmp_dir
+    test "refuses it after a pass that failed partway", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@redact_partial_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor)
+      assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
+
+      # The refusal has to survive the failure: page 0 was rewritten before
+      # page 1 errored, so an incremental save would write the original back.
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, Path.join(tmp_dir, "incremental.pdf"), incremental: true)
+
+      assert message =~ "incremental"
+    end
+
+    @tag :tmp_dir
+    test "allows an incremental save before one", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      path = Path.join(tmp_dir, "marked.pdf")
+
+      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
+      assert File.exists?(path)
+    end
+  end
+
+  describe "a page whose text state a q/Q restores" do
+    # Only the tail of the word: at the 24pt it is drawn in, the region covers
+    # the last letters; at the 1pt a q/Q left behind, the whole run collapses to
+    # the origin and misses it.
+    @qq_tail %PdfElixide.Geometry.Rect{x: 145.0, y: 695.0, width: 40.0, height: 35.0}
+
+    test "is refused rather than measured with the discarded state" do
+      editor = Editor.open!(@redact_qq_text_state_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.add_redaction!(editor, 0, @qq_tail)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.apply_redactions(editor)
+
+      assert message =~ "Page 0"
+      assert message =~ "q/Q"
+
+      # Nothing was armed, so the refusal is repeatable and reports the same
+      # reason rather than the one-pass rule.
+      assert {:error, %Error{reason: :unsupported, message: ^message}} =
+               Editor.apply_redactions(editor)
+
+      assert page_text(editor, 0) == "Secret"
+    end
+
+    test "a page re-setting the font after the restore is measured and applied" do
+      editor = Editor.open!(@redact_qq_text_state_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      # Page 1 carries the same q/Q and a `Tf` after it. The guard compares the
+      # two readings rather than matching the pattern, which is the whole reason
+      # this page is not refused with page 0.
+      Editor.add_redaction!(editor, 1, @qq_tail)
+
+      assert {:ok, %PdfElixide.RedactionReport{glyphs_removed: 4}} =
+               Editor.apply_redactions(editor)
+
+      assert page_text(editor, 1) == "Con"
+    end
+
+    test "is refused when a discarded leading moves the line, TD's included" do
+      # Page 2 sets the leading with a `TD` inside the block and page 3 with a
+      # `TL`, then puts the parameters back in agreement — neither shows up as a
+      # parameter difference at the show, only as a position one.
+      for {page, word} <- [{2, "Ledger"}, {3, "Baseline"}] do
+        editor = Editor.open!(@redact_qq_text_state_pdf)
+        on_exit(fn -> Editor.close(editor) end)
+
+        source = Document.open!(@redact_qq_text_state_pdf)
+        on_exit(fn -> Document.close(source) end)
+        [%{text: ^word} = shown] = Document.words!(source, page)
+
+        # The region a caller would queue: the word's own reported box.
+        Editor.add_redaction!(editor, page, shown.bbox)
+
+        assert {:error, %Error{reason: :unsupported, message: message}} =
+                 Editor.apply_redactions(editor)
+
+        assert message =~ "Page #{page}"
+      end
+    end
+
+    test "an ordinary page is not refused" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      assert {:ok, %PdfElixide.RedactionReport{}} = Editor.apply_redactions(editor)
+    end
+
+    test "a mark on such a page is still allowed, the cosmetic overlay measuring nothing" do
+      editor = Editor.open!(@redact_qq_text_state_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.mark_redactions(editor, 0)
+    end
+
+    # The fixture carries no /Annots at all, so every page is marked with
+    # nothing to redact and the divergence is unreachable — the common shape
+    # under `mark_redactions/1`, which the guard must not refuse.
+    test "a marked page with no region to apply is not refused" do
+      editor = Editor.open!(@redact_qq_text_state_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor)
+
+      assert {:ok, %PdfElixide.RedactionReport{glyphs_removed: 0, regions: 0}} =
+               Editor.apply_redactions(editor)
+
+      # The pass really did reach the diverging page and decline to measure it,
+      # rather than the mark having gone missing.
+      assert Editor.marked_for_redaction?(editor, 0)
+      assert page_text(editor, 0) == "Secret"
+    end
+
+    # The other side of the same line: a region on that page puts it back in
+    # reach of the defect, so the refusal must return.
+    test "a queued region on such a page is still refused" do
+      editor = Editor.open!(@redact_qq_text_state_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor)
+      Editor.add_redaction!(editor, 0, @qq_tail)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.apply_redactions(editor)
+
+      assert message =~ "Page 0"
+    end
+  end
+
+  describe "a sanitization and a save that does not collect" do
+    @tag :tmp_dir
+    test "refuses the save rather than copy the scrubbed objects back out", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@sanitize_objstm_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor)
+      path = Path.join(tmp_dir, "uncollected.pdf")
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, path, garbage_collect: false)
+
+      assert message =~ "garbage_collect"
+      refute File.exists?(path)
+
+      # The control: collecting is what carries the scrub, and the fixture
+      # keeps its /Info inside an object stream, so this is the shape the
+      # refusal protects.
+      collected = Path.join(tmp_dir, "collected.pdf")
+      Editor.save!(editor, collected, compress: false)
+      assert :binary.match(File.read!(collected), "OBJSTMTITLE") == :nomatch
+    end
+
+    test "refuses to_binary/2 the same way" do
+      editor = Editor.open!(@sanitize_objstm_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor)
+
+      assert {:error, %Error{reason: :unsupported}} =
+               Editor.to_binary(editor, garbage_collect: false)
+    end
+
+    test "allows it before one" do
+      editor = Editor.open!(@sanitize_objstm_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, bytes} = Editor.to_binary(editor, garbage_collect: false)
+      assert byte_size(bytes) > 0
+    end
+
+    test "allows it after a destructive redaction, which drops by id either way" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      Editor.apply_redactions!(editor)
+
+      assert {:ok, bytes} = Editor.to_binary(editor, garbage_collect: false, compress: false)
+      assert :binary.match(bytes, "Secret") == :nomatch
+    end
+  end
+
+  describe "redaction and the page operations" do
+    test "a mark follows its page through a move" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.mark_redactions!(0) |> Editor.move_page!(0, 1)
+
+      doc = written(editor)
+      assert Document.rects!(doc, 0) == []
+
+      assert doc |> Document.rects!(1) |> Enum.map(&{&1.bbox, &1.fill_color}) ==
+               [{@redact_rect, @red}, {@quad_rect, @black}]
+
+      Document.close(doc)
+    end
+  end
+
   describe "flatten_annotations/1" do
     test "returns the same editor and marks it modified" do
       editor = Editor.open!(@flatten_pdf)
@@ -1925,6 +2923,50 @@ defmodule PdfElixide.EditorTest do
 
       assert error.message =~ "EmbeddedFiles"
       refute Editor.modified?(editor)
+    end
+
+    # `attachments.pdf` above has an indirect `/Names`; this one is direct, which
+    # is the shape the scrubbed-entry filtering walks.
+    test "refuses a direct name tree, naming every entry" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported} = error} =
+               Editor.embed_file(editor, "added.txt", "added")
+
+      assert error.message =~ "EmbeddedFiles"
+      assert error.message =~ "JavaScript"
+    end
+
+    test "attaches to a document whose name tree a sanitize emptied" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor)
+      assert {:ok, ^editor} = Editor.embed_file(editor, "clean.txt", "CLEAN")
+
+      bytes = Editor.to_binary!(editor)
+
+      assert [%EmbeddedFile{name: "clean.txt", data: "CLEAN"}] =
+               bytes |> Document.from_binary!() |> Document.embedded_files!()
+
+      # The rebuild must not resurrect what the sanitize removed: it merges into
+      # the scrubbed catalog, not the source's.
+      assert :binary.match(bytes, "note.txt") == :nomatch
+      assert :binary.match(bytes, "app.alert") == :nomatch
+    end
+
+    test "still refuses when the sanitize left an entry in the name tree" do
+      editor = Editor.open!(@sanitize_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor, remove_javascript: false)
+
+      assert {:error, %Error{reason: :unsupported} = error} =
+               Editor.embed_file(editor, "clean.txt", "CLEAN")
+
+      assert error.message =~ "JavaScript"
+      refute error.message =~ "EmbeddedFiles"
     end
 
     test "raises for a name that is empty or not a string" do

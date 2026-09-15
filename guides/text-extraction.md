@@ -198,7 +198,8 @@ padding while `text/2` collapses the padding to single spaces.
     than its glyphs.
   * **Markup.** `to_markdown/2` represents detected headings, lists and tables;
     `to_html/2` returns an escaped fragment, optionally absolutely positioned.
-    Both take a larger option set than either plain-text surface.
+    Both take markup options the plain-text surfaces have no use for, and
+    `to_markdown/2` takes the largest set of the four.
   * **Finding a known string.** `PdfElixide.Document.search/2` indexes each page
     once and returns match geometry — see the [Search](search.md) guide.
 

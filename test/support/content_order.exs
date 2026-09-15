@@ -12,7 +12,7 @@ defmodule PdfElixide.ContentOrder do
     |> Enum.map(fn [_, number] -> stream_body(bytes, number) end)
   end
 
-  @spec page0(binary()) :: [:original | :whiteout | :flattened]
+  @spec page0(binary()) :: [:original | :whiteout | :redaction | :flattened]
   def page0(bytes) when is_binary(bytes) do
     bytes |> page0_bodies() |> Enum.map(&classify/1)
   end
@@ -22,8 +22,13 @@ defmodule PdfElixide.ContentOrder do
     body
   end
 
+  # Require a filled rectangle after the three-decimal colour to avoid matching
+  # a colour change alone. This helper reads only cosmetic overlay stream arrays.
+  @redaction_fill ~r/\d\.\d{3} \d\.\d{3} \d\.\d{3} rg\s+[\d.]+ [\d.]+ [\d.]+ [\d.]+ re f/
+
   defp classify(body) do
     cond do
+      Regex.match?(@redaction_fill, body) -> :redaction
       String.contains?(body, "1 1 1 rg") -> :whiteout
       String.contains?(body, "Do") -> :flattened
       true -> :original

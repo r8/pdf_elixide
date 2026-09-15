@@ -51,10 +51,21 @@ defmodule PdfElixide.Editor do
   [Erasing regions](guides/editing.md#erasing-regions) for coordinates, unsupported
   pages, verifying coverage, and flattening before erasing.
 
+  ## Redaction
+
+  `mark_redactions/1,2` schedules the page's `/Redact` annotations to be painted
+  over when the document is written — **cosmetic only**, the text stays
+  extractable. `apply_redactions/1,2` removes covered *text* from the page's
+  streams immediately and irreversibly, leaving covered images and vector
+  graphics in the file. `sanitize/1,2` separately strips document-level metadata,
+  JavaScript and attachments without changing page content. See the
+  [Redaction](guides/redaction.md) guide for workflows and limitations.
+
   ## Attachments
 
   `embed_file/4` adds an attachment and `embedded_files/1` includes pending ones.
-  Attaching to a document with an existing name tree is refused. See
+  Attaching to a document with an existing name tree is refused unless a
+  `sanitize/1,2` emptied it. See
   [Attachments](guides/editing.md#attachments) for the workflow and metadata limits.
 
   ## Document information
@@ -77,18 +88,22 @@ defmodule PdfElixide.Editor do
   does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
   a single editor serializes. `page_count/1`, `modified?/1`, `rotation/2`,
   `media_box/2`, `crop_box/2`, `metadata/1`, `embedded_files/1`,
-  `flatten_warnings/1` and `closed?/1` take the lock shared,
-  as do the `PdfElixide.Signature` reads given an editor, which reach the
-  document it was opened from. Give each process its own editor if you need them
+  `flatten_warnings/1`, `marked_for_redaction?/2` and `closed?/1` take the lock
+  shared, as do the `PdfElixide.Signature` reads given an editor, which reach the
+  document it was opened from. `redaction_count/2` is the exception among the
+  reads: it takes the lock exclusively. Give each process its own editor if you need them
   to work at once; see the [Concurrency](guides/concurrency.md) guide.
   """
 
+  alias PdfElixide.Color.RGB
   alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
+  alias PdfElixide.RedactionReport
+  alias PdfElixide.SanitizeReport
 
   @enforce_keys [:ref, :version]
   defstruct [:ref, :version, :source_path]
@@ -268,7 +283,10 @@ defmodule PdfElixide.Editor do
       [Saving edits](guides/editing.md#saving-edits) for the changes it omits.
     * `:compress` — compress streams. Defaults to `true`.
     * `:garbage_collect` — drop unreferenced objects. Defaults to
-      `true`.
+      `true`. `false` is refused after `sanitize/1,2` with
+      `{:error, %PdfElixide.Error{reason: :unsupported}}`, since the write
+      would carry the scrubbed values back into the file; see the
+      [Redaction](guides/redaction.md) guide.
     * `:encryption` — encrypt the written document, as a `t:encryption_opts/0`
       keyword list. Defaults to `nil`, which writes an unencrypted PDF.
       Cannot be combined with `incremental: true`; see the
@@ -286,6 +304,33 @@ defmodule PdfElixide.Editor do
         ]
 
   @save_opts_keys [:incremental, :compress, :garbage_collect, :encryption]
+
+  @typedoc """
+  Options for `apply_redactions/1,2` and `apply_redactions!/1,2`.
+  See `apply_redactions/2` for defaults and allowed values.
+
+  Unknown keys, invalid types and out-of-range values raise `ArgumentError`
+  naming the offending key.
+  """
+  @type redaction_opts :: [
+          edge_padding: number(),
+          default_fill: RGB.t(),
+          draw_default_overlay: boolean()
+        ]
+
+  @redaction_opts_keys [:edge_padding, :default_fill, :draw_default_overlay]
+
+  @typedoc """
+  Options for `sanitize/1,2` and `sanitize!/1,2`.
+  See `sanitize/2` for defaults and allowed values.
+  """
+  @type sanitize_opts :: [
+          scrub_metadata: boolean(),
+          remove_javascript: boolean(),
+          remove_embedded_files: boolean()
+        ]
+
+  @sanitize_opts_keys [:scrub_metadata, :remove_javascript, :remove_embedded_files]
 
   @typedoc """
   The `:encryption` option of `t:save_opts/0`.
@@ -724,6 +769,327 @@ defmodule PdfElixide.Editor do
   end
 
   @doc """
+  Marks every page so its redaction annotations are painted over when the
+  document is written, and returns the editor.
+
+  Equivalent to `mark_redactions/2` on each page. Returns
+  `{:error, %PdfElixide.Error{reason: :unsupported}}`, marking nothing, if any
+  page would be refused there.
+  """
+  @spec mark_redactions(t()) :: {:ok, t()} | {:error, Error.t()}
+  def mark_redactions(%__MODULE__{ref: ref} = editor) do
+    case Wrap.call(fn -> Native.editor_mark_all_redactions(ref) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Marks every page for redaction, raising an error if it fails.
+  """
+  @spec mark_redactions!(t()) :: t()
+  def mark_redactions!(%__MODULE__{} = editor) do
+    editor |> mark_redactions() |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Marks the page at the given zero-based index so each of its `/Redact`
+  annotations is painted over when the document is written, and returns the
+  editor.
+
+  **This is not redaction.** The annotation's rectangle is filled with its
+  `/IC` colour, or black if it declares none, over the existing page content —
+  the covered text and images remain in the written file and
+  `PdfElixide.Document.text/1` still returns the covered words. Use
+  `apply_redactions/1,2` to remove covered page text.
+
+  The mark is deferred: nothing happens until the next full write, `save/3`
+  without `:incremental` or `to_binary/2`. An incremental save ignores it.
+  `unmark_redactions/2` takes it back.
+
+  A page with no redaction annotations is marked and paints nothing. A page that
+  has them writes **without any annotations at all** — links and form widgets go
+  with them — so read the [Redaction](guides/redaction.md) guide before marking a
+  page whose annotations matter.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist, and `{:error, %PdfElixide.Error{reason: :unsupported}}` if it has
+  redaction annotations and stores its content streams in an indirect object
+  that is not itself a content stream. Nothing is recorded in the latter case.
+  """
+  @spec mark_redactions(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
+  def mark_redactions(%__MODULE__{ref: ref} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case Wrap.call(fn -> Native.editor_mark_page_redactions(ref, page_index) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Marks the page at the given zero-based index for redaction, raising an error
+  if it fails.
+  """
+  @spec mark_redactions!(t(), non_neg_integer()) :: t()
+  def mark_redactions!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> mark_redactions(page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Removes the redaction mark from the page at the given zero-based index, so the
+  next write paints nothing over it, and returns the editor.
+
+  `modified?/1` is left as it was. **A region added with `add_redaction/3,4` is
+  not withdrawn** — the page keeps it, and `apply_redactions/1,2` still removes
+  its content. Nothing can withdraw a queued region; reopen the source instead.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist.
+  """
+  @spec unmark_redactions(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
+  def unmark_redactions(%__MODULE__{ref: ref} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    case Wrap.call(fn -> Native.editor_unmark_page_redactions(ref, page_index) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Removes the redaction mark from the page at the given zero-based index,
+  raising an error if it fails.
+  """
+  @spec unmark_redactions!(t(), non_neg_integer()) :: t()
+  def unmark_redactions!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> unmark_redactions(page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns whether the page at the given zero-based index is marked for
+  redaction.
+
+  `mark_redactions/1,2` and `add_redaction/3,4` both mark a page, and so does
+  `apply_redactions/1,2` for every page it actually redacted — that one answers
+  `true` afterwards whether or not it was marked before the pass.
+
+  Raises `%PdfElixide.Error{reason: :out_of_range}` if the page does not exist,
+  and `%PdfElixide.Error{reason: :closed}` after `close/1`.
+  """
+  @spec marked_for_redaction?(t(), non_neg_integer()) :: boolean()
+  def marked_for_redaction?(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    # `Wrap.call!/1` for the reason spelled out on `PdfElixide.Document.encrypted?/1`.
+    Wrap.call!(fn -> Native.editor_is_page_marked_for_redaction(ref, page_index) end)
+  end
+
+  @doc """
+  Returns how many redaction regions the page at the given zero-based index
+  carries.
+
+  Counts each of the page's `/Redact` annotations that carries a `/Rect` — one
+  without it is not a region and is not counted — plus the regions added with
+  `add_redaction/3,4`. An annotation contributes one region however many
+  quadrilaterals it declares.
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist.
+  """
+  @spec redaction_count(t(), non_neg_integer()) ::
+          {:ok, non_neg_integer()} | {:error, Error.t()}
+  def redaction_count(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    Wrap.call(fn -> Native.editor_redaction_count(ref, page_index) end)
+  end
+
+  @doc """
+  Returns how many redaction regions a page carries, raising an error if it
+  fails.
+  """
+  @spec redaction_count!(t(), non_neg_integer()) :: non_neg_integer()
+  def redaction_count!(%__MODULE__{} = editor, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    editor |> redaction_count(page_index) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Queues `rect` on the page at the given zero-based index for removal by
+  `apply_redactions/1,2`, and returns the editor.
+
+  `fill` is the colour of the block drawn over the cleared area, each component
+  between `0.0` and `1.0`; `nil` uses the `:default_fill` given to
+  `apply_redactions/2`.
+
+  `rect` is in raw, unrotated page space, as returned by
+  `PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
+  `PdfElixide.Document.paths/1`. Other extractors may use a different frame on
+  rotated pages; see "Rotated pages and extracted geometry" in
+  `PdfElixide.Document`. A rectangle in the wrong frame is accepted without error.
+
+  **Saving alone does not apply the queued rectangle.** Queuing also marks the
+  page: if it has `/Redact` annotations, a full write paints their rectangles
+  and removes all annotations. Without them, the mark changes nothing.
+  See [Queuing your own regions](guides/redaction.md#queuing-your-own-regions).
+
+  **A queued region cannot be withdrawn**, including with `unmark_redactions/2`.
+  Reopen the source to start again.
+
+  Reversed corners are normalized. A rectangle whose corners do not fit a 32-bit
+  float raises `ArgumentError`, and so does a `fill` component outside
+  `0.0..1.0`. Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the
+  page does not exist, and `{:error, %PdfElixide.Error{reason: :unsupported}}`,
+  queuing nothing, if the page stores its content in an indirect object that is
+  not itself a content stream. Unlike `mark_redactions/2`, this restriction
+  applies even when the page has no redaction annotations.
+  """
+  @spec add_redaction(t(), non_neg_integer(), Rect.t(), RGB.t() | nil) ::
+          {:ok, t()} | {:error, Error.t()}
+  def add_redaction(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect, fill \\ nil)
+      when is_integer(page_index) and page_index >= 0 and (is_struct(fill, RGB) or is_nil(fill)) do
+    validate_region!(rect)
+    validate_fill!(fill, "fill")
+
+    case Wrap.call(fn -> Native.editor_add_redaction(ref, page_index, rect, fill) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Queues a region for removal by `apply_redactions/1,2`, raising an error if it
+  fails.
+  """
+  @spec add_redaction!(t(), non_neg_integer(), Rect.t(), RGB.t() | nil) :: t()
+  def add_redaction!(%__MODULE__{} = editor, page_index, %Rect{} = rect, fill \\ nil)
+      when is_integer(page_index) and page_index >= 0 and (is_struct(fill, RGB) or is_nil(fill)) do
+    editor |> add_redaction(page_index, rect, fill) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Removes covered page text from marked pages and pages with queued regions,
+  and returns a `PdfElixide.RedactionReport`. Glyphs whose boxes touch a region
+  are deleted and an overlay is drawn over the cleared area.
+
+  **Immediate and irreversible.** The call rewrites content in the editor;
+  saving is not required to apply it. Queue every region first: only one pass
+  is allowed per editor. A second call returns
+  `{:error, %PdfElixide.Error{reason: :unsupported}}` without changes.
+
+  **Only glyphs drawn by the page itself are removed.** Covered images, vector
+  graphics, form XObject text and `/ActualText` remain recoverable. Redact the
+  source document if those contain sensitive content. The overlay can also be
+  displaced or clipped; see [Removing content](guides/redaction.md#removing-content)
+  and [Verifying](guides/redaction.md#verifying).
+
+  A `/Redact` annotation alone does not schedule a page: use
+  `mark_redactions/1,2` or `add_redaction/3,4` first. Deleting a page does not
+  cancel its marks or regions, and its results still count in the report.
+  Mark and queue after deletions, or reopen the source.
+
+  Rewritten pages lose all annotations, whose objects remain recoverable; see
+  [Annotation removal](guides/redaction.md#redacting-a-page-removes-every-annotation-on-it).
+  They also lose pending erase and annotation-flatten overlays; see
+  [Pending overlays](guides/redaction.md#it-discards-other-pending-overlays-on-the-page).
+
+  Incremental saves are refused afterwards. Metadata, JavaScript and embedded
+  files require a separate `sanitize/1,2` call.
+
+  Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` for undefined fonts,
+  composite fonts other than horizontal Identity-H, or text measured with state
+  discarded by a `q` … `Q` restore. **A font refusal can leave earlier pages
+  rewritten: discard the editor and reopen the source.** The text-state check
+  leaves the editor unchanged. See
+  [Refused pages](guides/redaction.md#refused-by-apply_redactions-1-2).
+
+  ## Options
+
+    * `:edge_padding` — how far past a region's edge to clear, in points, as a
+      floor on a proportional padding. Must be a non-negative number. Defaults
+      to `0.5`.
+    * `:default_fill` — the `PdfElixide.Color.RGB` drawn over a region queued
+      with `add_redaction/3,4` and given no `fill`. Each component must be
+      between `0.0` and `1.0`. Defaults to black. It never reaches a region
+      taken from a `/Redact` annotation: that carries a colour of its own,
+      its `/IC` or black where it declares none.
+    * `:draw_default_overlay` — draw `:default_fill` over such a region at all.
+      `false` leaves the cleared area blank. The same scope: an annotation's
+      region is painted either way. Defaults to `true`.
+
+  """
+  @spec apply_redactions(t(), redaction_opts()) ::
+          {:ok, RedactionReport.t()} | {:error, Error.t()}
+  def apply_redactions(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_redaction_options(opts)
+
+    with {:ok, report} <- Wrap.call(fn -> Native.editor_apply_redactions(ref, options) end) do
+      {:ok, RedactionReport.from_nif(report)}
+    end
+  end
+
+  @doc """
+  Removes the content covered by every queued region, raising an error if it
+  fails.
+  """
+  @spec apply_redactions!(t(), redaction_opts()) :: RedactionReport.t()
+  def apply_redactions!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
+    editor |> apply_redactions(opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Strips document-level metadata, JavaScript and embedded files, and returns a
+  `PdfElixide.SanitizeReport`.
+
+  **This removes nothing from any page.** Text, images and annotations are left
+  as they are; only catalog-level and `/Info` entries go. Use
+  `apply_redactions/1,2` to remove page content.
+
+  Like `apply_redactions/1,2` this takes effect immediately and cannot be
+  undone, and an incremental `save/3` is refused afterwards.
+
+  `garbage_collect: false` on `save/3` or `to_binary/2` is refused afterwards
+  with `{:error, %PdfElixide.Error{reason: :unsupported}}`: a full rewrite with
+  garbage collection is required to remove the scrubbed objects.
+
+  With `:scrub_metadata`, an indirect `/Info` value returns
+  `{:error, %PdfElixide.Error{reason: :unsupported}}` without changes. Use
+  `scrub_metadata: false` to strip the rest, or rewrite the metadata first.
+  See [Sanitization refusals](guides/redaction.md#refused-by-sanitize-1-2).
+
+  ## Options
+
+    * `:scrub_metadata` — clear `/Info` and the catalog's XMP metadata.
+      Defaults to `true`.
+    * `:remove_javascript` — remove document JavaScript, `/OpenAction` and
+      `/AA`. Defaults to `true`.
+    * `:remove_embedded_files` — remove the embedded-file name tree, and discard
+      any file queued with `embed_file/4` that has not been written yet.
+      Emptying the tree also lets `embed_file/4` attach to a document that would
+      otherwise be refused; see [Attachments](guides/editing.md#attachments). A
+      `/FileAttachment` annotation is left alone and its bytes stay in the file,
+      and nothing in this library removes them; see
+      [Sanitizing](guides/redaction.md#sanitizing). Defaults to `true`.
+
+  """
+  @spec sanitize(t(), sanitize_opts()) :: {:ok, SanitizeReport.t()} | {:error, Error.t()}
+  def sanitize(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_sanitize_options(opts)
+
+    with {:ok, report} <- Wrap.call(fn -> Native.editor_sanitize(ref, options) end) do
+      {:ok, SanitizeReport.from_nif(report)}
+    end
+  end
+
+  @doc """
+  Strips document-level metadata, JavaScript and embedded files, raising an
+  error if it fails.
+  """
+  @spec sanitize!(t(), sanitize_opts()) :: SanitizeReport.t()
+  def sanitize!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
+    editor |> sanitize(opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
   Returns the `/MediaBox` of the page at the given zero-based index — the sheet
   it is imposed on — including pending changes. For an unchanged page it
   behaves like `PdfElixide.Document.Page.media_box/1`.
@@ -919,7 +1285,9 @@ defmodule PdfElixide.Editor do
   which readers resolve inconsistently — use distinct names.
 
   Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` for a document that
-  already has a name tree. See the "Attachments" section of this module for this
+  already has a name tree, naming the entries that would be lost. A
+  `sanitize/1,2` that emptied the tree lifts the refusal; one that left an entry
+  in it does not. See the "Attachments" section of this module for this
   restriction, the media-type limitation and incremental-save behavior.
 
   Attachment data is copied into native memory and increases peak memory during
@@ -953,7 +1321,8 @@ defmodule PdfElixide.Editor do
   Lists the file attachments the edited document will carry, in name-tree order.
 
   This reflects pending edits: an attachment added with `embed_file/4` appears
-  here before any save, in the order a full write will place it. Its `:size`,
+  here before any save, in the order a full write will place it, and a
+  `sanitize/1,2` that removed the attachments empties the list. Its `:size`,
   `:checksum`, `:created` and `:modified` remain `nil`, even after a save. Read
   those fields with `PdfElixide.Document.embedded_files/1` on the written
   document.
@@ -988,8 +1357,9 @@ defmodule PdfElixide.Editor do
   Reads the document information the edited document will carry: values given
   to the setters below over the source's `/Info` dictionary.
 
-  `:trapped` is always the source's value. It cannot be set, and any write that
-  emits `/Info` drops it. See
+  `:trapped` is the source's value until `sanitize/1,2` clears it. It cannot be
+  set, and any write that emits `/Info` drops it. A `sanitize/1,2` that scrubbed
+  the metadata leaves every field here `nil`. See
   [Document information](guides/editing.md#document-information).
   """
   @spec metadata(t()) :: {:ok, Metadata.t()} | {:error, Error.t()}
@@ -1428,13 +1798,87 @@ defmodule PdfElixide.Editor do
 
   defp build_permission_option(other), do: other
 
+  # See `__option_defaults__/1` for why every key is emitted; the two option
+  # types say which of them each caller accepts.
+  defp build_redaction_options(opts) do
+    opts = Keyword.validate!(opts, @redaction_opts_keys)
+
+    redaction_options(opts)
+  end
+
+  # The other half of the split above; same comment applies.
+  defp build_sanitize_options(opts) do
+    opts = Keyword.validate!(opts, @sanitize_opts_keys)
+
+    redaction_options(opts)
+  end
+
+  defp redaction_options(opts) do
+    %{
+      scrub_metadata: Keyword.get(opts, :scrub_metadata, true),
+      remove_javascript: Keyword.get(opts, :remove_javascript, true),
+      remove_embedded_files: Keyword.get(opts, :remove_embedded_files, true),
+      # Literal, not a `Keyword.get`: no validated key list admits it, because
+      # nothing upstream reads it.
+      optional_content: :strip_hidden,
+      edge_padding: validate_edge_padding!(Keyword.get(opts, :edge_padding, 0.5)),
+      default_fill:
+        validate_fill!(
+          Keyword.get(opts, :default_fill, %RGB{r: 0.0, g: 0.0, b: 0.0}),
+          ":default_fill"
+        ),
+      draw_default_overlay: Keyword.get(opts, :draw_default_overlay, true),
+      emit_redaction_artifacts: false
+    }
+  end
+
+  # Range only; a value that is not a number is left to the NIF's field decoder,
+  # which also rejects a non-finite float before this can see one. Upstream
+  # substitutes its own default for a negative padding rather than reporting one,
+  # so accepting it would ignore the caller silently.
+  defp validate_edge_padding!(value) when is_number(value) and value < 0 do
+    raise ArgumentError,
+          "invalid :edge_padding, expected a non-negative number: #{inspect(value)}"
+  end
+
+  defp validate_edge_padding!(value), do: value
+
+  # Upstream clamps a component into range instead of reporting it, with NaN
+  # becoming 0.0 — same reasoning as `validate_edge_padding!/1`. Takes the label
+  # because it serves both the option and `add_redaction/4`'s positional
+  # argument, which must not be able to disagree about the range.
+  defp validate_fill!(fill, label)
+
+  defp validate_fill!(%RGB{r: r, g: g, b: b} = fill, label)
+       when is_number(r) and is_number(g) and is_number(b) do
+    if Enum.any?([r, g, b], &(&1 < 0.0 or &1 > 1.0)) do
+      raise ArgumentError,
+            "invalid #{label} #{inspect(fill)}: each component must be " <>
+              "between 0.0 and 1.0"
+    end
+
+    fill
+  end
+
+  defp validate_fill!(other, _label), do: other
+
   @doc false
-  @spec __option_defaults__(:save | :embed | :encryption | :permissions | :crop_margins) :: map()
+  @spec __option_defaults__(
+          :save
+          | :embed
+          | :encryption
+          | :permissions
+          | :crop_margins
+          | :redaction
+          | :sanitize
+        ) :: map()
   def __option_defaults__(:save), do: build_save_options([])
   def __option_defaults__(:embed), do: build_embed_options([])
   def __option_defaults__(:crop_margins), do: build_crop_margins([])
   def __option_defaults__(:encryption), do: build_encryption_option([])
   def __option_defaults__(:permissions), do: build_permission_option([])
+  def __option_defaults__(:redaction), do: build_redaction_options([])
+  def __option_defaults__(:sanitize), do: build_sanitize_options([])
 
   defimpl Inspect do
     import Inspect.Algebra

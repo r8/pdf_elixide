@@ -1,0 +1,58 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Metadata 6 0 R /Names << /JavaScript << /Names [(boot) 7 0 R] >> /EmbeddedFiles << /Names [(note.txt) 8 0 R] >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /Font << /F1 5 0 R >> >> /MediaBox [0 0 612 792] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 36 >>
+stream
+BT /F1 24 Tf 100 700 Td (Body) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Length 303 /Type /Metadata /Subtype /XML >>
+stream
+<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Sanitize me</dc:title></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>
+endstream
+endobj
+7 0 obj
+<< /S /JavaScript /JS (app.alert\(1\);) >>
+endobj
+8 0 obj
+<< /Type /Filespec /F (note.txt) /UF (note.txt) /EF << /F 9 0 R >> >>
+endobj
+9 0 obj
+<< /Length 8 /Type /EmbeddedFile >>
+stream
+attached
+endstream
+endobj
+10 0 obj
+<< /Title (Sanitize me) /Author (Ada) /Producer (pdf_elixide test) >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000174 00000 n 
+0000000294 00000 n 
+0000000357 00000 n 
+0000000443 00000 n 
+0000000540 00000 n 
+0000000924 00000 n 
+0000000982 00000 n 
+0000001067 00000 n 
+0000001144 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R /Info 10 0 R >>
+startxref
+1230
+%%EOF
