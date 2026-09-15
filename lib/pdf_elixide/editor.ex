@@ -1677,11 +1677,11 @@ defmodule PdfElixide.Editor do
 
   # Validate here so a bad positional NIF argument still names what it was.
   defp validate_name!(name) do
-    unless String.valid?(name) do
+    if String.valid?(name) do
+      name
+    else
       raise ArgumentError, "invalid name, expected a UTF-8 string: #{inspect(name)}"
     end
-
-    name
   end
 
   defp build_embed_options(opts) do

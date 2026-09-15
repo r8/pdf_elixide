@@ -2,8 +2,7 @@ use rustler::{Encoder, Env, NifResult, OwnedBinary, Term};
 
 use crate::{atoms, error::tagged_err};
 
-// Preserve allocation failure in the tagged error contract; never replace this
-// with an `expect` that Rustler would expose as opaque `:nif_panicked`.
+// Return allocation failures as tagged errors instead of panicking.
 pub fn owned_binary(bytes: &[u8], label: &str) -> NifResult<OwnedBinary> {
     let mut bin = OwnedBinary::new(bytes.len())
         .ok_or_else(|| tagged_err(atoms::other(), format!("failed to allocate {label} binary")))?;

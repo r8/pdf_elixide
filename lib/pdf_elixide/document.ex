@@ -1084,14 +1084,14 @@ defmodule PdfElixide.Document do
         nil
 
       %Color.RGB{r: r, g: g, b: b} = color ->
-        unless in_unit_range?(r) and in_unit_range?(g) and in_unit_range?(b) do
+        if in_unit_range?(r) and in_unit_range?(g) and in_unit_range?(b) do
+          # `/ 1` coerces an integer component: `in_unit_range?` admits one and
+          # `BackgroundNif` decodes `f32`, which Rustler refuses for an integer term.
+          {r / 1, g / 1, b / 1, 1.0}
+        else
           raise ArgumentError,
                 ":background components must each be in 0.0..1.0, got: #{inspect(color)}"
         end
-
-        # `/ 1` coerces an integer component: `in_unit_range?` admits one and
-        # `BackgroundNif` decodes `f32`, which Rustler refuses for an integer term.
-        {r / 1, g / 1, b / 1, 1.0}
 
       other ->
         raise ArgumentError,
