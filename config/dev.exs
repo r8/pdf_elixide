@@ -22,7 +22,8 @@ config :git_hooks,
         {:cmd, "mix credo --strict"},
         {:cmd, "cargo test --offline"},
         {:cmd, "mix test --color"},
-        {:cmd, "mix dialyzer --quiet-with-result"}
+        {:cmd, "mix dialyzer --quiet-with-result"},
+        {:file, "priv/hooks/warn-stale-rustc.sh"}
       ]
     ]
   ]
