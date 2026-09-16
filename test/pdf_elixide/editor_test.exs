@@ -1010,14 +1010,13 @@ defmodule PdfElixide.EditorTest do
       assert Editor.rotation!(editor, 0) == 0
     end
 
-    test "rounds a delta that is not a multiple of 90 to the nearest quadrant" do
-      editor = Editor.open!(@rotation_pdf)
+    test "raises for a delta that is not a multiple of 90" do
+      editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      editor |> Editor.rotate_page_by!(0, 45) |> Editor.rotate_page_by!(1, 134)
-
-      assert Editor.rotation!(editor, 0) == 180
-      assert Editor.rotation!(editor, 1) == 270
+      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, 0, 45) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, 0, 134) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by!(editor, 0, -45) end
     end
 
     test "leaves an invalid /Rotate at zero rather than rounding it up" do
@@ -1051,6 +1050,7 @@ defmodule PdfElixide.EditorTest do
 
       assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, -1, 90) end
       assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, 0, untyped(90.0)) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by!(editor, 0, untyped(90.0)) end
     end
   end
 
@@ -1095,11 +1095,13 @@ defmodule PdfElixide.EditorTest do
       assert rotations(editor) == [0, 90, 180, 270]
     end
 
-    test "raises for a non-integer delta" do
+    test "raises for a non-integer delta or one that is not a multiple of 90" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
       assert_raise FunctionClauseError, fn -> Editor.rotate_all_by(editor, untyped(90.0)) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_all_by(editor, 45) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_all_by!(editor, 134) end
     end
   end
 

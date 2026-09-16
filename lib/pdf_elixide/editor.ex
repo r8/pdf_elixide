@@ -607,16 +607,17 @@ defmodule PdfElixide.Editor do
   where it already is, and returns the editor.
 
   `degrees` is a delta rather than an absolute angle, so `rotate_page_by(e, 0, 90)`
-  takes a page already at `180` to `270`. Any integer is accepted: a negative one
-  turns anticlockwise, one past `360` wraps, and one that is not a multiple of 90
-  is rounded to the nearest quadrant — `45` and `134` both add `90`.
+  takes a page already at `180` to `270`. It must be a multiple of 90 — anything
+  else raises `FunctionClauseError`. A negative delta turns anticlockwise and one
+  past `360` wraps.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
   not exist. See the "Page rotation" section of this module.
   """
   @spec rotate_page_by(t(), non_neg_integer(), integer()) :: {:ok, t()} | {:error, Error.t()}
   def rotate_page_by(%__MODULE__{ref: ref} = editor, page_index, degrees)
-      when is_integer(page_index) and page_index >= 0 and is_integer(degrees) do
+      when is_integer(page_index) and page_index >= 0 and is_integer(degrees) and
+             rem(degrees, 90) == 0 do
     case Wrap.call(fn -> Native.editor_rotate_page_by(ref, page_index, delta(degrees)) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -629,7 +630,8 @@ defmodule PdfElixide.Editor do
   """
   @spec rotate_page_by!(t(), non_neg_integer(), integer()) :: t()
   def rotate_page_by!(%__MODULE__{} = editor, page_index, degrees)
-      when is_integer(page_index) and page_index >= 0 and is_integer(degrees) do
+      when is_integer(page_index) and page_index >= 0 and is_integer(degrees) and
+             rem(degrees, 90) == 0 do
     editor |> rotate_page_by(page_index, degrees) |> Wrap.unwrap!()
   end
 
@@ -642,14 +644,13 @@ defmodule PdfElixide.Editor do
   same terms as `rotate_page_by/3`. On a document with no pages this changes
   nothing and succeeds.
 
-  Every page's current rotation is read before any page is turned, so if one of
-  them cannot be read the call fails having turned none of them and left the
-  editor unmodified.
+  If any page's rotation cannot be read, the call fails without changing the editor.
 
   See the "Page rotation" section of this module.
   """
   @spec rotate_all_by(t(), integer()) :: {:ok, t()} | {:error, Error.t()}
-  def rotate_all_by(%__MODULE__{ref: ref} = editor, degrees) when is_integer(degrees) do
+  def rotate_all_by(%__MODULE__{ref: ref} = editor, degrees)
+      when is_integer(degrees) and rem(degrees, 90) == 0 do
     case Wrap.call(fn -> Native.editor_rotate_all_pages_by(ref, delta(degrees)) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
@@ -660,7 +661,8 @@ defmodule PdfElixide.Editor do
   Turns every page a further `degrees` clockwise, raising an error if it fails.
   """
   @spec rotate_all_by!(t(), integer()) :: t()
-  def rotate_all_by!(%__MODULE__{} = editor, degrees) when is_integer(degrees) do
+  def rotate_all_by!(%__MODULE__{} = editor, degrees)
+      when is_integer(degrees) and rem(degrees, 90) == 0 do
     editor |> rotate_all_by(degrees) |> Wrap.unwrap!()
   end
 

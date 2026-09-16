@@ -1283,9 +1283,16 @@ fn write_crop_box(
     )
 }
 
-// Reduce before adding to avoid i32 overflow; keep upstream's quadrant buckets.
+// Treat a non-quadrant base as zero, as the reader does rather than as upstream does.
+// Reduce before adding to avoid overflow; a quadrant for every input is what makes
+// `editor_rotate_all_pages_by`'s write pass infallible.
 fn round_to_quadrant(current: i32, degrees: i32) -> i32 {
-    match ((current % 360 + degrees % 360) % 360 + 360) % 360 {
+    let base = match current.rem_euclid(360) {
+        quadrant @ (0 | 90 | 180 | 270) => quadrant,
+        _ => 0,
+    };
+
+    match (base + degrees.rem_euclid(360)).rem_euclid(360) {
         0..=44 => 0,
         45..=134 => 90,
         135..=224 => 180,
@@ -2009,7 +2016,7 @@ mod tests {
     #[test]
     fn round_to_quadrant_still_matches_upstreams_rotate_page_by() {
         // `sample.pdf` has no /Rotate and keeps source order in this test.
-        for degrees in [45, 90, -90, 134, 135, 315, 450] {
+        for degrees in [90, -90, 450] {
             let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
 
             editor.rotate_page_by(0, degrees).expect("rotates");
@@ -2023,7 +2030,12 @@ mod tests {
     }
 
     #[test]
-    fn rounds_a_rotation_to_the_nearest_quadrant() {
+    fn the_quadrant_backstop_never_yields_a_non_quadrant() {
+        assert_eq!(round_to_quadrant(45, 0), 0);
+        assert_eq!(round_to_quadrant(45, 90), 90);
+
+        assert_eq!(round_to_quadrant(-90, 90), 0);
+
         assert_eq!(round_to_quadrant(0, 44), 0);
         assert_eq!(round_to_quadrant(0, 45), 90);
         assert_eq!(round_to_quadrant(0, 134), 90);

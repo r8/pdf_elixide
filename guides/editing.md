@@ -116,6 +116,12 @@ were.
 #=> :ok
 ```
 
+**Angles are quadrants.** `PdfElixide.Editor.set_rotation/3` takes `0`, `90`, `180` or
+`270`, and the two relative calls take any multiple of `90` — negative to turn
+anticlockwise, past `360` to wrap. Anything else raises `FunctionClauseError` rather
+than being rounded to the nearest quadrant. An invalid stored `/Rotate` reads as `0`
+before the delta is added, so turning a `45` page by `90` lands on `90`, not `135`.
+
 A rotation belongs to the page rather than to the position, so it follows the page
 through `PdfElixide.Editor.move_page/3` and survives the deletion of another page.
 
