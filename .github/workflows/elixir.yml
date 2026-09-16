@@ -29,6 +29,17 @@ jobs:
             otp: "28.4.2"
             os: ubuntu-latest
             checks: true
+          # The leg that gates the type checker: 1.20 infers guards, so it is
+          # the first Elixir to reject a test calling a function the guard
+          # excludes. `PdfElixide.Untyped` in `test/support/` is what keeps the
+          # deliberate ones passing. `checks:` repeats here rather than running
+          # once on the oldest leg because formatter output and credo results
+          # are version-dependent — unlike the host-independent reasoning that
+          # gives the Windows leg below `checks: false`.
+          - elixir: "1.20.4"
+            otp: "28.4.2"
+            os: ubuntu-latest
+            checks: true
             dialyzer: true
             docs: true
           # The only leg that compiles `fs_path.rs`'s `#[cfg(not(unix))]` arm —

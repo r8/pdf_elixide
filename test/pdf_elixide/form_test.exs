@@ -3,6 +3,8 @@ defmodule PdfElixide.FormTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Untyped
+
   alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Error
@@ -153,7 +155,7 @@ defmodule PdfElixide.FormTest do
 
     test "raises FunctionClauseError for a name that is not a binary" do
       doc = Document.open!(@form_pdf)
-      assert_raise FunctionClauseError, fn -> Form.field(doc, :full_name) end
+      assert_raise FunctionClauseError, fn -> Form.field(doc, untyped(:full_name)) end
     end
   end
 
@@ -1073,10 +1075,12 @@ defmodule PdfElixide.FormTest do
     test "raises FunctionClauseError for a non-function or a wrong arity" do
       editor = Editor.open!(@form_pdf)
 
-      assert_raise FunctionClauseError, fn -> Form.update_value(editor, "full_name", "nope") end
+      assert_raise FunctionClauseError, fn ->
+        Form.update_value(editor, "full_name", untyped("nope"))
+      end
 
       assert_raise FunctionClauseError, fn ->
-        Form.update_value(editor, "full_name", fn a, b -> {a, b} end)
+        Form.update_value(editor, "full_name", untyped(fn a, b -> {a, b} end))
       end
     end
   end

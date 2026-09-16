@@ -3,6 +3,8 @@ defmodule PdfElixide.DocumentTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Untyped
+
   alias PdfElixide.Color
   alias PdfElixide.Document
   alias PdfElixide.Document.Annotation
@@ -245,7 +247,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.text!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.text!(doc, untyped(:first)) end
     end
   end
 
@@ -498,7 +500,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer, non-list second argument" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.to_markdown!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.to_markdown!(doc, untyped(:first)) end
     end
   end
 
@@ -518,7 +520,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for a non-list options argument" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.to_markdown(doc, 0, :opts) end
+      assert_raise FunctionClauseError, fn -> Document.to_markdown(doc, 0, untyped(:opts)) end
     end
   end
 
@@ -843,7 +845,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer, non-list second argument" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.to_html!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.to_html!(doc, untyped(:first)) end
     end
   end
 
@@ -863,7 +865,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for a non-list options argument" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.to_html(doc, 0, :opts) end
+      assert_raise FunctionClauseError, fn -> Document.to_html(doc, 0, untyped(:opts)) end
     end
   end
 
@@ -1038,7 +1040,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer, non-list second argument" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.to_plain_text!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.to_plain_text!(doc, untyped(:first)) end
     end
   end
 
@@ -1058,7 +1060,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for a non-list options argument" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.to_plain_text(doc, 0, :opts) end
+      assert_raise FunctionClauseError, fn -> Document.to_plain_text(doc, 0, untyped(:opts)) end
     end
   end
 
@@ -1172,7 +1174,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.words!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.words!(doc, untyped(:first)) end
     end
   end
 
@@ -1238,7 +1240,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.text_lines!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.text_lines!(doc, untyped(:first)) end
     end
   end
 
@@ -1350,7 +1352,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.chars!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.chars!(doc, untyped(:first)) end
     end
   end
 
@@ -1457,7 +1459,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.spans!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.spans!(doc, untyped(:first)) end
     end
   end
 
@@ -1553,7 +1555,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.paths!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.paths!(doc, untyped(:first)) end
     end
   end
 
@@ -1649,7 +1651,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.rects!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.rects!(doc, untyped(:first)) end
     end
   end
 
@@ -1735,7 +1737,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.lines!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.lines!(doc, untyped(:first)) end
     end
   end
 
@@ -1844,7 +1846,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for a non-binary pattern" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.search(doc, :page) end
+      assert_raise FunctionClauseError, fn -> Document.search(doc, untyped(:page)) end
     end
 
     test "returns {:ok, []} for an encrypted document that was never authenticated" do
@@ -1934,7 +1936,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for a non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.search!(doc, "Page", :first) end
+      assert_raise FunctionClauseError, fn -> Document.search!(doc, "Page", untyped(:first)) end
     end
   end
 
@@ -2079,7 +2081,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.fonts!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.fonts!(doc, untyped(:first)) end
     end
   end
 
@@ -2292,7 +2294,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.images!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.images!(doc, untyped(:first)) end
     end
   end
 
@@ -2524,7 +2526,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@table_pdf)
-      assert_raise FunctionClauseError, fn -> Document.tables!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.tables!(doc, untyped(:first)) end
     end
   end
 
@@ -2554,7 +2556,7 @@ defmodule PdfElixide.DocumentTest do
 
       assert_raise FunctionClauseError, fn -> Table.cell(table, -1, 0) end
       assert_raise FunctionClauseError, fn -> Table.cell(table, 0, -1) end
-      assert_raise FunctionClauseError, fn -> Table.cell(table, :first, 0) end
+      assert_raise FunctionClauseError, fn -> Table.cell(table, untyped(:first), 0) end
     end
 
     test "indexes by position, ignoring colspan" do
@@ -2777,14 +2779,14 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "raises for a table that never came from extraction" do
-      assert_raise FunctionClauseError, fn -> Table.to_markdown(spanning_table()) end
+      assert_raise FunctionClauseError, fn -> Table.to_markdown(untyped(spanning_table())) end
     end
 
     test "raises for non-list options" do
       doc = Document.open!(@table_pdf)
       [table] = Document.tables!(doc, 0)
 
-      assert_raise FunctionClauseError, fn -> Table.to_markdown(table, :conservative) end
+      assert_raise FunctionClauseError, fn -> Table.to_markdown(table, untyped(:conservative)) end
     end
   end
 
@@ -2839,7 +2841,7 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "raises for a table that never came from extraction" do
-      assert_raise FunctionClauseError, fn -> Table.to_html(spanning_table()) end
+      assert_raise FunctionClauseError, fn -> Table.to_html(untyped(spanning_table())) end
     end
   end
 
@@ -2881,7 +2883,7 @@ defmodule PdfElixide.DocumentTest do
     end
 
     test "raises for a table that never came from extraction" do
-      assert_raise FunctionClauseError, fn -> Table.to_text(spanning_table()) end
+      assert_raise FunctionClauseError, fn -> Table.to_text(untyped(spanning_table())) end
     end
   end
 
@@ -3135,7 +3137,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for a non-binary password" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.authenticate(doc, :secret) end
+      assert_raise FunctionClauseError, fn -> Document.authenticate(doc, untyped(:secret)) end
     end
 
     test "a handle read before authenticating answers correctly afterwards" do
@@ -3477,7 +3479,7 @@ defmodule PdfElixide.DocumentTest do
 
     test "raises FunctionClauseError for non-integer page index" do
       doc = Document.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Document.annotations!(doc, :first) end
+      assert_raise FunctionClauseError, fn -> Document.annotations!(doc, untyped(:first)) end
     end
   end
 

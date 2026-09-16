@@ -2,6 +2,8 @@ defmodule PdfElixide.ExtractionOptionsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Untyped
+
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
   alias PdfElixide.Geometry.Rect
@@ -656,7 +658,7 @@ defmodule PdfElixide.ExtractionOptionsTest do
     end
 
     test "a non-list, non-integer second argument raises", %{doc: doc} do
-      assert_raise FunctionClauseError, fn -> Document.words(doc, :nope) end
+      assert_raise FunctionClauseError, fn -> Document.words(doc, untyped(:nope)) end
     end
 
     test "a list that is not a keyword list raises", %{doc: doc} do

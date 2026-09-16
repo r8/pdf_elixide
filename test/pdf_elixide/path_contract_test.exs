@@ -2,6 +2,8 @@ defmodule PdfElixide.PathContractTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Untyped
+
   alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Error
@@ -181,23 +183,23 @@ defmodule PdfElixide.PathContractTest do
 
   describe "only the binary form of Path.t() is accepted" do
     test "Document.open/2 rejects a charlist" do
-      assert_raise FunctionClauseError, fn -> Document.open(~c"sample.pdf") end
+      assert_raise FunctionClauseError, fn -> Document.open(untyped(~c"sample.pdf")) end
     end
 
     test "Editor.open/1 rejects a charlist" do
-      assert_raise FunctionClauseError, fn -> Editor.open(~c"sample.pdf") end
+      assert_raise FunctionClauseError, fn -> Editor.open(untyped(~c"sample.pdf")) end
     end
 
     test "Editor.save/3 rejects a charlist" do
       editor = Editor.open!(@valid_pdf)
-      assert_raise FunctionClauseError, fn -> Editor.save(editor, ~c"out.pdf") end
+      assert_raise FunctionClauseError, fn -> Editor.save(editor, untyped(~c"out.pdf")) end
     end
 
     test "Image.save/3 rejects a charlist" do
       [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
 
       assert_raise FunctionClauseError, fn ->
-        Document.Image.save(image, ~c"out.png", format: :png)
+        Document.Image.save(image, untyped(~c"out.png"), format: :png)
       end
     end
 
@@ -205,7 +207,7 @@ defmodule PdfElixide.PathContractTest do
       [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
 
       assert_raise FunctionClauseError, fn ->
-        Document.Image.save!(image, ~c"out.png", format: :png)
+        Document.Image.save!(image, untyped(~c"out.png"), format: :png)
       end
     end
   end

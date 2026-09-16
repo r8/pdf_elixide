@@ -3,6 +3,8 @@ defmodule PdfElixide.SignatureTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Untyped
+
   alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Error
@@ -122,7 +124,7 @@ defmodule PdfElixide.SignatureTest do
   # length and still parses, so only the signature across it can report this.
   defp tamper(%Timestamp{token: token, message_imprint: imprint}) do
     {offset, _size} = :binary.match(token, imprint)
-    <<head::binary-size(offset), byte, rest::binary>> = token
+    <<head::binary-size(^offset), byte, rest::binary>> = token
 
     head <> <<rem(byte + 1, 256)>> <> rest
   end
@@ -131,16 +133,16 @@ defmodule PdfElixide.SignatureTest do
   # stable across the OTP releases CI runs, so a test written against either
   # shape passes on one leg and fails on the other. The tags did not move.
   defp tlv(<<tag, len, rest::binary>>) when len < 0x80 do
-    <<value::binary-size(len), tail::binary>> = rest
+    <<value::binary-size(^len), tail::binary>> = rest
 
     {tag, value, tail}
   end
 
   defp tlv(<<tag, header, rest::binary>>) when header > 0x80 do
     size = header - 0x80
-    <<len::binary-size(size), body::binary>> = rest
+    <<len::binary-size(^size), body::binary>> = rest
     len = :binary.decode_unsigned(len)
-    <<value::binary-size(len), tail::binary>> = body
+    <<value::binary-size(^len), tail::binary>> = body
 
     {tag, value, tail}
   end
@@ -586,7 +588,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "raises on bytes that are not a binary", %{signature: signature} do
-      assert_raise FunctionClauseError, fn -> Signature.verify(signature, :not_bytes) end
+      assert_raise FunctionClauseError, fn -> Signature.verify(signature, untyped(:not_bytes)) end
     end
 
     test "verify!/2 and verify_signer!/1 unwrap or raise", %{
@@ -943,7 +945,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "raises on a value that is not a binary" do
-      assert_raise FunctionClauseError, fn -> Certificate.parse(42) end
+      assert_raise FunctionClauseError, fn -> Certificate.parse(untyped(42)) end
     end
 
     test "parse!/1 unwraps or raises", %{certificate: certificate} do
@@ -1138,7 +1140,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "raises on a store it cannot decode", %{b_lt: b_lt, dss: dss} do
-      assert_raise FunctionClauseError, fn -> Signature.pades_level(b_lt, %{}) end
+      assert_raise FunctionClauseError, fn -> Signature.pades_level(b_lt, untyped(%{})) end
       assert_raise ArgumentError, fn -> Signature.pades_level(b_lt, %{dss | vri: [42]}) end
     end
 
@@ -1215,7 +1217,7 @@ defmodule PdfElixide.SignatureTest do
 
     test "raises on bytes that are not a binary", ctx do
       assert_raise FunctionClauseError, fn ->
-        Signature.pades_level(ctx.signature, ctx.dss, 42)
+        Signature.pades_level(ctx.signature, ctx.dss, untyped(42))
       end
     end
 
@@ -1291,7 +1293,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "raises on bytes that are not a binary" do
-      assert_raise FunctionClauseError, fn -> Signature.document_timestamp?(42) end
+      assert_raise FunctionClauseError, fn -> Signature.document_timestamp?(untyped(42)) end
     end
   end
 
@@ -1327,7 +1329,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "raises on bytes that are not a binary" do
-      assert_raise FunctionClauseError, fn -> Signature.document_timestamp(42) end
+      assert_raise FunctionClauseError, fn -> Signature.document_timestamp(untyped(42)) end
     end
   end
 
@@ -1712,7 +1714,9 @@ defmodule PdfElixide.SignatureTest do
     test "raises on bytes that are not a binary", ctx do
       signature = ctx.signature.(@pades_t_pdf)
 
-      assert_raise FunctionClauseError, fn -> Signature.verify_timestamp(signature, 42) end
+      assert_raise FunctionClauseError, fn ->
+        Signature.verify_timestamp(signature, untyped(42))
+      end
     end
 
     test "verify_timestamp!/2 unwraps or raises", ctx do
@@ -1765,7 +1769,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "raises on a value the NIF cannot decode" do
-      assert_raise FunctionClauseError, fn -> Timestamp.parse(42) end
+      assert_raise FunctionClauseError, fn -> Timestamp.parse(untyped(42)) end
     end
 
     test "parse!/1 unwraps or raises", %{timestamp: timestamp} do
@@ -1874,7 +1878,7 @@ defmodule PdfElixide.SignatureTest do
 
     test "raises for a size that is not a byte count", %{signature: signature} do
       assert_raise FunctionClauseError, fn ->
-        Signature.covers_whole_document?(signature, "2382")
+        Signature.covers_whole_document?(signature, untyped("2382"))
       end
     end
   end

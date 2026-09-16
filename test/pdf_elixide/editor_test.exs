@@ -3,6 +3,8 @@ defmodule PdfElixide.EditorTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Untyped
+
   alias PdfElixide.Document
   alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Editor
@@ -1048,7 +1050,7 @@ defmodule PdfElixide.EditorTest do
       on_exit(fn -> Editor.close(editor) end)
 
       assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, -1, 90) end
-      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, 0, 90.0) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_page_by(editor, 0, untyped(90.0)) end
     end
   end
 
@@ -1097,7 +1099,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      assert_raise FunctionClauseError, fn -> Editor.rotate_all_by(editor, 90.0) end
+      assert_raise FunctionClauseError, fn -> Editor.rotate_all_by(editor, untyped(90.0)) end
     end
   end
 
@@ -1629,7 +1631,7 @@ defmodule PdfElixide.EditorTest do
       on_exit(fn -> Editor.close(editor) end)
 
       assert_raise ArgumentError, ~r/at least one region/, fn ->
-        Editor.erase_regions(editor, 0, [])
+        Editor.erase_regions(editor, 0, untyped([]))
       end
 
       refute Editor.modified?(editor)
@@ -2078,7 +2080,7 @@ defmodule PdfElixide.EditorTest do
       on_exit(fn -> Editor.close(editor) end)
 
       assert_raise FunctionClauseError, fn ->
-        Editor.add_redaction(editor, 1, @redact_rect, {1.0, 0.0, 0.0})
+        Editor.add_redaction(editor, 1, @redact_rect, untyped({1.0, 0.0, 0.0}))
       end
     end
 
@@ -3366,7 +3368,7 @@ defmodule PdfElixide.EditorTest do
       on_exit(fn -> Editor.close(editor) end)
 
       assert_raise FunctionClauseError, fn -> Editor.embed_file(editor, "", "x") end
-      assert_raise FunctionClauseError, fn -> Editor.embed_file(editor, :name, "x") end
+      assert_raise FunctionClauseError, fn -> Editor.embed_file(editor, untyped(:name), "x") end
       assert_raise ArgumentError, fn -> Editor.embed_file(editor, <<0xFF>>, "x") end
     end
 
