@@ -367,8 +367,11 @@ field-value updates and leaves the original AcroForm structure as it was:
 {:ok, editor} = Editor.save(editor, "path/to/filled.pdf", incremental: true)
 ```
 
-For changes beyond field values, see
-[Saving edits](editing.md#saving-edits) for the incremental-save limitations.
+Field values and document information are the only changes an incremental update
+carries. If the editor holds any other pending change — a flatten mark included —
+the save is refused with
+`{:error, %PdfElixide.Error{reason: :unsupported}}` naming it, rather than writing a
+file without it. See [Saving edits](editing.md#saving-edits).
 
 `to_binary/2` clears `PdfElixide.Editor.modified?/1` even though it writes no
 file; an incremental `save/3` leaves it set.
@@ -506,10 +509,13 @@ flatten; the drawing happens inside `PdfElixide.Editor.save/3` or
 field, because the editor is unchanged — what changes is the file you write.
 `PdfElixide.Editor.modified?/1` does go true at mark time.
 
-**An incremental save does not flatten.** `save(editor, path, incremental: true)`
-writes an unflattened file, reports no error and produces no warnings. An
-incremental update appends to the original, and the original's fields are still
-there. Write with `save/3` without `:incremental`, or with `to_binary/2`.
+**An incremental save is refused once a page is marked.**
+`save(editor, path, incremental: true)` returns
+`{:error, %PdfElixide.Error{reason: :unsupported}}` and writes nothing: an
+incremental update appends to the original, whose fields are still there, so it
+could only produce an unflattened file. Write with `save/3` without
+`:incremental`, or with `to_binary/2`. Because a mark cannot be removed, filling
+and flattening in one session means writing a full rewrite.
 
 **A mark cannot be removed, and it applies to every later write.** There is no
 unflatten; reopen the source if you need an unflattened document. Writing twice

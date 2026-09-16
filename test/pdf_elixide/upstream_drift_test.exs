@@ -736,123 +736,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   describe "what an incremental save carries out of the editor" do
     @tag :tmp_dir
-    test "a page deletion and a move both go missing", %{tmp_dir: tmp_dir} do
-      editor = Editor.open!(@sample_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-      path = Path.join(tmp_dir, "incremental_pages.pdf")
-
-      editor |> Editor.delete_page!(1) |> Editor.move_page!(1, 0)
-      assert Editor.page_count!(editor) == 2
-
-      Editor.save!(editor, path, incremental: true)
-
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
-
-      assert Document.page_count!(doc) == 3
-
-      assert doc |> Enum.map(&Page.text!/1) |> Enum.map(&String.trim/1) ==
-               ["Page One", "Page Two", "Page Three"]
-    end
-
-    @tag :tmp_dir
-    test "an embedded file goes missing too", %{tmp_dir: tmp_dir} do
-      editor = Editor.open!(@sample_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-      path = Path.join(tmp_dir, "incremental_attachment.pdf")
-
-      Editor.embed_file!(editor, "data.csv", "a,b\n")
-
-      Editor.save!(editor, path, incremental: true)
-
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
-
-      assert Document.embedded_files!(doc) == [],
-             "upstream now writes pending attachments into an incremental update"
-    end
-
-    @tag :tmp_dir
-    test "a page rotation goes missing too", %{tmp_dir: tmp_dir} do
-      editor = Editor.open!(@rotation_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-      path = Path.join(tmp_dir, "incremental_rotation.pdf")
-
-      Editor.rotate_all_by!(editor, 90)
-      assert Editor.rotation!(editor, @rotate_90) == 180
-
-      Editor.save!(editor, path, incremental: true)
-
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
-
-      assert Enum.map(doc, &Page.rotation!/1) == [90, 180, 270, 0],
-             "upstream now carries page properties into an incremental update"
-    end
-
-    @tag :tmp_dir
-    test "a page box goes missing too", %{tmp_dir: tmp_dir} do
-      editor = Editor.open!(@sample_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-      path = Path.join(tmp_dir, "incremental_boxes.pdf")
-
-      small = %PdfElixide.Geometry.Rect{x: 0.0, y: 0.0, width: 100.0, height: 50.0}
-      editor |> Editor.set_media_box!(0, small) |> Editor.set_crop_box!(1, small)
-
-      Editor.save!(editor, path, incremental: true)
-
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
-
-      assert %{width: 612.0, height: 792.0} = Page.media_box!(Document.page!(doc, 0))
-
-      assert Page.crop_box!(Document.page!(doc, 1)) == nil,
-             "upstream now carries page properties into an incremental update"
-    end
-
-    @tag :tmp_dir
-    test "an erased region goes missing too", %{tmp_dir: tmp_dir} do
-      editor = Editor.open!(@sample_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-      path = Path.join(tmp_dir, "incremental_erase.pdf")
-
-      Editor.erase_region!(editor, 0, %PdfElixide.Geometry.Rect{
-        x: 0.0,
-        y: 0.0,
-        width: 612.0,
-        height: 792.0
-      })
-
-      Editor.save!(editor, path, incremental: true)
-
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
-
-      assert Document.rects!(doc, 0) == [],
-             "upstream now carries erase overlays into an incremental update"
-    end
-
-    @tag :tmp_dir
-    test "a redaction mark goes missing too", %{tmp_dir: tmp_dir} do
-      editor = Editor.open!(@redact_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-      path = Path.join(tmp_dir, "incremental_redaction.pdf")
-
-      Editor.mark_redactions!(editor, 0)
-      Editor.save!(editor, path, incremental: true)
-
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
-
-      assert Document.rects!(doc, 0) == [],
-             "upstream now carries redaction overlays into an incremental update"
-
-      assert doc |> Document.annotations!(0) |> length() == 3,
-             "upstream now drops the annotations in an incremental update too"
-    end
-
-    @tag :tmp_dir
-    test "a metadata edit survives, unlike everything above", %{tmp_dir: tmp_dir} do
+    test "a metadata edit survives an incremental save", %{tmp_dir: tmp_dir} do
       editor = Editor.open!(@metadata_pdf)
       on_exit(fn -> Editor.close(editor) end)
       path = Path.join(tmp_dir, "incremental_info.pdf")
@@ -1267,19 +1151,6 @@ defmodule PdfElixide.UpstreamDriftTest do
       Editor.to_binary!(editor)
 
       assert Editor.flatten_warnings!(editor) == first ++ first
-    end
-
-    test "an incremental save ignores the flatten marks entirely" do
-      editor = Editor.open!(@flatten_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-      path = Path.join(System.tmp_dir!(), "drift_incremental_flatten.pdf")
-      on_exit(fn -> File.rm(path) end)
-
-      editor |> Form.flatten!() |> Editor.save!(path, incremental: true)
-
-      doc = Document.open!(path)
-      assert Enum.map(Form.fields!(doc), & &1.name) == ["full_name", "comments"]
-      assert Editor.flatten_warnings!(editor) == []
     end
 
     # The signature dictionary survives even when the catalog no longer links it.

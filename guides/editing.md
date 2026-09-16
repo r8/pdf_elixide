@@ -11,24 +11,59 @@ Use `PdfElixide.Editor.save/3` with its default `incremental: false`, or
 `PdfElixide.Editor.to_binary/2`, to write page edits and attachments. Writing leaves the
 editor open for further changes; `PdfElixide.Editor.close/1` discards any unsaved edits.
 
-**An incremental save omits page deletions, moves, rotations, page boxes, erased
-regions, redaction marks, attachments and flattening.** `PdfElixide.Editor.save(editor, path, incremental: true)`
-appends field-value updates to the original file. The output keeps the original pages,
-their order, rotation, boxes and content, and the original attachments and
-unflattened annotations. The call reports no error for those omitted changes. See
-[Saving](forms.md#saving) for the form-filling workflow.
+**An incremental save carries field values and document information, and refuses
+everything else.** `PdfElixide.Editor.save(editor, path, incremental: true)` appends an
+update to a verbatim copy of the original file. Only two kinds of change reach that
+update: form field values written with `PdfElixide.Form.put_value/3` — see
+[Saving](forms.md#saving) for that workflow — and the `/Info` entries the
+`PdfElixide.Editor.set_title/2` family sets. Everything else counts as pending:
 
-**A destructive redaction is the exception: it is refused, not omitted.** Once
+  * page deletions and moves
+  * page rotations
+  * page media and crop boxes
+  * erased regions and queued redaction regions
+  * redaction marks
+  * annotation and form flatten marks
+  * attachments
+
+If the editor holds any of those, the save returns
+`{:error, %PdfElixide.Error{reason: :unsupported}}` naming them, and writes no
+file.
+
+To withdraw pending changes, use `PdfElixide.Editor.clear_erase_regions/2` for
+a page's erased regions, `PdfElixide.Editor.unmark_redactions/2` for its redaction
+mark, or move pages back into their original order. Incremental saving becomes
+available once no unsupported changes remain. Deletions and the other changes
+listed above cannot be withdrawn; reopen the source or write a full rewrite.
+
+**Setting rotation or boxes counts as pending even if the value is unchanged.**
+Restoring the original value or calling `PdfElixide.Editor.rotate_page_by/3` with
+`0` still prevents incremental saving. Only page order is compared with the source.
+
+Marks also count when there is nothing to draw: `PdfElixide.Form.flatten/1` on
+a document with no AcroForm and `PdfElixide.Editor.mark_redactions/2` on a page
+without `/Redact` annotations both prevent incremental saving.
+
+**A full rewrite in between does not lift the refusal.** An incremental update is
+appended to the *original* file whatever was written since, so the pending change
+would still be missing from it.
+
+**An editor built with `PdfElixide.Editor.from_binary/1` cannot save incrementally.**
+It has no source file to copy, so `incremental: true` returns
+`{:error, %PdfElixide.Error{reason: :unsupported}}` even with no edits or only field
+values. Use `PdfElixide.Editor.open/1` for incremental saving, or write a full rewrite.
+
+**Destructive redaction requires a full rewrite.** Once
 `PdfElixide.Editor.apply_redactions/1` or `PdfElixide.Editor.sanitize/1` has run,
-`incremental: true` returns `{:error, %PdfElixide.Error{reason: :unsupported}}`
-rather than writing an update that leaves the removed content readable, and a
-write with `garbage_collect: false` after a sanitize is refused the same way. A
-*mark* is not refused — it is one of the omissions above. See
+`incremental: true` is refused because it would leave removed content readable.
+A write with `garbage_collect: false` after a sanitize is also refused. See
 [What is refused, and why](redaction.md#what-is-refused-and-why).
 
 `PdfElixide.Editor.to_binary/2` refuses `incremental: true` with
-`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`; an incremental update must be
-appended to the original file. Neither writing function accepts encryption with `incremental: true`; see
+`{:error, %PdfElixide.Error{reason: :invalid_pdf}}` regardless of pending edits.
+After `PdfElixide.Editor.sanitize/1,2`, requesting `garbage_collect: false` takes
+precedence and returns `:unsupported` instead.
+Neither writing function accepts encryption with `incremental: true`; see
 [Encryption](encryption.md).
 
 ## Page structure
@@ -87,7 +122,7 @@ through `PdfElixide.Editor.move_page/3` and survives the deletion of another pag
 Rotation only turns the page as a viewer displays it. Nothing re-lays out the content,
 and the page's `/MediaBox` is not swapped, so a `90`-rotated portrait page still reports
 portrait dimensions. See [Saving edits](#saving-edits) for the incremental-save
-limitation.
+refusal.
 
 ## Page boxes
 
@@ -141,7 +176,7 @@ A box belongs to the page rather than to the position, so it follows the page th
 `PdfElixide.Editor.move_page/3` and survives the deletion of another page. Where a
 box is inherited from the page tree, see "Page boxes and the coordinate origin" in
 `PdfElixide.Document` for which ancestor it comes from. See
-[Saving edits](#saving-edits) for the incremental-save limitation.
+[Saving edits](#saving-edits) for the incremental-save refusal.
 
 ## Erasing regions
 
@@ -221,8 +256,8 @@ A region belongs to the page rather than to the position, so it follows the page
 `PdfElixide.Editor.move_page/3` and survives the deletion of another page.
 
 `PdfElixide.Editor.clear_erase_regions/2` discards the regions pending on a page. It
-does not reset `PdfElixide.Editor.modified?/1`. See [Saving edits](#saving-edits) for
-the incremental-save limitation.
+does not reset `PdfElixide.Editor.modified?/1`, but it does lift the incremental-save
+refusal for that page. See [Saving edits](#saving-edits).
 
 ## Attachments
 
@@ -258,7 +293,7 @@ This works only when nothing is left in the tree. A sanitize that kept an entry 
 run with `remove_javascript: false`, say — still refuses, and names the entry it is
 protecting. A name tree that cannot be read is refused either way.
 
-See [Saving edits](#saving-edits) for the incremental-save limitation.
+See [Saving edits](#saving-edits) for the incremental-save refusal.
 
 No media type is written for an attachment. `PdfElixide.Document.EmbeddedFile` reads one
 when another producer declared it, but this editor cannot set one.
@@ -287,9 +322,10 @@ reads them back.
 
 Every write, full rewrite or incremental, carries the source's title, author,
 subject, keywords, creator, producer and both dates whether or not you set any
-of them, re-encoded as described below. Two things do not survive: `/Trapped`,
-which cannot be set — `PdfElixide.Editor.metadata/1` reports the source's value
-until something clears it — and any non-standard `/Info` key.
+of them, re-encoded as described below — `/Info` is one of the two things an
+incremental update carries, per [Saving edits](#saving-edits). Two things do not
+survive: `/Trapped`, which cannot be set — `PdfElixide.Editor.metadata/1` reports
+the source's value until something clears it — and any non-standard `/Info` key.
 
 `PdfElixide.Editor.sanitize/1` is what clears it. With its default
 `scrub_metadata: true` none of those values are carried, `/Trapped` included,

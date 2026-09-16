@@ -326,8 +326,9 @@ defmodule PdfElixide.Form do
   Flattening draws each field's appearance into the page content and removes the
   interactive fields, so the written PDF is no longer fillable. Nothing happens
   until the next full write: `PdfElixide.Editor.save/3` without `:incremental`,
-  or `PdfElixide.Editor.to_binary/2`. An incremental save ignores the mark
-  entirely.
+  or `PdfElixide.Editor.to_binary/2`. An incremental save is refused once a page
+  is marked, and because the mark cannot be removed it stays refused for the life
+  of the editor.
 
   This also removes the document's AcroForm, and any signature field goes with
   it — the dictionary stays in the file, but nothing references it any more, so

@@ -161,6 +161,32 @@ pub fn queued_redactions(resource: &EditorResource) -> MutexGuard<'_, HashSet<us
         .unwrap_or_else(|e| e.into_inner())
 }
 
+pub enum Marked {
+    Redactions,
+    Annotations,
+    Forms,
+}
+
+// Every marking NIF must enable its category's scan. Relaxed ordering is safe
+// because readers and writers hold the exclusive editor guard.
+pub fn mark_pages(resource: &EditorResource, what: Marked) {
+    let flag = match what {
+        Marked::Redactions => &resource.redactions_marked,
+        Marked::Annotations => &resource.annotations_marked,
+        Marked::Forms => &resource.forms_marked,
+    };
+
+    flag.store(true, Ordering::Relaxed);
+}
+
+// Same poisoning rule as `page_edits`.
+fn erased_pages(resource: &EditorResource) -> MutexGuard<'_, HashSet<usize>> {
+    resource
+        .erased_regions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 // The visible pages as source indices, in output order — the index space
 // upstream keys its destructive redaction set by.
 pub fn source_pages(resource: &EditorResource) -> Vec<usize> {
@@ -255,7 +281,11 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
         redacted: AtomicBool::new(false),
         sanitized: AtomicBool::new(false),
         redaction_regions: Mutex::new(HashSet::new()),
+        erased_regions: Mutex::new(HashSet::new()),
         applied_redactions: AtomicBool::new(false),
+        redactions_marked: AtomicBool::new(false),
+        annotations_marked: AtomicBool::new(false),
+        forms_marked: AtomicBool::new(false),
         embedded_scrubbed: AtomicBool::new(false),
         javascript_scrubbed: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
@@ -284,7 +314,11 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
         redacted: AtomicBool::new(false),
         sanitized: AtomicBool::new(false),
         redaction_regions: Mutex::new(HashSet::new()),
+        erased_regions: Mutex::new(HashSet::new()),
         applied_redactions: AtomicBool::new(false),
+        redactions_marked: AtomicBool::new(false),
+        annotations_marked: AtomicBool::new(false),
+        forms_marked: AtomicBool::new(false),
         embedded_scrubbed: AtomicBool::new(false),
         javascript_scrubbed: AtomicBool::new(false),
         pages: Mutex::new(Vec::new()),
@@ -550,6 +584,146 @@ fn ensure_scrub_survives_save(
     Ok(())
 }
 
+// Binary-sourced editors have no path for the incremental writer to copy.
+fn ensure_incremental_has_a_source(
+    editor: &DocumentEditor,
+    options: &SaveOptionsNif,
+) -> NifResult<()> {
+    if options.incremental && editor.source_path().is_empty() {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This editor was built from a binary, which an incremental save cannot \
+             append to: the update is written after a verbatim copy of the file the \
+             editor was opened from, and this editor has no such file. Nothing has \
+             been written. Save a full rewrite instead.",
+        ));
+    }
+
+    Ok(())
+}
+
+// The incremental writer silently omits changes outside field values and /Info.
+fn ensure_edits_survive_save(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+    options: &SaveOptionsNif,
+) -> NifResult<()> {
+    if !options.incremental {
+        return Ok(());
+    }
+
+    let dropped = dropped_by_an_incremental_save(resource, editor);
+    if dropped.is_empty() {
+        return Ok(());
+    }
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "This editor holds {}, which an incremental save does not carry: the \
+             update is appended to a verbatim copy of the original file, and only \
+             form field values and document information reach it. Nothing has been \
+             written. Save a full rewrite instead.",
+            spell_out(&dropped)
+        ),
+    ))
+}
+
+fn dropped_by_an_incremental_save(
+    resource: &EditorResource,
+    editor: &DocumentEditor,
+) -> Vec<&'static str> {
+    let mut dropped = Vec::new();
+
+    // Release this non-reentrant mutex before any helper can reacquire it.
+    let (sources, rotated, media, crop) = {
+        let edits = page_edits(resource);
+
+        (
+            edits.iter().map(|page| page.source).collect::<Vec<usize>>(),
+            edits.iter().any(|page| page.rotation.is_some()),
+            edits.iter().any(|page| page.media_box.is_some()),
+            edits.iter().any(|page| page.crop_box.is_some()),
+        )
+    };
+
+    // Deleting the last page leaves survivors' source and output indices equal.
+    if resource.pages_deleted.load(Ordering::Relaxed) {
+        dropped.push("page deletions");
+    }
+
+    // Deletions preserve source order; an undone move restores it.
+    if !sources.is_sorted() {
+        dropped.push("page moves");
+    }
+    if rotated {
+        dropped.push("page rotations");
+    }
+    if media {
+        dropped.push("page media boxes");
+    }
+    if crop {
+        dropped.push("page crop boxes");
+    }
+
+    // Region mirrors use source indices; ignore regions on deleted pages.
+    if pending_on_a_visible_page(&sources, &erased_pages(resource)) {
+        dropped.push("erased regions");
+    }
+    if pending_on_a_visible_page(&sources, &queued_redactions(resource)) {
+        dropped.push("queued redaction regions");
+    }
+
+    // Predicates take output indices and scan page_order to map them to source.
+    // Gate each quadratic sweep on whether that category was ever marked.
+    let any_page = |gate: &AtomicBool, ask: fn(&DocumentEditor, usize) -> bool| {
+        gate.load(Ordering::Relaxed) && (0..sources.len()).any(|page| ask(editor, page))
+    };
+
+    if any_page(
+        &resource.redactions_marked,
+        DocumentEditor::is_page_marked_for_redaction,
+    ) {
+        dropped.push("redaction marks");
+    }
+
+    if any_page(
+        &resource.annotations_marked,
+        DocumentEditor::is_page_marked_for_flatten,
+    ) {
+        dropped.push("annotation flatten marks");
+    }
+
+    // Check this first to avoid a sweep and catch flattening a page-less editor.
+    if editor.will_remove_acroform()
+        || any_page(
+            &resource.forms_marked,
+            DocumentEditor::is_page_marked_for_form_flatten,
+        )
+    {
+        dropped.push("form flatten marks");
+    }
+
+    if !embedded_files(resource).is_empty() {
+        dropped.push("attachments");
+    }
+
+    dropped
+}
+
+// Avoid scanning pages when no regions were queued.
+fn pending_on_a_visible_page(sources: &[usize], pending: &HashSet<usize>) -> bool {
+    !pending.is_empty() && sources.iter().any(|source| pending.contains(source))
+}
+
+fn spell_out(categories: &[&str]) -> String {
+    match categories {
+        [] => String::new(),
+        [only] => (*only).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_save(
     resource: ResourceArc<EditorResource>,
@@ -563,6 +737,9 @@ fn editor_save(
     resource.editor.with_lock(|editor| {
         ensure_redaction_survives_save(&resource, &options)?;
         ensure_scrub_survives_save(&resource, &options)?;
+        ensure_incremental_has_a_source(editor, &options)?;
+        // Report destructive edits and a missing source before omitted changes.
+        ensure_edits_survive_save(&resource, editor, &options)?;
 
         if !options.incremental {
             resupply_embedded(&resource, editor)?;
@@ -1360,6 +1537,15 @@ fn editor_erase_regions(
             .erase_regions(page_index, &corners)
             .map_err(to_nif_err)?;
 
+        // Mirror successful calls by source page, including empty slices:
+        // upstream records those too. The mirror must match the visible pages.
+        let sources = source_pages(&resource);
+        debug_assert_eq!(sources.len(), editor.current_page_count());
+
+        if let Some(source) = sources.get(page_index) {
+            erased_pages(&resource).insert(*source);
+        }
+
         Ok(atoms::ok())
     })
 }
@@ -1375,6 +1561,10 @@ fn editor_clear_erase_regions(
 
         editor.clear_erase_regions(page_index);
 
+        if let Some(source) = source_pages(&resource).get(page_index) {
+            erased_pages(&resource).remove(source);
+        }
+
         Ok(atoms::ok())
     })
 }
@@ -1385,6 +1575,7 @@ fn editor_clear_erase_regions(
 fn editor_flatten_forms(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         editor.flatten_forms().map_err(to_nif_err)?;
+        mark_pages(&resource, Marked::Forms);
 
         if resource.pages_deleted.load(Ordering::Relaxed) {
             for page in 0..editor.current_page_count() {
@@ -1409,6 +1600,7 @@ fn editor_flatten_forms_on_page(
         editor
             .flatten_forms_on_page(page_index)
             .map_err(to_nif_err)?;
+        mark_pages(&resource, Marked::Forms);
 
         Ok(atoms::ok())
     })
@@ -1420,6 +1612,7 @@ fn editor_flatten_forms_on_page(
 fn editor_flatten_all_annotations(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         editor.flatten_all_annotations().map_err(to_nif_err)?;
+        mark_pages(&resource, Marked::Annotations);
 
         if resource.pages_deleted.load(Ordering::Relaxed) {
             for page in 0..editor.current_page_count() {
@@ -1442,6 +1635,7 @@ fn editor_flatten_page_annotations(
         editor
             .flatten_page_annotations(page_index)
             .map_err(to_nif_err)?;
+        mark_pages(&resource, Marked::Annotations);
 
         Ok(atoms::ok())
     })
@@ -1461,6 +1655,7 @@ mod tests {
     use pdf_oxide::{
         editor::{form_fields::FormFieldValue, DocumentInfo},
         encryption::{Algorithm, EncryptionWriteHandler},
+        extractors::FormExtractor,
         PdfDocument,
     };
 
@@ -1897,7 +2092,7 @@ mod tests {
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "pdf_elixide_encryption_drift_{name}_{}.pdf",
+            "pdf_elixide_drift_{name}_{}.pdf",
             std::process::id()
         ))
     }
@@ -2236,5 +2431,170 @@ mod tests {
             first.as_array().is_some(),
             "upstream now resolves an indirect /Contents array before splicing"
         );
+    }
+
+    fn saved_incrementally(editor: &mut DocumentEditor, name: &str) -> PdfDocument {
+        let path = temp_path(name);
+        editor
+            .save_with_options(
+                &path,
+                SaveOptions {
+                    incremental: true,
+                    ..SaveOptions::full_rewrite()
+                },
+            )
+            .expect("incremental save");
+
+        let doc = PdfDocument::open(&path).expect("output opens");
+        let _ = std::fs::remove_file(&path);
+
+        doc
+    }
+
+    #[test]
+    fn upstream_still_drops_page_order_from_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        editor.remove_page(1).expect("page removed");
+        editor.move_page(1, 0).expect("page moved");
+        assert_eq!(editor.current_page_count(), 2);
+
+        let doc = saved_incrementally(&mut editor, "page_order");
+
+        assert_eq!(
+            doc.page_count().expect("page count"),
+            3,
+            "upstream now carries the page tree into an incremental update"
+        );
+
+        let text: Vec<String> = (0..3)
+            .map(|page| {
+                doc.extract_text(page)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(text, ["Page One", "Page Two", "Page Three"]);
+    }
+
+    #[test]
+    fn upstream_still_drops_a_pending_attachment_from_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        editor
+            .embed_file("data.csv", b"a,b\n".to_vec())
+            .expect("file embedded");
+
+        let path = temp_path("attachment");
+        editor
+            .save_with_options(
+                &path,
+                SaveOptions {
+                    incremental: true,
+                    ..SaveOptions::full_rewrite()
+                },
+            )
+            .expect("incremental save");
+        let bytes = std::fs::read(&path).expect("reads back");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            !bytes.windows(8).any(|w| w == b"data.csv"),
+            "upstream now writes pending attachments into an incremental update"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_a_page_rotation_from_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("rotation.pdf")).expect("fixture opens");
+        editor.rotate_all_pages(90).expect("pages rotated");
+
+        let doc = saved_incrementally(&mut editor, "rotation");
+        let rotations: Vec<i32> = (0..4)
+            .map(|page| doc.get_page_rotation(page).expect("rotation"))
+            .collect();
+
+        assert_eq!(
+            rotations,
+            [90, 180, 270, 0],
+            "upstream now carries page properties into an incremental update"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_a_page_box_from_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        editor
+            .set_page_media_box(0, [0.0, 0.0, 100.0, 50.0])
+            .expect("media box set");
+        editor
+            .set_page_crop_box(1, [0.0, 0.0, 100.0, 50.0])
+            .expect("crop box set");
+
+        let doc = saved_incrementally(&mut editor, "boxes");
+
+        assert_eq!(
+            doc.get_page_media_box(0).expect("media box"),
+            (0.0, 0.0, 612.0, 792.0),
+            "upstream now carries page properties into an incremental update"
+        );
+        assert_eq!(read_crop_box(&doc, 1).expect("crop box"), None);
+    }
+
+    #[test]
+    fn upstream_still_drops_an_erase_overlay_from_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        editor
+            .erase_regions(0, &[[0.0, 0.0, 612.0, 792.0]])
+            .expect("region erased");
+
+        let doc = saved_incrementally(&mut editor, "erase");
+
+        assert!(
+            doc.extract_rects(0).expect("rects").is_empty(),
+            "upstream now carries erase overlays into an incremental update"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_a_redaction_mark_from_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("redact.pdf")).expect("fixture opens");
+        editor.apply_page_redactions(0).expect("page marked");
+
+        let doc = saved_incrementally(&mut editor, "redaction");
+
+        assert!(
+            doc.extract_rects(0).expect("rects").is_empty(),
+            "upstream now carries redaction overlays into an incremental update"
+        );
+        assert_eq!(
+            doc.get_annotations(0).expect("annotations").len(),
+            3,
+            "upstream now drops the annotations in an incremental update too"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_flatten_marks_from_an_incremental_save() {
+        let mut editor = DocumentEditor::open(fixture("flatten.pdf")).expect("fixture opens");
+        editor.flatten_forms().expect("forms marked");
+
+        let doc = saved_incrementally(&mut editor, "flatten");
+        let names: Vec<String> = FormExtractor::extract_fields(&doc)
+            .expect("fields extract")
+            .into_iter()
+            .map(|field| field.name)
+            .collect();
+
+        assert_eq!(
+            names,
+            ["full_name", "comments"],
+            "upstream now honours the flatten marks in an incremental update"
+        );
+        assert!(editor.flatten_warnings().is_empty());
+    }
+
+    #[test]
+    fn spell_out_of_nothing_is_empty() {
+        assert_eq!(spell_out(&[]), "");
     }
 }

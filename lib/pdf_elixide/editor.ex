@@ -15,6 +15,10 @@ defmodule PdfElixide.Editor do
   the editor. Mutating calls return the editor so they compose in a pipeline.
   `close/1` **discards unsaved edits**.
 
+  **Incremental saves support only field values and document information.**
+  Other pending changes require a full rewrite; see
+  [Saving edits](guides/editing.md#saving-edits) for restrictions and errors.
+
   **An editor is a mutable handle: rebinding does not fork it.** Earlier bindings
   see later edits too. The [Forms](guides/forms.md) guide covers both bang
   pipelines and tuple-returning calls, plus filling and deferred flattening.
@@ -24,9 +28,6 @@ defmodule PdfElixide.Editor do
   `delete_page/2` and `move_page/3` use zero-based indices in the current page
   order. **Deleting a page is not redaction**, and bookmarks and links are not
   remapped. See [Page structure](guides/editing.md#page-structure).
-
-  **Incremental saves omit page edits and attachments.** Use a full rewrite;
-  [Saving edits](guides/editing.md#saving-edits) lists the limitations.
 
   ## Page rotation
 
@@ -161,6 +162,8 @@ defmodule PdfElixide.Editor do
   path is involved; use `open/1` to read a file.
 
   Encrypted bytes are refused, as in `open/1`.
+
+  Incremental saves are unsupported; see [Saving edits](guides/editing.md#saving-edits).
   """
   @spec from_binary(binary()) :: {:ok, t()} | {:error, Error.t()}
   def from_binary(bytes) when is_binary(bytes) do
@@ -177,6 +180,8 @@ defmodule PdfElixide.Editor do
   path is involved; use `open!/1` to read a file.
 
   Raises for encrypted bytes, as in `open/1`.
+
+  Incremental saves are unsupported, as in `from_binary/1`.
   """
   @spec from_binary!(binary()) :: t()
   def from_binary!(bytes) when is_binary(bytes) do
@@ -234,7 +239,7 @@ defmodule PdfElixide.Editor do
   A full rewrite clears it again, so `save/3` and `to_binary/2` both leave the
   editor unmodified — `to_binary/2` included, even though it writes no file. An
   incremental `save/3` does not: after `save(editor, path, incremental: true)`
-  the flag stays `true`.
+  the flag stays `true`. A refused save changes nothing at all.
   """
   @spec modified?(t()) :: boolean()
   def modified?(%__MODULE__{ref: ref}) do
@@ -279,8 +284,7 @@ defmodule PdfElixide.Editor do
   Options accepted by `save/3`, `save!/3`, `to_binary/2`, and `to_binary!/2`.
 
     * `:incremental` — write an incremental update instead of a full
-      rewrite. Defaults to `false`. See
-      [Saving edits](guides/editing.md#saving-edits) for the changes it omits.
+      rewrite. Defaults to `false`. See `save/3` and `to_binary/2` for restrictions.
     * `:compress` — compress streams. Defaults to `true`.
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`. `false` is refused after `sanitize/1,2` with
@@ -401,8 +405,10 @@ defmodule PdfElixide.Editor do
   @doc """
   Writes the editor to a PDF file at the given path, and returns the editor.
 
-  A full rewrite is the default. Incremental saves omit page edits, attachments
-  and flattening; see [Saving edits](guides/editing.md#saving-edits).
+  A full rewrite is the default. `incremental: true` returns
+  `{:error, %PdfElixide.Error{reason: :unsupported}}` without writing if the editor
+  came from `from_binary/1` or holds unsupported changes. See
+  [Saving edits](guides/editing.md#saving-edits) for supported changes and recovery.
 
   Writing does not consume the editor: you can keep editing and write again.
 
@@ -428,7 +434,7 @@ defmodule PdfElixide.Editor do
   @doc """
   Writes the editor to a PDF file at the given path, raising an error if it fails.
 
-  Uses the same write modes and limitations as `save/3`; see
+  Uses the same write modes and refusals as `save/3`; see
   [Saving edits](guides/editing.md#saving-edits).
 
   The path is handed to the operating system unchanged — see the "File paths"
@@ -447,10 +453,11 @@ defmodule PdfElixide.Editor do
   stored in a database, or streamed over HTTP.
 
   Accepts the same `t:save_opts/0` keyword list as `save/3`, except
-  `:incremental` — an incremental update is an append to the original file, so
-  there is nothing to append to in memory and passing `incremental: true` here
-  returns `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`. Use `save/3` for
-  an incremental write.
+  `incremental: true`, which returns
+  `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`: an incremental update is an
+  append to the original file, so there is nothing to append to in memory. Use
+  `save/3` for an incremental write; see
+  [Saving edits](guides/editing.md#saving-edits).
 
   That includes `:encryption`, which encrypts the returned binary exactly as it
   encrypts a file — including the caveat in
@@ -481,7 +488,7 @@ defmodule PdfElixide.Editor do
   Every later page moves down one index, and `page_count/1` reflects the removal
   at once — no save is needed. See [Page structure](guides/editing.md#page-structure)
   and [Saving edits](guides/editing.md#saving-edits) for the deletion's security
-  and writing limitations.
+  limitation and the incremental-save refusal.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
   not exist.
@@ -515,7 +522,7 @@ defmodule PdfElixide.Editor do
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if either index
   does not exist. See [Page structure](guides/editing.md#page-structure) for what
   a move does not update and [Saving edits](guides/editing.md#saving-edits) for
-  the incremental-save limitation.
+  the incremental-save refusal.
   """
   @spec move_page(t(), non_neg_integer(), non_neg_integer()) ::
           {:ok, t()} | {:error, Error.t()}
@@ -745,9 +752,9 @@ defmodule PdfElixide.Editor do
   Discards the regions pending on the page at the given zero-based index, so
   the next write paints nothing over it, and returns the editor.
 
-  `modified?/1` is left as it was. Returns
-  `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does not
-  exist. See [Erasing regions](guides/editing.md#erasing-regions).
+  `modified?/1` is left as it was, but the page stops blocking an incremental
+  `save/3`. Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the
+  page does not exist. See [Erasing regions](guides/editing.md#erasing-regions).
   """
   @spec clear_erase_regions(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
   def clear_erase_regions(%__MODULE__{ref: ref} = editor, page_index)
@@ -804,8 +811,9 @@ defmodule PdfElixide.Editor do
   `apply_redactions/1,2` to remove covered page text.
 
   The mark is deferred: nothing happens until the next full write, `save/3`
-  without `:incremental` or `to_binary/2`. An incremental save ignores it.
-  `unmark_redactions/2` takes it back.
+  without `:incremental` or `to_binary/2`. An incremental `save/3` is refused
+  while the mark is pending, since it could only write the original back
+  unmarked. `unmark_redactions/2` takes the mark back, and with it the refusal.
 
   A page with no redaction annotations is marked and paints nothing. A page that
   has them writes **without any annotations at all** — links and form widgets go
@@ -840,9 +848,11 @@ defmodule PdfElixide.Editor do
   Removes the redaction mark from the page at the given zero-based index, so the
   next write paints nothing over it, and returns the editor.
 
-  `modified?/1` is left as it was. **A region added with `add_redaction/3,4` is
-  not withdrawn** — the page keeps it, and `apply_redactions/1,2` still removes
-  its content. Nothing can withdraw a queued region; reopen the source instead.
+  `modified?/1` is left as it was, but the page stops blocking an incremental
+  `save/3`. **A region added with `add_redaction/3,4` is not withdrawn** — the
+  page keeps it, `apply_redactions/1,2` still removes its content, and it goes on
+  blocking an incremental `save/3`. Nothing can withdraw a queued region; reopen
+  the source instead.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
   not exist.
@@ -933,7 +943,9 @@ defmodule PdfElixide.Editor do
   See [Queuing your own regions](guides/redaction.md#queuing-your-own-regions).
 
   **A queued region cannot be withdrawn**, including with `unmark_redactions/2`.
-  Reopen the source to start again.
+  Reopen the source to start again. An incremental `save/3` is refused for the
+  life of the editor from the first queued region, since nothing can take it
+  back; see [Saving edits](guides/editing.md#saving-edits).
 
   Reversed corners are normalized. A rectangle whose corners do not fit a 32-bit
   float raises `ArgumentError`, and so does a `fill` component outside
@@ -992,8 +1004,9 @@ defmodule PdfElixide.Editor do
   They also lose pending erase and annotation-flatten overlays; see
   [Pending overlays](guides/redaction.md#it-discards-other-pending-overlays-on-the-page).
 
-  Incremental saves are refused afterwards. Metadata, JavaScript and embedded
-  files require a separate `sanitize/1,2` call.
+  Incremental saves are refused afterwards: the update would leave the removed
+  content readable. Metadata, JavaScript and embedded files require a separate
+  `sanitize/1,2` call.
 
   Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` for undefined fonts,
   composite fonts other than horizontal Identity-H, or text measured with state
@@ -1045,7 +1058,8 @@ defmodule PdfElixide.Editor do
   `apply_redactions/1,2` to remove page content.
 
   Like `apply_redactions/1,2` this takes effect immediately and cannot be
-  undone, and an incremental `save/3` is refused afterwards.
+  undone, and an incremental `save/3` is refused afterwards: the update would
+  leave the removed content readable.
 
   `garbage_collect: false` on `save/3` or `to_binary/2` is refused afterwards
   with `{:error, %PdfElixide.Error{reason: :unsupported}}`: a full rewrite with
@@ -1288,7 +1302,9 @@ defmodule PdfElixide.Editor do
   already has a name tree, naming the entries that would be lost. A
   `sanitize/1,2` that emptied the tree lifts the refusal; one that left an entry
   in it does not. See the "Attachments" section of this module for this
-  restriction, the media-type limitation and incremental-save behavior.
+  restriction and the media-type limitation, and
+  [Saving edits](guides/editing.md#saving-edits) for the incremental-save
+  refusal.
 
   Attachment data is copied into native memory and increases peak memory during
   writes, so measure large attachments before adding several.
@@ -1582,8 +1598,9 @@ defmodule PdfElixide.Editor do
 
   Flattening draws each annotation's appearance into the page content. Nothing
   happens until the next full write: `save/3` without `:incremental`, or
-  `to_binary/2`. An incremental save ignores the mark entirely. The mark cannot
-  be removed — reopen the source for an unflattened document.
+  `to_binary/2`. An incremental `save/3` is refused once a page is marked, and
+  because the mark cannot be removed it stays refused for the life of the
+  editor — reopen the source for an unflattened document.
 
   On a page where at least one annotation appearance can be produced, this
   removes every annotation entry, including ones it could not draw and form field

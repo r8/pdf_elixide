@@ -96,8 +96,15 @@ struct EditorResource {
     // Source pages carrying a queued region — the half of upstream's destructive
     // page set nothing exposes. It only grows: a region cannot be withdrawn.
     redaction_regions: Mutex<HashSet<usize>>,
+    // Pending erase overlays by source page; clear_erase_regions removes entries.
+    erased_regions: Mutex<HashSet<usize>>,
     // Set once a destructive pass has run; a second one is refused from here on.
     applied_redactions: AtomicBool,
+    // Monotonic scan gates, not current marks: marks can be removed or their
+    // pages deleted. Each flag skips a quadratic scan of an untouched category.
+    redactions_marked: AtomicBool,
+    annotations_marked: AtomicBool,
+    forms_marked: AtomicBool,
     // Set once sanitization dropped the source's embedded-file name tree, which
     // the editor otherwise keeps listing from `source()`.
     embedded_scrubbed: AtomicBool,

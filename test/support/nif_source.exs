@@ -20,9 +20,15 @@ defmodule PdfElixide.NifSource do
 
     path
     |> File.read!()
+    |> strip_tests()
     |> String.split("#[rustler::nif")
     |> Enum.drop(1)
     |> Enum.map(&parse_nif(file, &1))
+  end
+
+  # Exclude the trailing test module from the last NIF's body.
+  defp strip_tests(source) do
+    source |> String.split("#[cfg(test)]", parts: 2) |> hd()
   end
 
   defp parse_nif(file, chunk) do

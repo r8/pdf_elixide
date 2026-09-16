@@ -11,8 +11,8 @@ use crate::{
     color::RgbNif,
     editor::{
         draws_redactions, ensure_contents_redactable, ensure_editor_page_in_range,
-        ensure_info_is_direct, ensure_redaction_spliceable, queued_redactions, redaction_corners,
-        scrub_embedded, scrub_info, scrub_javascript, source_pages,
+        ensure_info_is_direct, ensure_redaction_spliceable, mark_pages, queued_redactions,
+        redaction_corners, scrub_embedded, scrub_info, scrub_javascript, source_pages, Marked,
     },
     error::{tagged_err, to_nif_err},
     geometry::RectNif,
@@ -146,6 +146,7 @@ fn editor_mark_page_redactions(
         editor
             .apply_page_redactions(page_index)
             .map_err(to_nif_err)?;
+        mark_pages(&resource, Marked::Redactions);
 
         Ok(atoms::ok())
     })
@@ -163,6 +164,9 @@ fn editor_mark_all_redactions(resource: ResourceArc<EditorResource>) -> NifResul
         for page in 0..editor.current_page_count() {
             ensure_redaction_spliceable(&resource, editor, page)?;
         }
+
+        // Enable the scan before the loop can fail with some pages marked.
+        mark_pages(&resource, Marked::Redactions);
 
         if resource.pages_deleted.load(Ordering::Relaxed) {
             for page in 0..editor.current_page_count() {
@@ -250,6 +254,7 @@ fn editor_add_redaction(
         if let Some(source) = source_pages(&resource).get(page_index) {
             queued_redactions(&resource).insert(*source);
         }
+        mark_pages(&resource, Marked::Redactions);
 
         Ok(atoms::ok())
     })

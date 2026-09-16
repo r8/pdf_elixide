@@ -151,6 +151,8 @@ did not touch.
 pair raises `ArgumentError`. Use a full rewrite, which is `save/3`'s default,
 to encrypt the output.
 
+For other incremental-save restrictions, see [Saving edits](editing.md#saving-edits).
+
 ## What a rewrite changes
 
 Encrypting takes the full-rewrite path, which rebuilds the file rather than

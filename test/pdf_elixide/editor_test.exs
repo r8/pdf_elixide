@@ -2489,6 +2489,367 @@ defmodule PdfElixide.EditorTest do
     end
   end
 
+  describe "a pending edit and an incremental save" do
+    setup %{tmp_dir: tmp_dir} do
+      {:ok, path: Path.join(tmp_dir, "incremental.pdf")}
+    end
+
+    defp refuses(editor, path) do
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, path, incremental: true)
+
+      refute File.exists?(path)
+      message
+    end
+
+    @tag :tmp_dir
+    test "refuses a page deletion", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 1)
+
+      assert refuses(editor, path) =~ "page deletions"
+    end
+
+    @tag :tmp_dir
+    test "refuses a page move", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 0, 2)
+      message = refuses(editor, path)
+
+      assert message =~ "page moves"
+      refute message =~ "page deletions"
+    end
+
+    @tag :tmp_dir
+    test "allows a move that was undone", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.move_page!(0, 2) |> Editor.move_page!(2, 0)
+
+      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
+    end
+
+    # Deleting the last page leaves survivors' source and output indices equal.
+    @tag :tmp_dir
+    test "refuses the deletion of the last page, and does not call it a move", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 2)
+      message = refuses(editor, path)
+
+      assert message =~ "page deletions"
+      refute message =~ "page moves"
+    end
+
+    @tag :tmp_dir
+    test "refuses a page rotation", %{path: path} do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_rotation!(editor, 0, 90)
+
+      assert refuses(editor, path) =~ "page rotations"
+    end
+
+    @tag :tmp_dir
+    test "refuses a media box", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 0, %Rect{x: 0.0, y: 0.0, width: 100.0, height: 50.0})
+
+      assert refuses(editor, path) =~ "page media boxes"
+    end
+
+    @tag :tmp_dir
+    test "refuses a crop box", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.crop_margins!(editor, left: 36.0, right: 36.0, top: 36.0, bottom: 36.0)
+
+      assert refuses(editor, path) =~ "page crop boxes"
+    end
+
+    @tag :tmp_dir
+    test "refuses an erased region, and clearing it lifts the refusal", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.erase_region!(editor, 0, %Rect{x: 0.0, y: 0.0, width: 100.0, height: 50.0})
+      assert refuses(editor, path) =~ "erased regions"
+
+      Editor.clear_erase_regions!(editor, 0)
+      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
+    end
+
+    @tag :tmp_dir
+    test "clearing one page's regions leaves another page's refusal", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      region = %Rect{x: 0.0, y: 0.0, width: 100.0, height: 50.0}
+      editor |> Editor.erase_region!(0, region) |> Editor.erase_region!(1, region)
+
+      Editor.clear_erase_regions!(editor, 1)
+
+      assert refuses(editor, path) =~ "erased regions"
+    end
+
+    @tag :tmp_dir
+    test "refuses a redaction mark, and unmarking lifts the refusal", %{path: path} do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      assert refuses(editor, path) =~ "redaction marks"
+
+      Editor.unmark_redactions!(editor, 0)
+      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
+    end
+
+    # Page 1 has no /Redact annotation; marking it still counts.
+    @tag :tmp_dir
+    test "unmarking one page leaves another page's refusal", %{path: path} do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.mark_redactions!(0) |> Editor.mark_redactions!(1)
+      Editor.unmark_redactions!(editor, 1)
+
+      assert refuses(editor, path) =~ "redaction marks"
+    end
+
+    @tag :tmp_dir
+    test "refuses a queued redaction region, and unmarking does not lift it", %{path: path} do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.add_redaction!(editor, 0, %Rect{x: 0.0, y: 0.0, width: 100.0, height: 50.0})
+
+      message = refuses(editor, path)
+      assert message =~ "queued redaction regions"
+      assert message =~ "redaction marks"
+
+      Editor.unmark_redactions!(editor, 0)
+      message = refuses(editor, path)
+
+      assert message =~ "queued redaction regions"
+      refute message =~ "redaction marks"
+    end
+
+    @tag :tmp_dir
+    test "refuses an annotation flatten mark", %{path: path} do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.flatten_annotations!(editor)
+
+      assert refuses(editor, path) =~ "annotation flatten marks"
+    end
+
+    @tag :tmp_dir
+    test "refuses a form flatten mark", %{path: path} do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.flatten!(editor)
+
+      assert refuses(editor, path) =~ "form flatten marks"
+    end
+
+    @tag :tmp_dir
+    test "refuses a per-page annotation flatten mark", %{path: path} do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.flatten_annotations!(editor, 0)
+
+      assert refuses(editor, path) =~ "annotation flatten marks"
+    end
+
+    @tag :tmp_dir
+    test "refuses a per-page form flatten mark", %{path: path} do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.flatten!(editor, 0)
+
+      assert refuses(editor, path) =~ "form flatten marks"
+    end
+
+    @tag :tmp_dir
+    test "refuses a whole-document redaction mark", %{path: path} do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor)
+
+      assert refuses(editor, path) =~ "redaction marks"
+    end
+
+    # With no pages to mark, only the AcroForm flag records this flatten.
+    @tag :tmp_dir
+    test "refuses a form flatten that marked no page", %{path: path} do
+      editor = Editor.open!(@no_pages_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.flatten!(editor)
+
+      assert refuses(editor, path) =~ "form flatten marks"
+    end
+
+    @tag :tmp_dir
+    test "refuses a pending attachment", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n")
+
+      assert refuses(editor, path) =~ "attachments"
+    end
+
+    @tag :tmp_dir
+    test "names every pending category at once", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.delete_page!(1)
+      |> Editor.rotate_all_by!(90)
+      |> Editor.embed_file!("data.csv", "a,b\n")
+
+      message = refuses(editor, path)
+
+      assert message =~ "page deletions"
+      assert message =~ "page rotations"
+      assert message =~ "attachments"
+    end
+
+    @tag :tmp_dir
+    test "a full rewrite in between does not lift the refusal", %{path: path, tmp_dir: tmp_dir} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 1)
+      Editor.save!(editor, Path.join(tmp_dir, "full.pdf"))
+
+      assert refuses(editor, path) =~ "page deletions"
+    end
+
+    # A full rewrite drains upstream's attachment list, but not the mirror.
+    @tag :tmp_dir
+    test "a full rewrite does not lift it for an attachment either", %{
+      path: path,
+      tmp_dir: tmp_dir
+    } do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n")
+      Editor.save!(editor, Path.join(tmp_dir, "full.pdf"))
+
+      assert refuses(editor, path) =~ "attachments"
+    end
+
+    @tag :tmp_dir
+    test "to_binary/2 still answers :invalid_pdf" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 1)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.to_binary(editor, incremental: true)
+    end
+
+    @tag :tmp_dir
+    test "an untouched editor still saves incrementally", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
+    end
+
+    @tag :tmp_dir
+    test "a form field fill still saves incrementally", %{path: path} do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.put_value!(editor, "full_name", "Ada")
+
+      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert %{value: "Ada"} = doc |> Form.fields!() |> Enum.find(&(&1.name == "full_name"))
+    end
+
+    @tag :tmp_dir
+    test "refuses a binary-sourced editor holding nothing at all", %{path: path} do
+      editor = Editor.from_binary!(File.read!(@valid_pdf))
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert refuses(editor, path) =~ "built from a binary"
+    end
+
+    @tag :tmp_dir
+    test "refuses a binary-sourced editor after a form fill", %{path: path} do
+      editor = Editor.from_binary!(File.read!(@form_pdf))
+      on_exit(fn -> Editor.close(editor) end)
+
+      Form.put_value!(editor, "full_name", "Ada")
+
+      assert refuses(editor, path) =~ "built from a binary"
+    end
+
+    @tag :tmp_dir
+    test "names the missing source rather than the pending edits", %{path: path} do
+      editor = Editor.from_binary!(File.read!(@valid_pdf))
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 1)
+      message = refuses(editor, path)
+
+      assert message =~ "built from a binary"
+      refute message =~ "page deletions"
+    end
+
+    @tag :tmp_dir
+    test "a refused save leaves the modified flag where it was", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 1)
+      before = Editor.modified?(editor)
+
+      refuses(editor, path)
+
+      assert Editor.modified?(editor) == before
+    end
+
+    @tag :tmp_dir
+    test "a metadata edit still saves incrementally", %{path: path} do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_title!(editor, "Updated")
+
+      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
+
+      doc = Document.open!(path)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert %Document.Metadata{title: "Updated"} = Document.metadata!(doc)
+    end
+  end
+
   describe "a destructive pass and an incremental save" do
     @tag :tmp_dir
     test "refuses the save rather than write the unredacted original", %{tmp_dir: tmp_dir} do
@@ -2510,6 +2871,21 @@ defmodule PdfElixide.EditorTest do
       full = Path.join(tmp_dir, "full.pdf")
       Editor.save!(editor, full)
       assert :binary.match(File.read!(full), "Secret") == :nomatch
+    end
+
+    @tag :tmp_dir
+    test "outranks the binary-source refusal", %{tmp_dir: tmp_dir} do
+      editor = Editor.from_binary!(File.read!(@redact_pdf))
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.mark_redactions!(editor, 0)
+      Editor.apply_redactions!(editor)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, Path.join(tmp_dir, "incremental.pdf"), incremental: true)
+
+      assert message =~ "destructive redaction"
+      refute message =~ "built from a binary"
     end
 
     @tag :tmp_dir
@@ -2540,15 +2916,19 @@ defmodule PdfElixide.EditorTest do
     end
 
     @tag :tmp_dir
-    test "allows an incremental save before one", %{tmp_dir: tmp_dir} do
+    test "refuses a bare mark on different grounds", %{tmp_dir: tmp_dir} do
       editor = Editor.open!(@redact_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
       Editor.mark_redactions!(editor, 0)
       path = Path.join(tmp_dir, "marked.pdf")
 
-      assert {:ok, ^editor} = Editor.save(editor, path, incremental: true)
-      assert File.exists?(path)
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, path, incremental: true)
+
+      assert message =~ "redaction marks"
+      refute message =~ "destructive redaction"
+      refute File.exists?(path)
     end
   end
 
@@ -2695,6 +3075,18 @@ defmodule PdfElixide.EditorTest do
 
       assert {:error, %Error{reason: :unsupported}} =
                Editor.to_binary(editor, garbage_collect: false)
+    end
+
+    test "outranks to_binary/2's refusal of an incremental request" do
+      editor = Editor.open!(@sanitize_objstm_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.sanitize!(editor)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.to_binary(editor, incremental: true, garbage_collect: false)
+
+      assert message =~ "garbage_collect"
     end
 
     test "allows it before one" do

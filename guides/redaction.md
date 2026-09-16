@@ -54,10 +54,11 @@ carries — placed by whatever tool prepared it — using each annotation's `/IC
 colour, or black where it declares none.
 
 Nothing happens until the next full write, `PdfElixide.Editor.save/3` without
-`:incremental` or `PdfElixide.Editor.to_binary/2`. An incremental save drops the
-mark and reports success; see [Saving edits](editing.md#saving-edits).
-`PdfElixide.Editor.unmark_redactions/2` takes the mark back, and
-`PdfElixide.Editor.marked_for_redaction?/2` reports it.
+`:incremental` or `PdfElixide.Editor.to_binary/2`. An incremental save is refused
+while the mark is pending, since it could only write the original back unmarked;
+see [Saving edits](editing.md#saving-edits).
+`PdfElixide.Editor.unmark_redactions/2` takes the mark back — and with it the
+refusal — and `PdfElixide.Editor.marked_for_redaction?/2` reports it.
 
 **A mark is not redaction.** The box is drawn over the existing page content,
 which stays exactly where it was: `PdfElixide.Document.text/1` on the written
@@ -166,7 +167,9 @@ way this feature can quietly redact the wrong area.
 The queued rectangle reaches no writer but
 `PdfElixide.Editor.apply_redactions/1`, and **cannot be withdrawn** once added:
 `PdfElixide.Editor.unmark_redactions/2` does not remove it and nothing else does.
-Reopen the source if you change your mind.
+Reopen the source if you change your mind. One consequence is that the first
+queued region ends incremental saving for that editor — the refusal it causes is
+one of the ones nothing lifts; see [Saving edits](editing.md#saving-edits).
 
 Queuing a region does, however, **mark the page** exactly as
 `PdfElixide.Editor.mark_redactions/2` would. On a page that carries `/Redact`
@@ -380,8 +383,9 @@ producers write `/Info` values inline, where this does not arise.
 `{:error, %PdfElixide.Error{reason: :unsupported}}`. An incremental update is
 appended to a verbatim copy of the original file, so it would carry none of the
 removal and leave the content readable while reporting success. Write a full
-rewrite. A *mark* is not refused on an incremental save — it is merely dropped,
-and it was never keeping anything secret.
+rewrite. A *mark* and a queued region are refused too, but the message names
+them rather than the removal, and `PdfElixide.Editor.unmark_redactions/2` lifts
+the mark's refusal where nothing lifts this one.
 
 **A write with `garbage_collect: false` after a sanitization.**
 `PdfElixide.Editor.save/3` and `PdfElixide.Editor.to_binary/2` both return
