@@ -31,7 +31,8 @@ defmodule PdfElixide.Form do
   form is `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and
   `value/2` as much as from `put_value/3`. Signature fields are not fillable and
   are not reported at all — `PdfElixide.Signature` reads those — and writing a
-  check box or radio group back is not always faithful.
+  check box or radio group back is not always faithful; inspect its
+  `:on_states` first.
 
   A form whose field hierarchy is cyclic, or nested far deeper than any real
   form, is reported as an error by every function here rather than read; the
@@ -215,9 +216,9 @@ defmodule PdfElixide.Form do
       {:ok, editor} = PdfElixide.Form.put_value(editor, "full_name", "Jane Doe")
       {:ok, editor} = PdfElixide.Form.put_value(editor, "subscribe", true)
 
-  Button fields are limited to `/Yes` and `/Off`, and a signature field cannot be
-  written at all — it answers `:not_found`. The [Forms](guides/forms.md) guide
-  has both.
+  Button fields are limited to `/Yes` and `/Off`; check for `"Yes"` in the
+  field's `:on_states` before writing `true`. A signature field cannot be
+  written and answers `:not_found`. The [Forms](guides/forms.md) guide has both.
 
   """
   @spec put_value(Editor.t(), String.t(), Field.value()) ::

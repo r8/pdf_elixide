@@ -11,6 +11,7 @@ defmodule PdfElixide.FormTest do
   alias PdfElixide.Form
   alias PdfElixide.Form.Field
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.Signature
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @form_pdf Path.join(@fixtures, "form.pdf")
@@ -20,6 +21,7 @@ defmodule PdfElixide.FormTest do
   @cyclic_pdf Path.join(@fixtures, "form_cyclic.pdf")
   @flags_pdf Path.join(@fixtures, "form_flags.pdf")
   @metadata_pdf Path.join(@fixtures, "form_metadata.pdf")
+  @on_states_pdf Path.join(@fixtures, "form_on_states.pdf")
   @no_form_pdf Path.join(@fixtures, "sample.pdf")
   @flatten_pdf Path.join(@fixtures, "flatten.pdf")
 
@@ -28,6 +30,12 @@ defmodule PdfElixide.FormTest do
   @form_pdf_kinds [Field.Text, Field.Button, Field.Choice]
 
   defp kinds(fields), do: Enum.map(fields, & &1.__struct__)
+
+  defp on_states(source) do
+    for %Field.Button{name: name, on_states: names} <- Form.fields!(source),
+        into: %{},
+        do: {name, names}
+  end
 
   defp exported_names(fdf) do
     Regex.scan(~r/\/T \(([^)]*)\)/, fdf) |> Enum.map(fn [_, name] -> name end)
@@ -459,6 +467,126 @@ defmodule PdfElixide.FormTest do
       assert {:ok, "Jane"} = Form.value(doc, "person.first")
       assert {:ok, ^editor} = Form.put_value(editor, "person.first", "Zoe")
       assert {:ok, "Zoe"} = Form.value(editor, "person.first")
+    end
+  end
+
+  describe "a button's on-state names" do
+    test "a check box reports the one state its widget declares" do
+      doc = Document.open!(@on_states_pdf)
+      states = on_states(doc)
+
+      # `on` and `yes` read as the same `true`; only this tells them apart.
+      assert states["on"] == ["On"]
+      assert states["yes"] == ["Yes"]
+      assert states["custom"] == ["Export1"]
+    end
+
+    test "a radio group reports one name per widget kid, in /Kids order" do
+      doc = Document.open!(@on_states_pdf)
+
+      assert %Field.Button{kind: :radio, value: "B", on_states: ["B", "A"]} =
+               Form.field!(doc, "group")
+    end
+
+    test "a push button's single appearance names no state" do
+      doc = Document.open!(@on_states_pdf)
+
+      assert %Field.Button{kind: :push, on_states: []} = Form.field!(doc, "push")
+    end
+
+    test "a field with no widget, or an unreadable /AP, reports none" do
+      doc = Document.open!(@on_states_pdf)
+      states = on_states(doc)
+
+      assert states["bare"] == []
+      assert states["broken"] == []
+    end
+
+    test "an unreadable /AP does not fail the signature listing" do
+      doc = Document.open!(@on_states_pdf)
+
+      assert Signature.list!(doc) == []
+    end
+
+    test "a document and an editor report the same names" do
+      doc = Document.open!(@on_states_pdf)
+      editor = Editor.open!(@on_states_pdf)
+
+      assert Form.fields!(doc) == Form.fields!(editor)
+    end
+
+    test "a named kid whose /T is indirect owns its own states" do
+      doc = Document.open!(@on_states_pdf)
+      states = on_states(doc)
+
+      assert states["indirect.leaf"] == ["C"]
+      assert states["indirect"] == []
+    end
+
+    test "a kid shared by two parents reports its states under each name" do
+      doc = Document.open!(@on_states_pdf)
+      states = on_states(doc)
+
+      assert states["left.x"] == ["S"]
+      assert states["right.x"] == ["S"]
+      assert states["left"] == []
+      assert states["right"] == []
+    end
+
+    test "an inline field reports the states its own dictionary declares" do
+      doc = Document.open!(@on_states_pdf)
+      states = on_states(doc)
+
+      assert states["inline"] == ["Yes"]
+      assert states["inline_group"] == ["L", "R"]
+      # Both names must use the same decoding as the extracted field rows.
+      assert states["naïve"] == ["Yes"]
+
+      assert [["Raw"]] =
+               for(
+                 {name, names} <- states,
+                 String.starts_with?(name, "na"),
+                 name != "naïve",
+                 do: names
+               )
+    end
+
+    test "an anonymous field node passes its widgets' states up to the reported field" do
+      doc = Document.open!(@on_states_pdf)
+
+      assert %Field.Button{on_states: ["Deep"]} = Form.field!(doc, "nested")
+    end
+
+    test "a widget kid carrying its own /FT is the field the name means" do
+      doc = Document.open!(@on_states_pdf)
+
+      # The first reported row owns the duplicated name.
+      rows = Enum.filter(Form.fields!(doc), &(&1.name == "copied"))
+
+      assert length(rows) == 3
+      assert Enum.all?(rows, &(&1.on_states == ["B1"]))
+    end
+
+    test "inline duplicates keep the first field's states" do
+      doc = Document.open!(@on_states_pdf)
+      rows = Enum.filter(Form.fields!(doc), &(&1.name == "dup"))
+
+      assert length(rows) == 2
+      assert Enum.all?(rows, &(&1.on_states == ["First"]))
+    end
+
+    test "a widget typed with an empty /FT name still belongs to its group" do
+      doc = Document.open!(@on_states_pdf)
+
+      assert %Field.Button{on_states: ["Yes"]} = Form.field!(doc, "empty_typed")
+    end
+
+    test "an /AS without an /AP names nothing" do
+      doc = Document.open!(@flags_pdf)
+
+      # `radio` declares `/AS /Choice1` and no appearance dictionary: the
+      # current state is not a declared one.
+      assert %Field.Button{value: "Choice1", on_states: []} = Form.field!(doc, "radio")
     end
   end
 

@@ -10,8 +10,11 @@ defmodule PdfElixide.Form.Field.Button do
   `nil` when the field carries no `/V`. See `t:PdfElixide.Form.Field.value/0` for
   what a malformed one can put here. A `:push` button holds no value at all.
 
+  `:on_states` lists each non-`Off` appearance state declared by the field's
+  widgets, once and in widget order. `[]` means no state was found.
+
   `PdfElixide.Form.put_value/3` can write only `/Yes` and `/Off`, so writing a
-  button's value back is not always faithful — see the "Check boxes and radio
+  button's value back is not always faithful. See the "Check boxes and radio
   groups" section of the [Forms](guides/forms.md) guide before round-tripping
   one.
   See `PdfElixide.Form.Field` for how fields are named and what every struct
@@ -20,7 +23,7 @@ defmodule PdfElixide.Form.Field.Button do
   alias PdfElixide.Form.Field
   alias PdfElixide.Geometry.Rect
 
-  @enforce_keys [:name, :kind, :value, :default_value, :flags, :tooltip, :rect]
+  @enforce_keys [:name, :kind, :value, :default_value, :flags, :tooltip, :rect, :on_states]
 
   defstruct @enforce_keys
 
@@ -41,6 +44,7 @@ defmodule PdfElixide.Form.Field.Button do
           default_value: Field.value(),
           flags: PdfElixide.Form.Field.Button.Flags.t(),
           tooltip: String.t() | nil,
-          rect: Rect.t() | nil
+          rect: Rect.t() | nil,
+          on_states: [String.t()]
         }
 end

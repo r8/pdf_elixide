@@ -886,13 +886,16 @@ defmodule PdfElixide.UpstreamDriftTest do
       doc = Document.open!(@button_states_pdf)
       on_exit(fn -> Document.close(doc) end)
 
-      values = Form.fields!(doc) |> Map.new(&{&1.name, &1.value})
+      fields = Form.fields!(doc)
+      values = Map.new(fields, &{&1.name, &1.value})
 
-      # The pair is the point: nothing in either struct says which name the file
-      # spells, so no caller can compensate.
+      # The pair is the point: the two values are the same term. The fixture
+      # carries no `/AP`, so `:on_states` is empty too and nothing in either
+      # struct says which name the file spells.
       assert values["on"] == true
       assert values["yes"] == true
       assert values["no"] == false
+      assert Enum.all?(fields, &(&1.on_states == []))
 
       assert values["custom"] == "Export1"
     end

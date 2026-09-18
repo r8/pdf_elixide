@@ -1354,8 +1354,9 @@ fn document_form_fields(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
             .filter(|field| !resolved.is_signature(&field.full_name))
             .filter_map(|field| {
                 let attrs = resolved.attrs(&field.full_name);
+                let on_states = resolved.on_states(&field.full_name);
 
-                document_form_field_to_nif(field, attrs)
+                document_form_field_to_nif(field, attrs, on_states)
             })
             .collect())
     })

@@ -189,6 +189,7 @@ pub struct ButtonFieldNif {
     flags: ButtonFlagsNif,
     tooltip: Option<String>,
     rect: Option<RectNif>,
+    on_states: Vec<String>,
 }
 
 #[derive(NifStruct, Debug)]
@@ -349,6 +350,7 @@ fn field_nif(
     value: Option<FieldValueNif>,
     meta: FieldMeta,
     attrs: Option<ResolvedAttrs<'_>>,
+    on_states: Vec<String>,
 ) -> Option<FieldNif> {
     // Refused whatever the walk resolved for this *name*: §12.7.3.2 requires
     // fully qualified names to be unique and the walk answers with the first
@@ -412,6 +414,7 @@ fn field_nif(
             flags: button_flags_nif(bits),
             tooltip,
             rect,
+            on_states,
         })),
         Some(FieldType::Choice) => Some(FieldNif::Choice(ChoiceFieldNif {
             name,
@@ -452,6 +455,7 @@ fn field_nif(
 pub fn document_form_field_to_nif(
     field: FormField,
     attrs: Option<ResolvedAttrs<'_>>,
+    on_states: &[String],
 ) -> Option<FieldNif> {
     // Built before the destructure below consumes `field`. Cloning what it
     // could have moved is the price of both paths running through one
@@ -477,12 +481,14 @@ pub fn document_form_field_to_nif(
         document_field_value_to_nif(value),
         meta,
         attrs,
+        on_states.to_vec(),
     )
 }
 
 pub fn editor_form_field_to_nif(
     wrapper: FormFieldWrapper,
     attrs: Option<ResolvedAttrs<'_>>,
+    on_states: &[String],
 ) -> Option<FieldNif> {
     // Off the source `FormField`, not the wrapper's own accessors: `bounds()`
     // misreads the `/Rect` corners as a size and `get_default_value()` discards
@@ -497,6 +503,7 @@ pub fn editor_form_field_to_nif(
         editor_field_value_to_nif(wrapper.value()),
         meta,
         attrs,
+        on_states.to_vec(),
     )
 }
 
@@ -680,7 +687,8 @@ mod tests {
                 None,
                 None,
                 meta(),
-                unreached()
+                unreached(),
+                Vec::new()
             ),
             Some(FieldNif::Text(_))
         ));
@@ -691,7 +699,8 @@ mod tests {
                 None,
                 None,
                 meta(),
-                unreached()
+                unreached(),
+                Vec::new()
             ),
             Some(FieldNif::Button(_))
         ));
@@ -702,7 +711,8 @@ mod tests {
                 None,
                 None,
                 meta(),
-                unreached()
+                unreached(),
+                Vec::new()
             ),
             Some(FieldNif::Choice(_))
         ));
@@ -712,7 +722,8 @@ mod tests {
             None,
             None,
             meta(),
-            unreached()
+            unreached(),
+            Vec::new()
         )
         .is_none());
 
@@ -723,13 +734,29 @@ mod tests {
         let named = FieldType::Unknown(String::from("Barcode"));
 
         for field_type in [Some(&empty), None] {
-            match field_nif(name(), field_type, None, None, meta(), unreached()) {
+            match field_nif(
+                name(),
+                field_type,
+                None,
+                None,
+                meta(),
+                unreached(),
+                Vec::new(),
+            ) {
                 Some(FieldNif::Unknown(f)) => assert_eq!(f.raw_type, None, "{field_type:?}"),
                 other => panic!("expected Unknown, got {other:?}"),
             }
         }
 
-        match field_nif(name(), Some(&named), None, None, meta(), unreached()) {
+        match field_nif(
+            name(),
+            Some(&named),
+            None,
+            None,
+            meta(),
+            unreached(),
+            Vec::new(),
+        ) {
             Some(FieldNif::Unknown(f)) => assert_eq!(f.raw_type.as_deref(), Some("Barcode")),
             other => panic!("expected Unknown, got {other:?}"),
         }
@@ -750,7 +777,8 @@ mod tests {
                 None,
                 None,
                 meta(),
-                resolved_type(FieldType::Choice)
+                resolved_type(FieldType::Choice),
+                Vec::new()
             ),
             Some(FieldNif::Choice(_))
         ));
@@ -760,7 +788,8 @@ mod tests {
             None,
             None,
             meta(),
-            resolved_type(FieldType::Signature)
+            resolved_type(FieldType::Signature),
+            Vec::new()
         )
         .is_none());
     }
@@ -787,6 +816,7 @@ mod tests {
                 Some(text(spelling)),
                 meta_with_default(text(spelling)),
                 resolved_type(FieldType::Button),
+                Vec::new(),
             ) {
                 Some(FieldNif::Button(f)) => {
                     assert_eq!(f.value, Some(expected), "{spelling}");
@@ -805,6 +835,7 @@ mod tests {
             Some(text("Yes")),
             meta_with_default(text("Yes")),
             resolved_type(FieldType::Button),
+            Vec::new(),
         ) {
             Some(FieldNif::Button(f)) => {
                 assert_eq!(f.value, Some(text("Yes")));
@@ -820,6 +851,7 @@ mod tests {
             Some(text("Yes")),
             meta_with_default(text("Yes")),
             resolved_type(FieldType::Text),
+            Vec::new(),
         ) {
             Some(FieldNif::Text(f)) => {
                 assert_eq!(f.value, Some(text("Yes")));

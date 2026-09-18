@@ -22,9 +22,9 @@ defmodule PdfElixide.Form.Field do
   hover — and `:rect`, the box the field occupies, which is `nil` for a field
   whose widgets are separate objects.
 
-  Beyond those, `Text` carries `:max_length` and `:alignment`, and `Choice`
-  `:alignment` and `:options`. The "What else a field reports" section of the
-  [Forms](guides/forms.md) guide covers all of it.
+  Beyond those, `Text` carries `:max_length` and `:alignment`, `Button`
+  `:on_states`, and `Choice` `:alignment` and `:options`. The "What else a
+  field reports" section of the [Forms](guides/forms.md) guide covers all of it.
 
   A field nested under a parent inherits the parent's *type* — so it is that
   type's struct rather than `Unknown` — along with `:flags`, `:options`,

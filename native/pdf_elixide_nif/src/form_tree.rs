@@ -1,14 +1,16 @@
 // Validates an AcroForm field tree and resolves the inheritable attributes
 // upstream reads off a field's own dictionary — `/FT`, `/Ff`, `/V`, `/MaxLen`
-// and `/Q` — before extraction, plus `/Opt`, which it never reads.
+// and `/Q` — before extraction, plus `/Opt` and the `/AP` `/N` state names,
+// which it never reads.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use pdf_oxide::{
     extractors::{
         forms::{FieldType, FormExtractor},
         FormField,
     },
+    fonts::font_dict::pdfdoc_encoding_lookup,
     object::{Object, ObjectRef},
     PdfDocument,
 };
@@ -37,6 +39,46 @@ fn field_type_of(name: &str) -> FieldType {
         "Sig" => FieldType::Signature,
         other => FieldType::Unknown(other.to_string()),
     }
+}
+
+// Match `FormExtractor`'s private decoder so inline names pair with its rows.
+fn field_name(bytes: &[u8]) -> Option<String> {
+    match bytes {
+        [0xFE, 0xFF, rest @ ..] => {
+            let pairs: Vec<u16> = rest
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_be_bytes(*pair))
+                .collect();
+
+            String::from_utf16(&pairs).ok()
+        }
+        _ => Some(
+            bytes
+                .iter()
+                .copied()
+                .filter_map(pdfdoc_encoding_lookup)
+                .collect(),
+        ),
+    }
+}
+
+// Upstream's `full_name` rule, so the two spellings cannot drift.
+fn full_name_of(parent: &str, partial: &str) -> String {
+    match (parent.is_empty(), partial.is_empty()) {
+        (true, _) => partial.to_string(),
+        (_, true) => parent.to_string(),
+        _ => format!("{parent}.{partial}"),
+    }
+}
+
+// Object identity preserves DAG aliases; visit identity separates inline
+// fields that share a name.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum Owner {
+    Ref(ObjectRef),
+    Inline(usize),
 }
 
 // Keep the walk BEAM-independent; build reason atoms only at its boundary.
@@ -69,9 +111,12 @@ struct FieldAttrs {
 #[derive(Debug, Default)]
 pub struct Resolved {
     signatures: HashSet<String>,
-    attrs: HashMap<String, FieldAttrs>,
+    attrs: HashMap<String, (ObjectRef, FieldAttrs)>,
     option_lists: Vec<Vec<ChoiceOptionNif>>,
     field_types: Vec<FieldType>,
+    on_states: HashMap<Owner, Vec<String>>,
+    // The visit that upstream's first row of each inline name pairs with.
+    inline_owners: HashMap<String, usize>,
 }
 
 impl Resolved {
@@ -84,7 +129,7 @@ impl Resolved {
     // field — an inline field dictionary, which has no object reference to key
     // on — and only then may the caller answer from the source's own reading.
     pub fn attrs(&self, name: &str) -> Option<ResolvedAttrs<'_>> {
-        let attrs = self.attrs.get(name)?;
+        let (_, attrs) = self.attrs.get(name)?;
 
         Some(ResolvedAttrs {
             field_type: attrs.field_type.map(|id| self.field_types[id].clone()),
@@ -94,11 +139,21 @@ impl Resolved {
             quadding: attrs.quadding,
         })
     }
+
+    pub fn on_states(&self, name: &str) -> &[String] {
+        let owner = match (self.attrs.get(name), self.inline_owners.get(name)) {
+            (Some((obj_ref, _)), _) => Owner::Ref(*obj_ref),
+            (None, Some(id)) => Owner::Inline(*id),
+            (None, None) => return &[],
+        };
+
+        self.on_states.get(&owner).map_or(&[], Vec::as_slice)
+    }
 }
 
 // What this walk resolves and neither upstream source does: `/FT`, `/Ff`,
-// `/MaxLen` and `/Q`, which upstream reads off the own dictionary, and `/Opt`,
-// which its forms path never reads.
+// `/MaxLen` and `/Q`, which upstream reads off the own dictionary, and `/Opt`
+// and the widgets' `/AP` `/N` state names, which its forms path never reads.
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedAttrs<'a> {
     pub field_type: Option<FieldType>,
@@ -131,13 +186,32 @@ fn resolved_of(fields: &[FormField], walked: Walked) -> Resolved {
     let mut resolved = Resolved {
         option_lists: walked.option_lists,
         field_types: walked.field_types,
+        on_states: walked.on_states,
         ..Resolved::default()
     };
     let mut seen = HashSet::new();
 
+    let mut inline_slots: HashMap<String, VecDeque<usize>> = HashMap::new();
+
+    for (name, id) in walked.inline_order {
+        inline_slots.entry(name).or_default().push_back(id);
+    }
+
     for field in fields {
+        // Consume before deduplication so later rows do not shift visits.
+        let inline_slot = match field.object_ref {
+            None => inline_slots
+                .get_mut(&field.full_name)
+                .and_then(VecDeque::pop_front),
+            Some(_) => None,
+        };
+
         if !seen.insert(&field.full_name) {
             continue;
+        }
+
+        if let Some(id) = inline_slot {
+            resolved.inline_owners.insert(field.full_name.clone(), id);
         }
 
         let is_signature = field.field_type == FieldType::Signature
@@ -149,11 +223,13 @@ fn resolved_of(fields: &[FormField], walked: Walked) -> Resolved {
             resolved.signatures.insert(field.full_name.clone());
         }
 
-        if let Some(attrs) = field
+        if let Some((obj_ref, attrs)) = field
             .object_ref
-            .and_then(|obj_ref| walked.attrs.get(&obj_ref))
+            .and_then(|obj_ref| walked.attrs.get(&obj_ref).map(|attrs| (obj_ref, attrs)))
         {
-            resolved.attrs.insert(field.full_name.clone(), *attrs);
+            resolved
+                .attrs
+                .insert(field.full_name.clone(), (obj_ref, *attrs));
         }
     }
 
@@ -292,6 +368,10 @@ struct Walked {
     // Interned for the same reason, and because it keeps `Inherited` `Copy`
     // where an owned `FieldType::Unknown(String)` would not.
     field_types: Vec<FieldType>,
+    // Non-`Off` `/AP` `/N` names, owned by the nearest reported field.
+    on_states: HashMap<Owner, Vec<String>>,
+    // Inline rows in upstream's kids-first order, paired with their visits.
+    inline_order: Vec<(String, usize)>,
 }
 
 fn walk(doc: &PdfDocument, strictness: Strictness) -> Result<Walked, Refused> {
@@ -307,6 +387,8 @@ fn walk(doc: &PdfDocument, strictness: Strictness) -> Result<Walked, Refused> {
         strictness,
         option_ids: HashMap::new(),
         field_type_ids: HashMap::new(),
+        state_seen: HashSet::new(),
+        visits: 0,
     };
 
     for field in &fields {
@@ -365,7 +447,7 @@ fn resolve(doc: &PdfDocument, obj: &Object) -> Option<Object> {
 // §12.7.3.1 inherits each attribute whole, so `/Ff` is carried down as one
 // value rather than merged bit by bit.
 #[derive(Clone, Copy, Debug, Default)]
-struct Inherited {
+struct Inherited<'n> {
     // An index into `Walked::field_types`, so this stays `Copy`.
     field_type: Option<usize>,
     flags: Option<u32>,
@@ -379,6 +461,10 @@ struct Inherited {
     quadding: Option<u32>,
     // Immediate parent; unlike the attributes above, this is not inherited.
     parent: Option<ObjectRef>,
+    // Borrowed from the parent frame to spell inline names as upstream does.
+    parent_name: &'n str,
+    // The nearest reported ancestor that owns an unreported node's states.
+    owner: Option<Owner>,
 }
 
 struct Walker<'a> {
@@ -398,6 +484,11 @@ struct Walker<'a> {
     // Keyed by the `/FT` name itself: a form declares a handful of distinct
     // types however many fields it has, so there is nothing to key per object.
     field_type_ids: HashMap<String, usize>,
+    // Membership for `Walked::on_states`, which keeps `/Kids` order in a `Vec`;
+    // a `contains` there would make one large radio group quadratic.
+    state_seen: HashSet<(Owner, String)>,
+    // Counts node visits, which is the identity an inline node has.
+    visits: usize,
 }
 
 impl Walker<'_> {
@@ -490,7 +581,48 @@ impl Walker<'_> {
         }
     }
 
-    fn node(&mut self, obj: &Object, inherited: Inherited, depth: usize) -> Result<(), Refused> {
+    // Use tolerant resolution: an unreadable appearance must not make the
+    // shared strict walk refuse a signature listing.
+    fn appearance_states(&self, dict: &HashMap<String, Object>) -> Vec<String> {
+        let Some(Object::Dictionary(ap)) = dict.get("AP").and_then(|raw| resolve(self.doc, raw))
+        else {
+            return Vec::new();
+        };
+        // `as_dict()` also accepts a push button's appearance stream.
+        let Some(Object::Dictionary(states)) = ap.get("N").and_then(|raw| resolve(self.doc, raw))
+        else {
+            return Vec::new();
+        };
+
+        let mut names: Vec<String> = states.keys().filter(|key| *key != "Off").cloned().collect();
+        // `states` is a `HashMap`, so sorting is the only stable order within
+        // one widget; `record_on_states` keeps `/Kids` order across widgets.
+        names.sort_unstable();
+
+        names
+    }
+
+    fn record_on_states(&mut self, owner: Owner, names: Vec<String>) {
+        if names.is_empty() {
+            return;
+        }
+
+        let known = self.walked.on_states.entry(owner).or_default();
+
+        // DAG paths and radios in unison must not duplicate a name.
+        for name in names {
+            if self.state_seen.insert((owner, name.clone())) {
+                known.push(name);
+            }
+        }
+    }
+
+    fn node(
+        &mut self,
+        obj: &Object,
+        inherited: Inherited<'_>,
+        depth: usize,
+    ) -> Result<(), Refused> {
         if depth >= MAX_FIELD_DEPTH {
             return Err(Refused::TooDeep);
         }
@@ -522,7 +654,7 @@ impl Walker<'_> {
         &mut self,
         obj: &Object,
         obj_ref: Option<ObjectRef>,
-        inherited: Inherited,
+        inherited: Inherited<'_>,
         depth: usize,
     ) -> Result<(), Refused> {
         let Some(field) = self.resolve_or_refuse(obj)? else {
@@ -541,7 +673,13 @@ impl Walker<'_> {
         // `/Sig` parent is a text field, not an inherited signature. A `/FT`
         // that is not a name is malformed and blocks inheritance the way a
         // non-integer `/Ff` does, rather than falling through to the ancestor.
-        let field_type = match self.entry(dict, "FT")? {
+        let own_type = self.entry(dict, "FT")?;
+        // An empty name is not a field type for upstream's emitted-row test.
+        let own_typed = own_type
+            .as_ref()
+            .and_then(Object::as_name)
+            .is_some_and(|name| !name.is_empty());
+        let field_type = match own_type {
             Some(object) => object.as_name().map(|name| self.intern_field_type(name)),
             None => inherited.field_type,
         };
@@ -588,15 +726,38 @@ impl Walker<'_> {
             None => inherited.value.map(Object::Reference),
         };
 
-        // Under §12.7.4.2 only a field kid carries `/T`; widget kids do not.
-        if let Some(parent) = inherited.parent {
-            let named = dict
-                .get("T")
-                .and_then(Object::as_string)
-                .is_some_and(|name| !name.is_empty());
+        // Resolve and decode `/T` as upstream does when deciding field ownership.
+        let title = dict.get("T").and_then(|raw| resolve(self.doc, raw));
+        let partial = title
+            .as_ref()
+            .and_then(Object::as_string)
+            .and_then(field_name)
+            .unwrap_or_default();
+        let named = !partial.is_empty();
 
+        if let Some(parent) = inherited.parent {
             if named {
                 self.walked.grouping.insert(parent);
+            }
+        }
+
+        let full_name = full_name_of(inherited.parent_name, &partial);
+
+        // States belong to the nearest node upstream reports as a field.
+        let emitted = named || own_typed;
+        let id = self.visits;
+        self.visits += 1;
+
+        let owner = if emitted {
+            Some(obj_ref.map_or(Owner::Inline(id), Owner::Ref))
+        } else {
+            inherited.owner
+        };
+
+        if self.strictness == Strictness::Tolerant {
+            if let Some(owner) = owner {
+                let names = self.appearance_states(dict);
+                self.record_on_states(owner, names);
             }
         }
 
@@ -641,27 +802,31 @@ impl Walker<'_> {
             }
         }
 
-        let Some(kids) = self.entry(dict, "Kids")? else {
-            return Ok(());
-        };
-        let Some(kids) = kids.as_array() else {
-            return Ok(());
-        };
+        let kids = self.entry(dict, "Kids")?;
 
-        let inherited = Inherited {
-            field_type,
-            flags,
-            value: own_value
-                .and_then(|raw| raw.as_reference())
-                .or(inherited.value),
-            options,
-            max_length,
-            quadding,
-            parent: obj_ref,
-        };
+        if let Some(kids) = kids.as_ref().and_then(Object::as_array) {
+            let inherited = Inherited {
+                field_type,
+                flags,
+                value: own_value
+                    .and_then(|raw| raw.as_reference())
+                    .or(inherited.value),
+                options,
+                max_length,
+                quadding,
+                parent: obj_ref,
+                parent_name: &full_name,
+                owner,
+            };
 
-        for kid in kids {
-            self.node(kid, inherited, depth + 1)?;
+            for kid in kids {
+                self.node(kid, inherited, depth + 1)?;
+            }
+        }
+
+        // Upstream pushes a field after its kids; pairing depends on this order.
+        if emitted && obj_ref.is_none() {
+            self.walked.inline_order.push((full_name, id));
         }
 
         Ok(())
@@ -931,6 +1096,82 @@ mod tests {
     }
 
     #[test]
+    fn upstream_still_reports_named_or_typed_nodes_kids_first() {
+        for name in [
+            "form_on_states.pdf",
+            "form_hierarchical.pdf",
+            "form_metadata.pdf",
+            "form_signature_edge.pdf",
+        ] {
+            let doc = fixture(name);
+            let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+            let walked = walk(&doc, Strictness::Tolerant).expect("a well-formed tree");
+
+            let upstream: Vec<&str> = fields
+                .iter()
+                .filter(|field| field.object_ref.is_none())
+                .map(|field| field.full_name.as_str())
+                .collect();
+            let ours: Vec<&str> = walked
+                .inline_order
+                .iter()
+                .map(|(name, _id)| name.as_str())
+                .collect();
+
+            assert_eq!(ours, upstream, "{name}");
+        }
+
+        let walked = walk(&fixture("form_on_states.pdf"), Strictness::Tolerant).expect("walks");
+
+        assert!(
+            !walked.inline_order.is_empty(),
+            "the fixture no longer has inline fields"
+        );
+    }
+
+    #[test]
+    fn upstream_still_reads_an_empty_field_type_name_as_no_type() {
+        let doc = fixture("form_on_states.pdf");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+        let rows = fields
+            .iter()
+            .filter(|field| field.full_name == "empty_typed")
+            .count();
+
+        assert_eq!(
+            rows, 1,
+            "upstream now reports a node whose only /FT is the empty name"
+        );
+    }
+
+    #[test]
+    fn upstream_still_decodes_field_names_through_pdfdoc() {
+        let doc = fixture("form_on_states.pdf");
+        let fields = FormExtractor::extract_fields(&doc).expect("fields extract");
+        let names: HashSet<&str> = fields.iter().map(|f| f.full_name.as_str()).collect();
+
+        for raw in [
+            b"na\xc3\xafve".as_slice(),
+            b"\xFE\xFF\x00n\x00a\x00\xef\x00v\x00e",
+        ] {
+            let decoded = field_name(raw).expect("decodes");
+
+            assert!(
+                names.contains(decoded.as_str()),
+                "upstream no longer decodes {raw:?} as {decoded:?}: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_kid_named_through_an_indirect_t_marks_its_parent_grouping() {
+        let walked =
+            walk(&fixture("form_on_states.pdf"), Strictness::Tolerant).expect("a well-formed tree");
+
+        assert!(walked.grouping.contains(&ObjectRef::new(16, 0)));
+    }
+
+    #[test]
     fn refuses_a_cyclic_kids_chain() {
         assert_eq!(
             walk(&fixture("form_cyclic.pdf"), Strictness::Tolerant),
@@ -972,6 +1213,10 @@ mod tests {
         }
 
         fn walk_detached(root: &Object, budget: usize) -> Result<(), Refused> {
+            walked_detached(root, budget).map(|_walked| ())
+        }
+
+        fn walked_detached(root: &Object, budget: usize) -> Result<Walked, Refused> {
             // A `PdfDocument` is needed only to resolve references, and these
             // trees hold none.
             let doc = fixture("sample.pdf");
@@ -984,9 +1229,44 @@ mod tests {
                 strictness: Strictness::Tolerant,
                 option_ids: HashMap::new(),
                 field_type_ids: HashMap::new(),
+                state_seen: HashSet::new(),
+                visits: 0,
             };
 
-            walker.node(root, Inherited::default(), 0)
+            walker.node(root, Inherited::default(), 0)?;
+
+            Ok(walker.walked)
+        }
+
+        fn dict(entries: &[(&str, Object)]) -> Object {
+            Object::Dictionary(
+                entries
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.clone()))
+                    .collect(),
+            )
+        }
+
+        #[test]
+        fn a_widget_typed_with_an_empty_name_passes_its_states_to_the_group() {
+            let states = dict(&[("Yes", Object::Null), ("Off", Object::Null)]);
+            let widget = dict(&[
+                ("FT", Object::Name(String::new())),
+                ("AP", dict(&[("N", states)])),
+            ]);
+            let group = dict(&[
+                ("T", Object::String(b"g".to_vec())),
+                ("FT", Object::Name(String::from("Btn"))),
+                ("Kids", Object::Array(vec![widget])),
+            ]);
+
+            let walked = walked_detached(&group, MAX_FIELD_NODES).expect("walks");
+
+            assert_eq!(
+                walked.on_states.get(&Owner::Inline(0)),
+                Some(&vec![String::from("Yes")])
+            );
+            assert_eq!(walked.inline_order, vec![(String::from("g"), 0)]);
         }
 
         #[test]

@@ -129,6 +129,7 @@ needs to render or validate it. Which keys a struct has depends on its type:
 | `:max_length` | ✓ | | | |
 | `:alignment` | ✓ | | ✓ | |
 | `:options` | | | ✓ | |
+| `:on_states` | | ✓ | | |
 | `:raw_type` | | | | ✓ |
 
 `:max_length` is the `/MaxLen` cap on how many characters may be entered; `0` is
@@ -142,6 +143,10 @@ whose widgets are separate objects — a radio group, or any field appearing on
 more than one page — reports `nil`, as does a field with no widget.
 
 `:tooltip` reports `nil` both for absent text and text that could not be decoded.
+
+`:on_states` lists each non-`Off` appearance state declared by a button's
+widgets, in widget order. `[]` means no states were found, including for a field
+with no widget. "Check boxes and radio groups" below shows how to use it.
 
 ### What a nested field inherits
 
@@ -167,11 +172,11 @@ differ. This library reports a parent's `/Opt` for a nested field that declares
 none, while a strict reader may report no options. Only a field's own `/Opt` is
 portable across viewers.
 
-`:value` and `:default_value` are not inherited this way. Each comes from the
-field's own dictionary, so both report `nil` when only the parent carries `/V`
-or `/DV`. A viewer may still inherit that default when resetting the form. Read
-a named parent directly to reach its value; a grouping level with neither a name
-nor a type is not reported and its value cannot be reached.
+`:value`, `:default_value` and `:on_states` are not inherited this way. The
+first two come from the field's own dictionary; `:on_states` comes from its
+widgets. A viewer may still inherit a parent's default when resetting the form.
+Read a named parent directly to reach its value; a grouping level with neither
+a name nor a type is not reported and its value cannot be reached.
 
 A field written *inline* rather than as an indirect reference inherits nothing.
 The PDF specification requires `/Fields` and `/Kids` entries to reference
@@ -228,21 +233,24 @@ round trip lossy for some check boxes and radio groups, in two ways.
 **A box whose on-state is `/On` rather than `/Yes` becomes unchecked after a
 read-then-write round trip.** It reads as `true`, since both names mean
 "checked", but writing that `true` back emits `/Yes` — which is not the state
-the widget declares. Nothing in the value reveals this; the two spellings are
-indistinguishable once read. (`/No` collapses to `false` and writes `/Off` in the
-same way, but harmlessly: `/Off` is the off state for every check box.)
+the widget declares. Check `"Yes" in field.on_states` before writing `true`;
+`["On"]` means the write will not check the box. (`/No` collapses to `false`
+and writes the universal `/Off` state harmlessly.)
+
+An empty `:on_states` decides nothing: the widget declares no states, so there
+is nothing to compare `/Yes` against.
 
 `export/3` loses it identically, and there the loss travels: an `/On` box
 exports as `Yes` in both formats, so data exported from one copy of a form
-cannot re-check that box in another. A custom on-state survives an export, since
-it is never collapsed to `true` in the first place.
+cannot re-check that box in another. The same `:on_states` check predicts it.
+A custom on-state survives an export because it is not collapsed to `true`.
 
 **A box whose on-state is a *custom* name — `/Export1`, say — cannot be checked
 at all.** `true` writes `/Yes`, which matches no widget state, and no other value
-writes a PDF name either. Writing the on-state's name as a string is not a
-workaround and makes matters worse: it goes into `/V` *and* is copied into the
-widget's `/AS`, where the PDF specification requires a name, so a reader may
-render the field wrongly.
+writes a PDF name either. `:on_states` reveals the custom name but does not make
+it writable. Writing it as a string is not a workaround: it also puts a string
+in the widget's `/AS`, where the PDF specification requires a name, so a reader
+may render the field wrongly.
 
 Either field needs its dictionaries edited directly, which this library does not
 expose. Reading such a field is unaffected; it is only the value produced from
