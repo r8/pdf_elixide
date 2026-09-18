@@ -44,7 +44,7 @@ defmodule PdfElixide.Error do
       or with the counterpart on whichever handle it is.
     * `:other` — any error not covered above; `message` is preserved verbatim.
 
-  `:message` is a human-readable description. `:details` is always `nil`.
+  `:message` is a human-readable description.
 
   ## Errors versus exceptions
 
@@ -102,11 +102,10 @@ defmodule PdfElixide.Error do
 
   @type t :: %__MODULE__{
           reason: reason(),
-          message: String.t(),
-          details: map() | nil
+          message: String.t()
         }
 
-  defexception reason: :other, message: "unknown error", details: nil
+  defexception reason: :other, message: "unknown error"
 
   @impl true
   def message(%__MODULE__{message: message}), do: message
