@@ -12,6 +12,14 @@ defmodule PdfElixide.NifSource do
   end
 
   @doc false
+  def structs do
+    @src
+    |> Path.join("*.rs")
+    |> Path.wildcard()
+    |> Enum.flat_map(&parse_structs/1)
+  end
+
+  @doc false
   def src_dir, do: @src
 
   # Discard the preamble before the first NIF attribute.
@@ -68,7 +76,7 @@ defmodule PdfElixide.NifSource do
   # own: the attribute applies to the item directly beneath it.
   defp nif_arity(body) do
     with [_, rest] <- Regex.split(~r/\bfn\s+[a-z0-9_]+\s*(?:<[^>(]*>)?\s*\(/, body, parts: 2),
-         {:ok, params} <- balanced(rest) do
+         {:ok, params} <- balanced(rest, ")") do
       params
       |> split_params()
       |> Enum.reject(&injected_env?/1)
@@ -78,14 +86,56 @@ defmodule PdfElixide.NifSource do
     end
   end
 
-  # Everything up to the paren that closes the parameter list, which is not the
-  # first `)` in the general case — a parameter type may contain its own parens.
-  defp balanced(rest) do
+  # Line comments are stripped before the split: the field regex is anchored,
+  # so a comment glued to a field by the comma split would hide it, and one
+  # containing `word:` would invent one.
+  defp parse_structs(path) do
+    file = Path.basename(path)
+
+    path
+    |> File.read!()
+    |> strip_tests()
+    |> String.replace(~r{//[^\n]*}, "")
+    |> String.split("#[derive(")
+    |> Enum.drop(1)
+    |> Enum.filter(&nif_struct?/1)
+    |> Enum.map(&parse_struct(file, &1))
+  end
+
+  defp nif_struct?(chunk) do
+    chunk |> String.split(")", parts: 2) |> hd() |> String.contains?("NifStruct")
+  end
+
+  defp parse_struct(file, chunk) do
+    %{
+      file: file,
+      name: capture(~r/\bstruct\s+([A-Za-z0-9_]+)/, chunk),
+      module: capture(~r/#\[module\s*=\s*"([^"]+)"\]/, chunk),
+      fields: struct_fields(chunk)
+    }
+  end
+
+  defp struct_fields(chunk) do
+    with [_, rest] <- Regex.split(~r/\bstruct\s+[A-Za-z0-9_]+\s*\{/, chunk, parts: 2),
+         {:ok, body} <- balanced(rest, "}") do
+      body
+      |> split_params()
+      |> Enum.map(&capture(~r/^(?:pub(?:\([^)]*\))?\s+)?([a-z_][a-z0-9_]*)\s*:/, &1))
+      |> Enum.reject(&is_nil/1)
+    else
+      _ -> []
+    end
+  end
+
+  # Everything up to the bracket that closes the parameter list or struct body,
+  # which is not the first closer in the general case — a type may contain its
+  # own brackets.
+  defp balanced(rest, closer) do
     rest
     |> String.graphemes()
     |> Enum.reduce_while({[], 0}, fn char, {taken, depth} ->
       case {char, depth} do
-        {")", 0} -> {:halt, {:ok, taken |> Enum.reverse() |> Enum.join()}}
+        {^closer, 0} -> {:halt, {:ok, taken |> Enum.reverse() |> Enum.join()}}
         _ -> {:cont, {[char | taken], depth + nesting(char)}}
       end
     end)
@@ -112,10 +162,10 @@ defmodule PdfElixide.NifSource do
   end
 
   # `<` and `>` are counted alongside the brackets so a generic parameter type
-  # cannot hide a comma. A comparison operator would unbalance this, but a
-  # parameter list has no expressions in it.
-  defp nesting(char) when char in ["(", "<", "["], do: 1
-  defp nesting(char) when char in [")", ">", "]"], do: -1
+  # cannot hide a comma. A comparison operator would unbalance this, but neither
+  # a parameter list nor a struct body has expressions in it.
+  defp nesting(char) when char in ["(", "<", "[", "{"], do: 1
+  defp nesting(char) when char in [")", ">", "]", "}"], do: -1
   defp nesting(_char), do: 0
 
   defp injected_env?(param), do: Regex.match?(~r/^env\s*:\s*Env\b/, param)
