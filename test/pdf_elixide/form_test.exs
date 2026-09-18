@@ -1051,6 +1051,21 @@ defmodule PdfElixide.FormTest do
       refute Editor.modified?(editor)
     end
 
+    test "an unknown name in last position still writes nothing" do
+      editor = Editor.open!(@form_pdf)
+
+      assert {:error, %Error{reason: :not_found}} =
+               Form.put_values(editor, [
+                 {"full_name", "Jane Doe"},
+                 {"subscribe", true},
+                 {"country", ["Canada"]},
+                 {"no_such_field", "x"}
+               ])
+
+      assert {:ok, "John Doe"} = Form.value(editor, "full_name")
+      refute Editor.modified?(editor)
+    end
+
     test "reports a signature field as :not_found and writes nothing" do
       editor = Editor.open!(@signature_pdf)
 

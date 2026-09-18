@@ -318,8 +318,7 @@ to say so.
 `PdfElixide.Form.put_values/2` takes a map with string keys, or a list of
 `{name, value}` pairs, and **validates all of them before it writes any**:
 unknown names, duplicates, names that are not strings and values outside
-`t:PdfElixide.Form.Field.value/0` are all caught up front, against a single
-`fields/1` read.
+`t:PdfElixide.Form.Field.value/0` are all caught up front.
 
 ```elixir
 {:ok, editor} = Form.put_values(editor, %{"full_name" => "Jane Doe", "subscribe" => true})
@@ -328,9 +327,10 @@ unknown names, duplicates, names that are not strings and values outside
 {:ok, editor} = Form.put_values(editor, [{"full_name", "Jane Doe"}, {"country", ["Canada"]}])
 ```
 
-**It is not a transaction.** A failure after validation stops at the first
-error, with any earlier writes already applied. It is a convenience for
-validation and composition, not an atomic batch.
+The editor is held exclusively while the batch is applied, so concurrent calls
+see the form before or after it, never partway through it. An unexpected runtime
+failure during application may leave earlier writes applied. The
+[Concurrency](concurrency.md) guide covers the locking model.
 
 `PdfElixide.Form.update_value/3` transforms a field in place, handing `fun` the
 current value and writing back whatever it returns:

@@ -27,7 +27,7 @@ use crate::{
     },
     error::{tagged_err, to_form_err, to_nif_err},
     form::{
-        editor_form_field_to_nif, export_bytes, export_form_field, is_exportable,
+        editor_form_field_to_nif, export_bytes, export_form_field, fillable, is_exportable,
         set_value_from_nif, FieldNif, FieldValueNif, FormDataFormatNif,
     },
     form_tree::{self, Resolved},
@@ -386,7 +386,7 @@ fn editor_form_fields(resource: ResourceArc<EditorResource>) -> NifResult<Vec<Fi
 
         Ok(fields
             .into_iter()
-            .filter(|field| !resolved.is_signature(field.name()))
+            .filter(|field| fillable(resolved, field))
             .filter_map(|field| {
                 let attrs = resolved.attrs(field.name());
                 let on_states = resolved.on_states(field.name());
@@ -856,18 +856,15 @@ fn editor_info(resource: ResourceArc<EditorResource>) -> NifResult<MetadataNif> 
     })
 }
 
+fn field_not_found(name: &str) -> rustler::Error {
+    tagged_err(atoms::not_found(), format!("Form field not found: {name}"))
+}
+
 // Guard the write itself: hiding signatures from reads does not stop a caller
 // naming one directly, and any value would replace its `/V` dictionary.
 fn ensure_not_signature(resolved: &Resolved, name: &str) -> NifResult<()> {
     if resolved.is_signature(name) {
-        // Upstream's own spelling carries an "Invalid PDF: " prefix its `Display`
-        // prepends; this matches what `Form.field/2` builds in Elixir instead.
-        // The two `:not_found` messages already differ across the read side, so
-        // the atom is the whole of the contract.
-        return Err(tagged_err(
-            atoms::not_found(),
-            format!("Form field not found: {name}"),
-        ));
+        return Err(field_not_found(name));
     }
 
     Ok(())
@@ -888,6 +885,37 @@ fn editor_set_form_field_value(
         editor
             .set_form_field_value(&name, set_value_from_nif(value))
             .map_err(to_form_err)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_set_form_field_values(
+    resource: ResourceArc<EditorResource>,
+    pairs: Vec<(String, Option<FieldValueNif>)>,
+) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        // Preflight every name so an unknown field cannot partially apply the batch.
+        let resolved = resolved_fields(&resource, editor)?;
+        let fields = editor.get_form_fields().map_err(to_nif_err)?;
+        let known: HashSet<&str> = fields
+            .iter()
+            .filter(|field| fillable(resolved, field))
+            .map(|field| field.name())
+            .collect();
+
+        for (name, _value) in &pairs {
+            if !known.contains(name.as_str()) {
+                return Err(field_not_found(name));
+            }
+        }
+
+        for (name, value) in pairs {
+            editor
+                .set_form_field_value(&name, set_value_from_nif(value))
+                .map_err(to_form_err)?;
+        }
 
         Ok(atoms::ok())
     })

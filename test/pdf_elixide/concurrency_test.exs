@@ -363,6 +363,44 @@ defmodule PdfElixide.ConcurrencyTest do
       end
     end
 
+    test "a put_values/2 batch is never observed half-applied" do
+      editor = Editor.open!(@form_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      initial = Map.new(Form.fields!(editor), &{&1.name, &1.value})
+
+      # Two fields written together with correlated values, so a snapshot taken
+      # between the batch's two writes would show them disagreeing.
+      writer =
+        Task.async(fn ->
+          for i <- 1..@writes do
+            Form.put_values(editor, [{"full_name", "b-#{i}"}, {"subscribe", even?(i)}])
+          end
+        end)
+
+      readers =
+        for _ <- 1..(@concurrency - 1) do
+          Task.async(fn -> for _ <- 1..@writes, do: Form.fields!(editor) end)
+        end
+
+      write_results = Task.await(writer, @timeout)
+      snapshots = readers |> Task.await_many(@timeout) |> Enum.concat()
+
+      assert length(write_results) == @writes
+      assert Enum.all?(write_results, &match?({:ok, %Editor{}}, &1))
+      assert length(snapshots) == (@concurrency - 1) * @writes
+
+      for fields <- snapshots do
+        values = Map.new(fields, &{&1.name, &1.value})
+
+        case values["full_name"] do
+          # A snapshot preceding the first write sees the fixture's own pair.
+          "b-" <> i -> assert values["subscribe"] == even?(String.to_integer(i))
+          _initial -> assert values == initial
+        end
+      end
+    end
+
     test "to_binary/2 racing put_value/3 always yields a parseable PDF" do
       editor = Editor.open!(@form_pdf)
       on_exit(fn -> Editor.close(editor) end)

@@ -126,9 +126,11 @@ document does not stop it answering. Certificates and timestamps reached from a
 signature are plain values too, so their operations are lock-free for the same
 reason.
 
-`PdfElixide.Form.put_values/2` validates values together but does not make their
-writes atomic. `PdfElixide.Form.update_value/3` is likewise a read followed by a
-write, so another process holding the same editor can write in between.
+`PdfElixide.Form.put_values/2` holds the editor exclusively for the whole batch,
+so no other call on that editor runs between two of its writes.
+`PdfElixide.Form.update_value/3` is a read followed by a write, each taking the
+lock on its own, so another process holding the same editor can write in
+between.
 
 `PdfElixide.Document.Image`, `PdfElixide.Document.Font` and
 `PdfElixide.Document.Table` handles are shareable the same way as a document, and

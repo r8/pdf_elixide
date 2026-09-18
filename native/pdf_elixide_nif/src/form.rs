@@ -485,6 +485,11 @@ pub fn document_form_field_to_nif(
     )
 }
 
+// Keep editor reads and batch-write membership on the same fillable-field rule.
+pub fn fillable(resolved: &Resolved, wrapper: &FormFieldWrapper) -> bool {
+    !resolved.is_signature(wrapper.name()) && wrapper.field_type() != Some(&FieldType::Signature)
+}
+
 pub fn editor_form_field_to_nif(
     wrapper: FormFieldWrapper,
     attrs: Option<ResolvedAttrs<'_>>,

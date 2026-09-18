@@ -244,24 +244,22 @@ defmodule PdfElixide.Form do
 
   Takes a map with string keys, or a list of `{name, value}` pairs.
 
-  Everything is validated before anything is written, against a single `fields/1`
-  read. A name the form does not carry — a signature field included — is
-  `{:error, %PdfElixide.Error{reason: :not_found}}`, and a duplicated name, a
-  name that is not a string, or a value outside
-  `t:PdfElixide.Form.Field.value/0` raises `ArgumentError` naming the field.
+  Everything is validated before anything is written. A duplicated name, a name
+  that is not a string, or a value outside `t:PdfElixide.Form.Field.value/0`
+  raises `ArgumentError` naming the field. A name the form does not carry — a
+  signature field included — is `{:error, %PdfElixide.Error{reason: :not_found}}`,
+  and nothing is written for the other names either.
 
-  **This is not a transaction.** What can still fail after validation is the
-  handle itself — `:closed`, `:panic`, `:lock_poisoned` — and that stops at the
-  first error, leaving earlier writes applied.
+  The editor is held exclusively while the values are applied, so concurrent
+  calls see the form before or after the batch, never partway through it. An
+  unexpected runtime failure during application may leave earlier writes
+  applied.
 
   A list is applied in its own order; a map is applied in `Enum` order, which is
   unspecified, so pass a list where the order matters. Empty input returns
-  `{:ok, editor}` and makes no native call, so it leaves
-  `PdfElixide.Editor.modified?/1` alone and answers the same way for a closed
-  editor.
+  `{:ok, editor}` without modifying it, even when the editor is closed.
 
-  It is a convenience, not a batching optimization — see the
-  [Concurrency](guides/concurrency.md) guide for what it locks.
+  See the [Concurrency](guides/concurrency.md) guide for what it locks.
   """
   @spec put_values(Editor.t(), Enumerable.t({String.t(), Field.value()})) ::
           {:ok, Editor.t()} | {:error, Error.t()}
@@ -272,11 +270,7 @@ defmodule PdfElixide.Form do
 
       pairs ->
         validate_pairs!(pairs)
-
-        with {:ok, fields} <- fields(editor),
-             :ok <- ensure_all_known(pairs, fields) do
-          apply_values(editor, pairs)
-        end
+        write_values(editor, pairs)
     end
   end
 
@@ -432,24 +426,11 @@ defmodule PdfElixide.Form do
     end
   end
 
-  defp ensure_all_known(pairs, fields) do
-    known = MapSet.new(fields, & &1.name)
-
-    pairs
-    |> Enum.find(fn {name, _value} -> not MapSet.member?(known, name) end)
-    |> case do
-      nil -> :ok
-      {name, _value} -> {:error, not_found(name)}
+  defp write_values(%Editor{ref: ref} = editor, pairs) do
+    case Wrap.call(fn -> Native.editor_set_form_field_values(ref, pairs) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
     end
-  end
-
-  defp apply_values(editor, pairs) do
-    Enum.reduce_while(pairs, {:ok, editor}, fn {name, value}, _acc ->
-      case put_value(editor, name, value) do
-        {:ok, _editor} = ok -> {:cont, ok}
-        {:error, _reason} = err -> {:halt, err}
-      end
-    end)
   end
 
   defp not_found(name) do
