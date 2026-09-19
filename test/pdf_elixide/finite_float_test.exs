@@ -4,8 +4,9 @@ defmodule PdfElixide.FiniteFloatTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
+  alias PdfElixide.Geometry.Rect
 
-  @fixture Path.join([__DIR__, "..", "fixtures", "unbounded_text_matrix.pdf"])
+  @fixtures [text: "unbounded_text_matrix.pdf", image: "unbounded_image_matrix.pdf"]
 
   # f32::MAX read as a double, spelled as its bit pattern rather than as a
   # twenty-digit literal.
@@ -25,24 +26,36 @@ defmodule PdfElixide.FiniteFloatTest do
   defp finite?(_other), do: true
 
   setup do
-    doc = Document.open!(@fixture)
-    on_exit(fn -> Document.close(doc) end)
-    %{doc: doc}
+    Map.new(@fixtures, fn {key, name} ->
+      doc = Document.open!(Path.join([__DIR__, "..", "fixtures", name]))
+      on_exit(fn -> Document.close(doc) end)
+      {key, doc}
+    end)
   end
 
-  # The fixture is the only document producing a value the clamp has to map,
-  # so this is the assertion that keeps every test below from passing
-  # vacuously.
-  test "the span's size arrives as the largest finite float", %{doc: doc} do
+  # The two value pins are what keep the generated walk below from passing
+  # vacuously: only these fixtures produce a value the clamp has to map.
+  test "the span's size arrives as the largest finite float", %{text: doc} do
     assert [%{font_size: @f32_max, bbox: %{width: @f32_max, height: @f32_max}}] =
              Document.spans!(doc, 0)
   end
 
-  for name <- @extractors do
-    test "#{name} returns only finite floats on every arity", %{doc: doc} do
-      assert {:ok, whole} = apply(Document, unquote(name), [doc])
-      assert {:ok, page} = apply(Document, unquote(name), [doc, 0])
-      assert {:ok, via_page} = apply(Page, unquote(name), [Enum.at(doc, 0)])
+  test "the image's matrix arrives as the largest finite float", %{image: doc} do
+    assert [image] = Document.images!(doc)
+    assert image.matrix == {@f32_max, 0.0, 0.0, @f32_max, 0.0, 0.0}
+
+    # Upstream transforms the unit square by that same CTM, so both corners land
+    # at infinity and the extents come through as `inf - inf`.
+    assert image.bbox == %Rect{x: @f32_max, y: @f32_max, width: 0.0, height: 0.0}
+  end
+
+  for {key, _name} <- @fixtures, extractor <- @extractors do
+    test "#{extractor} returns only finite floats on every arity (#{key})", context do
+      doc = Map.fetch!(context, unquote(key))
+
+      assert {:ok, whole} = apply(Document, unquote(extractor), [doc])
+      assert {:ok, page} = apply(Document, unquote(extractor), [doc, 0])
+      assert {:ok, via_page} = apply(Page, unquote(extractor), [Enum.at(doc, 0)])
 
       assert finite?(whole)
       assert finite?(page)
@@ -50,7 +63,7 @@ defmodule PdfElixide.FiniteFloatTest do
     end
   end
 
-  test "search and text succeed too", %{doc: doc} do
+  test "search and text succeed too", %{text: doc} do
     assert {:ok, [_ | _] = matches} = Document.search(doc, "1")
     assert finite?(matches)
     assert {:ok, text} = Document.text(doc)

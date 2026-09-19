@@ -16,13 +16,8 @@ pub fn rect_from_nif(rect: RectNif) -> Rect {
     Rect::new(rect.x, rect.y, rect.width, rect.height)
 }
 
-// Encode-side only: `enif_make_double` raises `badarg` on a non-finite value,
-// which would reach Elixir as `ArgumentError` outside the `{reason, message}`
-// contract. Never on the decode path, where a caller's non-finite input is
-// refused instead (`validate_mode`, `corners`, `ensure_fill_in_range`).
-//
-// `finite64` saturates at the `f32` bound on purpose: a caller cannot tell
-// which fields cross as `f64`, so the documented value has to be one number.
+// `enif_make_double` raises `badarg` on a non-finite value. `finite64` bounds
+// at the `f32` maximum too, so the one value the Rect doc promises is exact.
 pub fn finite(v: f32) -> f32 {
     if v.is_nan() {
         0.0

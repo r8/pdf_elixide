@@ -1455,10 +1455,8 @@ mod tests {
         out
     }
 
-    // A text-matrix scale past about 1.8e19 overflows the f32 in upstream's
-    // `font_size * sqrt(d*d + b*b)`; `Tf` and `cm` operands are sanitised,
-    // `Tm` is not. The clamp stays when this fails — retire the fixture and
-    // the Elixir value pin instead.
+    // The non-finite-float family: each pins one upstream mechanism that
+    // overflows an f32. The boundary clamp stays when they fail; the canary goes.
     #[test]
     fn upstream_still_emits_an_infinite_span_size_for_a_huge_text_matrix() {
         let doc = PdfDocument::open(fixture("unbounded_text_matrix.pdf")).expect("fixture opens");
@@ -1470,11 +1468,6 @@ mod tests {
         assert!(span.bbox.height.is_infinite(), "{}", span.bbox.height);
     }
 
-    // `prescan_text_regions` (`src/content/parser.rs`, streams over 256 KiB —
-    // hence the padding) applies `cm` without honouring `Q`, so the `q … Q`
-    // runs compound tenfold each. Only an XObject-hosted stream trips it, so
-    // the control is the unpadded stream rather than the page. Retire as
-    // above; the clamp stays.
     #[test]
     fn upstream_still_accumulates_the_ctm_across_q_blocks_past_the_prescan_threshold() {
         let runs: Vec<u8> = (0..25)
@@ -1521,6 +1514,17 @@ mod tests {
             compounded.iter().any(|size| size.is_infinite()),
             "{compounded:?}"
         );
+    }
+
+    #[test]
+    fn upstream_still_composes_an_infinite_image_ctm() {
+        let doc = PdfDocument::open(fixture("unbounded_image_matrix.pdf")).expect("fixture opens");
+        let images = doc.extract_images(0).expect("images");
+        assert_eq!(images.len(), 1);
+        let [a, b, c, d, e, f] = images[0].matrix();
+        assert!(a.is_infinite(), "{a}");
+        assert!(d.is_infinite(), "{d}");
+        assert_eq!((b, c, e, f), (0.0, 0.0, 0.0, 0.0));
     }
 
     #[test]
