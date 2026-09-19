@@ -935,9 +935,9 @@ defmodule PdfElixide.Editor do
 
   `rect` is in raw, unrotated page space, as returned by
   `PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
-  `PdfElixide.Document.paths/1`. Other extractors may use a different frame on
-  rotated pages; see "Rotated pages and extracted geometry" in
-  `PdfElixide.Document`. A rectangle in the wrong frame is accepted without error.
+  `PdfElixide.Document.paths/1`. For other extractors, see "Rotated pages and
+  extracted geometry" in `PdfElixide.Document`; a rectangle in the wrong frame
+  is accepted without error.
 
   **Saving alone does not apply the queued rectangle.** Queuing also marks the
   page: if it has `/Redact` annotations, a full write paints their rectangles

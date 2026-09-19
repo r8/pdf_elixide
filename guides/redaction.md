@@ -157,12 +157,11 @@ PdfElixide.Editor.close(editor)
 `PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
 `PdfElixide.Document.paths/1` report. On a rotated page it is *not* what
 `PdfElixide.Document.words/1`, `PdfElixide.Document.text_lines/1`,
-`PdfElixide.Document.tables/1` or `PdfElixide.Document.search/2` report — those
-are mapped into the displayed frame, and a box taken from one of them has to be
-mapped back before it is queued. See "Rotated pages and extracted geometry" in
-`PdfElixide.Document`. Nothing detects the mismatch: the region is queued,
-applied over whatever it lands on, and reported as a success, which is the one
-way this feature can quietly redact the wrong area.
+`PdfElixide.Document.tables/1` or `PdfElixide.Document.search/2` necessarily
+report. Follow "Rotated pages and extracted geometry" in `PdfElixide.Document`,
+and convert a search match span by span rather than using its `:bbox`. Nothing
+detects a frame mismatch: the region is applied wherever it lands and reported
+as a success, so it can quietly redact the wrong area.
 
 The queued rectangle reaches no writer but
 `PdfElixide.Editor.apply_redactions/1`, and **cannot be withdrawn** once added:

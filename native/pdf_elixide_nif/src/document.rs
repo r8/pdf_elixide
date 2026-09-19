@@ -5,7 +5,7 @@ use pdf_oxide::{
     error::{Error, Result},
     layout::{LayoutObjectSpatial, SpatialCollectionFiltering},
     object::Object,
-    search::TextSearcher,
+    search::{SearchOptions, TextSearcher},
     PdfDocument,
 };
 use rustler::{Atom, Binary, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc};
@@ -369,6 +369,8 @@ fn document_authenticate(
         let ok = result.map_err(to_nif_err)?;
         if ok {
             doc.doc = fresh;
+            // Cached runs belong to the document just discarded.
+            doc.search_runs.clear();
         }
 
         Ok(ok)
@@ -997,20 +999,9 @@ fn document_all_search(
     pattern: String,
     options: SearchOptionsNif,
 ) -> NifResult<Vec<SearchMatchNif>> {
-    resource.doc.with_read(|doc| {
-        // A document with no pages must answer `[]` like every sibling
-        // extractor, but not by returning early: `TextSearcher::search` compiles
-        // the pattern before it reads the page count, so an early return would
-        // accept an unparseable one. An inverted range keeps the call and still
-        // visits nothing — `start..=end` is empty when `start > end`.
-        let page_range = if doc.page_count().map_err(to_nif_err)? == 0 {
-            Some(EMPTY_PAGE_RANGE)
-        } else {
-            None
-        };
-
-        run_search(doc, options.into_request(pattern), page_range)
-    })
+    resource
+        .doc
+        .with_read(|doc| run_search(doc, options.into_request(pattern), None))
 }
 
 // Inverted, so `start..=end` visits no page: upstream clamps the end to the
@@ -1019,35 +1010,73 @@ fn document_all_search(
 const EMPTY_PAGE_RANGE: (usize, usize) = (1, 0);
 
 fn run_search(
-    doc: &PdfDocument,
+    doc: &OpenDocument,
     request: SearchRequest,
     page_range: Option<(usize, usize)>,
 ) -> NifResult<Vec<SearchMatchNif>> {
-    // A grouped pattern compiles iff the caller's does, so compiling theirs
-    // first — over the empty range, since `TextSearcher::search` compiles
-    // before it reads a page — reports a bad pattern as they wrote it, and the
-    // real search below can no longer fail on the pattern.
-    if let Some(raw_pattern) = &request.raw_pattern {
-        let probe = request
-            .options
-            .clone()
-            .with_page_range(EMPTY_PAGE_RANGE.0, EMPTY_PAGE_RANGE.1);
-        TextSearcher::search(doc, raw_pattern, &probe).map_err(to_search_err)?;
-    }
+    // Compile before the per-page loop so empty searches still validate, using
+    // the caller's raw pattern when grouping would obscure its error message.
+    let probe = request
+        .options
+        .clone()
+        .with_page_range(EMPTY_PAGE_RANGE.0, EMPTY_PAGE_RANGE.1);
+    let probed = request.raw_pattern.as_deref().unwrap_or(&request.pattern);
+    TextSearcher::search(doc, probed, &probe).map_err(to_search_err)?;
 
-    let mut options = request.options;
-    if let Some((start, end)) = page_range {
-        options = options.with_page_range(start, end);
-    }
+    // The probe above has already validated the pattern on a zero-page document.
+    let Some(last) = doc.page_count().map_err(to_nif_err)?.checked_sub(1) else {
+        return Ok(Vec::new());
+    };
+    let (start, end) = page_range.unwrap_or((0, last));
+    let end = end.min(last);
+    let max_results = request.options.max_results;
 
-    let hits = TextSearcher::search(doc, &request.pattern, &options).map_err(to_search_err)?;
-    Ok(hits.into_iter().map(search_match_to_nif).collect())
+    // Resolve each page's runs while the search extraction is still cached.
+    let mut matches = Vec::new();
+    for page in start..=end {
+        let options = request.options.clone().with_page_range(page, page);
+        let hits = TextSearcher::search(doc, &request.pattern, &options).map_err(to_search_err)?;
+        if hits.is_empty() {
+            continue;
+        }
+
+        let runs = doc
+            .search_runs
+            .get_or_fill(page, || doc.extract_spans(page))
+            .map_err(to_nif_err)?;
+        for hit in hits {
+            matches.push(search_match_to_nif(hit, &runs).ok_or_else(|| {
+                tagged_err(
+                    atoms::other(),
+                    format!("page {page}: search match names runs the page's spans do not contain"),
+                )
+            })?);
+        }
+
+        if max_results > 0 && matches.len() >= max_results {
+            matches.truncate(max_results);
+            break;
+        }
+    }
+    Ok(matches)
 }
+
+// A pattern that matches nothing, so a one-page search only builds that
+// page's index.
+const NEVER_MATCHES: &str = r"[^\s\S]";
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_prepare_search(resource: ResourceArc<DocumentResource>) -> NifResult<Atom> {
     resource.doc.with_read(|doc| {
-        doc.prepare_search().map_err(to_nif_err)?;
+        // Interleave the two caches so each page is extracted once.
+        let count = doc.page_count().map_err(to_nif_err)?;
+        for page in 0..count {
+            doc.search_runs
+                .get_or_fill(page, || doc.extract_spans(page))
+                .map_err(to_nif_err)?;
+            let options = SearchOptions::new().with_page_range(page, page);
+            TextSearcher::search(doc, NEVER_MATCHES, &options).map_err(to_nif_err)?;
+        }
         Ok(atoms::ok())
     })
 }
@@ -1057,6 +1086,7 @@ fn document_prepare_search(resource: ResourceArc<DocumentResource>) -> NifResult
 fn document_clear_search_index(resource: ResourceArc<DocumentResource>) -> NifResult<Atom> {
     resource.doc.with_lock(|doc| {
         doc.clear_search_index();
+        doc.search_runs.clear();
         Ok(atoms::ok())
     })
 }
@@ -1384,6 +1414,28 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             name
         )
+    }
+
+    #[test]
+    fn upstream_still_serves_pre_authentication_caches_after_authenticate() {
+        let doc = PdfDocument::open(fixture("encrypted.pdf")).expect("fixture opens");
+        let search = |doc: &PdfDocument| {
+            TextSearcher::search(doc, "Page", &SearchOptions::new()).expect("search runs")
+        };
+        assert!(doc.extract_spans(0).expect("spans").is_empty());
+        assert!(doc.extract_chars(0).expect("chars").is_empty());
+        assert!(search(&doc).is_empty());
+
+        assert!(doc.authenticate(b"secret").expect("authenticate runs"));
+        assert!(doc.extract_spans(0).expect("spans").is_empty());
+        assert!(doc.extract_chars(0).expect("chars").is_empty());
+        assert!(search(&doc).is_empty());
+
+        // The control: authenticated before any read, the same file has text.
+        let fresh = PdfDocument::open(fixture("encrypted.pdf")).expect("fixture opens");
+        assert!(fresh.authenticate(b"secret").expect("authenticate runs"));
+        assert!(!fresh.extract_spans(0).expect("spans").is_empty());
+        assert!(!search(&fresh).is_empty());
     }
 
     #[test]

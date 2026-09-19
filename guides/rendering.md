@@ -118,10 +118,10 @@ though the raster they are cut from is turned and shifted.
 
 **On a rotated page, not every extractor reports in that space.** Some hand back
 displayed coordinates, and a box taken from one of them crops the wrong part of
-the page — the example above is one of them, so on a turned page reach for a
-`bbox` that is still raw. The "Rotated pages and extracted geometry" section of
-`PdfElixide.Document` says which extractors are which. Page boxes are never
-mapped, so the crop-box recipe further up holds whatever the rotation.
+the page. The "Rotated pages and extracted geometry" section of
+`PdfElixide.Document` explains which boxes need
+`PdfElixide.Geometry.Rect.to_user_space/3`. Page boxes are never mapped, so the
+crop-box recipe further up holds whatever the rotation.
 
 A rectangle that pokes over an edge is clipped to the page, so what comes back
 is the part of it that is actually there and is smaller than the rectangle —

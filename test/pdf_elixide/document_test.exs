@@ -50,6 +50,7 @@ defmodule PdfElixide.DocumentTest do
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
   @search_pdf Path.join(@fixtures, "search.pdf")
+  @coincident_runs_pdf Path.join(@fixtures, "coincident_runs.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
   @attachments_pdf Path.join(@fixtures, "attachments.pdf")
   @attachments_cyclic_pdf Path.join(@fixtures, "attachments_cyclic.pdf")
@@ -1132,6 +1133,7 @@ defmodule PdfElixide.DocumentTest do
       assert is_binary(word.font)
       assert is_boolean(word.bold?)
       assert is_boolean(word.italic?)
+      assert is_float(word.rotation)
     end
 
     test "returns each page's words" do
@@ -1946,7 +1948,9 @@ defmodule PdfElixide.DocumentTest do
       [span] = Document.spans!(doc, 0) |> Enum.filter(&(&1.text =~ "Widgets"))
       [match] = Document.search!(doc, "Widgets")
 
-      assert match.span_boxes == [span.bbox]
+      assert [%Span{} = matched] = match.spans
+      assert matched.bbox == span.bbox
+      assert matched.text == span.text
       assert match.bbox == span.bbox
     end
 
@@ -1956,9 +1960,48 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@search_pdf)
       [match] = Document.search!(doc, "Quarterly Report")
 
-      assert [%Rect{y: 640.0} = first, %Rect{y: 600.0} = second] = match.span_boxes
-      assert match.bbox.y == second.y
-      assert match.bbox.height == first.y + first.height - second.y
+      assert [%Span{text: "Quarterly"} = first, %Span{text: "Report"} = second] = match.spans
+      assert [%Rect{y: 640.0}, %Rect{y: 600.0}] = [first.bbox, second.bbox]
+      assert match.bbox.y == second.bbox.y
+      assert match.bbox.height == first.bbox.y + first.bbox.height - second.bbox.y
+    end
+  end
+
+  describe "a match's spans on runs sharing one box" do
+    # `dog` and `god` are drawn at the same position in the same font, and their
+    # letters share an advance, so the two spans have equal boxes; only the
+    # matched text tells them apart.
+    setup do
+      doc = Document.open!(@coincident_runs_pdf)
+      [dog, god, _tail] = Document.spans!(doc, 0)
+      assert {dog.text, god.text} == {"dog", "god"}
+      assert dog.bbox == god.bbox
+      %{doc: doc, dog: dog, god: god}
+    end
+
+    test "resolve to the run whose text matched", %{doc: doc, dog: dog, god: god} do
+      assert [%SearchMatch{spans: [%Span{text: "god", color: color}]}] =
+               Document.search!(doc, "god", 0)
+
+      assert color == god.color
+
+      assert [%SearchMatch{spans: [%Span{text: "dog", color: color}]}] =
+               Document.search!(doc, "dog", 0)
+
+      assert color == dog.color
+      refute dog.color == god.color
+    end
+
+    test "a match across runs keeps each run's own text", %{doc: doc} do
+      assert [%SearchMatch{spans: [%Span{text: "god"}, %Span{text: "tail"}]}] =
+               Document.search!(doc, "god tail", 0)
+    end
+
+    test "still resolve after clear_search_index/1 rebuilds the index", %{doc: doc} do
+      before = Document.search!(doc, "god", 0)
+      assert :ok = Document.clear_search_index(doc)
+      assert Document.search!(doc, "god", 0) == before
+      assert [%SearchMatch{spans: [%Span{text: "god"}]}] = before
     end
   end
 
@@ -3157,6 +3200,17 @@ defmodule PdfElixide.DocumentTest do
       assert Document.chars!(doc, 0) == Document.chars!(fresh, 0)
       assert Document.search!(doc, "Page") == Document.search!(fresh, "Page")
       assert Document.page_count!(doc) == 3
+    end
+
+    test "runs prepared before authenticating are dropped with the document" do
+      # This fills runs even on pages with no pre-authentication matches.
+      doc = Document.open!(@encrypted_pdf)
+      assert :ok = Document.prepare_search(doc)
+      assert {:ok, true} = Document.authenticate(doc, @password)
+
+      fresh = Document.open!(@encrypted_pdf, password: @password)
+      assert [_ | _] = matches = Document.search!(doc, "Page")
+      assert matches == Document.search!(fresh, "Page")
     end
 
     test "a rejected password leaves the handle as it was" do

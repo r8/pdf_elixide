@@ -10,6 +10,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form
+  alias PdfElixide.Geometry.Rect
   alias PdfElixide.Logging
   alias PdfElixide.Signature
   alias PdfElixide.Warning
@@ -26,6 +27,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
   @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
+  @rotated_run_pdf Path.join(@fixtures, "rotated_run.pdf")
   @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
@@ -117,6 +119,33 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   defp origin(%{bbox: %{x: x, y: y}}), do: {x, y}
   defp origins(items), do: Enum.map(items, &origin/1)
+
+  defp union(%Rect{} = a, %Rect{} = b) do
+    x = min(a.x, b.x)
+    y = min(a.y, b.y)
+
+    %Rect{
+      x: x,
+      y: y,
+      width: max(a.x + a.width, b.x + b.width) - x,
+      height: max(a.y + a.height, b.y + b.height) - y
+    }
+  end
+
+  # Upstream maps in f32 and the helper in f64.
+  @delta 0.001
+
+  defp same?(%Rect{} = left, %Rect{} = right) do
+    Enum.all?([:x, :y, :width, :height], fn key ->
+      abs(Map.fetch!(left, key) - Map.fetch!(right, key)) < @delta
+    end)
+  end
+
+  defp assert_same(left, right),
+    do: assert(same?(left, right), "#{inspect(left)} != #{inspect(right)}")
+
+  defp refute_same(left, right),
+    do: refute(same?(left, right), "#{inspect(left)} == #{inspect(right)}")
 
   # The fill colours page 0 paints, read back off an uncompressed write. A
   # whiteout is white and a redaction block carries its annotation's `/IC`.
@@ -252,6 +281,24 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert text =~ ~r/\b0\.042\b/
       assert text =~ "Age0.0420.0110.001"
+    end
+
+    test "a cell span is one word's box with the rotation dropped", %{doc: doc} do
+      word_boxes = Document.words!(doc, 0) |> Enum.map(& &1.bbox)
+
+      cell_spans =
+        for table <- Document.tables!(doc, 0),
+            row <- table.rows,
+            cell <- row.cells,
+            span <- cell.spans,
+            do: span
+
+      refute cell_spans == []
+
+      for span <- cell_spans do
+        assert span.bbox in word_boxes
+        assert span.rotation == 0.0
+      end
     end
 
     test "words/2 keeps every cell separate", %{doc: doc} do
@@ -479,6 +526,81 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [match_90] = Document.search!(doc, span_90.text, @rotate_90)
       assert origin(match_90) == origin(span_90)
     end
+
+    for {page, rotation} <- [{0, 90}, {1, 270}] do
+      test "a #{rotation}-degree page maps only the run whose text matrix is rotated" do
+        doc = open(@rotated_run_pdf)
+        page = unquote(page)
+        rotation = unquote(rotation)
+        box = Page.media_box!(Document.page!(doc, page))
+
+        assert [level, sideways] = Document.spans!(doc, page)
+        assert {level.text, origin(level), level.rotation} == {"Level", {72.0, 720.0}, 0.0}
+
+        assert {sideways.text, origin(sideways), sideways.rotation} ==
+                 {"Sideways", {300.0, 200.0}, 90.0}
+
+        mapped = Rect.to_display_frame(sideways.bbox, rotation, box)
+        refute {mapped.x, mapped.y} == origin(sideways)
+
+        words = Document.words!(doc, page)
+        assert level_word = Enum.find(words, &(&1.text == "Level"))
+        assert {origin(level_word), level_word.rotation} == {origin(level), 0.0}
+
+        assert %{rotation: 90.0} = sideways_word = Enum.find(words, &(&1.text == "Sideways"))
+        # A rotated word preserves glyph advances, so only origin and height agree.
+        assert_in_delta sideways_word.bbox.x, mapped.x, 0.001
+        assert_in_delta sideways_word.bbox.y, mapped.y, 0.001
+        assert_in_delta sideways_word.bbox.height, mapped.height, 0.001
+
+        assert [match] = Document.search!(doc, "Sideways", page)
+
+        for key <- [:x, :y, :width, :height] do
+          assert_in_delta Map.fetch!(match.bbox, key), Map.fetch!(mapped, key), 0.001
+        end
+
+        chars = Document.chars!(doc, page)
+        assert Enum.find(chars, &(&1.text == "L")).rotation == 0.0
+        assert sideways_char = Enum.find(chars, &(&1.text == "S"))
+        assert origin(sideways_char) == origin(sideways)
+        assert_in_delta sideways_char.rotation, 90.0, 0.001
+      end
+    end
+
+    test "a match can cross from a raw run into a mapped one, and its spans say which is which" do
+      doc = open(@rotated_run_pdf)
+      box = Page.media_box!(Document.page!(doc, 0))
+      [level, sideways] = Document.spans!(doc, 0)
+
+      assert [%SearchMatch{spans: [first, second]} = match] =
+               Document.search!(doc, "Level Sideways", 0)
+
+      assert {first.text, first.rotation, first.bbox} == {"Level", 0.0, level.bbox}
+      assert {second.text, second.rotation} == {"Sideways", 90.0}
+      assert_same(second.bbox, Rect.to_display_frame(sideways.bbox, 90, box))
+
+      # The union covers one raw box and one mapped box, so it is in neither
+      # frame: mapping it back moves the raw run.
+      raw_union = union(level.bbox, sideways.bbox)
+      refute_same(match.bbox, raw_union)
+      refute_same(Rect.to_user_space(match.bbox, 90, box), raw_union)
+    end
+
+    test "upstream still maps a reversed media box about its corners as written" do
+      doc = open(@rotated_run_pdf)
+      page = Document.page!(doc, 2)
+      assert Page.rotation!(page) == 90
+      box = Page.media_box!(page)
+      assert box == %Rect{x: 0.0, y: 0.0, width: 612.0, height: 792.0}
+
+      assert [_level, sideways] = Document.spans!(doc, 2)
+      assert origin(sideways) == {300.0, 200.0}
+      assert [match] = Document.search!(doc, "Sideways", 2)
+
+      as_written = %Rect{x: 612.0, y: 792.0, width: -612.0, height: -792.0}
+      assert_same(match.bbox, Rect.to_display_frame(sideways.bbox, 90, as_written))
+      refute_same(Rect.to_user_space(match.bbox, 90, box), sideways.bbox)
+    end
   end
 
   describe "text search" do
@@ -490,7 +612,8 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [span] = Document.spans!(doc, 0) |> Enum.filter(&(&1.text =~ "Widgets"))
       assert [match] = Document.search!(doc, "Widgets")
 
-      assert match.span_boxes == [span.bbox]
+      assert [%{bbox: matched}] = match.spans
+      assert matched == span.bbox
       assert match.bbox == span.bbox
       assert span.bbox.width > 200.0
     end
@@ -499,7 +622,7 @@ defmodule PdfElixide.UpstreamDriftTest do
          %{doc: doc} do
       # "Quarterly" and "Report" are on separate lines in the fixture.
       assert [match] = Document.search!(doc, "Quarterly Report")
-      assert [%{y: 640.0}, %{y: 600.0}] = match.span_boxes
+      assert [%{bbox: %{y: 640.0}}, %{bbox: %{y: 600.0}}] = match.spans
     end
 
     test "matches are leftmost-first and non-overlapping", %{doc: doc} do

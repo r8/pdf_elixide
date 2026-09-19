@@ -12,6 +12,7 @@ pub struct WordNif {
     font: String,
     bold: bool,
     italic: bool,
+    rotation: f32,
 }
 
 pub fn word_to_nif(word: Word, page: usize) -> WordNif {
@@ -23,5 +24,6 @@ pub fn word_to_nif(word: Word, page: usize) -> WordNif {
         font: word.dominant_font,
         bold: word.is_bold,
         italic: word.is_italic,
+        rotation: word.rotation_degrees,
     }
 }

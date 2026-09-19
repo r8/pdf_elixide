@@ -151,10 +151,10 @@ box:
 
 Every box is a `PdfElixide.Geometry.Rect` in the page's raw, unrotated user space, so
 a box read from `PdfElixide.Document.Page.media_box/1`, or a `bbox` from an extractor
-that reports in that space, can be handed straight back. On a rotated page some
-extractors report displayed coordinates instead, and a box taken from one of them
-crops the wrong region; "Rotated pages and extracted geometry" in
-`PdfElixide.Document` says which is which. A reversed rectangle is normalized before
+that reports in that space, can be handed straight back. For rotated extractor boxes,
+see "Rotated pages and extracted geometry" in `PdfElixide.Document`; only boxes
+reported in the displayed frame should pass through
+`PdfElixide.Geometry.Rect.to_user_space/3`. A reversed rectangle is normalized before
 it is written, and the getters report the box as it will land in the file.
 
 **Cropping hides content; it does not remove it.** Whatever lies outside the crop box
@@ -247,8 +247,8 @@ rotated, moved, deleted and saved.
 
 Coordinates usually use the page's raw, unrotated user space, as reported by
 `PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
-`PdfElixide.Document.paths/1`. See "Rotated pages and extracted geometry" in
-`PdfElixide.Document` for extractors that report displayed coordinates.
+`PdfElixide.Document.paths/1`. Rotated extractor boxes follow the same conversion
+rules as crop boxes above.
 
 The whiteout inherits the graphics state left by the page content. An active
 transformation can move it, a clipping path can hide part or all of it, and an

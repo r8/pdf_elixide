@@ -11,7 +11,7 @@ use pdf_oxide::{
 };
 use rustler::{NifMap, NifResult, NifUnitEnum};
 
-use crate::ring::Ring;
+use crate::{ring::Ring, search::SearchRuns};
 
 #[derive(NifUnitEnum, Debug)]
 enum WarningCategoryNif {
@@ -108,6 +108,7 @@ impl Buffer {
 pub(crate) struct OpenDocument {
     pub(crate) doc: PdfDocument,
     pub(crate) warnings: Buffer,
+    pub(crate) search_runs: SearchRuns,
 }
 
 impl OpenDocument {
@@ -115,6 +116,7 @@ impl OpenDocument {
         Self {
             doc,
             warnings: Buffer::new(),
+            search_runs: SearchRuns::new(),
         }
     }
 

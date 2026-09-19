@@ -72,19 +72,20 @@ the *(a)* in *Fig. 3 (a)*, on either path, because a space precedes it.
 
 ## What a match covers
 
-`:bbox` and `:span_boxes` locate a match on the page — but they are coarser than
+`:bbox` and `:spans` locate a match on the page — but they are coarser than
 the matched text, in two ways that matter if you are drawing on top of them.
 
 **They cover whole runs of text.** A PDF stores text in runs, and a match reports
-the box of every run it touches rather than the extents of the matched
-characters. Searching `"Widgets"` in a line reading *Introduction to Widgets*
-gives back the box of the entire line. The search API provides no narrower box.
+every run it touches — each a whole `PdfElixide.Document.Span`, with its text,
+font and box — rather than the extents of the matched characters. Searching
+`"Widgets"` in a line reading *Introduction to Widgets* gives back the span of
+the entire line. The search API provides no narrower box.
 
-**`:bbox` is the union of `:span_boxes`.** For a match inside one run they are
+**`:bbox` is the union of the spans' boxes.** For a match inside one run they are
 the same rectangle. For a match crossing two runs — including two on different
 lines — the union is a single rectangle covering everything between them,
-including whatever sits in the gap. Draw from `:span_boxes`, which has one entry
-per run, and keep `:bbox` for coarse questions like "which part of the page".
+including whatever sits in the gap. Draw from each span's `:bbox`, one per run,
+and keep `:bbox` for coarse questions like "which part of the page".
 
 **A match can cross a line.** Runs are concatenated before matching, with a space
 inserted after a run only when that run does not already end in one. No newline
@@ -93,14 +94,13 @@ behaves as a single line: `^` and `$` anchor to the page rather than to a line,
 and `.` never stops at a line end.
 
 A match consisting entirely of inserted spaces — possible with a pattern such
-as `~S"\s+"` — belongs to no run and returns empty `:span_boxes` and a zero-sized
+as `~S"\s+"` — belongs to no run and returns empty `:spans` and a zero-sized
 `:bbox`.
 
-The boxes use the same coordinate spaces as the rest of the library. A rotated
-page has two: a search match is reported in the
-*displayed* frame, alongside `words/1` and `text_lines/1`, where `spans/1` and
-`chars/1` for the same text stay in raw page space. The "Rotated pages and
-extracted geometry" section of `PdfElixide.Document` has the full account.
+On a rotated page, a match may contain spans from both coordinate frames, so
+convert each span separately and never transform the combined `:bbox`. The
+"Rotated pages and extracted geometry" section of `PdfElixide.Document` has the
+recipe.
 
 ## Searching one page
 
@@ -127,12 +127,10 @@ Enum.flat_map(3..7, &Document.search!(doc, "Figure", &1))
 
 ## The search index
 
-The first search on a page builds a small index of it — the page's text and the
-boxes of its runs, without the font and glyph data a full extraction carries —
-and stores it on the document handle. Every later search on that page, **whatever
-the pattern**, reuses it. Each term still compiles its own pattern and scans the
-cached text; what the cache avoids is extracting the PDF text and rebuilding its
-position map for every term.
+The first search on a page builds an index on the document handle, and later
+searches reuse it regardless of their pattern. For every page that had a match,
+the page's spans are retained as well, and `prepare_search/1` retains them for
+every page; both are released together.
 
 Nothing evicts pages from the index during the handle's lifetime. Searching a
 thousand-page PDF end to end therefore retains a thousand pages of text in
@@ -146,7 +144,8 @@ Two calls control it:
   * `PdfElixide.Document.clear_search_index/1` drops the index and the memory it
     holds. The document stays usable and a later search rebuilds what it needs.
     `PdfElixide.Document.close/1` releases it too, along with everything else.
-  * `PdfElixide.Document.prepare_search/1` builds it for every page up front.
+  * `PdfElixide.Document.prepare_search/1` builds it, spans included, for every
+    page up front.
     This does not make searching cheaper overall — it moves the cost off the
     first `search/2` and onto a call you choose, which is useful when that first
     search is on a latency path.

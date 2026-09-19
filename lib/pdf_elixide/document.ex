@@ -168,6 +168,46 @@ defmodule PdfElixide.Document do
   boxes are likewise never swapped, so computing the displayed page size is the
   caller's job. A caller that only wants text is unaffected — the distinction
   matters when bounding boxes do.
+
+  ### Telling which frame a box is in
+
+  On a `180`-degree page every box in the second group is mapped. On a `90`- or
+  `270`-degree page the key is the run's own text-matrix rotation: a
+  `PdfElixide.Document.Word` or `PdfElixide.Document.Span` whose `:rotation` is
+  other than `0.0` was mapped, and one whose `:rotation` is `0.0` is raw. A
+  `PdfElixide.Document.TextLine` carries its `:words` and a
+  `PdfElixide.Document.SearchMatch` its `:spans`, so both can be read the same
+  way. A `PdfElixide.Document.Table.Cell`'s `:spans` are **not** a key: they
+  report `0.0` whatever the run was drawn with. Each is cut from one word, so
+  the entry of `words/2` with the same `:bbox` carries the real value.
+
+  ### Bringing boxes into one frame
+
+  `PdfElixide.Geometry.Rect.to_user_space/3` maps a displayed box back into raw
+  user space and `PdfElixide.Geometry.Rect.to_display_frame/3` does the
+  opposite, each given the page's `PdfElixide.Document.Page.rotation/1` and raw
+  `PdfElixide.Document.Page.media_box/1`. Map back before handing a box to a
+  call that takes raw user space — `PdfElixide.Editor.add_redaction/3`,
+  `PdfElixide.Editor.erase_region/3` or `render/3`'s `:region` — and only a box
+  that was mapped, since at `90` or `270` the inverse moves a raw box. Decide
+  per run: a search match's `:bbox` is the union of its spans' boxes, and on a
+  `90`- or `270`-degree page a match can cross from a horizontal run into a
+  rotated one, leaving that union in neither frame.
+
+      page = PdfElixide.Document.page!(doc, 0)
+      rotation = PdfElixide.Document.Page.rotation!(page)
+      box = PdfElixide.Document.Page.media_box!(page)
+
+      [match | _] = PdfElixide.Document.search!(doc, "Confidential", 0)
+
+      for span <- match.spans do
+        rect =
+          if rotation == 180 or span.rotation != 0.0,
+            do: PdfElixide.Geometry.Rect.to_user_space(span.bbox, rotation, box),
+            else: span.bbox
+
+        PdfElixide.Editor.add_redaction!(editor, 0, rect)
+      end
   """
 
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
@@ -811,7 +851,8 @@ defmodule PdfElixide.Document do
       unrotated user space, clipped to the page. An empty intersection returns
       `{:error, %PdfElixide.Error{reason: :out_of_range}}`. There is no
       `:region_mode`. See [Cropping with `:region`](guides/rendering.md#cropping-with-region)
-      for using extractor boxes on rotated pages.
+      for using extractor boxes on rotated pages;
+      `PdfElixide.Geometry.Rect.to_user_space/3` maps a displayed box back.
 
   Cropping still renders the full page, so `:region` does not reduce rendering
   cost or the size limit.
@@ -3201,7 +3242,8 @@ defmodule PdfElixide.Document do
   end
 
   @doc """
-  Releases the cached search index, and the page text and boxes it holds.
+  Releases the cached search index, with the page text and boxes it holds and
+  the runs kept for matches.
 
   The document stays usable; a later `search/2` rebuilds what it needs. Nothing
   evicts from this index on its own, so on a large document this is the only
