@@ -72,6 +72,14 @@ still contend while the document is being loaded and decoded, while repeated
 work may benefit more from cached data. Benchmark representative PDFs rather
 than expecting speedup proportional to the worker count.
 
+A whole-document call such as `PdfElixide.Document.chars/1` runs on one
+scheduler thread for the whole document, however many cores the node has.
+Fanning out by page, as in the example above, is the only way to use more than
+one. It pays off for the text-family extractors; for result-heavy ones such as
+`PdfElixide.Document.paths/1`, copying each page's results between processes
+can cost more than the parallel extraction saves, so measure before relying on
+it.
+
 ## Captured diagnostics are not per-process
 
 Diagnostics capture is global to the VM, and a captured record is forwarded by
