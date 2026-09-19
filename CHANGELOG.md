@@ -5,6 +5,35 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.19.0](https://github.com/r8/pdf_elixide/compare/v0.18.0...v0.19.0) (2026-09-19)
+
+
+
+
+### Features:
+
+* expose matched spans by [@r8](https://github.com/r8)
+
+* support table region modes and unify reading-order options by [@r8](https://github.com/r8)
+
+* apply put_values under one lock by [@r8](https://github.com/r8)
+
+* extract button's on-state names by [@r8](https://github.com/r8)
+
+* add PDF text redaction and document sanitization by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* return page count errors from Document.pages/1 by [@r8](https://github.com/r8)
+
+* clamp non-finite glyph metrics at the NIF boundary by [@r8](https://github.com/r8)
+
+* drop unused Error.details field by [@r8](https://github.com/r8)
+
+* reject non-quadrant rotation deltas by [@r8](https://github.com/r8)
+
+* refuse an incremental save that would drop a pending edit by [@r8](https://github.com/r8)
+
 ## [v0.18.0](https://github.com/r8/pdf_elixide/compare/v0.17.0...v0.18.0) (2026-09-13)
 
 
