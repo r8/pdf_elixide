@@ -5,108 +5,22 @@ defmodule PdfElixide.Signature do
   `list/1` reports what each signature in a document *claims* — who signed, when,
   why, which bytes the signature covers, and which field it sits in. It reads
   from either source (`t:source/0`), a read-only `PdfElixide.Document` or a
-  `PdfElixide.Editor`. `unsigned_fields/1` reports the signature fields still
-  waiting for a signature, so on a well-formed form the two together account for
-  every named one.
-  `verify/2` checks one of those signatures against the bytes it covers,
-  `pades_level/2` says what kind of signature it is, `timestamp/1` opens the
-  timestamp one carries, `signing_time_utc/1` parses the time one claims, and
-  `dss/1` reads the material the document carries for validating them later.
+  `PdfElixide.Editor`. `unsigned_fields/1` reports signature fields still waiting
+  for one. `verify/2` checks a signature against the bytes it covers;
+  `certificate/1`, `timestamp/1`, `pades_level/1,2,3` and `dss/1` expose the
+  certificate, timestamp and long-term-validation material around it.
 
       {:ok, doc} = PdfElixide.Document.open("signed.pdf")
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
-      signature.signer_name
+      PdfElixide.Signature.verify(signature, File.read!("signed.pdf"))
 
-  ## What `list/1` reports are claims
-
-  Nothing `list/1` returns is checked, and none of it is read from the
-  certificate. Every field comes from the signature dictionary alone, so a
-  value is only as trustworthy as the document it came from: a forged
-  `:signer_name` reads exactly like a genuine one, and a document altered after
-  signing still lists its signature. Treat these as claims, not findings;
-  `verify/2` is what turns one into a finding.
-
-  The certificate's own subject, issuer and validity window are not fields
-  here: they live in the certificate inside the signature blob rather than in
-  the dictionary. `certificate/1` reads that certificate out as a
-  `PdfElixide.Signature.Certificate`, and `:contents` carries the whole blob;
-  `t:t/0` says what it includes.
-
-  Whether a signature covers the whole file is likewise not a field. Use
-  `covers_whole_document?/2`.
-
-  ## What verification proves
-
-  `verify/2` answers about the bytes `:byte_range` covers, and about nothing
-  else. `{:ok, :valid}` means the signed attributes carry an authentic signature
-  from the certificate embedded in the blob, and the content digest those
-  attributes carry matches those covered bytes. An `adbe.pkcs7.sha1` signature
-  reaches that conclusion in two steps instead; `verify/2` says how. Three claims
-  it deliberately does not make:
-
-    * **That the file is intact.** A byte range need not reach the end of the
-      file, and whatever lies outside it — an appended incremental update, a
-      revision added after signing — is not covered and cannot be.
-      `covers_whole_document?/2` answers that half.
-    * **That the signer is who the certificate says.** No trust decision is
-      made: the certificate is not chained to any root, not checked against a
-      revocation list, and its validity dates are compared to nothing. An
-      expired or self-signed certificate verifies exactly like a trusted one.
-      `certificate/1` is how you reach the certificate to decide for yourself,
-      and `PdfElixide.Signature.Certificate.valid_at?/2` is how you ask about
-      its window.
-    * **That the claimed signing time is true.** `:signing_time` is the signer's
-      own claim, and verification compares it to nothing. Where a signature
-      carries a timestamp, `timestamp/1` reaches a third party's account of when
-      the signature existed, which is the thing to weigh it against.
-
-  A timestamp is itself three separate questions, and answering one answers
-  neither of the others: `PdfElixide.Signature.Timestamp.verify/1` asks whether
-  the authority issued the token, `verify_timestamp/2` whether the token was made
-  over *this* signature rather than something else, and nothing here asks whether
-  the authority is one to trust.
-
-  `:unknown` is the absence of a finding: the blob parsed, but the check could
-  not run — a signature algorithm this library cannot verify, an unrecognized
-  digest, no content digest to compare against, or a signature format whose
-  signed content is something other than the bytes `:byte_range` covers. Treat
-  it as unverified.
-
-  These are the algorithms a signature can be verified with:
-
-    * RSA PKCS#1 v1.5, over SHA-1, SHA-256, SHA-384 or SHA-512.
-    * RSA-PSS, over SHA-256, SHA-384 or SHA-512.
-    * ECDSA, over P-256 with SHA-256 or P-384 with SHA-384. The curve and the
-      digest go together; either paired otherwise is not verified.
-
-  A signature made with anything else — another curve, an Ed25519 key, RSA-PSS
-  over SHA-1 — is `:unknown`. One case reads as a finding without being one:
-  RSA-PSS is verified with a salt as long as its digest, so a signature salted
-  to a different length, which is unusual but permitted, is reported `:invalid`.
-
-  Deciding whether to *trust* a verified signature needs more than the signature:
-  the certificate chain, revocation lists and OCSP responses that were current
-  when it was signed. A document built for long-term validation carries them,
-  and `dss/1` is what reads them; `PdfElixide.Signature.DSS` says what they are
-  and what is — and is not — done with them.
-
-  Signature *fields* are a different thing from the signatures reported here: an
-  unsigned field is a placeholder with no dictionary behind it, so `list/1` has
-  nothing to report for one and `unsigned_fields/1` names it instead.
-  `PdfElixide.Form` omits signature fields entirely, signed or not, and refuses
-  to write to one; the [Forms](guides/forms.md) guide explains why.
-
-  Signature reads reject some damaged documents that form reads tolerate. The
-  "Damaged documents are refused, not stepped over" section of the
-  [Signatures](guides/signatures.md) guide describes those cases.
-
-  Signatures are read here and never produced: nothing in this library signs a
-  document. The "Producing signatures is not offered" section of the
-  [Signatures](guides/signatures.md) guide says what to do instead.
-
-  The [Signatures](guides/signatures.md) guide is the end-to-end account —
-  listing, verifying, coverage, the certificate and timestamp, PAdES levels and
-  the security store.
+  Values returned by `list/1` come from the document's signature dictionary and
+  are unverified claims. A valid cryptographic signature is not by itself a
+  trust decision or proof that no bytes were appended after signing. The
+  [Signatures](guides/signatures.md) guide is the end-to-end account of those
+  boundaries, supported algorithms, coverage, certificates, timestamps, PAdES
+  levels, damaged documents and the security store. Signatures are read here
+  and never produced.
 
   `list/1`, `unsigned_fields/1`, `count/1` and `dss/1` — and their bang variants
   — take a *shared* read on either source. Every other public function here
@@ -139,12 +53,12 @@ defmodule PdfElixide.Signature do
   @type sub_filter :: :pkcs7_detached | :pkcs7_sha1 | :cades_detached | :rfc3161 | nil
 
   @typedoc """
-  What a verification call concluded. "What verification proves" in the module
-  documentation says what each one does and does not establish.
+  What a verification call concluded. [Verifying one](guides/signatures.md#verifying-one)
+  says what each one does and does not establish.
 
   `:unknown` is always "the check could not run" rather than a doubt about the
   document, but what stopped it differs by call: `verify/2` has four causes,
-  listed under "What verification proves" in the module documentation;
+  listed under "Verifying one" in the [Signatures](guides/signatures.md) guide;
   `verify_signer/1` a signature algorithm or digest this library cannot handle;
   and `verify_timestamp/2` a timestamp naming a digest algorithm it cannot
   compute. Treat it as unverified either way.
@@ -392,8 +306,7 @@ defmodule PdfElixide.Signature do
 
   The verdict covers the range in `:byte_range` and nothing else, so
   `{:ok, :valid}` is not "this file is unchanged": pair it with
-  `covers_whole_document?/2`. See "What verification proves" in the module
-  documentation.
+  `covers_whole_document?/2`. See [Verifying one](guides/signatures.md#verifying-one).
 
   For `:pkcs7_sha1`, `{:ok, :valid}` means both that the signer signed the
   encapsulated SHA-1 digest and that it matches the covered bytes. A blob with no
@@ -444,8 +357,8 @@ defmodule PdfElixide.Signature do
 
   It is meaningful for every `t:sub_filter/0`, including the one `verify/2`
   declines to check. Prefer `verify/2` when the covered bytes are available.
-  Neither function makes a trust claim about the certificate; see "What
-  verification proves" in the module documentation.
+  Neither function makes a trust claim about the certificate; see
+  [Verifying one](guides/signatures.md#verifying-one).
   """
   @spec verify_signer(t()) :: {:ok, verdict()} | {:error, Error.t()}
   def verify_signer(%__MODULE__{contents: contents}) do
@@ -472,8 +385,8 @@ defmodule PdfElixide.Signature do
   embedded chain, it matches the signer's issuer and serial number; signatures
   using another identifier fall back to the first certificate.
 
-  Nothing about the certificate is trusted by this call. See "What verification
-  proves" in the module documentation.
+  Nothing about the certificate is trusted by this call. See
+  [Verifying one](guides/signatures.md#verifying-one).
 
   For an `:rfc3161` signature the blob is a timestamp token, so the certificate
   is the timestamp authority's rather than a document signer's.

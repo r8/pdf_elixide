@@ -123,9 +123,9 @@ only reads.
 
 `PdfElixide.Signature.list/1`, `PdfElixide.Signature.unsigned_fields/1`,
 `PdfElixide.Signature.count/1` and `PdfElixide.Signature.dss/1` are shared reads
-on *both* sources. Given an editor they read the document that editor was opened
-from, which needs no exclusive lock, so listing signatures does not serialize the
-way listing fields does.
+on *both* sources, as are their bang variants. Given an editor they read the
+document that editor was opened from, which needs no exclusive lock, so listing
+signatures does not serialize the way listing fields does.
 
 Every other public signature operation takes a signature or security-store
 struct, plain bytes, or scalar values rather than a handle, so it takes no handle

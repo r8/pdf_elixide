@@ -158,4 +158,4 @@ waiting and memory-release guarantees.
 :ok = Document.close(doc)
 ```
 
-[regex]: https://docs.rs/regex/1.12.3/regex/#syntax
+[regex]: https://docs.rs/regex/latest/regex/#syntax

@@ -973,9 +973,7 @@ fn signature_document_timestamp<'a>(
 const OID_SIGNATURE_TIME_STAMP: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
 
-// Carries the reason without building the atom, so `cargo test` can drive the
-// walk's failures: an atom without a BEAM aborts the process. `outline.rs`'s
-// `TooDeep` is the same move for the same reason.
+// Keep the walk BEAM-independent; build its reason atom at the NIF boundary.
 #[derive(Debug, PartialEq)]
 struct MalformedCms(&'static str);
 

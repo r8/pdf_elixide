@@ -19,7 +19,6 @@ fn decode(bytes: &[u8]) -> Option<PathBuf> {
     decode_utf8_only(bytes)
 }
 
-// Compiled on every host so the UTF-8 decoder is tested outside Windows too.
 #[cfg_attr(unix, allow(dead_code))]
 fn decode_utf8_only(bytes: &[u8]) -> Option<PathBuf> {
     std::str::from_utf8(bytes).ok().map(PathBuf::from)

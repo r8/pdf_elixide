@@ -13,9 +13,10 @@ and choosing the wrong one is the mistake this guide exists to prevent.
 | reversible | yes, `unmark_redactions/2` | no |
 | what it acts on | the page's `/Redact` annotations | those plus `add_redaction/3,4` regions |
 
-**Only `PdfElixide.Editor.apply_redactions/1` removes anything.** If the point is
-that nobody can recover the content, that is the call you need, and the check
-that it worked is that the words are gone from the written document's text:
+**Only `PdfElixide.Editor.apply_redactions/1,2` removes covered page text.** If
+the point is that nobody can recover that text, those are the calls you need,
+and the check that one worked is that the words are gone from the written
+document's text:
 
 ```elixir
 editor = PdfElixide.Editor.open!("report.pdf")

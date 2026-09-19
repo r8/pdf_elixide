@@ -94,10 +94,35 @@ end
 ```
 
 `:unknown` is the absence of a finding, not a mild failure — the blob parsed but
-the check could not run. Treat it as unverified rather than as a weak `:valid`.
-The "What verification proves" section of `PdfElixide.Signature` lists the
-algorithms that can be checked, the causes of `:unknown`, and the three things a
-`:valid` verdict does not establish.
+the check could not run. Its causes are a signature algorithm this library
+cannot verify, an unrecognized digest, no content digest to compare against, or
+a signature format whose signed content is something other than the bytes
+`:byte_range` covers. Treat it as unverified rather than as a weak `:valid`.
+
+These are the algorithms that can be checked:
+
+  * RSA PKCS#1 v1.5, over SHA-1, SHA-256, SHA-384 or SHA-512.
+  * RSA-PSS, over SHA-256, SHA-384 or SHA-512.
+  * ECDSA, over P-256 with SHA-256 or P-384 with SHA-384. The curve and digest
+    must be paired that way.
+
+Anything else — another curve, an Ed25519 key, RSA-PSS over SHA-1 — is
+`:unknown`. RSA-PSS is checked with a salt as long as its digest; a signature
+using another permitted salt length is reported `:invalid` rather than
+`:unknown`.
+
+`{:ok, :valid}` means the signature from the certificate embedded in the blob
+is authentic and the content digest matches the bytes in `:byte_range`. It does
+not establish any of these:
+
+  * **That the whole file is intact.** Bytes outside the declared range are not
+    checked. Use `covers_whole_document?/2` separately.
+  * **That the signer is trusted.** No certificate chain, revocation status or
+    validity window is checked. Use `certificate/1` and make that decision with
+    a certificate library and roots you trust.
+  * **That the claimed signing time is true.** `:signing_time` comes from the
+    signer. A timestamp is a third party's account, and has its own independent
+    checks below.
 
 `verify_signer/1` checks only whether the blob is internally consistent and
 needs no document bytes. It cannot detect appended document changes: the altered

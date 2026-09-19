@@ -25,9 +25,6 @@ defmodule PdfElixide.Document.Page do
   `%PdfElixide.Error{reason: :out_of_range}` from every function here.
   """
 
-  # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
-  # unaliased: a bare `Path` alias shadows `Elixir.Path`, silently turning every
-  # filesystem-path `Path.t()` in this module into the struct type.
   alias PdfElixide.Document
   alias PdfElixide.Document.Annotation
   alias PdfElixide.Document.Char

@@ -252,9 +252,9 @@ defmodule PdfElixide.Document do
   that opens the document, and are served from the struct thereafter, since both
   are immutable for a read-only document.
 
-  `:page_count` is `nil` when the count could not be determined at open — an
-  encrypted document whose page tree needs a password, opened without one — in
-  which case `page_count/1` asks the document instead.
+  `:page_count` is `nil` when the count could not be determined at open — for
+  example, when an encrypted document's page tree needs a password — in which
+  case `page_count/1` asks the document instead.
   """
   @type t :: %__MODULE__{
           ref: reference(),
@@ -1063,7 +1063,7 @@ defmodule PdfElixide.Document do
     %{dpi: validate_dpi!(opts)}
   end
 
-  # Fit overrides DPI; region cropping requires encoded output and cannot use fit.
+  # Fit excludes DPI and region; region cropping requires encoded output.
   defp validate_render_exclusivity!(opts) do
     fit? = given?(opts, :fit)
     region? = given?(opts, :region)

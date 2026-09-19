@@ -305,13 +305,17 @@ end
 such a mutating pipeline ends: one hands back bytes, the other `:ok`. Every
 mutating step before them hands back the editor.
 
-**A damaged field hierarchy is refused rather than read.** Every function in
-`PdfElixide.Form` rejects a form whose fields are cyclic or nested far deeper
-than any real one: a cycle, or a `/Kids` entry that cannot be read, returns
-`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`, and the depth and size
-caps return `{:error, %PdfElixide.Error{reason: :unsupported}}`. Reading such a
-form partially would report a field list that is missing entries with nothing
-to say so.
+**A cyclic or excessively large field hierarchy is refused rather than
+walked.** Functions that read fields reject a cycle with
+`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`; the depth and size caps
+return `{:error, %PdfElixide.Error{reason: :unsupported}}`. An unreadable field
+object is different: ordinary form reads step over it and return the fields they
+could reach, so a successful list can still be partial. Signature reads are
+stricter; see [Damaged documents are refused, not stepped over](signatures.md#damaged-documents-are-refused-not-stepped-over).
+
+Deferred operations such as `flatten/1,2` mark work for the writer rather than
+reading this hierarchy through the same validator, so this refusal guarantee
+does not apply to them.
 
 ## Several fields at once
 
