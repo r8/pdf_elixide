@@ -157,16 +157,30 @@ Use the same page-wise shape for concurrent extraction; see the
 
 ## When a page fails
 
-`text/1` is the only whole-document text call that can tolerate one: under its
-`:on_page_error` default a page that fails contributes an empty string and the
-call still succeeds. `to_plain_text/1`, `to_markdown/1` and `to_html/1` all fail
-the whole call instead.
+The "When a page cannot be read" section of `PdfElixide.Document` lists which
+whole-document calls fail or skip. To tolerate a failure, work a page at a time
+and decide per page. This keeps which page failed and why, so a handle failure
+such as `:closed` or `:panic` is not mistaken for an empty page:
 
-Many damaged or unreadable pages still produce no error. An undecodable content
-stream, a missing font, a scan with no text layer, and a document that could not
-be decrypted all extract as `""` on either surface. See the
-"`:on_page_error` and partly extractable documents" section of
-`t:PdfElixide.Document.text_opts/0` for what that option can and cannot catch.
+```elixir
+alias PdfElixide.Document.Page
+
+results = Enum.map(doc, &{&1.index, Page.chars(&1)})
+
+chars =
+  Enum.flat_map(results, fn
+    {_index, {:ok, chars}} -> chars
+    {_index, {:error, _}} -> []
+  end)
+
+failed =
+  for {index, {:error, %PdfElixide.Error{} = error}} <- results,
+      do: {index, error}
+```
+
+This handles only returned errors. See the "`:on_page_error` and partly
+extractable documents" section of `t:PdfElixide.Document.text_opts/0` for cases
+that produce empty text instead.
 
 ## Tables inside a text result
 

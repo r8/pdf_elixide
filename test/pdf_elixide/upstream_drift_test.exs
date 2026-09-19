@@ -6,6 +6,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form
@@ -59,6 +60,24 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   # In @broken_page_pdf: /Count says three pages, two page objects exist.
   @unreachable 2
+
+  @whole_document_calls [
+    chars: [],
+    words: [],
+    text_lines: [],
+    spans: [],
+    tables: [],
+    structured: [],
+    paths: [],
+    rects: [],
+    lines: [],
+    images: [],
+    annotations: [],
+    search: ["One"],
+    to_markdown: [],
+    to_html: [],
+    to_plain_text: []
+  ]
 
   # In @image_jpx_pdf: a JPEG 2000 codestream carrying RGB plus alpha, whose
   # page declares /ColorSpace /DeviceRGB and /SMaskInData 1.
@@ -269,8 +288,30 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert {:ok, []} = Document.fonts(doc, @unreachable)
 
       assert [0, 1] = doc |> Document.fonts!() |> Enum.map(& &1.page)
-      assert {:error, %Error{}} = Document.chars(doc)
-      assert {:error, %Error{}} = Document.images(doc)
+    end
+
+    test "every other whole-document call fails on the same page" do
+      doc = open(@broken_page_pdf)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Document.text(doc, @unreachable)
+
+      for {name, args} <- @whole_document_calls do
+        assert {:error, %Error{reason: :invalid_pdf}} = apply(Document, name, [doc | args]),
+               "#{name}/#{length(args) + 1} tolerated the unresolvable page"
+      end
+    end
+
+    test "a capped search stops before the unreadable page" do
+      doc = open(@broken_page_pdf)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Document.text(doc, @unreachable)
+
+      # "One" is on page 0 and "Three" on no page, so only the second walk
+      # reaches @unreachable.
+      assert {:ok, [%SearchMatch{page: 0}]} = Document.search(doc, "One", max_results: 1)
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Document.search(doc, "Three", max_results: 1)
     end
   end
 

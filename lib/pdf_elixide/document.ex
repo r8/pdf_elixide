@@ -66,6 +66,21 @@ defmodule PdfElixide.Document do
   `to_plain_text/1` each join with a `---` break, and `to_html/1` wraps each
   page in a `<div class="page">`.
 
+  ### When a page cannot be read
+
+  A whole-document extractor or converter that reaches a page it cannot read
+  fails with `{:error, %PdfElixide.Error{}}`. The exceptions are `text/1`, which
+  skips the page by default and supports `:on_page_error`, and `fonts/1`, which
+  always skips it. A capped `search/2` may stop before reaching a later
+  unreadable page; if it reaches one, it fails. See `t:search_opts/0`.
+
+  Most damaged pages extract as *empty* rather than failing; see the
+  `:on_page_error` section of `t:text_opts/0`.
+
+  To tolerate one with any other extractor, work a page at a time and decide
+  per page, keeping which page failed and why; the "When a page fails" section
+  of the [Text extraction](guides/text-extraction.md) guide has the recipe.
+
   ## Choosing an extractor for search and matching
 
   `text/1` infers word breaks from where glyphs sit, and can fuse neighbouring
@@ -1194,8 +1209,9 @@ defmodule PdfElixide.Document do
   page degrades to empty text rather than an error — an undecodable content
   stream, missing fonts, a scan with no text layer and an undecryptable
   document all extract as `""`. All it can catch is a page whose page-tree entry
-  does not resolve at all, which the other whole-document extractors fail on
-  unconditionally, except `fonts/1`, which skips it. Nor do those conditions
+  does not resolve at all — the same page every other whole-document call
+  but `fonts/1` fails on, as the "When a page cannot be read" section of
+  `PdfElixide.Document` describes. Nor do those conditions
   leave a warning behind: neither `structured_warnings/1` nor
   `PdfElixide.Logging.structured_warnings/0` records them, and only
   `PdfElixide.Logging` capture makes them visible. The one exception is a
@@ -1821,7 +1837,8 @@ defmodule PdfElixide.Document do
 
   There is no `:on_page_error` here: a page that cannot be converted fails the
   whole call, as it does for `to_markdown/1` and `to_html/1`. `text/1` is the
-  only whole-document text call that can skip one. A document that is
+  only whole-document text call that can skip one — see the "When a page
+  cannot be read" section of `PdfElixide.Document`. A document that is
   encrypted and could not be decrypted converts to an empty string rather than
   failing.
 
@@ -3223,7 +3240,8 @@ defmodule PdfElixide.Document do
   A page whose fonts cannot be read contributes nothing and does not fail the
   call — see `fonts/2` for what that covers. Along with `text/1` this is the
   only whole-document extractor that tolerates such a page, and the only one
-  that does so with no option to say otherwise.
+  that does so with no option to say otherwise; the "When a page cannot be
+  read" section of `PdfElixide.Document` has the rule for the rest.
 
   Each returned font holds the embedded font program behind its handle until
   `PdfElixide.Document.Font.close/1` or GC, one handle per page per font — see
@@ -3368,7 +3386,9 @@ defmodule PdfElixide.Document do
 
   An image that is too small, or whose encoding cannot be decoded, is left out
   of the list rather than reported — see the "Which images are extracted"
-  section of `PdfElixide.Document.Image`.
+  section of `PdfElixide.Document.Image`. That omission is per image: a page
+  that cannot be read still fails the call, as the "When a page cannot be
+  read" section of `PdfElixide.Document` describes.
   """
   @spec images(t()) :: {:ok, [Image.t()]} | {:error, Error.t()}
   def images(%__MODULE__{ref: ref}) do
