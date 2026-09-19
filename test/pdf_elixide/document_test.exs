@@ -28,6 +28,7 @@ defmodule PdfElixide.DocumentTest do
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @latin1_pdf Path.join(@fixtures, "encrypted_latin1.pdf")
+  @objstm_pdf Path.join(@fixtures, "encrypted_objstm.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
   @xfa_pdf Path.join(@fixtures, "xfa.pdf")
@@ -83,19 +84,17 @@ defmodule PdfElixide.DocumentTest do
       assert is_integer(count)
     end
 
-    test "falls back to the document when nothing was cached at open" do
-      # The uncached state belongs to an encrypted document whose page tree needs
-      # a password, which no fixture produces on demand — build it directly. The
-      # fallback is what answers correctly once `authenticate/2` has run.
-      %Document{} = doc = Document.open!(@valid_pdf)
-      uncached = %{doc | page_count: nil}
+    test "retries an uncached count after authentication" do
+      assert %Document{page_count: nil} = doc = Document.open!(@objstm_pdf)
 
-      assert {:ok, 3} = Document.page_count(uncached)
-      assert Document.page_count!(uncached) == 3
+      assert {:error, %Error{reason: :encrypted}} = Document.page_count(doc)
 
-      # ...and, unlike a cached count, it needs the handle.
+      assert {:ok, true} = Document.authenticate(doc, @password)
+      assert {:ok, 3} = Document.page_count(doc)
+      assert Document.page_count!(doc) == 3
+
       :ok = Document.close(doc)
-      assert {:error, %Error{reason: :closed}} = Document.page_count(uncached)
+      assert {:error, %Error{reason: :closed}} = Document.page_count(doc)
     end
 
     test "an encrypted document opened without a password still opens and counts" do
@@ -107,7 +106,7 @@ defmodule PdfElixide.DocumentTest do
       assert %Document{page_count: count} = doc
       assert is_integer(count)
       assert {:ok, ^count} = Document.page_count(doc)
-      assert length(Document.pages(doc)) == count
+      assert length(Document.pages!(doc)) == count
 
       assert {:ok, true} = Document.authenticate(doc, @password)
       assert {:ok, ^count} = Document.page_count(doc)
@@ -2980,8 +2979,33 @@ defmodule PdfElixide.DocumentTest do
     test "returns a lazy handle for every page" do
       doc = Document.open!(@valid_pdf)
 
-      assert [%Page{doc: ^doc, index: 0}, %Page{doc: ^doc, index: 1}, %Page{doc: ^doc, index: 2}] =
+      assert {:ok,
+              [%Page{doc: ^doc, index: 0}, %Page{doc: ^doc, index: 1}, %Page{doc: ^doc, index: 2}]} =
                Document.pages(doc)
+    end
+
+    test "reports the error instead of raising when the count is unreadable" do
+      doc = Document.open!(@objstm_pdf)
+
+      assert {:error, %Error{reason: :encrypted}} = Document.pages(doc)
+
+      assert {:ok, true} = Document.authenticate(doc, @password)
+      assert {:ok, [%Page{index: 0}, %Page{index: 1}, %Page{index: 2}]} = Document.pages(doc)
+    end
+  end
+
+  describe "pages!/1" do
+    test "returns a lazy handle for every page" do
+      doc = Document.open!(@valid_pdf)
+
+      assert [%Page{doc: ^doc, index: 0}, %Page{doc: ^doc, index: 1}, %Page{doc: ^doc, index: 2}] =
+               Document.pages!(doc)
+    end
+
+    test "raises when the count is unreadable" do
+      doc = Document.open!(@objstm_pdf)
+
+      assert_raise Error, fn -> Document.pages!(doc) end
     end
   end
 
@@ -3006,9 +3030,17 @@ defmodule PdfElixide.DocumentTest do
       assert Enum.at(doc, 99) == nil
     end
 
-    test "Enum.to_list/1 matches pages/1" do
+    test "Enum.to_list/1 matches pages!/1" do
       doc = Document.open!(@valid_pdf)
-      assert Enum.to_list(doc) == Document.pages(doc)
+      assert Enum.to_list(doc) == Document.pages!(doc)
+    end
+
+    test "raises when the count is unreadable" do
+      doc = Document.open!(@objstm_pdf)
+
+      assert_raise Error, fn -> Enum.count(doc) end
+      assert_raise Error, fn -> Enum.to_list(doc) end
+      assert_raise Error, fn -> Enum.at(doc, 0) end
     end
 
     test "is iterable page by page" do
@@ -4092,7 +4124,7 @@ defmodule PdfElixide.DocumentTest do
       # handles it yields does, and reports :closed (test above).
       assert Enum.count(doc) == 3
       assert Enum.map(doc, & &1.index) == [0, 1, 2]
-      assert Document.pages(doc) == Enum.to_list(doc)
+      assert Document.pages!(doc) == Enum.to_list(doc)
     end
   end
 

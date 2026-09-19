@@ -45,9 +45,10 @@ defmodule PdfElixide.Document do
   ### Working a page at a time
 
   `PdfElixide.Document` implements `Enumerable` over its pages, and
-  `PdfElixide.Document.Page` offers every extractor. Process results as they
-  arrive without accumulating them to keep only one page's extraction results
-  at a time:
+  `PdfElixide.Document.Page` offers every extractor. Enumeration raises when
+  the page count cannot be read; use `pages/1` to receive that error instead.
+  Process results as they arrive without accumulating them to keep only one
+  page's extraction results at a time:
 
       doc
       |> Stream.flat_map(&Page.chars!/1)
@@ -416,10 +417,9 @@ defmodule PdfElixide.Document do
   cached on the struct, so this normally costs nothing and keeps working after
   `close/1`, as `version/1` does.
 
-  The exception is a document whose page tree could not be read at open — an
-  encrypted one opened without a password. Nothing is cached for it, so the
-  count is read from the document on every call: an error until `authenticate/2`
-  succeeds, and the real count afterwards.
+  If no count could be cached at open, each call reads it from the live
+  document and may return an error. Authenticating an encrypted document can
+  make the count available; closing the document makes this fallback fail.
   """
   @spec page_count(t()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
   def page_count(%__MODULE__{page_count: count}) when is_integer(count), do: {:ok, count}
@@ -3481,17 +3481,23 @@ defmodule PdfElixide.Document do
   @doc """
   Returns a `PdfElixide.Document.Page` handle for every page in the document.
 
-  The list is built eagerly, but each handle is just the document and a
-  zero-based index and holds no native resource, so building one costs nothing.
-  To walk a large document without materializing every handle, enumerate the
-  document itself: it implements `Enumerable` over its pages.
-
-  Reads the page count cached on the struct, so it raises only for a document
-  whose count could not be determined at open — see `page_count/1`.
+  The list is eager, but its handles hold no native resources. Returns an error
+  if the page count cannot be read; see `page_count/1`. Enumerate the document
+  directly to walk its pages lazily.
   """
-  @spec pages(t()) :: [Page.t()]
+  @spec pages(t()) :: {:ok, [Page.t()]} | {:error, Error.t()}
   def pages(%__MODULE__{} = doc) do
-    Enum.map(0..(page_count!(doc) - 1)//1, &%Page{doc: doc, index: &1})
+    with {:ok, count} <- page_count(doc) do
+      {:ok, Enum.map(0..(count - 1)//1, &%Page{doc: doc, index: &1})}
+    end
+  end
+
+  @doc """
+  Same as `pages/1` but raises an error if it fails.
+  """
+  @spec pages!(t()) :: [Page.t()]
+  def pages!(%__MODULE__{} = doc) do
+    pages(doc) |> Wrap.unwrap!()
   end
 
   @doc """
