@@ -1,9 +1,4 @@
-use std::sync::atomic::Ordering;
-
-use pdf_oxide::{
-    editor::DocumentEditor,
-    redaction::{OcgPolicy, RedactionOptions, RedactionReport},
-};
+use pdf_oxide::redaction::{OcgPolicy, RedactionOptions, RedactionReport};
 use rustler::{Atom, NifMap, NifResult, NifUnitEnum, ResourceArc};
 
 use crate::{
@@ -11,11 +6,11 @@ use crate::{
     color::RgbNif,
     editor::{
         draws_redactions, ensure_contents_redactable, ensure_editor_page_in_range,
-        ensure_info_is_direct, ensure_redaction_spliceable, mark_pages, queued_redactions,
-        redaction_corners, scrub_embedded, scrub_info, scrub_javascript, source_pages, Marked,
+        ensure_info_is_direct, ensure_redaction_spliceable, redaction_corners,
     },
     error::{tagged_err, to_nif_err},
     geometry::RectNif,
+    open_editor::{Marked, OpenEditor},
     text_state::measures_restored_text_state,
     EditorResource,
 };
@@ -141,12 +136,12 @@ fn editor_mark_page_redactions(
         // Inside the guard so the checks and the mark cannot straddle a writer
         // that changes the page count.
         ensure_editor_page_in_range(editor, page_index)?;
-        ensure_redaction_spliceable(&resource, editor, page_index)?;
+        ensure_redaction_spliceable(editor, page_index)?;
 
         editor
             .apply_page_redactions(page_index)
             .map_err(to_nif_err)?;
-        mark_pages(&resource, Marked::Redactions);
+        editor.mark(Marked::Redactions);
 
         Ok(atoms::ok())
     })
@@ -162,13 +157,13 @@ fn editor_mark_all_redactions(resource: ResourceArc<EditorResource>) -> NifResul
         // All-or-nothing: refusing halfway would leave a partly marked editor
         // whose marks cannot be told from ones the caller made.
         for page in 0..editor.current_page_count() {
-            ensure_redaction_spliceable(&resource, editor, page)?;
+            ensure_redaction_spliceable(editor, page)?;
         }
 
         // Enable the scan before the loop can fail with some pages marked.
-        mark_pages(&resource, Marked::Redactions);
+        editor.mark(Marked::Redactions);
 
-        if resource.pages_deleted.load(Ordering::Relaxed) {
+        if editor.pages_deleted() {
             for page in 0..editor.current_page_count() {
                 editor.apply_page_redactions(page).map_err(to_nif_err)?;
             }
@@ -242,43 +237,29 @@ fn editor_add_redaction(
         // Strictly stronger than `ensure_redaction_spliceable`, which the two
         // marking NIFs still use: a queued region reaches only the destructive
         // pass and cannot be withdrawn, so it is refused unconditionally.
-        ensure_contents_redactable(&resource, editor, page_index)?;
+        ensure_contents_redactable(editor, page_index)?;
 
         editor
-            .add_redaction(page_index, corners, fill)
+            .queue_redaction(page_index, corners, fill)
             .map_err(to_nif_err)?;
-
-        // Upstream keys the region by the source page and marks that page too;
-        // only the mark can be taken back, so this is the half `apply` cannot
-        // rediscover.
-        if let Some(source) = source_pages(&resource).get(page_index) {
-            queued_redactions(&resource).insert(*source);
-        }
-        mark_pages(&resource, Marked::Redactions);
 
         Ok(atoms::ok())
     })
 }
 
 // Check only before destructive apply: cosmetic marks measure no glyphs.
-fn ensure_text_state_measurable(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-) -> NifResult<()> {
-    let sources = source_pages(resource);
+fn ensure_text_state_measurable(editor: &OpenEditor) -> NifResult<()> {
+    let sources = editor.source_pages();
+    let queued = editor.queued_redactions();
 
     // Only half of upstream's destructive set is readable, hence the mirror. A
     // source page with no output index needs no check: nothing of it is written.
-    let destructive: Vec<(usize, usize, bool)> = {
-        let queued = queued_redactions(resource);
-
-        sources
-            .iter()
-            .enumerate()
-            .map(|(output, source)| (output, *source, queued.contains(source)))
-            .filter(|(output, _, queued)| *queued || editor.is_page_marked_for_redaction(*output))
-            .collect()
-    };
+    let destructive: Vec<(usize, usize, bool)> = sources
+        .iter()
+        .enumerate()
+        .map(|(output, source)| (output, *source, queued.contains(source)))
+        .filter(|(output, _, queued)| *queued || editor.is_page_marked_for_redaction(*output))
+        .collect();
 
     for (output, source, queued) in destructive {
         // A mark without any regions rewrites nothing and needs no measurement.
@@ -312,8 +293,8 @@ fn ensure_text_state_measurable(
 }
 
 // A second pass rebuilds from the source and can restore removed text.
-fn ensure_first_pass(resource: &EditorResource) -> NifResult<()> {
-    if resource.applied_redactions.load(Ordering::Relaxed) {
+fn ensure_first_pass(editor: &OpenEditor) -> NifResult<()> {
+    if editor.applied_redactions() {
         return Err(tagged_err(
             atoms::unsupported(),
             "This editor has already applied a destructive redaction. A second \
@@ -335,12 +316,10 @@ fn editor_apply_redactions(
 
     resource.editor.with_lock(|editor| {
         // Before anything is armed: a refused pass changes nothing.
-        ensure_first_pass(&resource)?;
-        ensure_text_state_measurable(&resource, editor)?;
+        ensure_first_pass(editor)?;
+        ensure_text_state_measurable(editor)?;
 
-        // Arm under the lock before applying: an error can leave pages rewritten.
-        resource.redacted.store(true, Ordering::Relaxed);
-        resource.applied_redactions.store(true, Ordering::Relaxed);
+        editor.arm_redaction();
 
         let report = editor
             .apply_redactions_destructive(options.into())
@@ -369,17 +348,7 @@ fn editor_sanitize(
             .sanitize_document(options.into())
             .map_err(to_nif_err)?;
 
-        resource.redacted.store(true, Ordering::Relaxed);
-        resource.sanitized.store(true, Ordering::Relaxed);
-        if scrub_metadata {
-            scrub_info(&resource);
-        }
-        if remove_javascript {
-            scrub_javascript(&resource);
-        }
-        if remove_embedded_files {
-            scrub_embedded(&resource, editor);
-        }
+        editor.record_sanitize(scrub_metadata, remove_javascript, remove_embedded_files);
 
         Ok(sanitize_report_to_nif(report))
     })

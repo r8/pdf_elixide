@@ -3,7 +3,8 @@ defmodule PdfElixide.Native.MarkingTest do
 
   use ExUnit.Case, async: true
 
-  # add_redaction also marks the page, so it must enable the scan.
+  # add_redaction also marks the page, so it must enable the scan; it stays
+  # listed although only the wrapper calls it, in case a NIF reaches upstream's.
   @marking_calls [
     ".apply_page_redactions(",
     ".apply_all_redactions(",
@@ -22,13 +23,13 @@ defmodule PdfElixide.Native.MarkingTest do
     offenders =
       for %{file: file, name: name, body: body} <- nifs,
           Enum.any?(@marking_calls, &String.contains?(body, &1)),
-          not String.contains?(body, "mark_pages("),
+          not String.contains?(body, ".mark("),
           do: "#{file}: #{name}"
 
     assert offenders == [],
            """
            These NIFs mark a page for redaction or flattening without calling
-           `mark_pages/2`, which gates the sweep that reports the mark to
+           `OpenEditor::mark`, which gates the sweep that reports the mark to
            `dropped_by_an_incremental_save`. An incremental save would write a
            file missing the mark and report success. Add the call, naming the
            category the NIF marked:
@@ -38,10 +39,14 @@ defmodule PdfElixide.Native.MarkingTest do
   end
 
   # The assertion above is vacuous if the parse finds no marking call at all.
+  # `add_redaction` is spelled only in the wrapper, so that file joins the corpus.
   test "the marking calls are still spelled the way this test greps for them", %{nifs: nifs} do
+    wrapper = File.read!(Path.join(PdfElixide.NifSource.src_dir(), "open_editor.rs"))
+    corpus = [wrapper | Enum.map(nifs, & &1.body)]
+
     found =
       for call <- @marking_calls,
-          Enum.any?(nifs, &String.contains?(&1.body, call)),
+          Enum.any?(corpus, &String.contains?(&1, call)),
           do: call
 
     assert found == @marking_calls

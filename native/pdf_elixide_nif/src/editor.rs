@@ -1,10 +1,4 @@
-use std::{
-    collections::HashSet,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
-    },
-};
+use std::collections::HashSet;
 
 use pdf_oxide::{
     annotation_types::AnnotationSubtype,
@@ -20,7 +14,6 @@ use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, Re
 use crate::{
     atoms,
     binary::owned_binary,
-    document::read_crop_box,
     embedded_files::{
         embedded_file, ensure_no_name_tree, pending_to_nif, read_embedded_files, EmbeddedFileNif,
         RelationshipNif,
@@ -30,10 +23,11 @@ use crate::{
         editor_form_field_to_nif, export_bytes, export_form_field, fillable, is_exportable,
         set_value_from_nif, FieldNif, FieldValueNif, FormDataFormatNif,
     },
-    form_tree::{self, Resolved},
+    form_tree::Resolved,
     fs_path::path_arg,
     geometry::{rect_from_corners, rect_from_nif, RectNif},
-    metadata::{has_info_text, normalize_text, read_metadata, to_document_info, MetadataNif},
+    metadata::{normalize_text, read_metadata, MetadataNif},
+    open_editor::{Marked, OpenEditor, OutOfRange, PageError},
     resource::Closable,
     signatures::well_formed_pdf_date_len,
     warnings, EditorResource,
@@ -135,118 +129,6 @@ fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
 }
 
-// A visible page's source identity and pending properties in output order.
-pub struct PageEdits {
-    source: usize,
-    rotation: Option<i32>,
-    media_box: Option<[f32; 4]>,
-    crop_box: Option<[f32; 4]>,
-}
-
-// Recover poisoning like `Closable`; a contained panic must not prevent close.
-fn page_edits(resource: &EditorResource) -> MutexGuard<'_, Vec<PageEdits>> {
-    resource.pages.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-// Same poisoning rule as `page_edits`; written only under the exclusive guard.
-fn info_edits(resource: &EditorResource) -> MutexGuard<'_, Option<MetadataNif>> {
-    resource.info.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-// Same poisoning rule as `page_edits`.
-pub fn queued_redactions(resource: &EditorResource) -> MutexGuard<'_, HashSet<usize>> {
-    resource
-        .redaction_regions
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-}
-
-pub enum Marked {
-    Redactions,
-    Annotations,
-    Forms,
-}
-
-// Every marking NIF must enable its category's scan. Relaxed ordering is safe
-// because readers and writers hold the exclusive editor guard.
-pub fn mark_pages(resource: &EditorResource, what: Marked) {
-    let flag = match what {
-        Marked::Redactions => &resource.redactions_marked,
-        Marked::Annotations => &resource.annotations_marked,
-        Marked::Forms => &resource.forms_marked,
-    };
-
-    flag.store(true, Ordering::Relaxed);
-}
-
-// Same poisoning rule as `page_edits`.
-fn erased_pages(resource: &EditorResource) -> MutexGuard<'_, HashSet<usize>> {
-    resource
-        .erased_regions
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-}
-
-// The visible pages as source indices, in output order — the index space
-// upstream keys its destructive redaction set by.
-pub fn source_pages(resource: &EditorResource) -> Vec<usize> {
-    page_edits(resource)
-        .iter()
-        .map(|page| page.source)
-        .collect()
-}
-
-// Record that upstream cleared `/Info`, so `editor_info` reports the scrub and
-// `resupply_info` does not hand the source dictionary back.
-pub fn scrub_info(resource: &EditorResource) {
-    *info_edits(resource) = Some(MetadataNif::scrubbed());
-}
-
-// The editor guard provides exclusion; this lock provides interior mutability
-// and recovers poisoning like `page_edits`.
-fn embedded_files(resource: &EditorResource) -> RwLockReadGuard<'_, Vec<EmbeddedFile>> {
-    resource.embedded.read().unwrap_or_else(|e| e.into_inner())
-}
-
-// The write half of `embedded_files`, reached only under the exclusive lock.
-fn embedded_files_mut(resource: &EditorResource) -> RwLockWriteGuard<'_, Vec<EmbeddedFile>> {
-    resource.embedded.write().unwrap_or_else(|e| e.into_inner())
-}
-
-// Drop every attachment that has not been written yet, upstream's pending list
-// and the mirror alike: upstream's sanitization removes only the name tree the
-// *source* carried, and `resupply_embedded` would hand the pending files back
-// on the next write. The flag records the scrub for `editor_embedded_files`,
-// which reads `source()` and would otherwise keep listing them.
-pub fn scrub_embedded(resource: &EditorResource, editor: &mut DocumentEditor) {
-    editor.clear_embedded_files();
-    embedded_files_mut(resource).clear();
-    resource.embedded_scrubbed.store(true, Ordering::Relaxed);
-}
-
-// The JavaScript half has no pending list and no mirror: the tree lives only in
-// the source catalog, which sanitization stages around. The flag is the whole
-// record, and `ensure_no_name_tree` is its only reader.
-pub fn scrub_javascript(resource: &EditorResource) {
-    resource.javascript_scrubbed.store(true, Ordering::Relaxed);
-}
-
-// At open, visible and source page indices are identical.
-fn seed_pages(resource: &EditorResource) -> NifResult<()> {
-    resource.editor.with_read(|editor| {
-        *page_edits(resource) = (0..editor.current_page_count())
-            .map(|source| PageEdits {
-                source,
-                rotation: None,
-                media_box: None,
-                crop_box: None,
-            })
-            .collect();
-
-        Ok(())
-    })
-}
-
 // Upstream's writer copies stream payloads out through `load_object` without
 // decrypting them, so a save would emit ciphertext under a `/Filter` dict, omit
 // `/Encrypt`, and report success. Nothing upstream guards it:
@@ -275,24 +157,8 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
     })?;
 
     let resource = ResourceArc::new(EditorResource {
-        editor: Closable::new("Editor", editor),
-        resolved_fields: OnceLock::new(),
-        pages_deleted: AtomicBool::new(false),
-        redacted: AtomicBool::new(false),
-        sanitized: AtomicBool::new(false),
-        redaction_regions: Mutex::new(HashSet::new()),
-        erased_regions: Mutex::new(HashSet::new()),
-        applied_redactions: AtomicBool::new(false),
-        redactions_marked: AtomicBool::new(false),
-        annotations_marked: AtomicBool::new(false),
-        forms_marked: AtomicBool::new(false),
-        embedded_scrubbed: AtomicBool::new(false),
-        javascript_scrubbed: AtomicBool::new(false),
-        pages: Mutex::new(Vec::new()),
-        embedded: RwLock::new(Vec::new()),
-        info: Mutex::new(None),
+        editor: Closable::new("Editor", OpenEditor::new(editor)),
     });
-    seed_pages(&resource)?;
     let version = cached_version(&resource)?;
 
     Ok((resource, version))
@@ -308,24 +174,8 @@ fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
     })?;
 
     let resource = ResourceArc::new(EditorResource {
-        editor: Closable::new("Editor", editor),
-        resolved_fields: OnceLock::new(),
-        pages_deleted: AtomicBool::new(false),
-        redacted: AtomicBool::new(false),
-        sanitized: AtomicBool::new(false),
-        redaction_regions: Mutex::new(HashSet::new()),
-        erased_regions: Mutex::new(HashSet::new()),
-        applied_redactions: AtomicBool::new(false),
-        redactions_marked: AtomicBool::new(false),
-        annotations_marked: AtomicBool::new(false),
-        forms_marked: AtomicBool::new(false),
-        embedded_scrubbed: AtomicBool::new(false),
-        javascript_scrubbed: AtomicBool::new(false),
-        pages: Mutex::new(Vec::new()),
-        embedded: RwLock::new(Vec::new()),
-        info: Mutex::new(None),
+        editor: Closable::new("Editor", OpenEditor::new(editor)),
     });
-    seed_pages(&resource)?;
     let version = cached_version(&resource)?;
 
     Ok((resource, version))
@@ -348,11 +198,7 @@ fn editor_is_modified(resource: ResourceArc<EditorResource>) -> NifResult<bool> 
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_close(resource: ResourceArc<EditorResource>) -> Atom {
-    // Close first so no later call can observe the cleared mirror.
     resource.editor.close();
-    page_edits(&resource).clear();
-    embedded_files_mut(&resource).clear();
-    *info_edits(&resource) = None;
 
     atoms::ok()
 }
@@ -362,27 +208,13 @@ fn editor_closed(resource: ResourceArc<EditorResource>) -> bool {
     resource.editor.is_closed()
 }
 
-// Failed builds are not cached, so malformed trees fail consistently.
-fn resolved_fields<'a>(
-    resource: &'a EditorResource,
-    editor: &DocumentEditor,
-) -> NifResult<&'a Resolved> {
-    if let Some(resolved) = resource.resolved_fields.get() {
-        return Ok(resolved);
-    }
-
-    let resolved = form_tree::resolved(editor.source())?;
-
-    Ok(resource.resolved_fields.get_or_init(|| resolved))
-}
-
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_form_fields(resource: ResourceArc<EditorResource>) -> NifResult<Vec<FieldNif>> {
     resource.editor.with_lock(|editor| {
         // By name, because a `FormFieldWrapper` carries no `object_ref`. The
         // document path resolves the same names, so the two sources agree.
-        let resolved = resolved_fields(&resource, editor)?;
-        let fields = editor.get_form_fields().map_err(to_nif_err)?;
+        let (resolved, upstream) = editor.resolved_fields()?;
+        let fields = upstream.get_form_fields().map_err(to_nif_err)?;
 
         Ok(fields
             .into_iter()
@@ -406,8 +238,8 @@ fn editor_export_form_data(
     file_spec: Option<String>,
 ) -> NifResult<OwnedBinary> {
     resource.editor.with_lock(|editor| {
-        let resolved = resolved_fields(&resource, editor)?;
-        let fields = editor.get_form_fields().map_err(to_nif_err)?;
+        let (resolved, upstream) = editor.resolved_fields()?;
+        let fields = upstream.get_form_fields().map_err(to_nif_err)?;
 
         let fields = fields
             .into_iter()
@@ -417,58 +249,6 @@ fn editor_export_form_data(
 
         owned_binary(&export_bytes(fields, format, file_spec)?, "form data")
     })
-}
-
-// Full writes drain pending attachments, so restore the mirror before repeats.
-fn resupply_embedded(resource: &EditorResource, editor: &mut DocumentEditor) -> NifResult<()> {
-    let mirror = embedded_files(resource);
-    if editor.pending_embedded_files().len() == mirror.len() {
-        return Ok(());
-    }
-
-    editor.clear_embedded_files();
-    for file in mirror.iter() {
-        editor
-            .embed_file_with_options(file.clone())
-            .map_err(to_nif_err)?;
-    }
-
-    Ok(())
-}
-
-// The writers emit `/Info` only from pending metadata, so supply the source's
-// values when no setter has populated the mirror.
-fn resupply_info(resource: &EditorResource, editor: &mut DocumentEditor) -> NifResult<()> {
-    // A scrubbing redaction or sanitization leaves the mirror `Some(scrubbed)`,
-    // which stops the resupply here: re-reading the source would write the very
-    // `/Info` the caller just had removed, and report success.
-    if info_edits(resource).is_some() {
-        return Ok(());
-    }
-
-    let info = read_metadata(editor.source());
-    if has_info_text(&info) {
-        editor
-            .set_info(to_document_info(&info))
-            .map_err(to_nif_err)?;
-    }
-
-    Ok(())
-}
-
-// The entries a sanitization dropped from the catalog the writer builds on. Read
-// here rather than in `redaction.rs` so the flags and the source catalog are
-// inspected under the same guard.
-fn scrubbed_name_tree_entries(resource: &EditorResource) -> Vec<&'static str> {
-    let mut entries = Vec::new();
-    if resource.embedded_scrubbed.load(Ordering::Relaxed) {
-        entries.push("EmbeddedFiles");
-    }
-    if resource.javascript_scrubbed.load(Ordering::Relaxed) {
-        entries.push("JavaScript");
-    }
-
-    entries
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -481,22 +261,16 @@ fn editor_embed_file(
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         // Inside the guard so the check and the push cannot straddle a writer.
-        ensure_no_name_tree(editor.source(), &scrubbed_name_tree_entries(&resource))?;
+        ensure_no_name_tree(editor.source(), &editor.scrubbed_name_tree_entries())?;
 
         let file = embedded_file(name, data.as_slice().to_vec(), description, relationship);
-
-        // Upstream first: it owns `is_modified`, and the mirror must not record
-        // an attachment the editor rejected.
-        editor
-            .embed_file_with_options(file.clone())
-            .map_err(to_nif_err)?;
-        embedded_files_mut(&resource).push(file);
+        editor.attach_file(file).map_err(to_nif_err)?;
 
         Ok(atoms::ok())
     })
 }
 
-// Both reads are shared; mirror writes always hold the exclusive editor guard.
+// Shared: it reads only `source()` and the attachment mirror.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_embedded_files<'a>(
     env: Env<'a>,
@@ -506,15 +280,14 @@ fn editor_embedded_files<'a>(
         // The source and pending halves cannot both be populated. A sanitize
         // removes the source's name tree from the *output* only, so once it has
         // run the source half is no longer what the written document carries.
-        let mut files = if resource.embedded_scrubbed.load(Ordering::Relaxed) {
+        let mut files = if editor.embedded_scrubbed() {
             Vec::new()
         } else {
             read_embedded_files(env, editor.source())?
         };
 
         // Match the name order a full write will produce.
-        let mirror = embedded_files(&resource);
-        let mut pending: Vec<&EmbeddedFile> = mirror.iter().collect();
+        let mut pending: Vec<&EmbeddedFile> = editor.embedded_files().iter().collect();
         pending.sort_by(|a, b| a.name.cmp(&b.name));
 
         for file in pending {
@@ -532,13 +305,13 @@ fn editor_to_bytes(
 ) -> NifResult<OwnedBinary> {
     resource.editor.with_lock(|editor| {
         // Incremental output upstream refuses on its own; this one it does not.
-        ensure_scrub_survives_save(&resource, &options)?;
+        ensure_scrub_survives_save(editor, &options)?;
 
         // Incremental output is refused below before writing, so resupplying
         // for it would only move the modified flag.
         if !options.incremental {
-            resupply_embedded(&resource, editor)?;
-            resupply_info(&resource, editor)?;
+            editor.resupply_embedded().map_err(to_nif_err)?;
+            editor.resupply_info().map_err(to_nif_err)?;
         }
 
         let bytes = editor
@@ -550,11 +323,8 @@ fn editor_to_bytes(
 }
 
 // Incremental output copies the original bytes, retaining removed content.
-fn ensure_redaction_survives_save(
-    resource: &EditorResource,
-    options: &SaveOptionsNif,
-) -> NifResult<()> {
-    if options.incremental && resource.redacted.load(Ordering::Relaxed) {
+fn ensure_redaction_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
+    if options.incremental && editor.redacted() {
         return Err(tagged_err(
             atoms::unsupported(),
             "This editor has applied a destructive redaction or sanitization, which an \
@@ -567,11 +337,8 @@ fn ensure_redaction_survives_save(
 }
 
 // GC must drop orphaned /ObjStm containers or their scrubbed values survive.
-fn ensure_scrub_survives_save(
-    resource: &EditorResource,
-    options: &SaveOptionsNif,
-) -> NifResult<()> {
-    if !options.garbage_collect && resource.sanitized.load(Ordering::Relaxed) {
+fn ensure_scrub_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
+    if !options.garbage_collect && editor.sanitized() {
         return Err(tagged_err(
             atoms::unsupported(),
             "This editor has sanitized the document, which a write with \
@@ -604,16 +371,12 @@ fn ensure_incremental_has_a_source(
 }
 
 // The incremental writer silently omits changes outside field values and /Info.
-fn ensure_edits_survive_save(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    options: &SaveOptionsNif,
-) -> NifResult<()> {
+fn ensure_edits_survive_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
     if !options.incremental {
         return Ok(());
     }
 
-    let dropped = dropped_by_an_incremental_save(resource, editor);
+    let dropped = editor.dropped_by_an_incremental_save();
     if dropped.is_empty() {
         return Ok(());
     }
@@ -628,93 +391,6 @@ fn ensure_edits_survive_save(
             spell_out(&dropped)
         ),
     ))
-}
-
-fn dropped_by_an_incremental_save(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-) -> Vec<&'static str> {
-    let mut dropped = Vec::new();
-
-    // Release this non-reentrant mutex before any helper can reacquire it.
-    let (sources, rotated, media, crop) = {
-        let edits = page_edits(resource);
-
-        (
-            edits.iter().map(|page| page.source).collect::<Vec<usize>>(),
-            edits.iter().any(|page| page.rotation.is_some()),
-            edits.iter().any(|page| page.media_box.is_some()),
-            edits.iter().any(|page| page.crop_box.is_some()),
-        )
-    };
-
-    // Deleting the last page leaves survivors' source and output indices equal.
-    if resource.pages_deleted.load(Ordering::Relaxed) {
-        dropped.push("page deletions");
-    }
-
-    // Deletions preserve source order; an undone move restores it.
-    if !sources.is_sorted() {
-        dropped.push("page moves");
-    }
-    if rotated {
-        dropped.push("page rotations");
-    }
-    if media {
-        dropped.push("page media boxes");
-    }
-    if crop {
-        dropped.push("page crop boxes");
-    }
-
-    // Region mirrors use source indices; ignore regions on deleted pages.
-    if pending_on_a_visible_page(&sources, &erased_pages(resource)) {
-        dropped.push("erased regions");
-    }
-    if pending_on_a_visible_page(&sources, &queued_redactions(resource)) {
-        dropped.push("queued redaction regions");
-    }
-
-    // Predicates take output indices and scan page_order to map them to source.
-    // Gate each quadratic sweep on whether that category was ever marked.
-    let any_page = |gate: &AtomicBool, ask: fn(&DocumentEditor, usize) -> bool| {
-        gate.load(Ordering::Relaxed) && (0..sources.len()).any(|page| ask(editor, page))
-    };
-
-    if any_page(
-        &resource.redactions_marked,
-        DocumentEditor::is_page_marked_for_redaction,
-    ) {
-        dropped.push("redaction marks");
-    }
-
-    if any_page(
-        &resource.annotations_marked,
-        DocumentEditor::is_page_marked_for_flatten,
-    ) {
-        dropped.push("annotation flatten marks");
-    }
-
-    // Check this first to avoid a sweep and catch flattening a page-less editor.
-    if editor.will_remove_acroform()
-        || any_page(
-            &resource.forms_marked,
-            DocumentEditor::is_page_marked_for_form_flatten,
-        )
-    {
-        dropped.push("form flatten marks");
-    }
-
-    if !embedded_files(resource).is_empty() {
-        dropped.push("attachments");
-    }
-
-    dropped
-}
-
-// Avoid scanning pages when no regions were queued.
-fn pending_on_a_visible_page(sources: &[usize], pending: &HashSet<usize>) -> bool {
-    !pending.is_empty() && sources.iter().any(|source| pending.contains(source))
 }
 
 fn spell_out(categories: &[&str]) -> String {
@@ -736,16 +412,16 @@ fn editor_save(
     let path = path_arg(path)?;
 
     resource.editor.with_lock(|editor| {
-        ensure_redaction_survives_save(&resource, &options)?;
-        ensure_scrub_survives_save(&resource, &options)?;
+        ensure_redaction_survives_save(editor, &options)?;
+        ensure_scrub_survives_save(editor, &options)?;
         ensure_incremental_has_a_source(editor, &options)?;
         // Report destructive edits and a missing source before omitted changes.
-        ensure_edits_survive_save(&resource, editor, &options)?;
+        ensure_edits_survive_save(editor, &options)?;
 
         if !options.incremental {
-            resupply_embedded(&resource, editor)?;
+            editor.resupply_embedded().map_err(to_nif_err)?;
         }
-        resupply_info(&resource, editor)?;
+        editor.resupply_info().map_err(to_nif_err)?;
 
         editor
             .save_with_options(&path, options.into())
@@ -792,14 +468,6 @@ fn pdf_date_writable(date: String) -> bool {
     writable_pdf_date(&date)
 }
 
-// Seed from `read_metadata`, never upstream's `get_info`: that decodes
-// `/Info` lossily and would mangle every field the caller did not touch.
-fn seeded_info(resource: &EditorResource, editor: &DocumentEditor) -> MetadataNif {
-    let pending = info_edits(resource).clone();
-
-    pending.unwrap_or_else(|| read_metadata(editor.source()))
-}
-
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_set_info_field(
     resource: ResourceArc<EditorResource>,
@@ -816,16 +484,10 @@ fn editor_set_info_field(
     }
 
     resource.editor.with_lock(|editor| {
-        let mut info = seeded_info(&resource, editor);
+        let mut info = editor.seeded_info();
         *info_slot(&mut info, field) = value;
 
-        // Upstream first: it owns `is_modified`, and the mirror must not record
-        // a value the editor rejected. Always the whole struct, so clearing the
-        // last field replaces the earlier dictionary rather than keeping it.
-        editor
-            .set_info(to_document_info(&info))
-            .map_err(to_nif_err)?;
-        *info_edits(&resource) = Some(info);
+        editor.write_info(info).map_err(to_nif_err)?;
 
         Ok(atoms::ok())
     })
@@ -837,7 +499,7 @@ fn editor_set_info_field(
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_info(resource: ResourceArc<EditorResource>) -> NifResult<MetadataNif> {
     resource.editor.with_read(|editor| {
-        let pending = info_edits(&resource).clone();
+        let pending = editor.info().cloned();
 
         Ok(match pending {
             Some(info) => MetadataNif {
@@ -880,9 +542,10 @@ fn editor_set_form_field_value(
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         // Inside the guard, so check and write cannot straddle another writer.
-        ensure_not_signature(resolved_fields(&resource, editor)?, &name)?;
+        let (resolved, upstream) = editor.resolved_fields()?;
+        ensure_not_signature(resolved, &name)?;
 
-        editor
+        upstream
             .set_form_field_value(&name, set_value_from_nif(value))
             .map_err(to_form_err)?;
 
@@ -897,8 +560,8 @@ fn editor_set_form_field_values(
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         // Preflight every name so an unknown field cannot partially apply the batch.
-        let resolved = resolved_fields(&resource, editor)?;
-        let fields = editor.get_form_fields().map_err(to_nif_err)?;
+        let (resolved, upstream) = editor.resolved_fields()?;
+        let fields = upstream.get_form_fields().map_err(to_nif_err)?;
         let known: HashSet<&str> = fields
             .iter()
             .filter(|field| fillable(resolved, field))
@@ -912,7 +575,7 @@ fn editor_set_form_field_values(
         }
 
         for (name, value) in pairs {
-            editor
+            upstream
                 .set_form_field_value(&name, set_value_from_nif(value))
                 .map_err(to_form_err)?;
         }
@@ -926,6 +589,22 @@ fn out_of_range(page_index: usize, count: usize) -> rustler::Error {
         atoms::out_of_range(),
         format!("Page index {page_index} out of range (editor has {count} pages)"),
     )
+}
+
+// The mirror reports a bad index as data; the atom is built here, at the boundary.
+impl From<OutOfRange> for rustler::Error {
+    fn from(e: OutOfRange) -> Self {
+        out_of_range(e.index, e.count)
+    }
+}
+
+impl From<PageError> for rustler::Error {
+    fn from(e: PageError) -> Self {
+        match e {
+            PageError::OutOfRange(e) => e.into(),
+            PageError::Upstream(e) => to_nif_err(e),
+        }
+    }
 }
 
 // Upstream bounds-checks every page-taking method but reports a bad index as a
@@ -943,12 +622,8 @@ pub fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -
 // The object a source page's `/Contents` reference resolves to, or `None` when
 // the entry is absent or already direct. Use the mirror to reach the source page
 // after moves or deletions.
-fn indirect_contents_target(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<Option<Object>> {
-    let (source, _) = pending(resource, page_index, |_| None::<()>)?;
+fn indirect_contents_target(editor: &OpenEditor, page_index: usize) -> NifResult<Option<Object>> {
+    let source = editor.source_page(page_index)?;
 
     let page = editor.source().get_page(source).map_err(to_nif_err)?;
     let contents = page.as_dict().and_then(|dict| dict.get("Contents"));
@@ -967,22 +642,14 @@ fn indirect_contents_target(
 // Whether the source page's `/Contents` is a reference to an *array* object.
 // Every overlay splice wraps such a reference without resolving it, nesting an
 // array in an array and losing the page content.
-fn contents_is_indirect_array(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<bool> {
-    Ok(indirect_contents_target(resource, editor, page_index)?
+fn contents_is_indirect_array(editor: &OpenEditor, page_index: usize) -> NifResult<bool> {
+    Ok(indirect_contents_target(editor, page_index)?
         .is_some_and(|target| target.as_array().is_some()))
 }
 
 // Reject indirect content arrays before recording an erase.
-fn ensure_contents_spliceable(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<()> {
-    if contents_is_indirect_array(resource, editor, page_index)? {
+fn ensure_contents_spliceable(editor: &OpenEditor, page_index: usize) -> NifResult<()> {
+    if contents_is_indirect_array(editor, page_index)? {
         return Err(tagged_err(
             atoms::unsupported(),
             format!(
@@ -1001,11 +668,10 @@ fn ensure_contents_spliceable(
 // array-only test: a destructive pass decodes the *unresolved* `/Contents`, so
 // every indirect non-stream object fails.
 fn unusable_contents_shape(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
+    editor: &OpenEditor,
     page_index: usize,
 ) -> NifResult<Option<&'static str>> {
-    let Some(target) = indirect_contents_target(resource, editor, page_index)? else {
+    let Some(target) = indirect_contents_target(editor, page_index)? else {
         return Ok(None);
     };
 
@@ -1025,12 +691,8 @@ fn unusable_contents_shape(
 // The refusal for a *queued* region, and unconditional where the mark's is not:
 // a region only ever reaches the destructive pass, and cannot be withdrawn once
 // added, so accepting one the pass could never apply strands the editor.
-pub fn ensure_contents_redactable(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<()> {
-    let Some(shape) = unusable_contents_shape(resource, editor, page_index)? else {
+pub fn ensure_contents_redactable(editor: &OpenEditor, page_index: usize) -> NifResult<()> {
+    let Some(shape) = unusable_contents_shape(editor, page_index)? else {
         return Ok(());
     };
 
@@ -1062,21 +724,17 @@ pub fn draws_redactions(editor: &DocumentEditor, source: usize) -> NifResult<boo
 // The same refusal for a redaction mark, but only where the mark has an effect:
 // with no region of its own a page produces no overlay and rewrites nothing, so
 // marking it is harmless whatever its `/Contents`.
-pub fn ensure_redaction_spliceable(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<()> {
+pub fn ensure_redaction_spliceable(editor: &OpenEditor, page_index: usize) -> NifResult<()> {
     // The annotation check first: reading a page's `/Contents` clones the whole
     // stream while `get_annotations` is cheap, and `editor_mark_all_redactions`
     // runs this over every page.
-    let (source, _) = pending(resource, page_index, |_| None::<()>)?;
+    let source = editor.source_page(page_index)?;
 
     if !draws_redactions(editor, source)? {
         return Ok(());
     }
 
-    let Some(shape) = unusable_contents_shape(resource, editor, page_index)? else {
+    let Some(shape) = unusable_contents_shape(editor, page_index)? else {
         return Ok(());
     };
 
@@ -1144,12 +802,7 @@ fn editor_delete_page(resource: ResourceArc<EditorResource>, page_index: usize) 
         // that changes the page count.
         ensure_editor_page_in_range(editor, page_index)?;
 
-        editor.remove_page(page_index).map_err(to_nif_err)?;
-
-        // Relaxed because the flatten NIFs load it under the same exclusive
-        // guard, so the lock already orders this against every reader.
-        resource.pages_deleted.store(true, Ordering::Relaxed);
-        page_edits(&resource).remove(page_index);
+        editor.delete_page(page_index).map_err(to_nif_err)?;
 
         Ok(atoms::ok())
     })
@@ -1169,147 +822,8 @@ fn editor_move_page(
 
         editor.move_page(from, to).map_err(to_nif_err)?;
 
-        // The mirror is indexed by visible position, so it takes the same
-        // permutation the editor just took.
-        let mut pages = page_edits(&resource);
-        let page = pages.remove(from);
-        pages.insert(to, page);
-
         Ok(atoms::ok())
     })
-}
-
-// Drop the mirror guard before source lookup so shared reads stay concurrent.
-fn pending<T: Copy>(
-    resource: &EditorResource,
-    page_index: usize,
-    pick: impl FnOnce(&PageEdits) -> Option<T>,
-) -> NifResult<(usize, Option<T>)> {
-    let pages = page_edits(resource);
-    let count = pages.len();
-    let page = pages
-        .get(page_index)
-        .ok_or_else(|| out_of_range(page_index, count))?;
-
-    Ok((page.source, pick(page)))
-}
-
-// Record only after a successful write while page operations remain excluded.
-fn record<T: Copy>(
-    resource: &EditorResource,
-    editor: &mut DocumentEditor,
-    page_index: usize,
-    value: T,
-    write: impl FnOnce(&mut DocumentEditor, usize, T) -> pdf_oxide::error::Result<()>,
-    slot: impl FnOnce(&mut PageEdits) -> &mut Option<T>,
-) -> NifResult<()> {
-    let mut pages = page_edits(resource);
-    let count = pages.len();
-    let page = pages
-        .get_mut(page_index)
-        .ok_or_else(|| out_of_range(page_index, count))?;
-
-    write(editor, page_index, value).map_err(to_nif_err)?;
-    *slot(page) = Some(value);
-
-    Ok(())
-}
-
-// `source()` is the pre-edit document, so an unchanged rotation must be read at
-// the recorded source index rather than at the visible one.
-fn effective_rotation(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<i32> {
-    let (source, set) = pending(resource, page_index, |page| page.rotation)?;
-
-    match set {
-        Some(rotation) => Ok(rotation),
-        None => editor
-            .source()
-            .get_page_rotation(source)
-            .map_err(to_nif_err),
-    }
-}
-
-fn write_rotation(
-    resource: &EditorResource,
-    editor: &mut DocumentEditor,
-    page_index: usize,
-    degrees: i32,
-) -> NifResult<()> {
-    record(
-        resource,
-        editor,
-        page_index,
-        degrees,
-        DocumentEditor::set_page_rotation,
-        |page| &mut page.rotation,
-    )
-}
-
-// Read unchanged boxes from the source to preserve inheritance and indirection.
-fn effective_media_box(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<[f32; 4]> {
-    let (source, set) = pending(resource, page_index, |page| page.media_box)?;
-
-    match set {
-        Some(media_box) => Ok(media_box),
-        None => editor
-            .source()
-            .get_page_media_box(source)
-            .map(|(llx, lly, urx, ury)| [llx, lly, urx, ury])
-            .map_err(to_nif_err),
-    }
-}
-
-fn effective_crop_box(
-    resource: &EditorResource,
-    editor: &DocumentEditor,
-    page_index: usize,
-) -> NifResult<Option<[f32; 4]>> {
-    let (source, set) = pending(resource, page_index, |page| page.crop_box)?;
-
-    match set {
-        Some(crop_box) => Ok(Some(crop_box)),
-        None => read_crop_box(editor.source(), source).map_err(to_nif_err),
-    }
-}
-
-fn write_media_box(
-    resource: &EditorResource,
-    editor: &mut DocumentEditor,
-    page_index: usize,
-    corners: [f32; 4],
-) -> NifResult<()> {
-    record(
-        resource,
-        editor,
-        page_index,
-        corners,
-        DocumentEditor::set_page_media_box,
-        |page| &mut page.media_box,
-    )
-}
-
-fn write_crop_box(
-    resource: &EditorResource,
-    editor: &mut DocumentEditor,
-    page_index: usize,
-    corners: [f32; 4],
-) -> NifResult<()> {
-    record(
-        resource,
-        editor,
-        page_index,
-        corners,
-        DocumentEditor::set_page_crop_box,
-        |page| &mut page.crop_box,
-    )
 }
 
 // Treat a non-quadrant base as zero, as the reader does rather than as upstream does.
@@ -1338,7 +852,7 @@ fn editor_page_rotation(
 ) -> NifResult<i32> {
     resource
         .editor
-        .with_read(|editor| effective_rotation(&resource, editor, page_index))
+        .with_read(|editor| Ok(editor.effective_rotation(page_index)?))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -1348,7 +862,7 @@ fn editor_set_page_rotation(
     degrees: i32,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        write_rotation(&resource, editor, page_index, degrees)?;
+        editor.write_rotation(page_index, degrees)?;
 
         Ok(atoms::ok())
     })
@@ -1362,10 +876,10 @@ fn editor_rotate_page_by(
     degrees: i32,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        let current = effective_rotation(&resource, editor, page_index)?;
+        let current = editor.effective_rotation(page_index)?;
         let rotation = round_to_quadrant(current, degrees);
 
-        write_rotation(&resource, editor, page_index, rotation)?;
+        editor.write_rotation(page_index, rotation)?;
 
         Ok(atoms::ok())
     })
@@ -1377,21 +891,17 @@ fn editor_rotate_all_pages_by(
     degrees: i32,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        // The mirror's length, not `current_page_count`: every write below is
-        // bounded by the mirror.
-        let count = page_edits(&resource).len();
-
         // Resolve bases first so a read failure leaves the editor unchanged.
-        let rotations = (0..count)
+        let rotations = (0..editor.visible_page_count())
             .map(|page_index| {
-                let current = effective_rotation(&resource, editor, page_index)?;
+                let current = editor.effective_rotation(page_index)?;
 
                 Ok(round_to_quadrant(current, degrees))
             })
             .collect::<NifResult<Vec<_>>>()?;
 
         for (page_index, rotation) in rotations.into_iter().enumerate() {
-            write_rotation(&resource, editor, page_index, rotation)?;
+            editor.write_rotation(page_index, rotation)?;
         }
 
         Ok(atoms::ok())
@@ -1468,7 +978,7 @@ fn editor_page_media_box(
     page_index: usize,
 ) -> NifResult<RectNif> {
     resource.editor.with_read(|editor| {
-        let [llx, lly, urx, ury] = effective_media_box(&resource, editor, page_index)?;
+        let [llx, lly, urx, ury] = editor.effective_media_box(page_index)?;
 
         Ok(rect_from_corners(
             llx.into(),
@@ -1485,11 +995,11 @@ fn editor_page_crop_box(
     page_index: usize,
 ) -> NifResult<Option<RectNif>> {
     resource.editor.with_read(|editor| {
-        Ok(
-            effective_crop_box(&resource, editor, page_index)?.map(|[llx, lly, urx, ury]| {
+        Ok(editor
+            .effective_crop_box(page_index)?
+            .map(|[llx, lly, urx, ury]| {
                 rect_from_corners(llx.into(), lly.into(), urx.into(), ury.into())
-            }),
-        )
+            }))
     })
 }
 
@@ -1502,7 +1012,7 @@ fn editor_set_page_media_box(
     let corners = corners(rect).map_err(unrepresentable)?;
 
     resource.editor.with_lock(|editor| {
-        write_media_box(&resource, editor, page_index, corners)?;
+        editor.write_media_box(page_index, corners)?;
 
         Ok(atoms::ok())
     })
@@ -1517,7 +1027,7 @@ fn editor_set_page_crop_box(
     let corners = corners(rect).map_err(unrepresentable)?;
 
     resource.editor.with_lock(|editor| {
-        write_crop_box(&resource, editor, page_index, corners)?;
+        editor.write_crop_box(page_index, corners)?;
 
         Ok(atoms::ok())
     })
@@ -1530,11 +1040,9 @@ fn editor_crop_margins(
     margins: MarginsNif,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        let count = page_edits(&resource).len();
-
-        let crops = (0..count)
+        let crops = (0..editor.visible_page_count())
             .map(|page_index| {
-                let media_box = effective_media_box(&resource, editor, page_index)?;
+                let media_box = editor.effective_media_box(page_index)?;
 
                 crop_from_margins(media_box, margins).map_err(|refusal| {
                     let why = match refusal {
@@ -1550,7 +1058,7 @@ fn editor_crop_margins(
             .collect::<NifResult<Vec<_>>>()?;
 
         for (page_index, crop) in crops.into_iter().enumerate() {
-            write_crop_box(&resource, editor, page_index, crop)?;
+            editor.write_crop_box(page_index, crop)?;
         }
 
         Ok(atoms::ok())
@@ -1567,20 +1075,9 @@ fn editor_erase_regions(
 
     resource.editor.with_lock(|editor| {
         ensure_editor_page_in_range(editor, page_index)?;
-        ensure_contents_spliceable(&resource, editor, page_index)?;
+        ensure_contents_spliceable(editor, page_index)?;
 
-        editor
-            .erase_regions(page_index, &corners)
-            .map_err(to_nif_err)?;
-
-        // Mirror successful calls by source page, including empty slices:
-        // upstream records those too. The mirror must match the visible pages.
-        let sources = source_pages(&resource);
-        debug_assert_eq!(sources.len(), editor.current_page_count());
-
-        if let Some(source) = sources.get(page_index) {
-            erased_pages(&resource).insert(*source);
-        }
+        editor.erase(page_index, &corners).map_err(to_nif_err)?;
 
         Ok(atoms::ok())
     })
@@ -1595,11 +1092,7 @@ fn editor_clear_erase_regions(
     resource.editor.with_lock(|editor| {
         ensure_editor_page_in_range(editor, page_index)?;
 
-        editor.clear_erase_regions(page_index);
-
-        if let Some(source) = source_pages(&resource).get(page_index) {
-            erased_pages(&resource).remove(source);
-        }
+        editor.clear_erase(page_index);
 
         Ok(atoms::ok())
     })
@@ -1611,9 +1104,9 @@ fn editor_clear_erase_regions(
 fn editor_flatten_forms(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         editor.flatten_forms().map_err(to_nif_err)?;
-        mark_pages(&resource, Marked::Forms);
+        editor.mark(Marked::Forms);
 
-        if resource.pages_deleted.load(Ordering::Relaxed) {
+        if editor.pages_deleted() {
             for page in 0..editor.current_page_count() {
                 editor.flatten_forms_on_page(page).map_err(to_nif_err)?;
             }
@@ -1636,7 +1129,7 @@ fn editor_flatten_forms_on_page(
         editor
             .flatten_forms_on_page(page_index)
             .map_err(to_nif_err)?;
-        mark_pages(&resource, Marked::Forms);
+        editor.mark(Marked::Forms);
 
         Ok(atoms::ok())
     })
@@ -1648,9 +1141,9 @@ fn editor_flatten_forms_on_page(
 fn editor_flatten_all_annotations(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         editor.flatten_all_annotations().map_err(to_nif_err)?;
-        mark_pages(&resource, Marked::Annotations);
+        editor.mark(Marked::Annotations);
 
-        if resource.pages_deleted.load(Ordering::Relaxed) {
+        if editor.pages_deleted() {
             for page in 0..editor.current_page_count() {
                 editor.flatten_page_annotations(page).map_err(to_nif_err)?;
             }
@@ -1671,7 +1164,7 @@ fn editor_flatten_page_annotations(
         editor
             .flatten_page_annotations(page_index)
             .map_err(to_nif_err)?;
-        mark_pages(&resource, Marked::Annotations);
+        editor.mark(Marked::Annotations);
 
         Ok(atoms::ok())
     })
@@ -1696,6 +1189,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::document::read_crop_box;
 
     #[test]
     fn writable_pdf_date_holds_the_shared_grammar_to_the_whole_input() {

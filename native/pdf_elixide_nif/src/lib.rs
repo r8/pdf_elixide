@@ -1,17 +1,8 @@
-use std::{
-    collections::HashSet,
-    sync::{atomic::AtomicBool, Arc, Mutex, OnceLock, RwLock},
-};
+use std::sync::Arc;
 
-use pdf_oxide::{
-    editor::DocumentEditor, extractors::PdfImage, fonts::FontInfo,
-    structure::table_extractor::Table, writer::EmbeddedFile,
-};
+use pdf_oxide::{extractors::PdfImage, fonts::FontInfo, structure::table_extractor::Table};
 
-use crate::{
-    editor::PageEdits, form_tree::Resolved, metadata::MetadataNif, resource::Closable,
-    warnings::OpenDocument,
-};
+use crate::{open_editor::OpenEditor, resource::Closable, warnings::OpenDocument};
 
 mod annotations;
 mod binary;
@@ -30,6 +21,7 @@ mod geometry;
 mod images;
 mod logging;
 mod metadata;
+mod open_editor;
 mod optional_content;
 mod outline;
 mod paths;
@@ -81,43 +73,7 @@ struct DocumentResource {
 impl rustler::Resource for DocumentResource {}
 
 struct EditorResource {
-    editor: Closable<DocumentEditor>,
-    // Cacheable while no bound operation mutates the source document or fields.
-    resolved_fields: OnceLock<Resolved>,
-    // Set after a deletion so whole-document flattens re-mark surviving pages
-    // through the mapped per-page methods.
-    pages_deleted: AtomicBool,
-    // Set once a destructive redaction or sanitization has rewritten content,
-    // which an incremental save carries none of.
-    redacted: AtomicBool,
-    // Set once a sanitization has scrubbed the catalog, which only a collecting
-    // write completes.
-    sanitized: AtomicBool,
-    // Source pages carrying a queued region — the half of upstream's destructive
-    // page set nothing exposes. It only grows: a region cannot be withdrawn.
-    redaction_regions: Mutex<HashSet<usize>>,
-    // Pending erase overlays by source page; clear_erase_regions removes entries.
-    erased_regions: Mutex<HashSet<usize>>,
-    // Set once a destructive pass has run; a second one is refused from here on.
-    applied_redactions: AtomicBool,
-    // Monotonic scan gates, not current marks: marks can be removed or their
-    // pages deleted. Each flag skips a quadratic scan of an untouched category.
-    redactions_marked: AtomicBool,
-    annotations_marked: AtomicBool,
-    forms_marked: AtomicBool,
-    // Set once sanitization dropped the source's embedded-file name tree, which
-    // the editor otherwise keeps listing from `source()`.
-    embedded_scrubbed: AtomicBool,
-    // Set once sanitization dropped the source's JavaScript name tree. With
-    // `embedded_scrubbed`, the whole record of what the staged catalog lost.
-    javascript_scrubbed: AtomicBool,
-    // Visible pages in output order, including pending rotations and boxes.
-    pages: Mutex<Vec<PageEdits>>,
-    // Re-supplied after full writes drain the editor's pending list.
-    embedded: RwLock<Vec<EmbeddedFile>>,
-    // Caller-visible `/Info` values once a setter has run; `None` answers from
-    // the source.
-    info: Mutex<Option<MetadataNif>>,
+    editor: Closable<OpenEditor>,
 }
 
 #[rustler::resource_impl]
