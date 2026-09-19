@@ -950,15 +950,18 @@ enum CropRefusal {
     Empty,
 }
 
-// Normalize first so margins always inset a corner-reversed media box.
+// Normalize first so margins always inset a corner-reversed media box. Not
+// through `rect_from_corners`: that clamps for encoding, and an extent past
+// f32 must overflow here so the finiteness check below can refuse it.
 fn crop_from_margins(media_box: [f32; 4], margins: MarginsNif) -> Result<[f32; 4], CropRefusal> {
     let [llx, lly, urx, ury] = media_box;
-    let r = rect_from_corners(llx.into(), lly.into(), urx.into(), ury.into());
+    let (x, y) = (llx.min(urx), lly.min(ury));
+    let (width, height) = ((urx - llx).abs(), (ury - lly).abs());
     let crop = [
-        r.x + margins.left,
-        r.y + margins.bottom,
-        r.x + r.width - margins.right,
-        r.y + r.height - margins.top,
+        x + margins.left,
+        y + margins.bottom,
+        x + width - margins.right,
+        y + height - margins.top,
     ];
 
     if !crop.iter().all(|c| c.is_finite()) {

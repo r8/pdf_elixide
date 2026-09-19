@@ -10,7 +10,7 @@ use crate::{
     binary::{binary_term, owned_binary},
     error::{tagged_err, to_nif_err},
     fs_path::path_arg,
-    geometry::{rect_to_nif, RectNif},
+    geometry::{finite, rect_to_nif, RectNif},
     resource::Closable,
     ImageResource,
 };
@@ -124,7 +124,7 @@ impl From<ColorSpace> for ColorSpaceNif {
 // Encoding is lazy, but the complete decoded image or JPEG blob is resident in
 // this resource from extraction onward.
 pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
-    let [a, b, c, d, e, f] = image.matrix();
+    let [a, b, c, d, e, f] = image.matrix().map(finite);
 
     ImageNif {
         page,

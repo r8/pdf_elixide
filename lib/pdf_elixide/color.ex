@@ -7,7 +7,13 @@ defmodule PdfElixide.Color do
     * `PdfElixide.Color.Gray` — one channel (DeviceGray).
     * `PdfElixide.Color.Unknown` — components whose colorspace we can't identify.
 
-  Every channel is in the `0.0..1.0` range.
+  ## Component range
+
+  In a well-formed PDF every component is in the `0.0..1.0` range. Components
+  are carried as the file writes them rather than clamped to that range, so a
+  malformed file can yield `1.5` or a negative value, and the struct reports
+  it as is. A value past the single-precision range follows the "Unbounded
+  values" rule in `PdfElixide.Geometry.Rect`.
 
   ## Which shapes appear where
 

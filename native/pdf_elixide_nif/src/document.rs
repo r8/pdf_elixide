@@ -1416,6 +1416,113 @@ mod tests {
         )
     }
 
+    // A one-page document painting one Form XObject holding `content`, so the
+    // stream runs under upstream's XObject handling behind a correct xref.
+    fn one_xobject_page(content: &[u8]) -> Vec<u8> {
+        let form = format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 448 337] \
+             /Resources << /Font << /F1 5 0 R >> >> /Length {} >>\nstream\n",
+            content.len()
+        );
+        let objects: [Vec<u8>; 6] = [
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 448 337] \
+              /Resources << /XObject << /Im1 6 0 R >> >> /Contents 4 0 R >>"
+                .to_vec(),
+            b"<< /Length 8 >>\nstream\n/Im1 Do \nendstream".to_vec(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+            [form.as_bytes(), content, b"\nendstream"].concat(),
+        ];
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            out.extend_from_slice(object);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = out.len();
+        let size = objects.len() + 1;
+        out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n")
+                .as_bytes(),
+        );
+        out
+    }
+
+    // A text-matrix scale past about 1.8e19 overflows the f32 in upstream's
+    // `font_size * sqrt(d*d + b*b)`; `Tf` and `cm` operands are sanitised,
+    // `Tm` is not. The clamp stays when this fails — retire the fixture and
+    // the Elixir value pin instead.
+    #[test]
+    fn upstream_still_emits_an_infinite_span_size_for_a_huge_text_matrix() {
+        let doc = PdfDocument::open(fixture("unbounded_text_matrix.pdf")).expect("fixture opens");
+        let spans = doc.extract_spans(0).expect("spans");
+        assert_eq!(spans.len(), 1);
+        let span = &spans[0];
+        assert!(span.font_size.is_infinite(), "{}", span.font_size);
+        assert!(span.bbox.width.is_infinite(), "{}", span.bbox.width);
+        assert!(span.bbox.height.is_infinite(), "{}", span.bbox.height);
+    }
+
+    // `prescan_text_regions` (`src/content/parser.rs`, streams over 256 KiB —
+    // hence the padding) applies `cm` without honouring `Q`, so the `q … Q`
+    // runs compound tenfold each. Only an XObject-hosted stream trips it, so
+    // the control is the unpadded stream rather than the page. Retire as
+    // above; the clamp stays.
+    #[test]
+    fn upstream_still_accumulates_the_ctm_across_q_blocks_past_the_prescan_threshold() {
+        let runs: Vec<u8> = (0..25)
+            .flat_map(|index| {
+                format!(
+                    "q\n10 0 0 10 0 0 cm\nBT\n/F1 10 Tf\n1 0 0 1 {} 5 Tm\n(1) Tj\nET\nQ\n",
+                    5 + index
+                )
+                .into_bytes()
+            })
+            .collect();
+        let padding = b"0 0 m\n1 1 l\nS\n".repeat(25_000);
+        let sizes = |content: Vec<u8>| -> Vec<f32> {
+            let doc = PdfDocument::from_bytes(one_xobject_page(&content)).expect("synthetic opens");
+            let mut sizes: Vec<f32> = doc
+                .extract_chars(0)
+                .expect("chars")
+                .into_iter()
+                .map(|ch| ch.font_size)
+                .collect();
+            sizes.sort_by(|a, b| a.partial_cmp(b).expect("no NaN"));
+            sizes
+        };
+
+        let control = sizes(runs.clone());
+        assert_eq!(control.len(), 25);
+        assert!(control.iter().all(|&size| size == 100.0), "{control:?}");
+
+        let compounded = sizes([runs, padding].concat());
+        assert_eq!(compounded.len(), 25);
+        assert_eq!(compounded[0], 100.0, "{compounded:?}");
+        let finite: Vec<f32> = compounded
+            .iter()
+            .copied()
+            .filter(|s| s.is_finite())
+            .collect();
+        assert!(
+            finite
+                .windows(2)
+                .all(|pair| (pair[1] / pair[0] - 10.0).abs() < 1e-3),
+            "{compounded:?}"
+        );
+        assert!(
+            compounded.iter().any(|size| size.is_infinite()),
+            "{compounded:?}"
+        );
+    }
+
     #[test]
     fn upstream_still_serves_pre_authentication_caches_after_authenticate() {
         let doc = PdfDocument::open(fixture("encrypted.pdf")).expect("fixture opens");

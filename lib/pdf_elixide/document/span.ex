@@ -3,6 +3,9 @@ defmodule PdfElixide.Document.Span do
   A run of text sharing one text state — the same font, size, color, and
   text-state parameters — extracted from a PDF page, with its zero-based page
   index and bounding box.
+
+  Float fields follow the "Unbounded values" rule in
+  `PdfElixide.Geometry.Rect`.
   """
   alias PdfElixide.Color.RGB
   alias PdfElixide.Geometry.Rect

@@ -15,6 +15,9 @@ defmodule PdfElixide.Document.StructuredPage do
   on a box such as `[10 20 622 812]` they read `622.0` and `812.0` where
   `PdfElixide.Document.Page.width/1` reads `612.0`. Use
   `PdfElixide.Document.Page.media_box/1` for the normalized rectangle.
+
+  Float fields follow the "Unbounded values" rule in
+  `PdfElixide.Geometry.Rect`.
   """
   alias PdfElixide.Document.StructuredPage.Region
 

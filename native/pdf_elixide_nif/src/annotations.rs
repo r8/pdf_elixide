@@ -6,7 +6,7 @@ use rustler::{NifMap, NifStruct, NifTaggedEnum, NifUnitEnum};
 
 use crate::{
     color::{annotation_color_to_nif, AnnotationColorNif},
-    geometry::{rect_from_corners, RectNif},
+    geometry::{finite64, rect_from_corners, RectNif},
 };
 
 #[derive(NifMap, Debug)]
@@ -105,7 +105,7 @@ impl From<AnnotationSubtype> for SubtypeNif {
     }
 }
 
-#[derive(NifTaggedEnum, Debug)]
+#[derive(NifTaggedEnum, Debug, PartialEq)]
 pub enum LinkDestinationNif {
     Named(String),
     Explicit(u32, String, Vec<f64>),
@@ -122,7 +122,7 @@ impl From<LinkDestination> for LinkDestinationNif {
             } => LinkDestinationNif::Explicit(
                 page,
                 fit_type,
-                params.into_iter().map(f64::from).collect(),
+                params.into_iter().map(|p| finite64(f64::from(p))).collect(),
             ),
         }
     }
@@ -244,14 +244,19 @@ pub fn annotation_to_nif(annotation: Annotation, page: usize) -> AnnotationNif {
         modification_date: annotation.modification_date,
         destination: annotation.destination.map(Into::into),
         action: annotation.action.map(Into::into),
-        quad_points: annotation
-            .quad_points
-            .map(|quads| quads.into_iter().map(|quad| quad.to_vec()).collect()),
+        quad_points: annotation.quad_points.map(|quads| {
+            quads
+                .into_iter()
+                .map(|quad| quad.iter().copied().map(finite64).collect())
+                .collect()
+        }),
         color: annotation_color_to_nif(annotation.color),
         interior_color: annotation_color_to_nif(annotation.interior_color),
-        opacity: annotation.opacity,
+        opacity: annotation.opacity.map(finite64),
         flags: flags_to_nif(annotation.flags),
-        border: annotation.border.map(|border| border.to_vec()),
+        border: annotation
+            .border
+            .map(|border| border.iter().copied().map(finite64).collect()),
         field_type: annotation.field_type.map(|field_type| {
             widget_field_type_nif(
                 field_type,
@@ -444,5 +449,75 @@ mod tests {
             assert!(!accessor(&empty), "{name} set on empty flags");
             assert!(accessor(&full), "{name} unset on full flags");
         }
+    }
+
+    #[test]
+    fn every_annotation_float_crosses_finite() {
+        let (inf, ninf, nan) = (f64::INFINITY, f64::NEG_INFINITY, f64::NAN);
+        let annotation = Annotation {
+            annotation_type: "Annot".into(),
+            subtype: Some("Link".into()),
+            subtype_enum: AnnotationSubtype::Link,
+            contents: None,
+            rect: Some([ninf, nan, inf, 1.0]),
+            author: None,
+            creation_date: None,
+            modification_date: None,
+            subject: None,
+            destination: Some(LinkDestination::Explicit {
+                page: 2,
+                fit_type: "XYZ".into(),
+                params: vec![f32::INFINITY, f32::NAN, f32::NEG_INFINITY, 0.5],
+            }),
+            action: None,
+            quad_points: Some(vec![[inf, ninf, nan, 1.0, inf, ninf, nan, 2.0]]),
+            color: Some(vec![inf]),
+            opacity: Some(inf),
+            flags: AnnotationFlags::default(),
+            border: Some([inf, nan, ninf]),
+            interior_color: Some(vec![nan, inf, ninf]),
+            field_type: None,
+            field_name: None,
+            field_value: None,
+            default_value: None,
+            field_flags: None,
+            options: None,
+            appearance_state: None,
+            raw_dict: None,
+        };
+
+        let nif = annotation_to_nif(annotation, 0);
+
+        let bound = f64::from(f32::MAX);
+        assert_eq!(
+            nif.rect,
+            Some(RectNif {
+                x: -f32::MAX,
+                y: 0.0,
+                width: f32::MAX,
+                height: 1.0,
+            })
+        );
+        assert_eq!(
+            nif.destination,
+            Some(LinkDestinationNif::Explicit(
+                2,
+                "XYZ".into(),
+                vec![bound, 0.0, -bound, 0.5]
+            ))
+        );
+        assert_eq!(
+            nif.quad_points,
+            Some(vec![vec![bound, -bound, 0.0, 1.0, bound, -bound, 0.0, 2.0]])
+        );
+        // The components themselves are `color.rs`'s to pin; only the routing
+        // is asserted here.
+        assert!(matches!(nif.color, Some(AnnotationColorNif::Gray(_))));
+        assert!(matches!(
+            nif.interior_color,
+            Some(AnnotationColorNif::Rgb(_))
+        ));
+        assert_eq!(nif.opacity, Some(bound));
+        assert_eq!(nif.border, Some(vec![bound, 0.0, -bound]));
     }
 }

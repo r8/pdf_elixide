@@ -40,6 +40,8 @@ defmodule PdfElixide.Document.Path do
       arrive with a zero-height or zero-width `:bbox`.
     * **Degenerate shapes are kept**, so filter on `:bbox` if you need shapes
       with extent.
+    * **Coordinates and widths are always finite**, following the "Unbounded
+      values" rule in `PdfElixide.Geometry.Rect`.
     * **A curve disqualifies a path entirely.** A rounded rectangle is neither.
 
   Each call runs a full extraction of the page, so asking one page for both its

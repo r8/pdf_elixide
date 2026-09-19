@@ -7,6 +7,13 @@ defmodule PdfElixide.Geometry.Rect do
   is `y + height` and the right edge is `x + width`. `width` and `height` are
   always non-negative.
 
+  ## Unbounded values
+
+  A float the PDF drives past the single-precision range arrives as the
+  largest finite value of that sign, about `3.4e38`, and one it leaves
+  undefined as `0.0`. No field ever holds an infinity or a NaN. Every float
+  on an extracted struct follows this rule, whichever module carries it.
+
   ## Rotated pages
 
   `to_display_frame/3` and `to_user_space/3` move rectangles between raw user

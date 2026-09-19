@@ -1,7 +1,8 @@
 defmodule PdfElixide.Document.Image do
   @moduledoc """
   A raster image (photo, logo, scanned picture) extracted from a PDF page, with
-  its zero-based page index, on-page bounding box, and dimensions.
+  its zero-based page index, on-page bounding box, and dimensions. The box and
+  the matrix follow the "Unbounded values" rule in `PdfElixide.Geometry.Rect`.
 
   The pixel data is not carried on the struct; instead `:ref` is a handle to the
   underlying image, and you encode it on demand with `to_binary/2` (bytes) or

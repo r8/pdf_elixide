@@ -1,7 +1,8 @@
 defmodule PdfElixide.Color.CMYK do
   @moduledoc """
   A DeviceCMYK color — cyan, magenta, yellow, and key (black), each in the
-  `0.0..1.0` range.
+  `0.0..1.0` range in a well-formed PDF; see "Component range" in
+  `PdfElixide.Color` for what a malformed one can hold.
 
   Only annotation colors can take this shape; see `PdfElixide.Color`.
   """

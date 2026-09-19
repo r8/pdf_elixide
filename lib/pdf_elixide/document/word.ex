@@ -9,6 +9,9 @@ defmodule PdfElixide.Document.Word do
   On a page whose `PdfElixide.Document.Page.rotation/1` is `90` or `270` it also
   says whether `:bbox` was mapped into the displayed frame; see "Rotated pages
   and extracted geometry" in `PdfElixide.Document`.
+
+  Float fields follow the "Unbounded values" rule in
+  `PdfElixide.Geometry.Rect`.
   """
   alias PdfElixide.Geometry.Rect
 

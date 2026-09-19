@@ -2,6 +2,9 @@ defmodule PdfElixide.Document.Char do
   @moduledoc """
   A single character extracted from a PDF page, with its zero-based page index,
   bounding box, font metadata, and typographic placement.
+
+  Float fields follow the "Unbounded values" rule in
+  `PdfElixide.Geometry.Rect`.
   """
   alias PdfElixide.Color.RGB
   alias PdfElixide.Geometry.Rect

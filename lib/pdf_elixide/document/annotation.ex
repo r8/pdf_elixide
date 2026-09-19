@@ -22,6 +22,9 @@ defmodule PdfElixide.Document.Annotation do
 
   `:color` and `:interior_color` are decoded from the raw `/C` and `/IC`
   component arrays into a `PdfElixide.Color` struct (see `t:color/0`).
+
+  Float fields follow the "Unbounded values" rule in
+  `PdfElixide.Geometry.Rect`.
   """
   alias PdfElixide.Color
   alias PdfElixide.Document.Annotation
@@ -84,9 +87,9 @@ defmodule PdfElixide.Document.Annotation do
     * `%PdfElixide.Color.Gray{}` — one component (DeviceGray).
     * `%PdfElixide.Color.RGB{}` — three components (DeviceRGB).
     * `%PdfElixide.Color.CMYK{}` — four components (DeviceCMYK).
-    * `%PdfElixide.Color.Unknown{}` — any other length, preserved verbatim.
+    * `%PdfElixide.Color.Unknown{}` — any other length, kept in full.
 
-  Each component is in the `0.0..1.0` range.
+  Component values follow "Component range" in `PdfElixide.Color`.
 
   The colorspace is inferred from the component count, because the array itself
   carries none. That inference can be wrong — a one-component `/C` in a

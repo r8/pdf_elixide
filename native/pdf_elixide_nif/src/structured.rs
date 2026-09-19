@@ -8,7 +8,7 @@ use crate::{
     document::ensure_page_in_range,
     error::to_nif_err,
     extract_options::StructuredOptionsNif,
-    geometry::{rect_to_nif, RectNif},
+    geometry::{finite, rect_to_nif, RectNif},
     span::{span_to_nif, SpanNif},
     DocumentResource,
 };
@@ -77,8 +77,8 @@ fn page_to_nif(page: StructuredPage) -> StructuredPageNif {
     let index = page.page_index;
     StructuredPageNif {
         page: index,
-        width: page.page_width,
-        height: page.page_height,
+        width: finite(page.page_width),
+        height: finite(page.page_height),
         regions: page
             .regions
             .into_iter()
@@ -122,4 +122,23 @@ fn document_all_structured(
             .map(|page_index| extract_structured_page(doc, page_index, mode))
             .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_extent_crosses_finite() {
+        let nif = page_to_nif(StructuredPage {
+            page_index: 3,
+            page_width: f32::INFINITY,
+            page_height: f32::NAN,
+            regions: vec![],
+        });
+
+        assert_eq!(nif.page, 3);
+        assert_eq!((nif.width, nif.height), (f32::MAX, 0.0));
+        assert!(nif.regions.is_empty());
+    }
 }
