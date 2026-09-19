@@ -292,8 +292,14 @@ defmodule PdfElixide.ExtractionOptionsTest do
       # This fixture's columns merge into one span per row, so no strategy can
       # reorder them — the assertion is that each value decodes and returns the
       # full span set, not that the three differ.
-      for order <- [:top_to_bottom, :column_aware, :structure] do
+      for order <- [:top_to_bottom, :column_aware, :structure_tree] do
         assert length(Document.spans!(doc, @columns, reading_order: order)) == 4
+      end
+    end
+
+    test ":reading_order rejects the former spans-only spelling", %{doc: doc} do
+      assert_raise ArgumentError, ~r/:reading_order/, fn ->
+        Document.spans(doc, @columns, reading_order: :structure)
       end
     end
 
@@ -346,6 +352,36 @@ defmodule PdfElixide.ExtractionOptionsTest do
       # preset here; ours passes the config through, so the cell floor still
       # rejects the table.
       assert Document.tables!(doc, @ruleless, region: table.bbox, min_table_cells: 999) == []
+    end
+
+    test ":region_mode decides how a region matches", %{doc: doc} do
+      [table] = Document.tables!(doc, @ruleless)
+      %Rect{x: x, y: y, width: w, height: h} = table.bbox
+      inset = %Rect{x: x + w / 4, y: y + h / 4, width: w / 2, height: h / 2}
+
+      # Each extraction mints a fresh handle, so compare without `:ref`.
+      without_ref = fn tables -> Enum.map(tables, &Map.delete(&1, :ref)) end
+
+      assert without_ref.(Document.tables!(doc, @ruleless, region: inset)) ==
+               without_ref.(
+                 Document.tables!(doc, @ruleless, region: inset, region_mode: :intersects)
+               )
+
+      assert length(Document.tables!(doc, @ruleless, region: inset)) == 1
+      assert Document.tables!(doc, @ruleless, region: inset, region_mode: :fully_contained) == []
+
+      assert length(
+               Document.tables!(doc, @ruleless, region: table.bbox, region_mode: :fully_contained)
+             ) ==
+               1
+
+      # The inset covers a quarter of the table's own area.
+      assert length(
+               Document.tables!(doc, @ruleless, region: inset, region_mode: {:min_overlap, 0.2})
+             ) == 1
+
+      assert Document.tables!(doc, @ruleless, region: inset, region_mode: {:min_overlap, 0.9}) ==
+               []
     end
   end
 
@@ -450,12 +486,14 @@ defmodule PdfElixide.ExtractionOptionsTest do
             fn -> Document.words(doc, @ruleless, opts) end,
             fn -> Document.text_lines(doc, @ruleless, opts) end,
             fn -> Document.spans(doc, @ruleless, opts) end,
+            fn -> Document.tables(doc, @ruleless, opts) end,
             # …and the whole-document arities, which validate before looping.
             fn -> Document.text(doc, opts) end,
             fn -> Document.chars(doc, opts) end,
             fn -> Document.words(doc, opts) end,
             fn -> Document.text_lines(doc, opts) end,
-            fn -> Document.spans(doc, opts) end
+            fn -> Document.spans(doc, opts) end,
+            fn -> Document.tables(doc, opts) end
           ] do
         assert_raise ArgumentError, ~r/:region_mode/, call
       end

@@ -2346,9 +2346,10 @@ defmodule PdfElixide.Document do
 
     * `:reading_order` — how spans are ordered: `:top_to_bottom` (simple
       geometric sorting), `:column_aware` (XY-cut column detection), or
-      `:structure` (follow a tagged PDF's structure tree). Defaults to
-      `:top_to_bottom`. Note these values differ from the `:reading_order` of
-      `t:markdown_opts/0`, which is a separate setting.
+      `:structure_tree` (column-aware order, with the cells of a tagged
+      table reordered row-major by the structure tree; identical to
+      `:column_aware` on an untagged document). The same values as
+      `t:markdown_opts/0`, but the default here is `:top_to_bottom`.
     * `:span_merging` — a `t:span_merging_opts/0` keyword list, or `nil`
       for the default merging behavior. Defaults to `nil`.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the spans
@@ -2368,7 +2369,7 @@ defmodule PdfElixide.Document do
   naming the key.
   """
   @type spans_opts :: [
-          reading_order: :top_to_bottom | :column_aware | :structure,
+          reading_order: :top_to_bottom | :column_aware | :structure_tree,
           span_merging: span_merging_opts() | nil,
           region: Rect.t() | nil,
           region_mode: region_mode(),
@@ -2689,8 +2690,10 @@ defmodule PdfElixide.Document do
   `t:table_detection_opts/0` key, plus
 
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the tables
-      overlapping it. Defaults to `nil`. There is no `:region_mode`; tables use
-      bounding-box intersection only.
+      matching it. Defaults to `nil`. A table whose `bbox` is `nil` never
+      matches a region.
+    * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
+      Defaults to `:intersects`.
 
   Unlike the `:table_detection` option of the `text` functions, the detection
   keys are given *flat* here rather than nested under one key.
@@ -2700,6 +2703,7 @@ defmodule PdfElixide.Document do
   """
   @type tables_opts :: [
           region: Rect.t() | nil,
+          region_mode: region_mode(),
           preset: :default | :strict | :relaxed,
           enabled: boolean() | nil,
           horizontal_strategy: :lines | :text | :both | nil,
@@ -2715,7 +2719,7 @@ defmodule PdfElixide.Document do
           text_fallback: boolean() | nil
         ]
 
-  @tables_opts_keys [:region | @table_detection_opts_keys]
+  @tables_opts_keys [:region, :region_mode | @table_detection_opts_keys]
 
   @doc """
   Detects tables, as `PdfElixide.Document.Table` structs.
@@ -2798,7 +2802,8 @@ defmodule PdfElixide.Document do
 
     %{
       detection: build_table_detection(opts),
-      region: Keyword.get(opts, :region)
+      region: Keyword.get(opts, :region),
+      region_mode: validate_region_mode!(opts, :region_mode)
     }
   end
 

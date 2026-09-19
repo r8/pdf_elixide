@@ -3,7 +3,7 @@
 
 use pdf_oxide::{
     config::ExtractionProfile,
-    converters::ConversionOptions,
+    converters::{ConversionOptions, ReadingOrderMode},
     document::ReadingOrder,
     extractors::{AdaptiveThresholdConfig, SpanMergingConfig},
     geometry::Rect,
@@ -110,23 +110,33 @@ impl From<ExtractionProfileNif> for ExtractionProfile {
     }
 }
 
-// The reading-order strategy for span extraction. This is upstream's
-// `document::ReadingOrder`, not the `ReadingOrderMode` the Markdown and HTML
-// converters take — the two enums are unrelated and name their variants
-// differently.
+// Shared atom vocabulary for span extraction and document converters.
 #[derive(NifUnitEnum, Debug)]
-pub enum SpanReadingOrderNif {
-    TopToBottom,
+pub enum ReadingOrderNif {
+    StructureTree,
     ColumnAware,
-    Structure,
+    TopToBottom,
 }
 
-impl From<SpanReadingOrderNif> for ReadingOrder {
-    fn from(order: SpanReadingOrderNif) -> Self {
+impl From<ReadingOrderNif> for ReadingOrder {
+    fn from(order: ReadingOrderNif) -> Self {
         match order {
-            SpanReadingOrderNif::TopToBottom => ReadingOrder::TopToBottom,
-            SpanReadingOrderNif::ColumnAware => ReadingOrder::ColumnAware,
-            SpanReadingOrderNif::Structure => ReadingOrder::Structure,
+            ReadingOrderNif::StructureTree => ReadingOrder::Structure,
+            ReadingOrderNif::ColumnAware => ReadingOrder::ColumnAware,
+            ReadingOrderNif::TopToBottom => ReadingOrder::TopToBottom,
+        }
+    }
+}
+
+impl From<ReadingOrderNif> for ReadingOrderMode {
+    fn from(order: ReadingOrderNif) -> Self {
+        match order {
+            // `mcid_order` is an extraction-time detail upstream fills in.
+            ReadingOrderNif::StructureTree => {
+                ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
+            }
+            ReadingOrderNif::ColumnAware => ReadingOrderMode::ColumnAware,
+            ReadingOrderNif::TopToBottom => ReadingOrderMode::TopToBottomLeftToRight,
         }
     }
 }
@@ -522,7 +532,7 @@ impl From<LinesOptionsNif> for LinesOptions {
 // Options for `PdfElixide.Document.spans/2,3`.
 #[derive(NifMap, Debug)]
 pub struct SpansOptionsNif {
-    pub reading_order: SpanReadingOrderNif,
+    pub reading_order: ReadingOrderNif,
     pub span_merging: Option<SpanMergingNif>,
     pub region: Option<RectNif>,
     pub region_mode: RectFilterModeNif,
@@ -561,25 +571,30 @@ pub struct StructuredOptionsNif {
     pub column_mode: ColumnModeNif,
 }
 
-// Options for `PdfElixide.Document.tables/2,3`. There is no `region_mode`:
-// upstream's `extract_tables_in_rect_with_config` filters by bbox
-// intersection only.
+// Options for `PdfElixide.Document.tables/2,3`.
 #[derive(NifMap, Debug)]
 pub struct TablesOptionsNif {
     pub detection: TableDetectionNif,
     pub region: Option<RectNif>,
+    pub region_mode: RectFilterModeNif,
+}
+
+impl TablesOptionsNif {
+    pub fn validate(&self) -> NifResult<()> {
+        validate_mode("region_mode", &self.region_mode)
+    }
 }
 
 pub struct TablesOptions {
     pub detection: TableDetectionConfig,
-    pub region: Option<Rect>,
+    pub region: Option<RegionFilter>,
 }
 
 impl From<TablesOptionsNif> for TablesOptions {
     fn from(o: TablesOptionsNif) -> Self {
         TablesOptions {
             detection: o.detection.into(),
-            region: o.region.map(rect_from_nif),
+            region: region_filter(o.region, o.region_mode),
         }
     }
 }

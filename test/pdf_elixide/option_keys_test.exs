@@ -141,7 +141,7 @@ defmodule PdfElixide.OptionKeysTest do
     exclude_inks: ["SpotRed"]
   ]
 
-  @tables_opts [{:region, @rect} | @table_detection_opts]
+  @tables_opts [{:region, @rect}, {:region_mode, :intersects} | @table_detection_opts]
 
   @structured_opts [column_mode: :two]
 

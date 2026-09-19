@@ -156,9 +156,6 @@ defmodule PdfElixide.OptionDefaultsTest do
     end
 
     test "spans/2,3" do
-      # `:reading_order` is the span-level upstream type, which names its
-      # values differently from the converters' — hence `:top_to_bottom` here
-      # against `:structure_tree` there.
       assert Document.__option_defaults__(:spans) == %{
                reading_order: :top_to_bottom,
                span_merging: nil,
@@ -176,7 +173,8 @@ defmodule PdfElixide.OptionDefaultsTest do
     test "tables/2,3" do
       assert Document.__option_defaults__(:tables) == %{
                detection: @table_detection_defaults,
-               region: nil
+               region: nil,
+               region_mode: :intersects
              }
     end
 

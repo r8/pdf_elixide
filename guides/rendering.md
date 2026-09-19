@@ -107,8 +107,8 @@ Document.render!(doc, 0, region: bbox, dpi: 200)
 ```
 
 There is no `:region_mode` here; the rectangle is a crop, not a filter. The
-extractors that pair the two are `text`, `words`, `text_lines`, `chars` and
-`spans` — `tables` takes a `:region` without a mode as well.
+extractors that pair the two are `text`, `words`, `text_lines`, `chars`,
+`spans` and `tables`.
 
 That space is the page's raw, unrotated user space — what
 `PdfElixide.Document.Page.media_box/1` and

@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use pdf_oxide::{
-    converters::{BoldMarkerBehavior, ConversionOptions, ReadingOrderMode},
+    converters::{BoldMarkerBehavior, ConversionOptions},
     error::{Error, Result},
-    layout::SpatialCollectionFiltering,
+    layout::{LayoutObjectSpatial, SpatialCollectionFiltering},
     object::Object,
     search::TextSearcher,
     PdfDocument,
@@ -17,10 +17,10 @@ use crate::{
     char::{char_to_nif, CharNif},
     error::{tagged_err, to_nif_err, to_nif_page_err, to_search_err},
     extract_options::{
-        CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, OnPageErrorNif, RegionFilter,
-        SearchOptionsNif, SearchRequest, SpansOptions, SpansOptionsNif, TableDetectionNif,
-        TablesOptions, TablesOptionsNif, TextOptions, TextOptionsNif, WordsOptions,
-        WordsOptionsNif,
+        CharsOptions, CharsOptionsNif, LinesOptions, LinesOptionsNif, OnPageErrorNif,
+        ReadingOrderNif, RegionFilter, SearchOptionsNif, SearchRequest, SpansOptions,
+        SpansOptionsNif, TableDetectionNif, TablesOptions, TablesOptionsNif, TextOptions,
+        TextOptionsNif, WordsOptions, WordsOptionsNif,
     },
     fonts::{extract_page_fonts, FontNif},
     form::{document_form_field_to_nif, export_bytes, is_exportable, FieldNif, FormDataFormatNif},
@@ -61,13 +61,6 @@ impl OpenOptionsNif<'_> {
         }
         Ok(())
     }
-}
-
-#[derive(NifUnitEnum, Debug)]
-pub enum ReadingOrderNif {
-    StructureTree,
-    ColumnAware,
-    TopToBottom,
 }
 
 #[derive(NifUnitEnum, Debug)]
@@ -149,14 +142,7 @@ impl From<MarkdownOptionsNif> for ConversionOptions {
             expand_ligatures: o.expand_ligatures,
             annotate_skipped_pages: o.annotate_skipped_pages,
             max_image_pixels: o.max_image_pixels,
-            reading_order_mode: match o.reading_order {
-                // `mcid_order` is an extraction-time detail upstream fills in.
-                ReadingOrderNif::StructureTree => {
-                    ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
-                }
-                ReadingOrderNif::ColumnAware => ReadingOrderMode::ColumnAware,
-                ReadingOrderNif::TopToBottom => ReadingOrderMode::TopToBottomLeftToRight,
-            },
+            reading_order_mode: o.reading_order.into(),
             bold_marker_behavior: o.bold_markers.into(),
             ..Default::default()
         }
@@ -198,13 +184,7 @@ impl From<HtmlOptionsNif> for ConversionOptions {
             image_output_dir: o.image_output_dir,
             include_form_fields: o.include_form_fields,
             max_image_pixels: o.max_image_pixels,
-            reading_order_mode: match o.reading_order {
-                ReadingOrderNif::StructureTree => {
-                    ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
-                }
-                ReadingOrderNif::ColumnAware => ReadingOrderMode::ColumnAware,
-                ReadingOrderNif::TopToBottom => ReadingOrderMode::TopToBottomLeftToRight,
-            },
+            reading_order_mode: o.reading_order.into(),
             ..Default::default()
         }
     }
@@ -225,13 +205,7 @@ impl From<PlainTextOptionsNif> for ConversionOptions {
             extract_tables: o.extract_tables,
             table_detection_config: o.table_detection.map(Into::into),
             include_form_fields: o.include_form_fields,
-            reading_order_mode: match o.reading_order {
-                ReadingOrderNif::StructureTree => {
-                    ReadingOrderMode::StructureTreeFirst { mcid_order: vec![] }
-                }
-                ReadingOrderNif::ColumnAware => ReadingOrderMode::ColumnAware,
-                ReadingOrderNif::TopToBottom => ReadingOrderMode::TopToBottomLeftToRight,
-            },
+            reading_order_mode: o.reading_order.into(),
             ..Default::default()
         }
     }
@@ -1190,19 +1164,33 @@ fn document_all_fonts(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<
     })
 }
 
-// Preserve the caller's config for a region; the convenience upstream method
-// would silently replace it with `relaxed()`.
+// Adapts a present table bbox to upstream's spatial-filter trait.
+struct TableBox(pdf_oxide::geometry::Rect);
+
+impl LayoutObjectSpatial for TableBox {
+    fn bbox(&self) -> pdf_oxide::geometry::Rect {
+        self.0
+    }
+}
+
+// Filter after detection so every mode preserves the caller's config.
 fn extract_tables_page(
     doc: &PdfDocument,
     page_index: usize,
     options: &TablesOptions,
 ) -> Result<Vec<pdf_oxide::structure::table_extractor::Table>> {
-    match &options.region {
-        Some(rect) => {
-            doc.extract_tables_in_rect_with_config(page_index, *rect, options.detection.clone())
-        }
-        None => doc.extract_tables_with_config(page_index, options.detection.clone()),
-    }
+    let tables = doc.extract_tables_with_config(page_index, options.detection.clone())?;
+    Ok(match &options.region {
+        Some(RegionFilter { rect, mode }) => tables
+            .into_iter()
+            .filter(|table| {
+                table
+                    .bbox
+                    .is_some_and(|bbox| TableBox(bbox).matches_filter(rect, *mode))
+            })
+            .collect(),
+        None => tables,
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -1213,6 +1201,8 @@ fn document_tables(
 ) -> NifResult<Vec<TableNif>> {
     resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
+
+        options.validate()?;
 
         let tables = extract_tables_page(doc, page_index, &options.into()).map_err(to_nif_err)?;
         Ok(tables
@@ -1228,6 +1218,7 @@ fn document_all_tables(
     options: TablesOptionsNif,
 ) -> NifResult<Vec<TableNif>> {
     resource.doc.with_read(|doc| {
+        options.validate()?;
         let options: TablesOptions = options.into();
 
         let count = doc.page_count().map_err(to_nif_err)?;
