@@ -133,17 +133,19 @@ encrypted, `PdfElixide.Document.encrypted?/1` is still `true`, and the password
 still authenticates. The consequence runs the other way — an object left in the
 clear is readable by someone **without** the password.
 
-For security-critical output, reopen it and read from it:
+Reopening the output with its password is only a partial check:
 
-```elixir
-doc = PdfElixide.Document.open!("locked.pdf", password: "open-me")
-PdfElixide.Document.text!(doc, 0)
-```
+  * Under `:aes128`, a **stream** written in the clear normally fails to
+    decrypt. Page text may then be empty or incomplete while extraction still
+    returns `{:ok, _}` — see the `:on_page_error` section of
+    `t:PdfElixide.Document.text_opts/0`. `PdfElixide.Logging` reports the
+    rejection at `:error` as `Decryption failed for object N`.
+  * Under `:aes128`, a **string** written in the clear reads back unchanged; an
+    encrypted string looks the same. Under `:rc4_128`, the cleartext string
+    instead reads back as garbage. Reading a title, form value, annotation
+    comment or outline entry therefore does not verify its encryption.
 
-An object left in the clear is decrypted anyway on the way out, so it comes back
-as garbage. Text that reads back correctly is therefore evidence that the
-content was encrypted, not proof, and it says nothing about an object the reader
-did not touch.
+Neither says anything about an object the reader did not touch.
 
 ## Incremental saves
 

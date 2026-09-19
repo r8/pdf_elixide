@@ -21,6 +21,8 @@ defmodule PdfElixide.LoggingTest do
 
   @broken "test/fixtures/broken_page.pdf"
   @clean "test/fixtures/sample.pdf"
+  # Page 1's content stream is cleartext inside an AES-128 file; object 6.
+  @cleartext "test/fixtures/encrypted_cleartext.pdf"
 
   setup do
     on_exit(fn -> Logging.set_level(:off) end)
@@ -91,6 +93,20 @@ defmodule PdfElixide.LoggingTest do
 
       assert log =~ "Page tree traversal failed"
       assert log =~ "Page index 2 not found"
+    end
+
+    test "a stream that fails to decrypt is reported at :error" do
+      Logging.set_level(:error)
+
+      log =
+        capture_log(fn ->
+          {:ok, doc} = Document.open(@cleartext, password: "secret")
+          # Still `:ok` and empty — the record is the only report.
+          assert {:ok, ""} = Document.text(doc, 1)
+          Document.close(doc)
+        end)
+
+      assert log =~ "Decryption failed for object 6 0"
     end
 
     test "records reach Logger without an explicit flush" do

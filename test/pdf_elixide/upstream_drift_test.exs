@@ -21,6 +21,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @image_jpx_pdf Path.join(@fixtures, "image_jpx.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
+  @encrypted_cleartext_pdf Path.join(@fixtures, "encrypted_cleartext.pdf")
   @html_escaping_pdf Path.join(@fixtures, "html_escaping.pdf")
   @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
@@ -786,6 +787,21 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert Document.encrypted?(doc),
              "upstream now saves without encryption, as its own comment claims"
+    end
+  end
+
+  describe "how a cleartext object reads back from an encrypted file" do
+    test "a string reads back as its own value, a stream as empty text" do
+      doc = Document.open!(@encrypted_cleartext_pdf, password: "secret")
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.encrypted?(doc)
+      assert String.trim(Document.text!(doc, 0)) == "Page One"
+
+      assert %Document.Metadata{title: title} = Document.metadata!(doc)
+
+      assert String.trim(title) == "CLEARTEXT TITLE"
+      assert Document.text!(doc, 1) == ""
     end
   end
 
