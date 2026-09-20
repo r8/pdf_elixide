@@ -68,19 +68,35 @@ the buffer count when more than one full-page buffer is budgeted.
 The budget includes all full-page buffers, so CMYK-profiled documents with
 spot inks can reach the limit at a lower DPI than ordinary pages of the same size.
 
-## What the raster covers
-
-**The MediaBox, never the CropBox.** A page a viewer shows cropped — trimmed
-proofs, imposed sheets, anything with printer's marks outside the visible
-area — renders here at full bleed, including the parts the viewer hides. To
-match what a reader sees, read the crop box and pass it back as a `:region`:
+By default, a page that exceeds the limit is refused rather than quietly scaled
+down. Set `:max_output_pixels` when a smaller image is preferable:
 
 ```elixir
-case PdfElixide.Document.Page.crop_box!(page) do
-  nil -> Document.Page.render!(page)
-  crop -> Document.Page.render!(page, region: crop)
-end
+rendered = Document.render!(doc, 0, dpi: 600, max_output_pixels: 4_000_000)
+{rendered.width, rendered.height}
+#=> {1759, 2276}      # rather than the 5100x6600 that `dpi: 600` asks for
 ```
+
+The aspect ratio is preserved, and `:width` and `:height` report the resulting
+size. A `:region` render returns `:unsupported` if the budget would require
+scaling the page before cropping it.
+
+`separations/3`, `separation/4` and `rasterize/2` instead have a fixed limit of
+roughly 16 million pixels — about 414 DPI on a US Letter page. Retry with a
+lower `:dpi`, or use `render/3` when you need its higher ceiling or
+`:max_output_pixels`.
+
+## What the raster covers
+
+The raster covers the intersection of the page's CropBox and MediaBox, matching
+what a viewer shows. The MediaBox is used when there is no usable CropBox.
+`PdfElixide.Document.Page.crop_box/1` still reports the box declared by the
+page, which can extend beyond the rendered area. `:dpi` scales the intersection.
+
+`:fit` chooses its scale from the MediaBox before drawing the CropBox, so a
+cropped page can stop short of the requested box. For example, a 100 × 100 pt
+CropBox on a 200 × 200 pt page fitted into 400 × 400 renders at 200 × 200. Use
+`:dpi` when the output size must be exact.
 
 **A page whose `/MediaBox` cannot be read still renders, at US Letter.** Where
 `PdfElixide.Document.Page.media_box/1` reports `{:error, %{reason: :invalid_pdf}}`
@@ -114,14 +130,17 @@ That space is the page's raw, unrotated user space — what
 `PdfElixide.Document.Page.media_box/1` and
 `PdfElixide.Document.Page.crop_box/1` report. A page turned by `/Rotate` and a
 page whose box does not start at the origin both crop where you asked, even
-though the raster they are cut from is turned and shifted.
+though the raster they are cut from is turned and shifted. A rectangle that
+falls outside the visible area of a cropped page has no pixels to cut, so it
+returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` like any other
+region off the page.
 
 **On a rotated page, not every extractor reports in that space.** Some hand back
 displayed coordinates, and a box taken from one of them crops the wrong part of
 the page. The "Rotated pages and extracted geometry" section of
 `PdfElixide.Document` explains which boxes need
 `PdfElixide.Geometry.Rect.to_user_space/3`. Page boxes are never mapped, so the
-crop-box recipe further up holds whatever the rotation.
+page boxes hold whatever the rotation.
 
 A rectangle that pokes over an edge is clipped to the page, so what comes back
 is the part of it that is actually there and is smaller than the rectangle —
@@ -137,7 +156,9 @@ Document.render(doc, 0, region: region)
 **Cropping does not make a render cheaper.** The page is rasterized in full and
 the result is then cut down, so both the time and the size limit are the whole
 page's however small the region is. `:region` also cannot be combined with
-`format: :rgba8`, and with `:fit`; both raise `ArgumentError`.
+`format: :rgba8`, and with `:fit`; both raise `ArgumentError`. A
+`:max_output_pixels` low enough to shrink the page returns `:unsupported`
+instead, for the reason given under [Sizing the output](#sizing-the-output).
 
 ## Formats and transparency
 
@@ -240,6 +261,8 @@ Use `PdfElixide.Document.separation/4` for one ink and
 the size limit even when requesting one plate. Pages with many spot inks can
 reach the limit at a lower DPI and return
 `{:error, %PdfElixide.Error{reason: :unsupported}}`; retry with a lower `:dpi`.
+The fixed per-page limit under [Sizing the output](#sizing-the-output) also
+applies.
 
 ## Rasterizing a whole document
 
@@ -272,8 +295,9 @@ To preserve page sizes, render the pages with `PdfElixide.Document.render/3`
 and assemble them with a tool that lets you set the page box.
 
 Memory grows with page count and compressed image size. Scanned or photographic
-pages typically cost more memory than text pages at the same DPI. The size limit
-applies per page, not to the document as a whole. Calls are serialized; see
+pages typically cost more memory than text pages at the same DPI. The fixed
+limit under [Sizing the output](#sizing-the-output) applies per page, not to the
+document as a whole. Calls are serialized; see
 Concurrency below.
 
 ## Concurrency

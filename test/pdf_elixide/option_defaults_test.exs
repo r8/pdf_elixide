@@ -59,7 +59,8 @@ defmodule PdfElixide.OptionDefaultsTest do
                jpeg_quality: 85,
                exclude_layers: [],
                fit: nil,
-               region: nil
+               region: nil,
+               max_output_pixels: nil
              }
     end
 

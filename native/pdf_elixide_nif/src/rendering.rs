@@ -7,6 +7,7 @@ use pdf_oxide::{
     rendering::{
         flatten_to_images, render_page, render_page_fit, render_page_region, render_separation,
         render_separations, ImageFormat, RenderOptions, RenderedImage, SeparationPlate,
+        DEFAULT_MAX_OUTPUT_PIXELS,
     },
     PdfDocument,
 };
@@ -73,6 +74,7 @@ pub struct RenderOptionsNif {
     exclude_layers: Vec<String>,
     fit: Option<FitNif>,
     region: Option<RectNif>,
+    max_output_pixels: Option<u64>,
 }
 
 #[derive(NifMap, Debug)]
@@ -106,6 +108,14 @@ enum Scale {
     Fit(f32),
 }
 
+impl Scale {
+    fn factor(self) -> f32 {
+        match self {
+            Scale::Dpi(factor) | Scale::Fit(factor) => factor,
+        }
+    }
+}
+
 impl RenderOptionsNif {
     // Upstream cannot combine fit scaling with a DPI-based region crop.
     fn validate(&self) -> NifResult<()> {
@@ -135,6 +145,8 @@ impl RenderOptionsNif {
         options.render_annotations = self.render_annotations;
         options.jpeg_quality = self.jpeg_quality;
         options.excluded_layers = self.exclude_layers.iter().cloned().collect::<HashSet<_>>();
+        // Resolve the cap here so default renders cannot be silently downscaled upstream.
+        options.max_output_pixels = self.max_output_pixels.unwrap_or(MAX_RENDER_PIXELS);
 
         options
     }
@@ -156,13 +168,38 @@ fn render_dimensions(page_w: f32, page_h: f32, scale: Scale) -> (u64, u64) {
     }
 }
 
+// Mirror the distinct f64 arithmetic upstream uses to decide whether to reduce.
+fn upstream_want(page_w: f32, page_h: f32, scale: f32) -> (u64, u64) {
+    (
+        (f64::from(page_w) * f64::from(scale)).ceil().max(0.0) as u64,
+        (f64::from(page_h) * f64::from(scale)).ceil().max(0.0) as u64,
+    )
+}
+
+// Do not substitute `render_dimensions`: its allocation rounding can be smaller.
+fn would_be_reduced(page_w: f32, page_h: f32, scale: f32, cap: u64) -> bool {
+    let (width, height) = upstream_want(page_w, page_h, scale);
+
+    width.saturating_mul(height) > cap.max(1)
+}
+
 fn fit_scale(page_w: f32, page_h: f32, fit: &FitNif) -> f32 {
     (fit.width as f32 / page_w.max(1.0)).min(fit.height as f32 / page_h.max(1.0))
 }
 
 // Count spot lanes as full pixmaps to conservatively budget their allocation.
-fn within_budget(width: u64, height: u64, buffers: u64) -> bool {
-    width.saturating_mul(height).saturating_mul(buffers) <= MAX_RENDER_PIXELS
+fn within_budget(pixels: u64, buffers: u64) -> bool {
+    pixels.saturating_mul(buffers) <= MAX_RENDER_PIXELS
+}
+
+// Only an explicit caller cap may make the allocation guard accept a smaller raster.
+fn budgeted_pixels(width: u64, height: u64, cap: Option<u64>) -> u64 {
+    let pixels = width.saturating_mul(height);
+
+    match cap {
+        Some(cap) => pixels.min(cap.max(1)),
+        None => pixels,
+    }
 }
 
 // Use the renderer's page reader, including its Letter fallback, so dimensions agree.
@@ -170,11 +207,41 @@ fn page_info(doc: &PdfDocument, page_index: usize) -> NifResult<PageInfo> {
     doc.get_page_info(page_index).map_err(to_nif_err)
 }
 
-fn page_extent(info: &PageInfo) -> (f32, f32) {
-    match info.rotation.rem_euclid(360) {
-        90 | 270 => (info.media_box.height, info.media_box.width),
-        _ => (info.media_box.width, info.media_box.height),
+// Mirror upstream's private `page_render_box` over the same `PageInfo` it renders.
+fn render_box(info: &PageInfo) -> Rect {
+    let media = info.media_box;
+    let Some(crop) = info.crop_box else {
+        return media;
+    };
+
+    let x0 = crop.x.max(media.x);
+    let y0 = crop.y.max(media.y);
+    let x1 = (crop.x + crop.width).min(media.x + media.width);
+    let y1 = (crop.y + crop.height).min(media.y + media.height);
+
+    // A crop box describing nothing to show must not blank the page.
+    if x1 <= x0 || y1 <= y0 {
+        return media;
     }
+
+    Rect::from_points(x0, y0, x1, y1)
+}
+
+fn rotated_extent(box_: Rect, rotation: i32) -> (f32, f32) {
+    match rotation.rem_euclid(360) {
+        90 | 270 => (box_.height, box_.width),
+        _ => (box_.width, box_.height),
+    }
+}
+
+// What the pixmap covers, and so what every budget measures.
+fn render_extent(info: &PageInfo) -> (f32, f32) {
+    rotated_extent(render_box(info), info.rotation)
+}
+
+// Fit scaling uses the medium even though the resulting pixmap uses the render box.
+fn media_extent(info: &PageInfo) -> (f32, f32) {
+    rotated_extent(info.media_box, info.rotation)
 }
 
 const PROCESS_INKS: [&str; 4] = ["Cyan", "Magenta", "Yellow", "Black"];
@@ -208,10 +275,25 @@ fn ensure_render_budget(
     page_h: f32,
     scale: Scale,
     buffers: u64,
+    cap: Option<u64>,
     advice: &str,
 ) -> NifResult<()> {
     let (width, height) = render_dimensions(page_w, page_h, scale);
-    if within_budget(width, height, buffers) {
+
+    // On the default path, guard both allocation and upstream's larger threshold rounding.
+    let (width, height) = match cap {
+        Some(_) => (width, height),
+        None => {
+            let want = upstream_want(page_w, page_h, scale.factor());
+            if want.0.saturating_mul(want.1) > width.saturating_mul(height) {
+                want
+            } else {
+                (width, height)
+            }
+        }
+    };
+
+    if within_budget(budgeted_pixels(width, height, cap), buffers) {
         return Ok(());
     }
 
@@ -230,9 +312,55 @@ fn ensure_render_budget(
     ))
 }
 
-// Map raw page coordinates into upstream's crop frame, accounting for rotation
-// and the MediaBox origin. Read `upstream_h` with `get_page_media_box` so its
-// inversion cancels even when the page readers disagree.
+// DPI-only upstream calls fix their own cap; refuse before they can scale inconsistently.
+fn ensure_upstream_budget(page_w: f32, page_h: f32, dpi: u32, advice: &str) -> NifResult<()> {
+    // Upstream's threshold arithmetic, not the pixmap's: this predicts its branch.
+    let scale = dpi as f32 / 72.0;
+    if !would_be_reduced(page_w, page_h, scale, DEFAULT_MAX_OUTPUT_PIXELS) {
+        return Ok(());
+    }
+
+    let (width, height) = upstream_want(page_w, page_h, scale);
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "rendering this page would need {width}x{height} pixels, over the \
+             {DEFAULT_MAX_OUTPUT_PIXELS} pixel limit this call cannot raise; {advice}"
+        ),
+    ))
+}
+
+// Region coordinates stay at the requested DPI, so refuse a cap that changes the scale.
+fn ensure_crop_is_not_reduced(
+    page_w: f32,
+    page_h: f32,
+    options: &RenderOptionsNif,
+) -> NifResult<()> {
+    let Some(cap) = options.max_output_pixels else {
+        return Ok(());
+    };
+
+    let scale = options.dpi as f32 / 72.0;
+    if !would_be_reduced(page_w, page_h, scale, cap) {
+        return Ok(());
+    }
+
+    let (width, height) = upstream_want(page_w, page_h, scale);
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "cropping with :region needs the whole page, {width}x{height} pixels, \
+             within :max_output_pixels ({cap}); the crop would be taken from a \
+             reduced raster at the requested :dpi. Lower :dpi or raise \
+             :max_output_pixels"
+        ),
+    ))
+}
+
+// Map raw page coordinates into the render-box frame. `upstream_h` must remain
+// the media height because `render_page_region` subtracts that same value.
 // Clip first: upstream clamps the origin without shrinking the crop extent.
 // `None` denotes an empty intersection.
 fn upstream_crop_rect(
@@ -240,7 +368,7 @@ fn upstream_crop_rect(
     upstream_h: f32,
     rect: Rect,
 ) -> Option<(f32, f32, f32, f32)> {
-    let media = info.media_box;
+    let media = render_box(info);
     let dx0 = (rect.x - media.x).max(0.0);
     let dy0 = (rect.y - media.y).max(0.0);
     let dx1 = (rect.x - media.x + rect.width).min(media.width);
@@ -262,7 +390,7 @@ fn upstream_crop_rect(
 }
 
 fn region_off_page(info: &PageInfo, region: &RectNif) -> rustler::Error {
-    let media = info.media_box;
+    let media = render_box(info);
 
     tagged_err(
         atoms::out_of_range(),
@@ -372,7 +500,7 @@ fn document_render_page<'a>(
         ensure_page_in_range(doc, page_index)?;
 
         let info = page_info(doc, page_index)?;
-        let (page_w, page_h) = page_extent(&info);
+        let (page_w, page_h) = render_extent(&info);
         let buffers = 1 + sidecar_buffers(doc, page_index);
         let mut upstream = options.to_upstream();
         let jpeg = matches!(options.format, RenderFormatNif::Jpeg);
@@ -382,12 +510,15 @@ fn document_render_page<'a>(
 
         let image = match (&options.fit, &options.region) {
             (Some(fit), _) => {
-                let scale = fit_scale(page_w, page_h, fit);
+                // Scale the medium, but budget the render-box raster.
+                let (fit_w, fit_h) = media_extent(&info);
+                let scale = fit_scale(fit_w, fit_h, fit);
                 ensure_render_budget(
                     page_w,
                     page_h,
                     Scale::Fit(scale),
                     buffers,
+                    options.max_output_pixels,
                     "use a smaller :fit box",
                 )?;
                 render_page_fit(doc, page_index, fit.width, fit.height, &upstream)
@@ -400,8 +531,10 @@ fn document_render_page<'a>(
                     page_h,
                     Scale::Dpi(options.dpi as f32 / 72.0),
                     buffers,
+                    options.max_output_pixels,
                     "lower :dpi or use :fit",
                 )?;
+                ensure_crop_is_not_reduced(page_w, page_h, &options)?;
                 // Use the same box reader as upstream's crop to preserve its coordinates and errors.
                 let (_, lly, _, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
                 let rect = upstream_crop_rect(&info, ury - lly, rect_from_nif(*region))
@@ -414,6 +547,7 @@ fn document_render_page<'a>(
                     page_h,
                     Scale::Dpi(options.dpi as f32 / 72.0),
                     buffers,
+                    options.max_output_pixels,
                     "lower :dpi or use :fit",
                 )?;
                 render_page(doc, page_index, &upstream)
@@ -448,7 +582,7 @@ fn document_render_separations<'a>(
     resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
-        let (page_w, page_h) = page_extent(&page_info(doc, page_index)?);
+        let (page_w, page_h) = render_extent(&page_info(doc, page_index)?);
         // The error propagates because `collect_page_inks` propagates it: a page
         // whose ink walk fails produces no plates upstream either.
         let spots = doc.get_page_inks_deep(page_index).map_err(to_nif_err)?;
@@ -458,8 +592,11 @@ fn document_render_separations<'a>(
             page_h,
             Scale::Dpi(options.dpi as f32 / 72.0),
             plates,
+            None,
             "lower :dpi",
         )?;
+        // Keep the more specific buffer-count refusal first.
+        ensure_upstream_budget(page_w, page_h, options.dpi, "lower :dpi")?;
 
         render_separations(doc, page_index, options.dpi)
             .map_err(to_nif_err)?
@@ -480,7 +617,7 @@ fn document_render_separation<'a>(
     resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
-        let (page_w, page_h) = page_extent(&page_info(doc, page_index)?);
+        let (page_w, page_h) = render_extent(&page_info(doc, page_index)?);
         // The whole ink set, not the one plate asked for: upstream's composite
         // path allocates the entire sidecar either way. The walk's error is
         // swallowed because upstream still yields a plate when it fails.
@@ -491,8 +628,10 @@ fn document_render_separation<'a>(
             page_h,
             Scale::Dpi(options.dpi as f32 / 72.0),
             plates,
+            None,
             "lower :dpi",
         )?;
+        ensure_upstream_budget(page_w, page_h, options.dpi, "lower :dpi")?;
 
         let plate = render_separation(doc, page_index, &ink, options.dpi).map_err(to_nif_err)?;
 
@@ -523,14 +662,16 @@ fn document_rasterize(
         let count = doc.page_count().map_err(to_nif_err)?;
 
         for page_index in 0..count {
-            let (page_w, page_h) = page_extent(&page_info(doc, page_index)?);
+            let (page_w, page_h) = render_extent(&page_info(doc, page_index)?);
             ensure_render_budget(
                 page_w,
                 page_h,
                 Scale::Dpi(options.dpi as f32 / 72.0),
                 1 + sidecar_buffers(doc, page_index),
+                None,
                 "lower :dpi",
             )?;
+            ensure_upstream_budget(page_w, page_h, options.dpi, "lower :dpi")?;
         }
 
         let bytes = flatten_to_images(doc, options.dpi).map_err(to_nif_err)?;
@@ -577,24 +718,211 @@ mod tests {
     #[test]
     fn the_budget_rejects_what_would_abort_the_node() {
         let (w, h) = render_dimensions(612.0, 792.0, Scale::Dpi(600.0 / 72.0));
-        assert!(within_budget(w, h, 1));
+        assert!(within_budget(budgeted_pixels(w, h, None), 1));
         let (w, h) = render_dimensions(612.0, 792.0, Scale::Dpi(10_000.0 / 72.0));
-        assert!(!within_budget(w, h, 1));
-        assert!(!within_budget(u64::MAX, u64::MAX, 1));
-        assert!(!within_budget(u64::MAX, u64::MAX, u64::MAX));
+        assert!(!within_budget(budgeted_pixels(w, h, None), 1));
+        assert!(!within_budget(budgeted_pixels(u64::MAX, u64::MAX, None), 1));
+        assert!(!within_budget(
+            budgeted_pixels(u64::MAX, u64::MAX, None),
+            u64::MAX
+        ));
     }
 
     #[test]
     fn the_budget_counts_every_full_page_buffer() {
         let (w, h) = render_dimensions(612.0, 792.0, Scale::Dpi(600.0 / 72.0));
-        assert!(within_budget(w, h, 1));
-        assert!(!within_budget(w, h, 20));
-        assert!(!within_budget(w, h, 1 + 1 + 8));
+        let letter_at_600 = budgeted_pixels(w, h, None);
+        assert!(within_budget(letter_at_600, 1));
+        assert!(!within_budget(letter_at_600, 20));
+        assert!(!within_budget(letter_at_600, 1 + 1 + 8));
 
         // Use a fraction of the cap so this assertion holds on both pointer widths.
         let quarter = MAX_RENDER_PIXELS / 4;
-        assert!(within_budget(quarter, 1, 4));
-        assert!(!within_budget(quarter, 1, 5));
+        assert!(within_budget(quarter, 4));
+        assert!(!within_budget(quarter, 5));
+    }
+
+    #[test]
+    fn a_caller_budget_clamps_the_guard_only_when_it_is_given() {
+        assert_eq!(budgeted_pixels(1_000, 1_000, None), 1_000_000);
+        assert_eq!(budgeted_pixels(1_000, 1_000, Some(4_000)), 4_000);
+        assert_eq!(budgeted_pixels(10, 10, Some(4_000)), 100);
+        // Upstream floors its budget at one pixel.
+        assert_eq!(budgeted_pixels(1_000, 1_000, Some(0)), 1);
+        assert_eq!(budgeted_pixels(u64::MAX, u64::MAX, None), u64::MAX);
+    }
+
+    #[test]
+    fn the_render_box_is_the_crop_box_reduced_to_the_medium() {
+        let media = Rect::new(0.0, 0.0, 200.0, 200.0);
+        let with_crop = |crop: Option<Rect>| {
+            render_box(&PageInfo {
+                media_box: media,
+                crop_box: crop,
+                rotation: 0,
+            })
+        };
+
+        assert_eq!(with_crop(None), media);
+        assert_eq!(
+            with_crop(Some(Rect::new(50.0, 40.0, 100.0, 100.0))),
+            Rect::new(50.0, 40.0, 100.0, 100.0)
+        );
+        assert_eq!(
+            with_crop(Some(Rect::new(100.0, 100.0, 500.0, 500.0))),
+            Rect::new(100.0, 100.0, 100.0, 100.0)
+        );
+        assert_eq!(with_crop(Some(Rect::new(300.0, 300.0, 50.0, 50.0))), media);
+        assert_eq!(with_crop(Some(Rect::new(10.0, 10.0, 0.0, 50.0))), media);
+    }
+
+    #[test]
+    fn the_render_box_agrees_with_upstreams_public_visible_box() {
+        for name in ["crop_box.pdf", "media_box.pdf"] {
+            let doc = PdfDocument::open(fixture(name)).expect("open");
+            let pages = doc.page_count().expect("page count");
+
+            for page in 0..pages {
+                let (Ok(info), Ok(visible)) =
+                    (doc.get_page_info(page), doc.get_page_visible_box(page))
+                else {
+                    continue;
+                };
+                // Its malformed CropBox is parsed differently by the public accessor.
+                if name == "crop_box.pdf" && page == 5 {
+                    continue;
+                }
+
+                let ours = render_box(&info);
+                let corners = (ours.x, ours.y, ours.x + ours.width, ours.y + ours.height);
+                assert_eq!(corners, visible, "{name} page {page}");
+            }
+        }
+    }
+
+    #[test]
+    fn upstream_still_rasters_the_crop_box() {
+        let doc = PdfDocument::open(fixture("crop_box.pdf")).expect("open");
+        let render = |page| {
+            let image = render_page(&doc, page, &RenderOptions::with_dpi(72)).expect("render");
+            (image.width, image.height)
+        };
+
+        assert_eq!(
+            render(0),
+            (200, 300),
+            "upstream stopped rastering the crop box"
+        );
+        // Pages 4 and 7 declare none and `null`: the medium is the fallback.
+        assert_eq!(render(4), (612, 792));
+        assert_eq!(render(7), (612, 792));
+    }
+
+    // Why `render_box` transcribes a private helper rather than calling the
+    // public accessor that answers the same question: the two read `/CropBox`
+    // differently and the renderer follows `get_page_info`. When this fails they
+    // agree, and `render_box` becomes that one call.
+    #[test]
+    fn upstream_still_rasters_a_crop_box_its_public_accessor_rejects() {
+        let doc = PdfDocument::open(fixture("crop_box.pdf")).expect("open");
+        let rendered = render_page(&doc, 5, &RenderOptions::with_dpi(72)).expect("render");
+
+        // `/CropBox [0 0 100]` is three elements; `get_page_info` fills the
+        // fourth from its own default, so the renderer draws 100 pt wide.
+        assert_eq!((rendered.width, rendered.height), (100, 792));
+        assert_eq!(
+            doc.get_page_visible_box(5).expect("visible box"),
+            (0.0, 0.0, 612.0, 792.0)
+        );
+    }
+
+    #[test]
+    fn upstream_still_scales_a_fit_render_by_the_media_box() {
+        let doc = PdfDocument::open(fixture("cropped_content.pdf")).expect("open");
+        let rendered =
+            render_page_fit(&doc, 0, 400, 400, &RenderOptions::with_dpi(72)).expect("fit");
+
+        assert_eq!((rendered.width, rendered.height), (200, 200));
+    }
+
+    #[test]
+    fn the_reduction_threshold_is_upstreams_own_arithmetic() {
+        let scale = 2.0 / 72.0;
+
+        assert_eq!(render_dimensions(612.0, 792.0, Scale::Dpi(scale)), (17, 22));
+        assert_eq!(upstream_want(612.0, 792.0, scale), (18, 23));
+
+        assert_eq!(upstream_want(612.0, 792.0, 600.0 / 72.0), (5100, 6600));
+    }
+
+    // Nothing else checks that upstream tests its budget with the f64 product
+    // rather than the pixmap it allocates, which is why `upstream_want` exists.
+    // When this fails it has unified them and `upstream_want` collapses into
+    // `render_dimensions`.
+    #[test]
+    fn upstream_still_reduces_on_the_f64_threshold() {
+        let doc = PdfDocument::open(fixture("sample.pdf")).expect("open");
+        let render = |cap| {
+            let mut options = RenderOptions::with_dpi(2);
+            options.max_output_pixels = cap;
+            let image = render_page(&doc, 0, &options).expect("render");
+            (image.width, image.height)
+        };
+
+        // The pixmap is exactly 17x22 = 374 px, so a 374 px budget fits it.
+        assert_eq!(
+            render_dimensions(612.0, 792.0, Scale::Dpi(2.0 / 72.0)),
+            (17, 22)
+        );
+        assert_eq!(
+            render(374),
+            (17, 21),
+            "upstream now budgets the pixmap it allocates"
+        );
+
+        // A budget at the number it does test leaves the page alone.
+        assert_eq!(render(414), (17, 22));
+    }
+
+    #[test]
+    fn a_raster_that_fills_its_budget_exactly_is_still_reduced() {
+        let scale = 2.0 / 72.0;
+        assert_eq!(render_dimensions(612.0, 792.0, Scale::Dpi(scale)), (17, 22));
+
+        assert!(would_be_reduced(612.0, 792.0, scale, 17 * 22));
+        assert!(would_be_reduced(612.0, 792.0, scale, 18 * 23 - 1));
+        assert!(!would_be_reduced(612.0, 792.0, scale, 18 * 23));
+
+        assert!(would_be_reduced(612.0, 792.0, scale, 0));
+    }
+
+    #[test]
+    fn the_unbudgetable_ceiling_is_the_one_upstream_builds_for_itself() {
+        assert_eq!(DEFAULT_MAX_OUTPUT_PIXELS, 16_000_000);
+        assert_eq!(
+            RenderOptions::default().max_output_pixels,
+            DEFAULT_MAX_OUTPUT_PIXELS
+        );
+    }
+
+    #[test]
+    fn upstream_still_crops_a_reduced_raster_at_the_requested_dpi() {
+        let doc = PdfDocument::open(fixture("sample.pdf")).expect("open");
+        let rect = (0.0, 0.0, 100.0, 100.0);
+
+        let mut reduced = RenderOptions::with_dpi(72);
+        reduced.max_output_pixels = 10_000;
+        let cropped = render_page_region(&doc, 0, rect, &reduced).expect("crop");
+        assert_ne!(
+            (cropped.width, cropped.height),
+            (100, 100),
+            "upstream now crops a reduced raster at the scale it rendered"
+        );
+
+        // Keep an unreduced control so an unrelated crop failure cannot satisfy the canary.
+        let control =
+            render_page_region(&doc, 0, rect, &RenderOptions::with_dpi(72)).expect("crop");
+        assert_eq!((control.width, control.height), (100, 100));
     }
 
     #[test]
@@ -762,6 +1090,44 @@ mod tests {
             (612, 792),
             "the unrotated control crop failed, so the assertion above proves nothing"
         );
+    }
+
+    #[test]
+    fn a_mapped_crop_lands_on_the_content_it_names_on_a_cropped_page() {
+        let doc = PdfDocument::open(fixture("cropped_content.pdf")).expect("open");
+        let info = doc.get_page_info(0).expect("page info");
+        let (_, lly, _, ury) = doc.get_page_media_box(0).expect("media box");
+        let options = RenderOptions::with_dpi(72);
+
+        let crop = |rect: Rect| {
+            let mapped = upstream_crop_rect(&info, ury - lly, rect).expect("on the page");
+            let image = render_page_region(&doc, 0, mapped, &options).expect("crop");
+            image::load_from_memory(&image.data)
+                .expect("decode")
+                .to_luma8()
+        };
+
+        // The visible area is 50,40 .. 150,140 and its left half is filled.
+        let inked = crop(Rect::new(50.0, 40.0, 50.0, 100.0));
+        let paper = crop(Rect::new(100.0, 40.0, 50.0, 100.0));
+        assert_eq!((inked.width(), inked.height()), (50, 100));
+        assert!(
+            inked.pixels().all(|p| p.0[0] < 128),
+            "the crop of the inked half is not all ink"
+        );
+        assert!(
+            paper.pixels().all(|p| p.0[0] == 255),
+            "the crop of the empty half is not all paper"
+        );
+    }
+
+    #[test]
+    fn a_crop_rect_outside_the_visible_area_is_off_the_page() {
+        let doc = PdfDocument::open(fixture("cropped_content.pdf")).expect("open");
+        let info = doc.get_page_info(0).expect("page info");
+
+        // Inside the medium, outside the crop box: no pixels were rendered for it.
+        assert!(upstream_crop_rect(&info, 200.0, Rect::new(0.0, 0.0, 40.0, 30.0)).is_none());
     }
 
     // Dimensions cannot detect mirroring; the fixture fills x=0..100 on a

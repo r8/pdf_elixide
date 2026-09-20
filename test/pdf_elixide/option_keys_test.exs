@@ -295,7 +295,8 @@ defmodule PdfElixide.OptionKeysTest do
           jpeg_quality: 50,
           exclude_layers: ["Watermark"],
           fit: nil,
-          region: %PdfElixide.Geometry.Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0}
+          region: %PdfElixide.Geometry.Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0},
+          max_output_pixels: 8_000_000
         ],
         &Document.render(doc, 0, &1)
       )

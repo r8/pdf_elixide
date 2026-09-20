@@ -855,9 +855,13 @@ defmodule PdfElixide.Document do
       `:region_mode`. See [Cropping with `:region`](guides/rendering.md#cropping-with-region)
       for using extractor boxes on rotated pages;
       `PdfElixide.Geometry.Rect.to_user_space/3` maps a displayed box back.
+    * `:max_output_pixels` — a positive pixel budget. When set, scales an
+      oversized render down instead of refusing it. Defaults to `nil`, which
+      preserves the requested scale or returns an error.
 
   Cropping still renders the full page, so `:region` does not reduce rendering
-  cost or the size limit.
+  cost or the size limit. A `:region` render returns `:unsupported` when
+  `:max_output_pixels` would require scaling the page first.
 
   `:region` cannot be combined with `format: :rgba8`, and `:fit` cannot be
   combined with `:dpi` or `:region`. These combinations raise `ArgumentError`.
@@ -870,7 +874,8 @@ defmodule PdfElixide.Document do
           jpeg_quality: 1..100,
           exclude_layers: [String.t()],
           fit: {pos_integer(), pos_integer()} | nil,
-          region: Rect.t() | nil
+          region: Rect.t() | nil,
+          max_output_pixels: pos_integer() | nil
         ]
 
   @render_opts_keys [
@@ -881,7 +886,8 @@ defmodule PdfElixide.Document do
     :jpeg_quality,
     :exclude_layers,
     :fit,
-    :region
+    :region,
+    :max_output_pixels
   ]
 
   @doc """
@@ -891,12 +897,14 @@ defmodule PdfElixide.Document do
       {:ok, rendered} = PdfElixide.Document.render(doc, 0, dpi: 150)
       File.write!("page0.png", rendered.data)
 
-  Renders the **MediaBox**, with US Letter substituted if it is unreadable;
-  a `:region` render instead returns an `:invalid_pdf` error for that page.
+  Renders the page's CropBox intersected with its MediaBox, falling back to the
+  MediaBox or, when unreadable, US Letter. A `:region` render instead returns
+  `:invalid_pdf` for an unreadable MediaBox.
   Default layer visibility is honoured and output depends on available fonts.
 
   Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` when the requested
-  size exceeds the pixel limit. Lower `:dpi` or use a smaller `:fit` box.
+  size exceeds the pixel limit. Lower `:dpi`, use a smaller `:fit` box, or set
+  `:max_output_pixels` to have the page rendered smaller instead.
   See the [Rendering](guides/rendering.md) guide for sizing, page coverage,
   fonts and differences from text extraction.
 
@@ -928,6 +936,9 @@ defmodule PdfElixide.Document do
 
     * `:dpi` — resolution in dots per inch. Defaults to `150`, and must be
       positive.
+
+  These calls have a fixed per-page limit and return `:unsupported` above it.
+  See [Sizing the output](guides/rendering.md#sizing-the-output).
   """
   @type dpi_opts :: [dpi: pos_integer()]
 
@@ -1015,8 +1026,8 @@ defmodule PdfElixide.Document do
   are not preserved; rotation is baked into the image and `/Rotate` resets to
   `0`.
 
-  Memory grows with page count and compressed image size; the render size limit
-  applies per page. See "Rasterizing a whole document" in the
+  Memory grows with page count and compressed image size; the size limit applies
+  per page. See "Rasterizing a whole document" in the
   [Rendering](guides/rendering.md) guide.
 
   Calls are **serialized across the node**; see [Concurrency](guides/concurrency.md).
@@ -1055,7 +1066,8 @@ defmodule PdfElixide.Document do
       jpeg_quality: validate_jpeg_quality!(opts),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       fit: validate_fit!(opts),
-      region: Keyword.get(opts, :region)
+      region: Keyword.get(opts, :region),
+      max_output_pixels: validate_max_output_pixels!(opts)
     }
   end
 
@@ -1123,6 +1135,17 @@ defmodule PdfElixide.Document do
 
       other ->
         raise ArgumentError, ":dpi must be a positive integer, got: #{inspect(other)}"
+    end
+  end
+
+  defp validate_max_output_pixels!(opts) do
+    case Keyword.get(opts, :max_output_pixels) do
+      budget when is_nil(budget) or (is_integer(budget) and budget > 0) ->
+        budget
+
+      other ->
+        raise ArgumentError,
+              ":max_output_pixels must be a positive integer, got: #{inspect(other)}"
     end
   end
 

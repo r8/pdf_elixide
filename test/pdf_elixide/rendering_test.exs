@@ -19,6 +19,8 @@ defmodule PdfElixide.RenderingTest do
   @render_layers_pdf Path.join(@fixtures_dir, "render_layers.pdf")
   @spot_inks_pdf Path.join(@fixtures_dir, "spot_inks_and_intent.pdf")
   @inherited_boxes_pdf Path.join(@fixtures_dir, "inherited_boxes.pdf")
+  @crop_box_pdf Path.join(@fixtures_dir, "crop_box.pdf")
+  @cropped_content_pdf Path.join(@fixtures_dir, "cropped_content.pdf")
 
   @png_signature <<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A>>
   @jpeg_signature <<0xFF, 0xD8>>
@@ -231,6 +233,34 @@ defmodule PdfElixide.RenderingTest do
       assert {rendered.width, rendered.height} == {5100, 6600}
     end
 
+    test ":max_output_pixels renders the page smaller instead of refusing it", %{doc: doc} do
+      rendered = Document.render!(doc, 0, dpi: 600, max_output_pixels: 4_000_000)
+
+      assert {rendered.width, rendered.height} == {1759, 2276}
+      assert byte_size(rendered.data) > 0
+    end
+
+    test ":max_output_pixels lets a constrained host ask for a page we would refuse",
+         %{doc: doc} do
+      assert {:error, %Error{reason: :unsupported}} = Document.render(doc, 0, dpi: 20_000)
+
+      rendered = Document.render!(doc, 0, dpi: 20_000, max_output_pixels: 4_000_000)
+
+      assert {rendered.width, rendered.height} == {1759, 2276}
+    end
+
+    test ":region refuses a budget that would shrink the page it crops", %{doc: doc} do
+      region = %Rect{x: 0.0, y: 0.0, width: 100.0, height: 100.0}
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Document.render(doc, 0, dpi: 600, region: region, max_output_pixels: 4_000_000)
+
+      assert message =~ ":max_output_pixels"
+
+      cropped = Document.render!(doc, 0, dpi: 72, region: region, max_output_pixels: 4_000_000)
+      assert {cropped.width, cropped.height} == {100, 100}
+    end
+
     test "the ink planes a press-profiled page needs count against the limit" do
       doc = Document.open!(@spot_inks_pdf)
       on_exit(fn -> Document.close(doc) end)
@@ -243,6 +273,62 @@ defmodule PdfElixide.RenderingTest do
 
       assert %RenderedPage{} = Document.render!(doc, 1, dpi: 600)
       assert %RenderedPage{} = Document.render!(doc, 0, dpi: 150)
+    end
+  end
+
+  describe "render/3 on a page with a crop box" do
+    test "renders the crop box reduced to the medium" do
+      doc = Document.open!(@crop_box_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      # Page 0 is /MediaBox [0 0 612 792] with /CropBox [10 20 210 320].
+      rendered = Document.render!(doc, 0, dpi: 72)
+
+      assert {rendered.width, rendered.height} == {200, 300}
+    end
+
+    test "the size limit measures that box and not the medium" do
+      doc = Document.open!(@crop_box_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      # 200 x 300 pt at 600 DPI is 1667 x 2500 = 4.2 Mpx, inside the budget;
+      # the 612 x 792 medium would be 33.7 Mpx and refused.
+      rendered = Document.render!(doc, 0, dpi: 600, max_output_pixels: 5_000_000)
+
+      assert {rendered.width, rendered.height} == {1667, 2500}
+    end
+
+    test ":region crops the area it names, in the page's own frame" do
+      doc = Document.open!(@cropped_content_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      # The visible area is 50,40 .. 150,140; its left half is filled.
+      left =
+        Document.render!(doc, 0,
+          dpi: 72,
+          region: %Rect{x: 50.0, y: 40.0, width: 50.0, height: 100.0}
+        )
+
+      assert {left.width, left.height} == {50, 100}
+    end
+
+    test ":region reports a rect that is on the medium but outside the crop box" do
+      doc = Document.open!(@cropped_content_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      region = %Rect{x: 0.0, y: 0.0, width: 40.0, height: 30.0}
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Document.render(doc, 0, dpi: 72, region: region)
+    end
+
+    test ":fit scales by the medium, so a cropped page stops short of the box" do
+      doc = Document.open!(@cropped_content_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      rendered = Document.render!(doc, 0, fit: {400, 400})
+
+      assert {rendered.width, rendered.height} == {200, 200}
     end
   end
 
@@ -474,7 +560,17 @@ defmodule PdfElixide.RenderingTest do
     end
 
     test "a page declaring no spot inks fits at that resolution", %{doc: doc} do
-      assert length(Document.separations!(doc, 1, dpi: 600)) == 4
+      assert length(Document.separations!(doc, 1, dpi: 300)) == 4
+    end
+
+    test "a plate over the limit this call cannot raise is refused", %{doc: doc} do
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Document.separations(doc, 1, dpi: 600)
+
+      assert message =~ "cannot raise"
+
+      assert {:error, %Error{reason: :unsupported}} =
+               Document.separation(doc, 1, "Cyan", dpi: 600)
     end
   end
 
@@ -533,10 +629,15 @@ defmodule PdfElixide.RenderingTest do
       assert {:error, %Error{reason: :unsupported, message: message}} =
                Document.rasterize(doc, dpi: 4000)
 
-      # The guard walks the pages in order and names the first over budget, so
-      # this is page 0 at its inherited 300 x 500 pt rather than a 612 x 792
-      # filler.
-      assert message =~ "16667x27778"
+      # Page 0 inherits a 260 x 460 crop box rather than the 612 x 792 fallback.
+      assert message =~ "14445x25556"
+    end
+
+    test "a page over the limit this call cannot raise is refused", %{doc: doc} do
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Document.rasterize(doc, dpi: 600)
+
+      assert message =~ "cannot raise"
     end
 
     test "reports a closed handle" do
