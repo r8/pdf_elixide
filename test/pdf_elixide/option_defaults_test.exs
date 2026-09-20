@@ -92,7 +92,6 @@ defmodule PdfElixide.OptionDefaultsTest do
                include_form_fields: true,
                strip_running_headers_footers: false,
                expand_ligatures: false,
-               annotate_skipped_pages: true,
                max_image_pixels: nil,
                reading_order: :structure_tree,
                bold_markers: :conservative
@@ -100,7 +99,7 @@ defmodule PdfElixide.OptionDefaultsTest do
     end
 
     test "to_html/2,3" do
-      # The four markdown-only fields are absent rather than defaulted: the
+      # The three markdown-only fields are absent rather than defaulted: the
       # HTML converter never reads them, and `build_html_options/1` rejects
       # them outright.
       assert Document.__option_defaults__(:html) == %{

@@ -23,6 +23,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Document.XmpMetadata
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.Warning
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
@@ -330,12 +331,15 @@ defmodule PdfElixide.DocumentTest do
       refute without =~ "|---|"
     end
 
-    test "annotate_skipped_pages: false leaves a scanned page blank" do
+    test "a scanned page converts to nothing and reports why" do
       doc = Document.open!(@image_pdf)
-      assert {:ok, annotated} = Document.to_markdown(doc)
-      assert {:ok, bare} = Document.to_markdown(doc, annotate_skipped_pages: false)
-      assert annotated =~ "OCR REQUIRED"
-      assert String.trim(bare) == ""
+      assert {:ok, markdown} = Document.to_markdown(doc)
+      assert String.trim(markdown) == ""
+
+      assert Enum.any?(
+               Document.structured_warnings!(doc),
+               &match?(%Warning{category: :no_text_layer, page: 0}, &1)
+             )
     end
 
     test "detect_headings distinguishes the two font tiers" do
@@ -819,7 +823,7 @@ defmodule PdfElixide.DocumentTest do
       # These keys are valid for `to_markdown/2` but upstream never consults
       # them on the HTML path, so accepting them would silently promise an
       # effect that cannot happen.
-      for opt <- [[bold_markers: :aggressive], [annotate_skipped_pages: false]] do
+      for opt <- [[bold_markers: :aggressive], [expand_ligatures: true]] do
         assert_raise ArgumentError, fn -> Document.to_html(doc, opt) end
       end
     end

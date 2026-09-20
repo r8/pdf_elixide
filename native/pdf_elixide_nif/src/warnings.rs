@@ -24,6 +24,10 @@ enum WarningCategoryNif {
     Encryption,
     Font,
     Layout,
+    GlyphDropped,
+    NoTextLayer,
+    ImageSuppressed,
+    Unknown,
 }
 
 impl From<WarningCategory> for WarningCategoryNif {
@@ -38,6 +42,14 @@ impl From<WarningCategory> for WarningCategoryNif {
             WarningCategory::Encryption => Self::Encryption,
             WarningCategory::Font => Self::Font,
             WarningCategory::Layout => Self::Layout,
+            WarningCategory::GlyphDropped => Self::GlyphDropped,
+            WarningCategory::NoTextLayer => Self::NoTextLayer,
+            WarningCategory::ImageSuppressed => Self::ImageSuppressed,
+            // `WarningCategory` is `#[non_exhaustive]`, so this arm is
+            // mandatory and the compiler can no longer report an upstream
+            // addition. One reaches a caller as `:unknown` rather than being
+            // mapped onto a category it is not.
+            _ => Self::Unknown,
         }
     }
 }

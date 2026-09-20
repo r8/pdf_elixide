@@ -13,8 +13,9 @@ defmodule PdfElixide.Warning do
   ## Fields
 
     * `:category` — what kind of condition, see `t:category/0`.
-    * `:page` — the zero-based page index the condition was tied to, or `nil`.
-      Currently always `nil`.
+    * `:page` — the zero-based page index the condition was tied to, or `nil`
+      when it is not tied to one. Only `:no_text_layer` and `:image_suppressed`
+      carry an index; every other category records `nil`.
     * `:message` — human-readable, the same text the condition produces as a
       log record when capture is enabled (see `PdfElixide.Logging`).
     * `:spec_section` — the ISO 32000-1 section the condition violates, such
@@ -33,6 +34,11 @@ defmodule PdfElixide.Warning do
 
     * `:eof_premature` — an object's header or body ran into the end of the
       file. A truncated body may still be parsed; an unreadable header fails.
+    * `:no_text_layer` — a page carries no extractable text layer and looks
+      like a scan, so it converts and extracts as nothing. OCR is what would
+      recover its content.
+    * `:image_suppressed` — an image was left out of converted output because
+      its encoded size exceeds the reader's inline-image cap.
 
   Recorded process-wide, so listed by `PdfElixide.Logging.structured_warnings/0`:
 
@@ -44,9 +50,18 @@ defmodule PdfElixide.Warning do
     * `:type3_font` — a Type 3 font, whose glyphs may not map to text.
     * `:to_unicode_missing` — a Type0 font with no `/ToUnicode` map, so its
       text may extract as wrong or missing characters.
+    * `:glyph_dropped` — a font painted nothing for a glyph while still
+      advancing the cursor, so the page renders with a gap that reads as
+      whitespace. Raised while rendering rather than while extracting, so it
+      appears only after `PdfElixide.Document.render/3`,
+      `PdfElixide.Document.rasterize/2` or
+      `PdfElixide.Document.separations/3`.
 
   Reserved by the reader and not produced by any current condition:
   `:xref_recovery`, `:encryption`, `:font` and `:layout`.
+
+  Finally, `:unknown` — the reader recorded a category this version of
+  `PdfElixide` does not model. The `:message` still carries the condition.
   """
   @type category ::
           :spec_violation
@@ -58,6 +73,10 @@ defmodule PdfElixide.Warning do
           | :encryption
           | :font
           | :layout
+          | :glyph_dropped
+          | :no_text_layer
+          | :image_suppressed
+          | :unknown
 
   @enforce_keys [:category, :page, :message, :spec_section]
 

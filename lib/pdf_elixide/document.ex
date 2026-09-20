@@ -1448,9 +1448,6 @@ defmodule PdfElixide.Document do
       component letters (`ﬁ` to `fi`, and so on). Accepted for forward
       compatibility, but currently has **no effect** on Markdown output; it is
       applied only on the plain-text path used by `text/2`. Defaults to `false`.
-    * `:annotate_skipped_pages` — emit a block quote naming any page that
-      is a scan with no usable text layer, rather than rendering it blank.
-      Defaults to `true`.
     * `:max_image_pixels` — skip images whose width times height exceeds
       this count. `nil` means the built-in 16 MP limit, not "no
       limit" — pass a large integer to lift it, or `0` to skip every
@@ -1478,7 +1475,6 @@ defmodule PdfElixide.Document do
           include_form_fields: boolean(),
           strip_running_headers_footers: boolean(),
           expand_ligatures: boolean(),
-          annotate_skipped_pages: boolean(),
           max_image_pixels: non_neg_integer() | nil,
           reading_order: :structure_tree | :column_aware | :top_to_bottom,
           bold_markers: :conservative | :aggressive
@@ -1493,7 +1489,6 @@ defmodule PdfElixide.Document do
     :include_form_fields,
     :strip_running_headers_footers,
     :expand_ligatures,
-    :annotate_skipped_pages,
     :max_image_pixels,
     :reading_order,
     :bold_markers
@@ -1514,6 +1509,12 @@ defmodule PdfElixide.Document do
   The whole-document form builds the entire conversion in memory at once, which
   `:include_images` can make considerably larger — see the "Whole-document
   extraction and memory" section of `PdfElixide.Document`.
+
+  A page that is a scan with no text layer converts to nothing rather than to a
+  note saying so, and an image too large to inline is left out. Both are
+  reported by `structured_warnings/1` instead, as `:no_text_layer` and
+  `:image_suppressed`, each naming the page — so a caller decides whether to
+  surface them, where, and in what wording.
 
   See `t:markdown_opts/0` for the available options.
   """
@@ -1581,7 +1582,6 @@ defmodule PdfElixide.Document do
       include_form_fields: Keyword.get(opts, :include_form_fields, true),
       strip_running_headers_footers: Keyword.get(opts, :strip_running_headers_footers, false),
       expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
-      annotate_skipped_pages: Keyword.get(opts, :annotate_skipped_pages, true),
       max_image_pixels: Keyword.get(opts, :max_image_pixels),
       reading_order: Keyword.get(opts, :reading_order, :structure_tree),
       bold_markers: Keyword.get(opts, :bold_markers, :conservative)
@@ -1613,11 +1613,10 @@ defmodule PdfElixide.Document do
   Options accepted by the `to_html` and `to_html!` functions.
 
   Only options that affect HTML output are exposed. `:bold_markers`,
-  `:annotate_skipped_pages`, `:strip_running_headers_footers` and
-  `:expand_ligatures` — all valid for `to_markdown/2` — are therefore absent
-  here, and passing one raises `ArgumentError`, as does a declared key given a
-  value of the wrong type. See the "Errors versus exceptions" section of
-  `PdfElixide.Error`.
+  `:strip_running_headers_footers` and `:expand_ligatures` — all valid for
+  `to_markdown/2` — are therefore absent here, and passing one raises
+  `ArgumentError`, as does a declared key given a value of the wrong type. See
+  the "Errors versus exceptions" section of `PdfElixide.Error`.
 
     * `:preserve_layout` — emit one absolutely positioned `<div>` per text
       span, carrying that span's coordinates and font size in inline CSS

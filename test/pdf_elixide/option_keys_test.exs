@@ -90,7 +90,6 @@ defmodule PdfElixide.OptionKeysTest do
     include_form_fields: true,
     strip_running_headers_footers: false,
     expand_ligatures: false,
-    annotate_skipped_pages: true,
     max_image_pixels: 1_000_000,
     reading_order: :structure_tree,
     bold_markers: :aggressive
