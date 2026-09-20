@@ -586,10 +586,13 @@ defmodule PdfElixide.UpstreamDriftTest do
       refute_same(Rect.to_user_space(match.bbox, 90, box), raw_union)
     end
 
-    test "upstream still maps a reversed media box about its corners as written" do
+    test "a reversed media box maps and inverts like any other" do
       doc = open(@rotated_run_pdf)
       page = Document.page!(doc, 2)
       assert Page.rotation!(page) == 90
+
+      # The page declares `[612 792 0 0]`; upstream normalizes it at read time,
+      # and the extractors map about the same corners the helpers are given.
       box = Page.media_box!(page)
       assert box == %Rect{x: 0.0, y: 0.0, width: 612.0, height: 792.0}
 
@@ -597,9 +600,8 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert origin(sideways) == {300.0, 200.0}
       assert [match] = Document.search!(doc, "Sideways", 2)
 
-      as_written = %Rect{x: 612.0, y: 792.0, width: -612.0, height: -792.0}
-      assert_same(match.bbox, Rect.to_display_frame(sideways.bbox, 90, as_written))
-      refute_same(Rect.to_user_space(match.bbox, 90, box), sideways.bbox)
+      assert_same(match.bbox, Rect.to_display_frame(sideways.bbox, 90, box))
+      assert_same(Rect.to_user_space(match.bbox, 90, box), sideways.bbox)
     end
   end
 
@@ -792,22 +794,21 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Enum.map(rects, &{&1.bbox.width, &1.bbox.height}) == [{0.0, 0.0}, {300.0, 0.0}]
     end
 
-    test "a fill-and-stroke path is dropped and takes the next path with it" do
+    test "a fill-and-stroke path is painted on its own and leaves the next one intact" do
       doc = open(@vector_shapes_pdf)
 
-      # `B` is never painted into a path of its own, and its operations are
-      # prepended to the next one — so the stroked line that follows is
-      # three operations long and classifies as nothing.
-      assert [path] = Document.paths!(doc, @fill_stroke)
+      # All six painting operators finalize a path, so `B` neither vanishes nor
+      # prepends its operations to the `m l S` that follows it.
+      assert [filled, stroked] = Document.paths!(doc, @fill_stroke)
+      assert filled.operations == [{:rectangle, 50.0, 100.0, 60.0, 60.0}]
+      assert stroked.operations == [{:move_to, 200.0, 100.0}, {:line_to, 400.0, 100.0}]
 
-      assert path.operations == [
-               {:rectangle, 50.0, 100.0, 60.0, 60.0},
-               {:move_to, 200.0, 100.0},
-               {:line_to, 400.0, 100.0}
-             ]
+      # Each therefore reaches its classifier at its own operation count.
+      assert [rect] = Document.rects!(doc, @fill_stroke)
+      assert rect.bbox == %Rect{x: 50.0, y: 100.0, width: 60.0, height: 60.0}
 
-      assert Document.rects!(doc, @fill_stroke) == []
-      assert Document.lines!(doc, @fill_stroke) == []
+      assert [line] = Document.lines!(doc, @fill_stroke)
+      assert line.bbox == %Rect{x: 200.0, y: 100.0, width: 200.0, height: 0.0}
     end
 
     test "the two sets are disjoint subsets of paths" do

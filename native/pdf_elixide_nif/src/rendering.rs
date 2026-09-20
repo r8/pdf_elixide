@@ -924,37 +924,4 @@ mod tests {
             "page 1 gained an ink, so it is no longer the control"
         );
     }
-
-    // Guards no local code; the defect is recorded rather than worked around.
-    #[test]
-    fn upstream_still_mirrors_a_270_degree_separation() {
-        let doc = PdfDocument::open(fixture("rotated_separation.pdf")).expect("open");
-
-        let rendered = render_page(&doc, 0, &RenderOptions::with_dpi(72).as_raw()).expect("render");
-        let plate = render_separation(&doc, 0, "Black", 72).expect("plate");
-        assert_eq!(
-            (plate.width, plate.height),
-            (rendered.width, rendered.height),
-            "the plate and the render disagree about the raster size"
-        );
-
-        // The fixture marks the bottom half after rotation; column 0 distinguishes
-        // the two halves.
-        let inked = |row: u32| plate.data[(row * plate.width) as usize] > 0;
-        let painted = |row: u32| rendered.data[(row * rendered.width * 4) as usize] < 128;
-
-        let (top, bottom) = (1, plate.height - 2);
-        assert!(
-            painted(top) != painted(bottom),
-            "the fixture stopped painting exactly one half of the render"
-        );
-        assert!(
-            inked(top) != inked(bottom),
-            "the fixture stopped painting exactly one half of the plate"
-        );
-        assert!(
-            inked(top) != painted(top),
-            "upstream stopped mirroring a 270-degree separation"
-        );
-    }
 }

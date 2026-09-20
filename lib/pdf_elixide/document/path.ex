@@ -31,7 +31,7 @@ defmodule PdfElixide.Document.Path do
 
   (Those are vector graphics; `PdfElixide.Document.text_lines/2` is the
   unrelated text extractor.) The two sets are therefore disjoint subsets of
-  `PdfElixide.Document.paths/2`, with four consequences:
+  `PdfElixide.Document.paths/2`, with these consequences:
 
     * **A rectangle drawn back to its starting corner is classified as
       neither** — one `{:line_to, …}` too many. Boxes drawn with the `re`
@@ -46,11 +46,6 @@ defmodule PdfElixide.Document.Path do
 
   Each call runs a full extraction of the page, so asking one page for both its
   rectangles and its lines costs twice what asking for either does.
-
-  One shape reaches none of the three: a path painted with `B`, `B*` or `b*`
-  (fill and stroke together) is not extracted at all, and its commands are
-  prepended to the *next* path — changing that path's operation count, so a
-  rectangle or line drawn right after one goes missing too.
   """
   alias PdfElixide.Color.RGB
   alias PdfElixide.Geometry.Rect

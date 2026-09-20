@@ -19,10 +19,6 @@ defmodule PdfElixide.Geometry.Rect do
   `to_display_frame/3` and `to_user_space/3` move rectangles between raw user
   space and the displayed frame. See "Rotated pages and extracted geometry" in
   `PdfElixide.Document` for which extractor boxes need conversion.
-
-  One case cannot be inverted: a `/MediaBox` written with reversed corners is
-  normalized by `PdfElixide.Document.Page.media_box/1`, but the extractors map
-  about the original corners.
   """
   @enforce_keys [:x, :y, :width, :height]
 
