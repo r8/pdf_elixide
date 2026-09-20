@@ -522,12 +522,6 @@ fn document_rasterize(
     let result = resource.doc.with_read(|doc| {
         let count = doc.page_count().map_err(to_nif_err)?;
 
-        // Populate the page cache before measuring: filling it can change inherited
-        // boxes and rotations, invalidating earlier allocation estimates.
-        for page_index in 0..count {
-            page_info(doc, page_index)?;
-        }
-
         for page_index in 0..count {
             let (page_w, page_h) = page_extent(&page_info(doc, page_index)?);
             ensure_render_budget(

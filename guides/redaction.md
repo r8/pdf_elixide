@@ -77,17 +77,26 @@ state — reopen the source for that.
 
 ### Where the block lands
 
-The block inherits the graphics state the page content leaves active. A
-transformation still in effect at the end of the stream moves it, a clipping
-path can hide part or all of it, and a path left unfinished can extend what it
-covers. All of these still report success.
+The block is drawn in the page's own initial graphics state, so a transformation
+or a clipping path the content leaves active at the end of the stream reaches
+neither its position nor its visibility.
 
-**The removal itself is unaffected.** Glyph boxes and the region you queue are
-compared in the same frame, so the text inside the region goes whatever the page
-leaves active; it is the block marking the cleared area that moves. On a page
-ending with `1 0 0 1 100 50 cm`, a region over a word deletes that word and
-paints the block 100 points right and 50 up of it. For a document you did not
-produce, render the written result and look at it; see [Verifying](#verifying).
+**One case still extends what it covers:** a path the content left unfinished.
+The block's own rectangle joins that path and the two are filled together, so on
+a page ending with an unpainted page-sized `re` the whole page goes opaque. It
+reports success like any other call. `PdfElixide.Document.paths/2` shows it —
+one fill holding both rectangles, where `PdfElixide.Document.rects/2` reports
+none. For a document you did not produce, render the written result and look at
+it; see [Verifying](#verifying).
+
+**The removal itself is never affected.** Glyph boxes and the region you queue
+are compared in the same frame, so the text inside the region goes whatever the
+page leaves active.
+
+**Erasing behaves differently here.** `PdfElixide.Editor.erase_region/3` paints
+its whiteout in whatever graphics state the content leaves behind, so all three
+cases — transformation, clipping path and unfinished path — move or hide it. See
+[Erasing regions](editing.md#erasing-regions).
 
 ### It removes text, and only the text the page draws itself
 

@@ -90,9 +90,9 @@ geometry is sound — check the box directly if that matters. The one exception
 is `:region`: a crop needs the real box, so on such a page it returns
 `{:error, %PdfElixide.Error{reason: :invalid_pdf}}` instead.
 
-Which ancestor a page inherits its box and rotation from is not stable across a
-long document; see the "Page boxes and the coordinate origin" section of
-`PdfElixide.Document` for when that changes and why.
+A page that declares no box or rotation of its own inherits from the nearest
+ancestor that declares one; see the "Page boxes and the coordinate origin"
+section of `PdfElixide.Document`.
 
 ## Cropping with `:region`
 

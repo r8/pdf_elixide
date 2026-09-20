@@ -1595,7 +1595,7 @@ defmodule PdfElixide.DocumentTest do
     test "each rect carries its zero-based page index" do
       doc = Document.open!(@vector_shapes_pdf)
       {:ok, rects} = Document.rects(doc)
-      assert Enum.map(rects, & &1.page) == [0, 0, 0, 3, 3]
+      assert Enum.map(rects, & &1.page) == [0, 0, 0, 3, 3, 4]
     end
   end
 
@@ -1683,7 +1683,7 @@ defmodule PdfElixide.DocumentTest do
     test "each line carries its zero-based page index" do
       doc = Document.open!(@vector_shapes_pdf)
       {:ok, lines} = Document.lines(doc)
-      assert Enum.map(lines, & &1.page) == [1, 1]
+      assert Enum.map(lines, & &1.page) == [1, 1, 4]
     end
   end
 
@@ -2402,10 +2402,10 @@ defmodule PdfElixide.DocumentTest do
       assert byte_size(pixels) == image.width * image.height * 3
     end
 
-    # The pixel format of a JPEG 2000 image comes from its codestream's component
-    # count, not from the XObject's /ColorSpace. Both pages declare a /ColorSpace
-    # agreeing with their codestream, so these also pin that the samples are
-    # decoded rather than passed through as the codestream.
+    # The XObject's /ColorSpace decides how many of a JPEG 2000 codestream's
+    # decoded components are colour, whenever its own count fits. All three
+    # pages declare one agreeing with their codestream, so these also pin that
+    # the samples are decoded rather than passed through as the codestream.
     test "returns three-component pixels for a JPEG 2000 RGB image" do
       [image] = Document.open!(@image_jpx_pdf) |> Document.images!(0)
       assert {:ok, {:raw, pixels, :rgb}} = Document.Image.data(image)
@@ -2416,6 +2416,22 @@ defmodule PdfElixide.DocumentTest do
       [image] = Document.open!(@image_jpx_pdf) |> Document.images!(1)
       assert {:ok, {:raw, pixels, :grayscale}} = Document.Image.data(image)
       assert byte_size(pixels) == image.width * image.height
+    end
+
+    # Page 2 carries a four-component RGB-plus-alpha codestream under
+    # /ColorSpace /DeviceRGB and /SMaskInData 1. The declared three components
+    # are the colour ones and the trailing opacity channel is dropped, so the
+    # struct and its pixels agree; /SMaskInData is never read, so the image
+    # comes back opaque rather than masked.
+    test "drops a JPEG 2000 image's opacity channel and keeps its declared colour" do
+      [image] = Document.open!(@image_jpx_pdf) |> Document.images!(2)
+
+      assert image.color_space == :device_rgb
+      assert {:ok, {:raw, pixels, :rgb}} = Document.Image.data(image)
+      assert byte_size(pixels) == image.width * image.height * 3
+
+      assert {:ok, <<137, 80, 78, 71, 13, 10, 26, 10, _::binary>>} =
+               Document.Image.to_binary(image)
     end
 
     test "data!/1 returns the raw data directly" do

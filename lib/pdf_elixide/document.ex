@@ -140,11 +140,12 @@ defmodule PdfElixide.Document do
   ### Which ancestor an inherited box comes from
 
   `/MediaBox`, `/CropBox` and `/Rotate` are inheritable: a page declaring none
-  of them takes them from an ancestor `/Pages` node, unambiguously where exactly
-  one ancestor declares the entry. Where **two** nested ancestors declare it, which wins is
-  not stable: the same page can report a different box, and a different
-  rotation, on a later call. Almost all documents declare each entry at one
-  level only and are unaffected.
+  of them takes them from an ancestor `/Pages` node. Where **two** nested
+  ancestors declare the same entry, the **nearest** one wins, per ISO 32000-1
+  §7.7.3.4, and the answer does not depend on which other pages were read
+  first. `PdfElixide.Editor` resolves them the same way, so
+  `PdfElixide.Editor.media_box/2` and `PdfElixide.Editor.rotation/2` agree with
+  the page readers on such a document.
 
   ## Rotated pages and extracted geometry
 

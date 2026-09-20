@@ -533,8 +533,9 @@ defmodule PdfElixide.RenderingTest do
       assert {:error, %Error{reason: :unsupported, message: message}} =
                Document.rasterize(doc, dpi: 4000)
 
-      # After the page cache fills, page 0 changes from 200 x 100 to 300 x 500 pt.
-      # A cold measurement would instead fail on a filler page at 34001x44001.
+      # The guard walks the pages in order and names the first over budget, so
+      # this is page 0 at its inherited 300 x 500 pt rather than a 612 x 792
+      # filler.
       assert message =~ "16667x27778"
     end
 

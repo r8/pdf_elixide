@@ -161,9 +161,9 @@ defmodule PdfElixide.Document.Page do
   Returns the page's `/Rotate` — the clockwise rotation a viewer applies when
   displaying it — as `0`, `90`, `180` or `270`.
 
-  A page without `/Rotate` inherits it from an ancestor and otherwise reads as
-  `0`. See "Page boxes and the coordinate origin" in `PdfElixide.Document` for
-  the full inheritance behavior.
+  A page without `/Rotate` inherits it from the nearest ancestor that declares
+  one and otherwise reads as `0`. See "Page boxes and the coordinate origin" in
+  `PdfElixide.Document` for the full inheritance behavior.
 
   Two normalizations are worth knowing:
 

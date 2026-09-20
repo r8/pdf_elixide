@@ -5,6 +5,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @moduletag :upstream_drift
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.Image
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Editor
@@ -20,7 +21,6 @@ defmodule PdfElixide.UpstreamDriftTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
-  @image_jpx_pdf Path.join(@fixtures, "image_jpx.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @encrypted_cleartext_pdf Path.join(@fixtures, "encrypted_cleartext.pdf")
@@ -81,10 +81,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     to_plain_text: []
   ]
 
-  # In @image_jpx_pdf: a JPEG 2000 codestream carrying RGB plus alpha, whose
-  # page declares /ColorSpace /DeviceRGB and /SMaskInData 1.
-  @rgb_with_alpha 2
-
   # In @layers_and_inks_pdf: DeviceN plus /All and /None on one page, a tiling
   # pattern and an annotation appearance stream on another.
   @device_n 1
@@ -107,6 +103,24 @@ defmodule PdfElixide.UpstreamDriftTest do
   defp pixel(rendered, col, row) do
     <<r, g, b, a>> = binary_part(rendered.data, (row * rendered.width + col) * 4, 4)
     {r, g, b, a}
+  end
+
+  # The redaction block's default fill is opaque black, so a block the page
+  # clips away leaves the sheet's own white showing through instead.
+  @white {255, 255, 255, 255}
+  @black {0, 0, 0, 255}
+
+  # Samples the interior of a word's box on a 72 dpi render, where one pixel is
+  # one point and the row axis is flipped about the page height.
+  defp word_pixels(doc, word, page_height) do
+    {:ok, rendered} = Document.render(doc, 0, dpi: 72, format: :rgba8)
+
+    x0 = trunc(word.bbox.x) + 2
+    x1 = trunc(word.bbox.x + word.bbox.width) - 2
+    y0 = trunc(page_height - (word.bbox.y + word.bbox.height)) + 2
+    y1 = trunc(page_height - word.bbox.y) - 2
+
+    for row <- y0..y1, col <- x0..x1, do: pixel(rendered, col, row)
   end
 
   defp open(path) do
@@ -647,33 +661,35 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  describe "inherited page boxes" do
-    test "the outermost ancestor wins on the per-page traversal" do
+  describe "the ancestor an inherited page box comes from" do
+    # Page 0 nests two /Pages nodes that both declare all three entries; the
+    # inner one (300 x 500) is the nearest. The two page-tree walkers used to
+    # disagree, so the answer depended on how many pages had been read.
+    test "the nearest ancestor wins on a cold read, editor included" do
       page = Document.page!(open(@inherited_boxes_pdf), 0)
 
-      assert %{width: 200.0, height: 100.0} = Page.media_box!(page)
-      assert %{width: 180.0, height: 80.0} = Page.crop_box!(page)
-      assert Page.rotation!(page) == 90
+      assert %{width: 300.0, height: 500.0} = Page.media_box!(page)
+      assert %{width: 260.0, height: 460.0} = Page.crop_box!(page)
+      assert Page.rotation!(page) == 180
+
+      editor = Editor.open!(@inherited_boxes_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert %{width: 300.0, height: 500.0} = Editor.media_box!(editor, 0)
+      assert Editor.rotation!(editor, 0) == 180
     end
 
-    test "the nearest ancestor wins once the bulk page-tree walk takes over" do
+    test "the bulk page-tree walk answers the same" do
       doc = open(@inherited_boxes_pdf)
 
-      # Page 0 must remain unread while the other pages trigger the bulk walk.
+      # Page 0 must remain unread while the other pages trigger the bulk walk,
+      # or the cold answer is cached and the walkers are never compared.
       for i <- 1..70, do: Page.media_box!(Document.page!(doc, i))
 
       page = Document.page!(doc, 0)
       assert %{width: 300.0, height: 500.0} = Page.media_box!(page)
       assert %{width: 260.0, height: 460.0} = Page.crop_box!(page)
       assert Page.rotation!(page) == 180
-    end
-
-    test "the editor answers what a cold read answers, instability included" do
-      editor = Editor.open!(@inherited_boxes_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-
-      assert %{width: 200.0, height: 100.0} = Editor.media_box!(editor, 0)
-      assert Editor.rotation!(editor, 0) == 90
     end
   end
 
@@ -1187,7 +1203,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     test "a destructive pass still leaves an image a region covers" do
       doc = Document.open!(@image_pdf)
       [image] = Document.images!(doc)
-      original = PdfElixide.Document.Image.to_binary!(image, format: :png)
+      original = Image.to_binary!(image, format: :png)
       Document.close(doc)
 
       editor = Editor.open!(@image_pdf)
@@ -1209,7 +1225,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [survivor] = Document.images!(written),
              "upstream now removes an image a redaction region covers"
 
-      assert PdfElixide.Document.Image.to_binary!(survivor, format: :png) == original,
+      assert Image.to_binary!(survivor, format: :png) == original,
              "upstream now overwrites the pixels a redaction region covers"
     end
 
@@ -1609,31 +1625,14 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  describe "a JPEG 2000 image carrying alpha" do
-    # Nothing upstream reads /SMaskInData, so a four-component RGB-plus-alpha
-    # codestream is typed CMYK and encodes to a valid PNG in the wrong colours.
-    test "still reads its alpha channel as ink" do
-      doc = open(@image_jpx_pdf)
-
-      assert [image] = Document.images!(doc, @rgb_with_alpha)
-
-      # The struct contradicts its own pixels: three components declared, four
-      # decoded. Without this pair the assertion below could pass on a fixture
-      # that really was CMYK.
-      assert image.color_space == :device_rgb
-      assert {:ok, {:raw, pixels, :cmyk}} = Document.Image.data(image)
-      assert byte_size(pixels) == image.width * image.height * 4
-
-      assert {:ok, <<137, 80, 78, 71, 13, 10, 26, 10, _::binary>>} =
-               Document.Image.to_binary(image)
-    end
-  end
-
   describe "where the destructive redaction block lands" do
-    # The same leaked `1 0 0 1 100 50 cm` the erase canaries use: the block is
-    # appended after it and inherits the transform, while the glyph boxes and
-    # the queued region are compared in the same frame, so the text still goes.
-    test "the block is drawn in the graphics state the content leaves behind" do
+    # The pruned body is wrapped in its own outer q/Q before the overlays are
+    # drawn, so neither a leaked transform nor a leaked clip reaches the block.
+    # The erase overlay has no such wrapper, which is what makes the two paths
+    # differ; its canaries are in "where the erase overlay lands" above.
+
+    # The same leaked `1 0 0 1 100 50 cm` the erase canary uses.
+    test "a transform the content leaves active no longer moves the block" do
       source = Document.open!(@leaked_cm_pdf)
       on_exit(fn -> Document.close(source) end)
       [word] = Document.words!(source, 0)
@@ -1650,14 +1649,63 @@ defmodule PdfElixide.UpstreamDriftTest do
       written = Document.from_binary!(Editor.to_binary!(editor))
       on_exit(fn -> Document.close(written) end)
 
-      # The removal is correct; only the block marking it is not.
       assert Document.text!(written, 0) == ""
 
       assert [rect] = Document.rects!(written, 0)
-      assert_in_delta rect.bbox.x, word.bbox.x + 100.0, 0.01
-      assert_in_delta rect.bbox.y, word.bbox.y + 50.0, 0.01
+      assert_in_delta rect.bbox.x, word.bbox.x, 0.01
+      assert_in_delta rect.bbox.y, word.bbox.y, 0.01
       assert_in_delta rect.bbox.width, word.bbox.width, 0.01
       assert_in_delta rect.bbox.height, word.bbox.height, 0.01
+    end
+
+    # The fixture's `0 0 1 1 re W n` clips everything but a 1x1 square at the
+    # origin. Only a render shows whether the block survives it: the path
+    # extractor tracks no clipping state, so `rects/2` reports the block at its
+    # requested position either way.
+    test "a clipping path the content leaves active no longer hides the block" do
+      source = Document.open!(@leaked_clip_pdf)
+      on_exit(fn -> Document.close(source) end)
+      [word] = Document.words!(source, 0)
+      assert word.text == "Clipped"
+
+      editor = Editor.open!(@leaked_clip_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.add_redaction!(editor, 0, word.bbox)
+      Editor.apply_redactions!(editor)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      page_height = Page.media_box!(Document.page!(source, 0)).height
+      before_pixels = word_pixels(source, word, page_height)
+      after_pixels = word_pixels(written, word, page_height)
+
+      assert @white in before_pixels
+
+      assert Enum.uniq(after_pixels) == [@black],
+             "upstream stopped restoring the graphics state before the redaction overlay"
+    end
+
+    # The fixture ends with `0 0 999 999 re` outside any q/Q. Path construction
+    # is not graphics state, so the q/Q wrapper does not finish it and the
+    # block's own `re f` still fills the union - the one leak that survives.
+    test "the block still fills a path the content left unfinished" do
+      source = Document.open!(@leaked_path_pdf)
+      on_exit(fn -> Document.close(source) end)
+      [word] = Document.words!(source, 0)
+
+      editor = Editor.open!(@leaked_path_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.add_redaction!(editor, 0, word.bbox)
+      Editor.apply_redactions!(editor)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      assert [path] = Document.paths!(written, 0)
+      assert length(path.operations) == 2
+      assert path.bbox == %Rect{x: 0.0, y: 0.0, width: 999.0, height: 999.0}
+      assert Document.rects!(written, 0) == []
     end
   end
 

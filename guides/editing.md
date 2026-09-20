@@ -253,6 +253,9 @@ rules as crop boxes above.
 The whiteout inherits the graphics state left by the page content. An active
 transformation can move it, a clipping path can hide part or all of it, and an
 unfinished path can cause extra content to be covered. These cases still report success.
+Redaction differs here — only the unfinished path reaches its block; see
+"Where the block lands" in the [Redaction](redaction.md#where-the-block-lands)
+guide.
 `PdfElixide.Document.rects/2` shows placement, not visibility, and may omit a fill
 combined with an unfinished path; `PdfElixide.Document.paths/2` reports the combined
 shapes. For a document you did not produce, render the written result to verify

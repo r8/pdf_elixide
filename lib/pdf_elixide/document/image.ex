@@ -42,24 +42,23 @@ defmodule PdfElixide.Document.Image do
   **An image is left out of the list rather than reported as an error** when
   it is under 8 pixels wide or tall, or when its stored encoding cannot be
   decoded. Flate, LZW, run-length, CCITT fax, JPEG and JPEG 2000
-  (`/JPXDecode`) decode; JBIG2 does not, nor does a JPEG 2000 codestream whose
-  component count is anything but 1, 3 or 4. A JPEG 2000 image arrives as
-  `:raw` pixels whose `pixel_format` comes from its codestream rather than
-  from the colour space the PDF declares for it.
+  (`/JPXDecode`) decode; JBIG2 does not, nor does a JPEG 2000 codestream that
+  resolves to anything but 1, 3 or 4 colour components. A JPEG 2000 image
+  arrives as `:raw` pixels, and the colour space the PDF declares decides how
+  many of the decoded components are colour whenever its own count fits the
+  decode; an `:indexed` one is expanded to `:rgb` pixels from its palette.
 
   `PdfElixide.Document.images/1` and `PdfElixide.Document.images/2` return
   `{:ok, list}` either way, so a page whose only picture was skipped is
   indistinguishable from a page with none — nothing is raised and nothing is
   logged.
 
-  **JPEG 2000 transparency is the one case that comes back wrong rather than
-  missing.** The alpha channel declared through `/SMaskInData` is ignored, so
-  a four-component codestream carrying RGB plus alpha is reported as `:cmyk`,
-  and `to_binary/2` and `save/3` *succeed* with wrong colours instead of
-  failing. To spot one, compare `:color_space` against `data/1`'s
-  `pixel_format`: a `:device_rgb` image whose pixels are `:cmyk` is one. (An
-  `:indexed` image reports `:rgb` pixels too, but correctly — its palette
-  really is expanded to RGB.)
+  **A JPEG 2000 image comes back opaque.** Channels the declared colour space
+  does not account for are dropped, so a four-component codestream carrying
+  RGB plus alpha is reported as `:device_rgb` with its opacity channel
+  discarded. `/SMaskInData` is not read at all, so an image asking for its
+  alpha to be applied as a soft mask is handed back fully opaque rather than
+  masked, with no error and nothing logged.
 
   A page that cannot be reached, or whose `/Resources` cannot be resolved,
   does return `{:error, t:PdfElixide.Error.t/0}`. A page whose content stream
