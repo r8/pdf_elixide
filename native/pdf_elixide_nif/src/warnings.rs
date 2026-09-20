@@ -132,8 +132,33 @@ impl OpenDocument {
         }
     }
 
+    // Every upstream per-document read below claims the process-wide sink for
+    // `GLOBAL` first. Upstream drains that sink into *this* document's sink
+    // before returning either way (`structured_warnings` and
+    // `take_structured_warnings` alike), so without the claim whichever handle
+    // happens to be touched absorbs every process-wide warning and the
+    // `Logging` feed goes silent. Claiming leaves upstream an empty sink, so it
+    // hands back only what this document recorded. It has to happen outside
+    // `Buffer::absorb`, which holds the mirror's lock while `fetch` runs.
     pub(crate) fn drain(&self) {
+        collect_global();
         self.warnings.absorb(|| self.doc.take_structured_warnings());
+    }
+
+    // Listing: claims first, per `drain` above.
+    pub(crate) fn collect(&self) -> (Vec<Warning>, usize) {
+        collect_global();
+
+        self.warnings
+            .collect(|| self.doc.take_structured_warnings())
+    }
+
+    // Re-authentication: claims first, per `drain` above. Old sink then the
+    // re-parse's, so the mirror keeps the order they were raised in.
+    pub(crate) fn absorb_reparse(&self, fresh: &PdfDocument) {
+        collect_global();
+        self.warnings.absorb(|| self.doc.take_structured_warnings());
+        self.warnings.absorb(|| fresh.take_structured_warnings());
     }
 }
 
@@ -204,6 +229,12 @@ mod tests {
         warnings.iter().map(|w| w.message.as_str()).collect()
     }
 
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures")
+            .join(name)
+    }
+
     #[test]
     fn collect_absorbs_then_snapshots_and_snapshot_does_not_drain() {
         let buffer = Buffer::new();
@@ -257,9 +288,9 @@ mod tests {
 
     #[test]
     fn drain_moves_the_document_sink_into_the_mirror() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../test/fixtures/warnings_header_at_eof.pdf");
-        let open = OpenDocument::new(PdfDocument::open(fixture).expect("fixture opens"));
+        let open = OpenDocument::new(
+            PdfDocument::open(fixture("warnings_header_at_eof.pdf")).expect("fixture opens"),
+        );
         assert!(open
             .load_object(pdf_oxide::object::ObjectRef { id: 5, gen: 0 })
             .is_err());
@@ -287,6 +318,35 @@ mod tests {
 
         assert!(result.is_err());
         assert!(messages(&GLOBAL.snapshot()).contains(&"sentinel for drained"));
+    }
+
+    // Why every `OpenDocument` read claims the process-wide sink first: upstream
+    // merges that sink into whichever document is asked, so the first handle
+    // touched would otherwise swallow the `Logging` feed. When this fails, drop
+    // the `collect_global()` calls in `OpenDocument`, not the assertion.
+    #[test]
+    fn upstream_still_merges_the_global_sink_into_a_document_read() {
+        let doc = PdfDocument::open(fixture("sample.pdf")).expect("fixture opens");
+        push_global_warning(warning("sentinel for the merge canary"));
+
+        let taken = doc.take_structured_warnings();
+
+        assert!(
+            messages(&taken).contains(&"sentinel for the merge canary"),
+            "upstream stopped merging the process-wide sink into a document read"
+        );
+    }
+
+    #[test]
+    fn drain_leaves_a_process_wide_entry_to_global() {
+        let open =
+            OpenDocument::new(PdfDocument::open(fixture("sample.pdf")).expect("fixture opens"));
+        push_global_warning(warning("sentinel for the split"));
+
+        open.drain();
+
+        assert!(messages(&GLOBAL.snapshot()).contains(&"sentinel for the split"));
+        assert!(!messages(&open.warnings.snapshot()).contains(&"sentinel for the split"));
     }
 
     // Other tests may append to the process-wide sinks concurrently.

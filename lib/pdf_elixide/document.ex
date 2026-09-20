@@ -680,9 +680,10 @@ defmodule PdfElixide.Document do
 
   The list is per handle and reading it does not empty it. Warnings remain
   recorded whether the call that produced them succeeded or failed; see
-  `PdfElixide.Warning` for fields and `t:PdfElixide.Warning.category/0` for
-  which conditions are recorded here or process-wide. Warnings appear as
-  objects are read, often during extraction rather than opening.
+  `PdfElixide.Warning` for fields, and "Which feed a warning reaches" there for
+  why a reader-level condition lands here after `text/2` but on
+  `PdfElixide.Logging.structured_warnings/0` after another call. Warnings appear
+  as objects are read, often during extraction rather than opening.
 
   Entries survive `authenticate/2`, whose re-read may add its own. After
   `close/1`, returns `{:error, %PdfElixide.Error{reason: :closed}}`.

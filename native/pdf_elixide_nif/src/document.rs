@@ -359,10 +359,8 @@ fn document_authenticate(
         let fresh = PdfDocument::from_bytes(doc.source_bytes.clone()).map_err(to_nif_err)?;
         let result = fresh.authenticate(password.as_slice());
 
-        // Preserve old-then-new warning order, including failed authentication;
-        // absorb before `?` can discard the fresh document.
-        doc.warnings.absorb(|| doc.doc.take_structured_warnings());
-        doc.warnings.absorb(|| fresh.take_structured_warnings());
+        // Absorb before `?` can discard the fresh document.
+        doc.absorb_reparse(&fresh);
 
         let ok = result.map_err(to_nif_err)?;
         if ok {
@@ -381,7 +379,7 @@ fn document_structured_warnings(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<(Vec<WarningNif>, usize)> {
     resource.doc.with_read(|doc| {
-        let (collected, dropped) = doc.warnings.collect(|| doc.doc.take_structured_warnings());
+        let (collected, dropped) = doc.collect();
 
         Ok((warnings::to_nif(collected), dropped))
     })

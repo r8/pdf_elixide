@@ -52,7 +52,8 @@ defmodule PdfElixide.Logging do
   values, independently of capture and without explicit enablement.
   `PdfElixide.Document.structured_warnings/1` lists per-document warnings;
   `structured_warnings/0` and `take_structured_warnings/0` read the process-wide
-  feed. See `t:PdfElixide.Warning.category/0` for the category-to-feed mapping.
+  feed. Which feed a warning reaches depends on the call that raised it; see
+  "Which feed a warning reaches" in `PdfElixide.Warning`.
 
   Under concurrent use an entry may come from any handle in the VM; see the
   [Concurrency](guides/concurrency.md) guide.

@@ -9,6 +9,7 @@ defmodule PdfElixide.WarningsTest do
   alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Error
+  alias PdfElixide.Geometry.Rect
   alias PdfElixide.Logging
   alias PdfElixide.Signature
   alias PdfElixide.Warning
@@ -51,6 +52,42 @@ defmodule PdfElixide.WarningsTest do
   end
 
   defp encrypt_entry, do: eof_entry(10, 909)
+
+  defp route(doc, :text), do: Document.text!(doc, 0)
+  defp route(doc, :text_all), do: Document.text!(doc)
+  defp route(doc, :markdown), do: Document.to_markdown!(doc, 0)
+  defp route(doc, :markdown_all), do: Document.to_markdown!(doc)
+  defp route(doc, :html), do: Document.to_html!(doc, 0)
+  defp route(doc, :html_all), do: Document.to_html!(doc)
+  defp route(doc, :plain_text), do: Document.to_plain_text!(doc, 0)
+  defp route(doc, :plain_text_all), do: Document.to_plain_text!(doc)
+  defp route(doc, :chars), do: Document.chars!(doc, 0)
+  defp route(doc, :words), do: Document.words!(doc, 0)
+  defp route(doc, :spans), do: Document.spans!(doc, 0)
+  defp route(doc, :search), do: Document.search!(doc, "Warned")
+  defp route(doc, :render), do: Document.render!(doc, 0, dpi: 20)
+  defp route(doc, :text_layers), do: Document.text!(doc, 0, exclude_layers: ["none"])
+  defp route(doc, :text_inks), do: Document.text!(doc, 0, exclude_inks: ["none"])
+
+  defp route(doc, :text_region) do
+    Document.text!(doc, 0, region: %Rect{x: 0.0, y: 0.0, width: 999.0, height: 999.0})
+  end
+
+  defp encryption_entry do
+    %Warning{
+      category: :encryption,
+      page: nil,
+      message:
+        "PDF is encrypted and requires a password; call authenticate() before extracting text",
+      spec_section: "7.6"
+    }
+  end
+
+  # One parse of the damaged encrypted fixture records both: the unreadable
+  # object, then the reader refusing to go on without a password.
+  defp parse_entries(count) do
+    List.duplicate([encrypt_entry(), encryption_entry()], count) |> List.flatten()
+  end
 
   describe "per document" do
     test "records nothing at open and one entry once the object is read" do
@@ -128,17 +165,17 @@ defmodule PdfElixide.WarningsTest do
     # The damaged `/Encrypt` dictionary records one warning per parse.
     test "entries survive authenticate/2, and each attempt's re-read adds its own" do
       doc = open(@encrypted_missing_endobj)
-      assert Document.structured_warnings!(doc) == [encrypt_entry()]
+      assert Document.structured_warnings!(doc) == parse_entries(1)
 
       refute Document.authenticate!(doc, "wrong")
-      assert Document.structured_warnings!(doc) == List.duplicate(encrypt_entry(), 2)
+      assert Document.structured_warnings!(doc) == parse_entries(2)
 
       assert Document.authenticate!(doc, @password)
-      assert Document.structured_warnings!(doc) == List.duplicate(encrypt_entry(), 3)
+      assert Document.structured_warnings!(doc) == parse_entries(3)
 
       reference = open(@encrypted, password: @password)
       assert Document.text!(doc, 0) == Document.text!(reference, 0)
-      assert Document.structured_warnings!(doc) == List.duplicate(encrypt_entry(), 3)
+      assert Document.structured_warnings!(doc) == parse_entries(3)
       assert Logging.structured_warnings() == []
     end
 
@@ -157,11 +194,11 @@ defmodule PdfElixide.WarningsTest do
 
     test "a handle opened with its password records the open's read once" do
       doc = open(@encrypted_missing_endobj, password: @password)
-      assert Document.structured_warnings!(doc) == [encrypt_entry()]
+      assert Document.structured_warnings!(doc) == parse_entries(1)
 
       # Already authenticated, so this authenticates in place with no re-parse.
       assert Document.authenticate!(doc, @password)
-      assert Document.structured_warnings!(doc) == [encrypt_entry()]
+      assert Document.structured_warnings!(doc) == parse_entries(1)
     end
 
     test "reads interleaved with the first extraction see nothing or the entry" do
@@ -189,9 +226,12 @@ defmodule PdfElixide.WarningsTest do
   end
 
   describe "process-wide" do
-    test "a parser condition lands here and not on the document" do
+    # Which feed a reader-level condition reaches depends on the call, not the
+    # category: extraction and conversion attribute what they meet to the
+    # document, every other call leaves it here.
+    test "a parser condition lands here when no extraction claimed it" do
       doc = open(@stream_cr)
-      assert Document.text!(doc, 0) == "Warned"
+      assert Document.search!(doc, "Warned") != []
 
       assert [
                %Warning{
@@ -205,9 +245,56 @@ defmodule PdfElixide.WarningsTest do
       assert Document.structured_warnings!(doc) == []
     end
 
+    test "the same condition lands on the document when extraction raised it" do
+      doc = open(@stream_cr)
+      assert Document.text!(doc, 0) == "Warned"
+
+      assert [%Warning{category: :spec_violation, spec_section: "7.3.8.1"}] =
+               Document.structured_warnings!(doc)
+
+      assert Logging.structured_warnings() == []
+    end
+
+    # Exactly which calls claim a reader-level condition is what
+    # `PdfElixide.Warning`'s "Which feed a warning reaches" promises, and the
+    # set is upstream's rather than ours — `text/3` under a layer or ink filter
+    # takes a route that does not claim, and `to_plain_text` never claims. The
+    # whole-document converters are listed separately because upstream gives
+    # `to_markdown_all` and `to_html_all` their own scope, so they can drift
+    # away from the per-page pair.
+    for route <- [:text, :text_region, :text_all, :markdown, :markdown_all, :html, :html_all] do
+      test "#{route} claims the condition for its document" do
+        doc = open(@stream_cr)
+        route(doc, unquote(route))
+
+        assert [%Warning{category: :spec_violation}] = Document.structured_warnings!(doc)
+        assert Logging.structured_warnings() == []
+      end
+    end
+
+    for route <- [
+          :text_layers,
+          :text_inks,
+          :plain_text,
+          :plain_text_all,
+          :chars,
+          :words,
+          :spans,
+          :search,
+          :render
+        ] do
+      test "#{route} leaves the condition process-wide" do
+        doc = open(@stream_cr)
+        route(doc, unquote(route))
+
+        assert Document.structured_warnings!(doc) == []
+        assert [%Warning{category: :spec_violation}] = Logging.structured_warnings()
+      end
+    end
+
     test "listing does not empty the feed; taking does" do
       doc = open(@stream_cr)
-      Document.text!(doc, 0)
+      Document.search!(doc, "Warned")
 
       seen = Logging.structured_warnings()
       assert length(seen) == 1
@@ -246,7 +333,7 @@ defmodule PdfElixide.WarningsTest do
 
       for _ <- 1..overflow do
         doc = Document.from_binary!(bytes)
-        Document.text!(doc, 0)
+        Document.search!(doc, "Warned")
         Document.close(doc)
       end
 

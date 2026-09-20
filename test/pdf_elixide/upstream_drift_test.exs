@@ -1561,9 +1561,14 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   # Async modules may add unrelated entries to the process-wide feed.
   describe "which sink a structured warning reaches" do
-    test "the per-document read still excludes the process-wide sink" do
+    # Upstream attributes a free-function warning to the document only for the
+    # five methods that take a `SinkScope` — text extraction and the Markdown
+    # and HTML conversions. If a call outside that set starts claiming them,
+    # the process-wide feed has nothing left to report and the binding's own
+    # claim-first ordering is what would have to change.
+    test "a call that is not an extraction leaves the condition process-wide" do
       doc = open(@stream_cr_pdf)
-      Document.text!(doc, 0)
+      Document.search!(doc, "Warned")
 
       assert Document.structured_warnings!(doc) == []
 
@@ -1573,7 +1578,19 @@ defmodule PdfElixide.UpstreamDriftTest do
              end)
     end
 
-    test "no condition reports a page yet" do
+    # The other half of the same rule: extraction does claim it.
+    test "an extraction claims the condition for its document" do
+      doc = open(@stream_cr_pdf)
+      Document.text!(doc, 0)
+
+      assert [%Warning{category: :spec_violation, spec_section: "7.3.8.1"}] =
+               Document.structured_warnings!(doc)
+    end
+
+    # Only what this fixture produces. `:layout`, `:no_text_layer` and
+    # `:image_suppressed` do carry a page index; pinning those needs fixtures
+    # that reach them, which the page-field canaries still owe.
+    test "an unreadable object reports no page" do
       doc = open(@missing_endobj_pdf)
       Document.text!(doc, 0)
 

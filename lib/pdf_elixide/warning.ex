@@ -4,20 +4,46 @@ defmodule PdfElixide.Warning do
 
   A warning never changes what a call returns and is never an error: a call
   that fails returns `t:PdfElixide.Error.t/0` instead, and what the reader
-  recorded on the way to that failure stays recorded. Two feeds return
-  warnings. `PdfElixide.Document.structured_warnings/1` lists the ones recorded
-  against one document handle. `PdfElixide.Logging.structured_warnings/0` lists
-  the ones the reader records process-wide, with no document to attach them
-  to. See `t:category/0` for the category-to-feed mapping.
+  recorded on the way to that failure stays recorded.
+
+  ## Which feed a warning reaches
+
+  Two feeds return warnings, and which one a warning reaches depends on the
+  call that raised it rather than on its category.
+
+  `PdfElixide.Document.structured_warnings/1` lists what one document handle
+  recorded. Some conditions are always tied to the document — an object that
+  ran into the end of the file, a page with no text layer. Reader-level ones
+  join them for exactly three calls and their other arities:
+  `PdfElixide.Document.text/2`, `PdfElixide.Document.to_markdown/2` and
+  `PdfElixide.Document.to_html/2`, which attribute what they meet to the
+  document being read. `PdfElixide.Document.text/3` given `:exclude_layers` or
+  `:exclude_inks` is an exception — that combination takes a different route
+  and does not.
+
+  `PdfElixide.Logging.structured_warnings/0` lists everything else: the same
+  reader-level conditions met during **any other call**, including
+  `PdfElixide.Document.to_plain_text/2` and the span-level extractors
+  (`PdfElixide.Document.chars/2`, `PdfElixide.Document.words/2`,
+  `PdfElixide.Document.spans/2`), as well as rendering, image extraction,
+  search and metadata — and those raised by a parse with no handle behind it
+  at all.
+
+  So the same `:spec_violation` on the same file reaches the document's feed
+  after `PdfElixide.Document.text/2` and the process-wide one after
+  `PdfElixide.Document.search/2`. Read both if you need every condition a call
+  met.
 
   ## Fields
 
     * `:category` — what kind of condition, see `t:category/0`.
     * `:page` — the zero-based page index the condition was tied to, or `nil`
-      when it is not tied to one. Only `:no_text_layer` and `:image_suppressed`
-      carry an index; every other category records `nil`.
-    * `:message` — human-readable, the same text the condition produces as a
-      log record when capture is enabled (see `PdfElixide.Logging`).
+      when it is not tied to one. Only `:layout`, `:no_text_layer` and
+      `:image_suppressed` carry an index; every other category records `nil`.
+    * `:message` — human-readable. Many conditions also produce a log record
+      when capture is enabled (see `PdfElixide.Logging`), but the two are
+      worded independently and some conditions produce no log record at all,
+      so do not match one against the other.
     * `:spec_section` — the ISO 32000-1 section the condition violates, such
       as `"7.3.8.1"`, or `nil` when none applies.
 
@@ -29,36 +55,46 @@ defmodule PdfElixide.Warning do
   @typedoc """
   The kind of condition a warning records.
 
-  Recorded against the document being read, so listed by
-  `PdfElixide.Document.structured_warnings/1`:
+  See "Which feed a warning reaches" in `PdfElixide.Warning` for where each
+  one is listed; a category alone does not decide that.
+
+  Always tied to the document being read:
 
     * `:eof_premature` — an object's header or body ran into the end of the
       file. A truncated body may still be parsed; an unreadable header fails.
+    * `:encryption` — a read was attempted before the document was
+      authenticated. It records that attempt and stays recorded afterwards, so
+      a handle opened with its password carries one from the read that
+      preceded the password. It is a record of what happened, not evidence
+      that the handle is still unauthenticated. See
+      `PdfElixide.Document.authenticate/2`.
+    * `:layout` — the structure tree names content that no span on the page
+      carries, so some text may be missing from a reading-order-aware result.
     * `:no_text_layer` — a page carries no extractable text layer and looks
       like a scan, so it converts and extracts as nothing. OCR is what would
       recover its content.
     * `:image_suppressed` — an image was left out of converted output because
       its encoded size exceeds the reader's inline-image cap.
+    * `:type3_font` — a Type 3 font, whose glyphs may not map to text.
+    * `:to_unicode_missing` — a Type0 font with no `/ToUnicode` map, so its
+      text may extract as wrong or missing characters.
 
-  Recorded process-wide, so listed by `PdfElixide.Logging.structured_warnings/0`:
+  Reader-level, so tied to the document only for the three calls named under
+  "Which feed a warning reaches" and process-wide for every other:
 
     * `:spec_violation` — a `stream` keyword followed by a lone carriage
       return or by no line break, or a stream `/Length` that does not reach
       its `endstream`. The reader recovers by scanning.
     * `:operator_cap_exceeded` — a content stream was cut off at the reader's
       operator limit, so the rest of that page's content is missing.
-    * `:type3_font` — a Type 3 font, whose glyphs may not map to text.
-    * `:to_unicode_missing` — a Type0 font with no `/ToUnicode` map, so its
-      text may extract as wrong or missing characters.
     * `:glyph_dropped` — a font painted nothing for a glyph while still
       advancing the cursor, so the page renders with a gap that reads as
-      whitespace. Raised while rendering rather than while extracting, so it
-      appears only after `PdfElixide.Document.render/3`,
-      `PdfElixide.Document.rasterize/2` or
-      `PdfElixide.Document.separations/3`.
+      whitespace. Raised while rendering, so it reaches the process-wide feed:
+      `PdfElixide.Document.render/3`, `PdfElixide.Document.rasterize/2` and
+      `PdfElixide.Document.separations/3` are not conversions.
 
   Reserved by the reader and not produced by any current condition:
-  `:xref_recovery`, `:encryption`, `:font` and `:layout`.
+  `:xref_recovery` and `:font`.
 
   Finally, `:unknown` — the reader recorded a category this version of
   `PdfElixide` does not model. The `:message` still carries the condition.
