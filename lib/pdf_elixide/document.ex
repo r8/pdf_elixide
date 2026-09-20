@@ -84,28 +84,19 @@ defmodule PdfElixide.Document do
 
   ## Choosing an extractor for search and matching
 
-  `text/1` infers word breaks from where glyphs sit, and can fuse neighbouring
-  runs. In a generated report whose table cells are positioned independently, a
-  row like
+  `text/1` reads a page as it is laid out, inferring word breaks from where
+  glyphs sit, so runs separated by only a narrow gap can still be joined.
 
-      Age  0.042  0.011  0.001
+  `:extract_tables`, which defaults to `true`, controls how a recognised table
+  is laid out, not whether its values are returned. With it on, detected cells
+  are rendered as column-aligned rows; with it off, their values appear as
+  ordinary flow text. A table aligned only by whitespace is flow text either
+  way. See `t:text_opts/0` and "Tables inside a text result" in the [Text
+  extraction](guides/text-extraction.md) guide.
 
-  is joined into one token, `"Age0.0420.0110.001"`.
-
-  Whether the values survive that depends on `:extract_tables`, which defaults
-  to `true`. A table the detector **recognises** is additionally rendered from
-  its own cells, so the page text carries the values a second time, separated —
-  they stay matchable, at the cost of appearing twice. Detection on this path
-  keys on the table's ruling lines, so a table aligned only by whitespace is not
-  recognised and its values appear in the fused form alone. Turning
-  `:extract_tables` off removes the separated copy from every table, recognised
-  or not, which is why it yields strictly less (see `t:text_opts/0`).
-
-  **To find or match tokens rather than read the page, use `words/2`.** It is
-  unaffected by either of those: it clusters characters by their own advance
-  widths, so it returns `"Age"`, `"0.042"`, `"0.011"` and `"0.001"` separately
-  and exactly once, each `PdfElixide.Document.Word` carrying the `bbox` to
-  locate the hit. Prefer `search/2` when the query is known in advance.
+  **To find or match tokens rather than read the page, use `words/2`.** It
+  clusters characters by their own advance widths and returns a bounding box
+  for every word. Prefer `search/2` when the query is known in advance.
 
   `to_plain_text/2` is a third reading of the same page — prose paragraphs
   rather than the page's visual lines. The [Text
@@ -1228,14 +1219,10 @@ defmodule PdfElixide.Document do
   Options accepted by the `text` and `text!` functions.
 
     * `:extract_tables` — detect tables and render them inline as
-      space-padded, column-aligned rows. Defaults to `true`. The rendered rows
-      are emitted *in addition to* the page's own text for those regions, so a
-      recognised table's values appear twice — once fused, once separated — and
-      the padding is collapsed to single spaces before the text is returned.
-      Keep it on: that separated copy is what keeps a table's values
-      searchable — see "Choosing an extractor for search and
-      matching" in `PdfElixide.Document`, which also covers when to reach for
-      `words/2` instead.
+      space-padded, column-aligned rows, the padding collapsed to single
+      spaces. Defaults to `true`; with it off, a recognised table's values
+      come back as ordinary flow text. See "Tables inside a text result" in
+      the [Text extraction](guides/text-extraction.md) guide.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
       Unlike in `t:markdown_opts/0`, it is live here.
@@ -2365,7 +2352,8 @@ defmodule PdfElixide.Document do
     * `:detect_citation_markers` / `:citation_font_size_ratio` — treat
       small raised runs as citation markers.
     * `:merge_tm_tj_runs` — when `false`, every text-matrix operator starts
-      a fresh span.
+      a fresh span. When `true`, one that stays on the same line and moves
+      forward by less than a column gap continues the open span instead.
 
   Every key except `:preset` defaults to `nil`, meaning "keep the preset's
   value".

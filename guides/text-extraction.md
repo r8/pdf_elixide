@@ -188,13 +188,11 @@ With `:extract_tables` on — the default for both — a recognised table is
 rendered from its detected cells. Both assemblers try to suppress flowing spans
 that those cells already represent, so ordinary cell text appears once.
 
-Duplication can still occur when a flowing span cannot be matched back to a
-cell. A common example is a generated table whose independently positioned
-cells were fused into one wide span: the result then contains the separated
-cell rendering as well as the fused span. Trustworthy tagged extraction avoids
-adding a second table rendering. The "Choosing an extractor for search and
-matching" section of `PdfElixide.Document` explains this failure mode and when
-to use `words/2` instead.
+Some PDFs can still repeat cell text when their page text cannot be associated
+reliably with the detected cells. Trustworthy tagged extraction avoids adding a
+second table rendering. For matching rather than reading, prefer `words/2`, or
+`search/2` when the query is known in advance. The "Choosing an extractor for
+search and matching" section of `PdfElixide.Document` compares these surfaces.
 
 When the separate cell rendering is emitted, `to_plain_text/2` keeps its column
 padding while `text/2` collapses the padding to single spaces.

@@ -226,7 +226,8 @@ defmodule PdfElixide.UpstreamDriftTest do
     test "the text path still forces text_fallback off", %{doc: doc} do
       assert length(Document.tables!(doc, @ruleless)) == 1
 
-      assert Document.text!(doc, @ruleless) =~ "RegionUnitsTotal"
+      assert Document.text!(doc, @ruleless) =~ "Region Units Total"
+      refute Document.text!(doc, @ruleless) =~ "RegionUnitsTotal"
 
       assert Document.text!(doc, @ruleless, table_detection: [text_fallback: true]) ==
                Document.text!(doc, @ruleless)
@@ -271,30 +272,30 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  describe "absolutely-positioned cells fuse into one token" do
+  describe "absolutely-positioned cells stay separate" do
     setup do: %{doc: open(@table_pdf)}
 
-    # `table.pdf` draws three horizontal rules, so its table *is* recognised —
-    # which is the only reason the two `:extract_tables` cases below differ.
-
-    test "text/1 joins a row's cells with no separator", %{doc: doc} do
-      assert Document.text!(doc, 0) =~ "Age0.0420.0110.001"
-    end
-
-    test "without table rendering the fused form is the only one", %{doc: doc} do
-      text = Document.text!(doc, 0, extract_tables: false)
-
-      assert text =~ "Age0.0420.0110.001"
-      # Absent, not merely joined differently — that is what "unreachable" means.
-      refute text =~ ~r/\b0\.042\b/
-    end
-
-    test "table rendering adds a separated copy without removing the fused one",
-         %{doc: doc} do
+    test "text/1 separates a row's cells", %{doc: doc} do
       text = Document.text!(doc, 0)
 
       assert text =~ ~r/\b0\.042\b/
-      assert text =~ "Age0.0420.0110.001"
+      refute text =~ "Age0.0420.0110.001"
+    end
+
+    test "table rendering returns every cell exactly once", %{doc: doc} do
+      # Without this precondition the two renderings coincide and the
+      # assertions below pass vacuously.
+      assert [_] = Document.tables!(doc, 0)
+
+      with_tables = Document.text!(doc, 0)
+      without = Document.text!(doc, 0, extract_tables: false)
+
+      for cell <- ["Age", "0.042", "0.011", "0.001"] do
+        assert with_tables =~ ~r/\b#{Regex.escape(cell)}\b/
+        assert without =~ ~r/\b#{Regex.escape(cell)}\b/
+      end
+
+      assert length(Regex.scan(~r/\b0\.042\b/, with_tables)) == 1
     end
 
     test "a cell span is one word's box with the rotation dropped", %{doc: doc} do
@@ -323,10 +324,9 @@ defmodule PdfElixide.UpstreamDriftTest do
       end
     end
 
-    test "the fusion is upstream of assembly, and its own flag still undoes it", %{doc: doc} do
-      assert "Age0.0420.0110.001" in texts(Document.spans!(doc, 0))
-
-      assert "Age" in texts(Document.spans!(doc, 0, span_merging: [merge_tm_tj_runs: false]))
+    test "span extraction keeps positioned cells separate", %{doc: doc} do
+      assert "Age" in texts(Document.spans!(doc, 0))
+      refute "Age0.0420.0110.001" in texts(Document.spans!(doc, 0))
     end
   end
 

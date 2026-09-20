@@ -53,15 +53,14 @@ defmodule PdfElixide.ExtractionOptionsTest do
     end
 
     test ":region filters whole spans, not individual glyphs", %{doc: doc} do
-      # Upstream applies the region to the span list before assembling text, so
-      # a region covering part of a span keeps all of it. Here the whole first
-      # row is one span even though it is three text-matrix runs.
-      [first | _] = Document.text_lines!(doc, @ruleless)
+      # `text` filters spans; `chars` filters glyphs within the same half-span.
+      [first | _] = Document.spans!(doc, @ruleless)
+      %Rect{x: x, y: y, width: w, height: h} = first.bbox
+      half = %Rect{x: x, y: y, width: w / 2, height: h}
 
-      assert Document.text!(doc, @ruleless, region: first.bbox) == "RegionUnitsTotal"
+      assert Document.text!(doc, @ruleless, region: half) == "Region"
 
-      assert Enum.map_join(Document.chars!(doc, @ruleless, region: first.bbox), & &1.text) ==
-               "Region"
+      assert Enum.map_join(Document.chars!(doc, @ruleless, region: half), & &1.text) == "Reg"
     end
 
     test ":exclude_regions drops the text overlapping them", %{doc: doc} do
