@@ -465,8 +465,7 @@ impl OpenEditor {
         self.info.as_ref()
     }
 
-    // Seed from `read_metadata`, never upstream's `get_info`: that decodes
-    // `/Info` lossily and would mangle every field the caller did not touch.
+    // Never `get_info`: `editor.rs`'s `upstream_still_*_info_*` canaries say why.
     pub(crate) fn seeded_info(&self) -> MetadataNif {
         self.info
             .clone()

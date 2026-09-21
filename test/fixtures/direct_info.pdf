@@ -1,0 +1,24 @@
+%PDF-1.7
+%‚„œ”
+% direct_info.pdf - the trailer's /Info is a direct dictionary, not a
+% reference. Non-conforming (ISO 32000-1 Table 15) and deliberately so.
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>
+endobj
+xref
+0 4
+0000000000 65535 f 
+0000000157 00000 n 
+0000000206 00000 n 
+0000000263 00000 n 
+trailer
+<< /Size 4 /Root 1 0 R /Info << /Title (Direct) /Author (Ada) >> >>
+startxref
+351
+%%EOF

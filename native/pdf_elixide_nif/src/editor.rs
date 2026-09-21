@@ -1240,20 +1240,70 @@ mod tests {
         assert_eq!(bytes, "Título".as_bytes());
     }
 
-    // Justifies seeding from `read_metadata` rather than upstream's `get_info`.
+    // The three below justify `read_metadata` over `get_info`. Unusually, no
+    // single red deletes it: `editor_info` is a shared read and `get_info`
+    // takes `&mut self`.
     #[test]
-    fn upstream_still_decodes_info_lossily() {
+    fn upstream_still_ignores_a_direct_info_dictionary() {
+        let mut editor = DocumentEditor::open(fixture("direct_info.pdf")).expect("fixture opens");
+        let ours = read_metadata(editor.source());
+        let theirs = editor.get_info().expect("info");
+
+        assert_eq!(ours.title.as_deref(), Some("Direct"));
+        assert_eq!(ours.author.as_deref(), Some("Ada"));
+        assert_eq!(
+            (theirs.title.as_deref(), theirs.author.as_deref()),
+            (None, None),
+            "upstream now reads an /Info dictionary written directly in the trailer"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_an_indirect_info_field() {
+        let mut editor =
+            DocumentEditor::open(fixture("sanitize_indirect_info.pdf")).expect("fixture opens");
+        let ours = read_metadata(editor.source());
+        let theirs = editor.get_info().expect("info");
+
+        // Non-vacuity: the direct sibling proves the dictionary was read.
+        assert_eq!(ours.author.as_deref(), Some("Ada"));
+        assert_eq!(theirs.author.as_deref(), Some("Ada"));
+
+        assert_eq!(ours.title.as_deref(), Some("INDIRECT SECRET"));
+        assert_eq!(
+            theirs.title.as_deref(),
+            None,
+            "upstream now resolves an indirect /Info field value"
+        );
+    }
+
+    #[test]
+    fn upstream_still_reads_info_values_unnormalized() {
         let mut editor =
             DocumentEditor::open(fixture("metadata_encodings.pdf")).expect("fixture opens");
+        let ours = read_metadata(editor.source());
+        let theirs = editor.get_info().expect("info");
 
+        // Control: both readers decode UTF-16BE identically.
+        assert_eq!(ours.title.as_deref(), Some("Título 🙂"));
         assert_eq!(
-            read_metadata(editor.source()).title.as_deref(),
-            Some("Título 🙂")
-        );
-        assert_ne!(
-            editor.get_info().expect("info").title.as_deref(),
+            theirs.title.as_deref(),
             Some("Título 🙂"),
-            "upstream now decodes a UTF-16BE /Title"
+            "upstream stopped decoding /Info text strings again"
+        );
+
+        assert_eq!(ours.producer.as_deref(), Some("pdf_elixide ✓"));
+        assert_eq!(
+            theirs.producer.as_deref(),
+            Some("\u{FEFF}pdf_elixide ✓"),
+            "upstream now strips PDF 2.0's UTF-8 BOM from /Info"
+        );
+
+        assert_eq!(ours.mod_date, None);
+        assert_eq!(
+            theirs.mod_date.as_deref(),
+            Some("   "),
+            "upstream now normalizes a whitespace-only /Info value"
         );
     }
 
