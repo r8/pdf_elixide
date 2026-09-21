@@ -79,9 +79,10 @@ defmodule PdfElixide.Editor do
 
   ## Encryption
 
-  `save/3` and `to_binary/2` accept `:encryption`. Existing encrypted documents
-  cannot be edited. See the [Encryption](guides/encryption.md) guide for the
-  workflow, supported algorithms, and limitations of a successful write.
+  `save/3` and `to_binary/2` accept `:encryption`; `open/2` and `from_binary/2`
+  accept the password of an already-encrypted source. See the
+  [Encryption](guides/encryption.md) guide for the workflow, supported
+  algorithms and operations refused on an encrypted source.
 
   ## Concurrency
 
@@ -116,7 +117,7 @@ defmodule PdfElixide.Editor do
   editor, and is served from the struct thereafter: it is the version of the
   document the editor was opened from, and no editing operation changes it.
 
-  `:source_path` is `nil` for an editor built with `from_binary/1`.
+  `:source_path` is `nil` for an editor built with `from_binary/2`.
   """
   @type t :: %__MODULE__{
           ref: reference(),
@@ -124,19 +125,46 @@ defmodule PdfElixide.Editor do
           source_path: Path.t() | nil
         }
 
+  @typedoc """
+  Options accepted by `open/2`, `open!/2`, `from_binary/2`, and `from_binary!/2`.
+
+    * `:password` — password used to authenticate against an encrypted PDF.
+      When the password is wrong, the call returns
+      `{:error, %PdfElixide.Error{reason: :wrong_password}}` (or raises, for the
+      bang variants). When omitted or `nil`, only the empty password is tried
+      automatically, and an encrypted document that it does not open returns
+      `{:error, %PdfElixide.Error{reason: :encrypted}}`, since the editor cannot
+      write one it cannot read.
+
+  The password is a *byte string*, not necessarily valid UTF-8, and takes
+  exactly the values `PdfElixide.Document.open/2`'s `:password` does — see
+  `t:PdfElixide.Document.open_opts/0`. It authenticates the document this editor
+  reads from; it is unrelated to the `:user_password` of `t:encryption_opts/0`,
+  which encrypts the *output* and is a `t:String.t/0`.
+
+  An unknown key, or a `:password` that is neither a binary nor `nil`, raises
+  `ArgumentError` — see the "Errors versus exceptions" section of
+  `PdfElixide.Error`.
+  """
+  @type open_opts :: [password: binary() | nil]
+
+  @open_opts_keys [:password]
+
   @doc """
   Opens a PDF document for editing from the specified file path.
 
-  An encrypted document is refused with
-  `{:error, %PdfElixide.Error{reason: :encrypted}}`. Read one with
-  `PdfElixide.Document.open/2`, which takes a password.
+  An encrypted document needs its password, as `t:open_opts/0` describes;
+  without one the call returns
+  `{:error, %PdfElixide.Error{reason: :encrypted}}`.
 
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
   """
-  @spec open(Path.t()) :: {:ok, t()} | {:error, Error.t()}
-  def open(path) when is_binary(path) do
-    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_open(path) end) do
+  @spec open(Path.t(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
+  def open(path, opts \\ []) when is_binary(path) and is_list(opts) do
+    options = build_open_options(opts)
+
+    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_open(path, options) end) do
       {:ok, %__MODULE__{ref: ref, version: version, source_path: path}}
     end
   end
@@ -145,29 +173,32 @@ defmodule PdfElixide.Editor do
   Opens a PDF document for editing from the specified file path,
   raising an error if it fails.
 
-  Raises for an encrypted document; `open/1` describes why.
+  Raises for an encrypted document opened without its password; `open/2`
+  describes why.
 
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
   """
-  @spec open!(Path.t()) :: t()
-  def open!(path) when is_binary(path) do
-    open(path) |> Wrap.unwrap!()
+  @spec open!(Path.t(), open_opts()) :: t()
+  def open!(path, opts \\ []) when is_binary(path) and is_list(opts) do
+    open(path, opts) |> Wrap.unwrap!()
   end
 
   @doc """
   Opens a PDF document for editing from the given binary data.
 
   Takes bytes you already have — an HTTP response body, a database blob — so no
-  path is involved; use `open/1` to read a file.
+  path is involved; use `open/2` to read a file.
 
-  Encrypted bytes are refused, as in `open/1`.
+  Encrypted bytes need a password, as in `open/2`.
 
   Incremental saves are unsupported; see [Saving edits](guides/editing.md#saving-edits).
   """
-  @spec from_binary(binary()) :: {:ok, t()} | {:error, Error.t()}
-  def from_binary(bytes) when is_binary(bytes) do
-    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_from_bytes(bytes) end) do
+  @spec from_binary(binary(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
+  def from_binary(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
+    options = build_open_options(opts)
+
+    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_from_bytes(bytes, options) end) do
       {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
     end
   end
@@ -177,15 +208,15 @@ defmodule PdfElixide.Editor do
   raising an error if it fails.
 
   Takes bytes you already have — an HTTP response body, a database blob — so no
-  path is involved; use `open!/1` to read a file.
+  path is involved; use `open!/2` to read a file.
 
-  Raises for encrypted bytes, as in `open/1`.
+  Raises for encrypted bytes opened without their password, as in `open/2`.
 
-  Incremental saves are unsupported, as in `from_binary/1`.
+  Incremental saves are unsupported, as in `from_binary/2`.
   """
-  @spec from_binary!(binary()) :: t()
-  def from_binary!(bytes) when is_binary(bytes) do
-    from_binary(bytes) |> Wrap.unwrap!()
+  @spec from_binary!(binary(), open_opts()) :: t()
+  def from_binary!(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
+    from_binary(bytes, opts) |> Wrap.unwrap!()
   end
 
   @doc """
@@ -407,7 +438,7 @@ defmodule PdfElixide.Editor do
 
   A full rewrite is the default. `incremental: true` returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` without writing if the editor
-  came from `from_binary/1` or holds unsupported changes. See
+  came from `from_binary/2` or holds unsupported changes. See
   [Saving edits](guides/editing.md#saving-edits) for supported changes and recovery.
 
   Writing does not consume the editor: you can keep editing and write again.
@@ -416,6 +447,9 @@ defmodule PdfElixide.Editor do
   with `incremental: true`, and a successful return does not by itself prove
   every object was encrypted — see
   [A failed encryption is not reported](guides/encryption.md#a-failed-encryption-is-not-reported).
+
+  A source that stores its XMP metadata unencrypted is refused; see
+  [What an encrypted source cannot do](guides/encryption.md#what-an-encrypted-source-cannot-do).
 
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
@@ -462,6 +496,8 @@ defmodule PdfElixide.Editor do
   That includes `:encryption`, which encrypts the returned binary exactly as it
   encrypts a file — including the caveat in
   [A failed encryption is not reported](guides/encryption.md#a-failed-encryption-is-not-reported).
+
+  A source that stores its XMP metadata unencrypted is refused, as in `save/3`.
 
   The whole document is serialised in native memory before being copied
   into the returned binary, so peak usage is roughly twice the output
@@ -954,8 +990,10 @@ defmodule PdfElixide.Editor do
   `0.0..1.0`. Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the
   page does not exist, and `{:error, %PdfElixide.Error{reason: :unsupported}}`,
   queuing nothing, if the page stores its content in an indirect object that is
-  not itself a content stream. Unlike `mark_redactions/2`, this restriction
-  applies even when the page has no redaction annotations.
+  not itself a content stream, or if the editor was opened from an encrypted
+  document. Unlike `mark_redactions/2`, both restrictions apply even when the
+  page has no redaction annotations. See
+  [What an encrypted source cannot do](guides/encryption.md#what-an-encrypted-source-cannot-do).
   """
   @spec add_redaction(t(), non_neg_integer(), Rect.t(), RGB.t() | nil) ::
           {:ok, t()} | {:error, Error.t()}
@@ -989,6 +1027,10 @@ defmodule PdfElixide.Editor do
   saving is not required to apply it. Queue every region first: only one pass
   is allowed per editor. A second call returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` without changes.
+
+  **Refused on an encrypted source**; nothing is changed and the editor stays
+  usable. See
+  [What an encrypted source cannot do](guides/encryption.md#what-an-encrypted-source-cannot-do).
 
   **Only glyphs drawn by the page itself are removed.** Covered images, vector
   graphics, form XObject text and `/ActualText` remain recoverable. Redact the
@@ -1610,6 +1652,9 @@ defmodule PdfElixide.Editor do
   or reported. If the page produces no appearances, the write creates no flatten
   data for it and draws or removes nothing.
 
+  **Refused on an encrypted source**; see
+  [What an encrypted source cannot do](guides/encryption.md#what-an-encrypted-source-cannot-do).
+
   Do not flatten annotations on a page whose form fields you also flatten with
   `PdfElixide.Form.flatten/1,2`: where appearances are produced, the two marks
   are applied independently and fields can be drawn twice.
@@ -1637,7 +1682,8 @@ defmodule PdfElixide.Editor do
   Marks the annotations of the page at the given zero-based index for flattening.
 
   Deferred until the next full write, with the same all-or-nothing page behavior
-  around appearance production as `flatten_annotations/1`.
+  around appearance production as `flatten_annotations/1`, and refused on an
+  encrypted source for the same reason.
 
   Returns the editor, or `{:error, %PdfElixide.Error{reason: :out_of_range}}` if
   the page does not exist. See the "Flattening" section of the
@@ -1667,10 +1713,10 @@ defmodule PdfElixide.Editor do
 
   Flattening is deferred, so warnings cannot appear before a full write processes
   a flatten mark. Each entry describes a problem encountered while flattening —
-  most importantly a newly set non-Latin or emoji field value the shipped
-  appearance path cannot render faithfully, which is written with wrong glyphs
-  or none while the PDF stays otherwise valid. The warning is the only signal
-  that happened.
+  most importantly a newly set non-Latin or emoji field value that this library
+  cannot draw into an appearance, which is written with wrong glyphs or none
+  while the PDF stays otherwise valid. The warning is the only signal that
+  happened.
 
   Warnings accumulate for the life of the editor and are never cleared, so a
   second write reports the first one's entries again. Read the list after the
@@ -1776,7 +1822,13 @@ defmodule PdfElixide.Editor do
 
   defp validate_encryption_target!(_incremental, _encryption), do: :ok
 
-  # Pass malformed values to the NIF so its decode error names the option.
+  # Value types are decoded by the NIF so errors name the option.
+  defp build_open_options(opts) do
+    opts = Keyword.validate!(opts, @open_opts_keys)
+
+    %{password: Keyword.get(opts, :password)}
+  end
+
   defp build_encryption_option(nil), do: nil
 
   defp build_encryption_option(opts) when is_list(opts) do
@@ -1796,7 +1848,8 @@ defmodule PdfElixide.Editor do
     case Keyword.get(opts, :algorithm, :aes128) do
       :aes256 ->
         raise ArgumentError,
-              "invalid :algorithm :aes256 — no reader could decrypt the output, " <>
+              "invalid :algorithm :aes256 — the output omits /Perms, which " <>
+                "some readers require before they will open an AES-256 file, " <>
                 "expected one of #{inspect(@algorithms)}"
 
       :rc4_40 ->
@@ -1883,7 +1936,8 @@ defmodule PdfElixide.Editor do
 
   @doc false
   @spec __option_defaults__(
-          :save
+          :open
+          | :save
           | :embed
           | :encryption
           | :permissions
@@ -1891,6 +1945,7 @@ defmodule PdfElixide.Editor do
           | :redaction
           | :sanitize
         ) :: map()
+  def __option_defaults__(:open), do: build_open_options([])
   def __option_defaults__(:save), do: build_save_options([])
   def __option_defaults__(:embed), do: build_embed_options([])
   def __option_defaults__(:crop_margins), do: build_crop_margins([])

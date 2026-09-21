@@ -49,10 +49,9 @@ defmodule PdfElixide.Document.Table do
 
   All three go through `:ref`, a handle to the detected table held on the Rust
   side, so they work only on a table that came from extraction — not on a
-  hand-built struct — and stop working once `close/1` releases it. A `%Table{}`
-  therefore holds the same table twice: the decoded `:rows` you read here, and
-  behind `:ref` the version carrying the glyph metrics the renderers need. Both
-  live until `close/1` or garbage collection, so on a table-dense page — and
+  hand-built struct — and stop working once `close/1` releases it. That handle
+  carries more than the decoded `:rows` you read here, and it lives until
+  `close/1` or garbage collection, so on a table-dense page — and
   more so with `PdfElixide.Document.tables/1` — close the tables you are done
   rendering.
 

@@ -109,8 +109,8 @@ defmodule PdfElixide.Native do
   def document_embedded_files(_doc), do: err()
   def document_structured_warnings(_doc), do: err()
 
-  def editor_open(_path), do: err()
-  def editor_from_bytes(_bytes), do: err()
+  def editor_open(_path, _options), do: err()
+  def editor_from_bytes(_bytes, _options), do: err()
   def editor_close(_editor), do: err()
   def editor_closed(_editor), do: err()
   def editor_page_count(_editor), do: err()

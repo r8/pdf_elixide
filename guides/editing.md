@@ -48,10 +48,14 @@ without `/Redact` annotations both prevent incremental saving.
 appended to the *original* file whatever was written since, so the pending change
 would still be missing from it.
 
-**An editor built with `PdfElixide.Editor.from_binary/1` cannot save incrementally.**
+**An editor built with `PdfElixide.Editor.from_binary/2` cannot save incrementally.**
 It has no source file to copy, so `incremental: true` returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` even with no edits or only field
-values. Use `PdfElixide.Editor.open/1` for incremental saving, or write a full rewrite.
+values. Use `PdfElixide.Editor.open/2` for incremental saving, or write a full rewrite.
+
+**An encrypted source cannot be saved incrementally.** The call returns
+`{:error, %PdfElixide.Error{reason: :unsupported}}`; see
+[Incremental saves](encryption.md#incremental-saves).
 
 **Destructive redaction requires a full rewrite.** Once
 `PdfElixide.Editor.apply_redactions/1` or `PdfElixide.Editor.sanitize/1` has run,
@@ -212,8 +216,7 @@ graphics where they were. The [Redaction](redaction.md) guide covers what each
 one does and does not take.
 
 **An erase on a page that `PdfElixide.Editor.apply_redactions/1,2` then rewrites
-is silently dropped** — the destructive pass replaces the page's content instead
-of appending to it, so the whiteout never reaches the output and whatever it
+is silently dropped** — the whiteout never reaches the output and whatever it
 covered stays visible. Erase in a separate editor, after the redactions have
 been written; see
 [It discards other pending overlays on the page](redaction.md#it-discards-other-pending-overlays-on-the-page).

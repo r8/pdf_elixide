@@ -49,7 +49,7 @@ pub struct OpenOptionsNif<'a> {
 
 impl OpenOptionsNif<'_> {
     // A rejected password is `Ok(false)`, so synthesize the reason atom here.
-    fn apply(self, doc: &PdfDocument) -> NifResult<()> {
+    pub(crate) fn apply(self, doc: &PdfDocument) -> NifResult<()> {
         if let Some(pw) = self.password {
             let ok = doc.authenticate(pw.as_slice()).map_err(to_nif_err)?;
             if !ok {

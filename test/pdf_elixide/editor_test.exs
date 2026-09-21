@@ -37,6 +37,20 @@ defmodule PdfElixide.EditorTest do
   @redact_qq_text_state_pdf Path.join(@fixtures, "redact_qq_text_state.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
+  # Its page count is unreadable until the password is applied.
+  @encrypted_objstm_pdf Path.join(@fixtures, "encrypted_objstm.pdf")
+  # Encrypted, but with its XMP left unencrypted — the one shape a rewrite
+  # cannot carry. Its `dc:title` is "Test Title".
+  @encrypted_cleartext_metadata_pdf Path.join(@fixtures, "encrypted_cleartext_metadata.pdf")
+  # The same shape, with the flag written as a reference rather than inline.
+  @encrypted_indirect_metadata_flag_pdf Path.join(
+                                          @fixtures,
+                                          "encrypted_indirect_metadata_flag.pdf"
+                                        )
+  # The one encrypted fixture carrying a form field and appearance streams.
+  @encrypted_flatten_pdf Path.join(@fixtures, "encrypted_flatten.pdf")
+  # AES-128 revision 4, and a user password with no UTF-8 spelling.
+  @encrypted_latin1_pdf Path.join(@fixtures, "encrypted_latin1.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
   @crop_box_pdf Path.join(@fixtures, "crop_box.pdf")
 
@@ -51,13 +65,11 @@ defmodule PdfElixide.EditorTest do
       assert {:error, %Error{reason: :invalid_pdf}} = Editor.open(@invalid_pdf)
     end
 
-    # Saving one writes still-encrypted stream bytes under a `/Filter` dict and
-    # reports success, so the refusal is what keeps the corruption unreachable.
-    test "refuses an encrypted document rather than editing it into corruption" do
+    test "an encrypted document without its password names the option" do
       assert {:error, %Error{reason: :encrypted, message: message}} =
                Editor.open(@encrypted_pdf)
 
-      assert message =~ "PdfElixide.Document"
+      assert message =~ ":password"
     end
   end
 
@@ -70,7 +82,7 @@ defmodule PdfElixide.EditorTest do
       assert_raise Error, fn -> Editor.open!(@invalid_pdf) end
     end
 
-    test "raises for an encrypted document" do
+    test "raises for an encrypted document opened without its password" do
       assert_raise Error, ~r/encrypted/, fn -> Editor.open!(@encrypted_pdf) end
     end
   end
@@ -90,7 +102,7 @@ defmodule PdfElixide.EditorTest do
       assert {:error, %Error{reason: :invalid_pdf}} = Editor.from_binary(<<>>)
     end
 
-    test "refuses encrypted bytes" do
+    test "refuses encrypted bytes without a password" do
       assert {:error, %Error{reason: :encrypted}} =
                Editor.from_binary(File.read!(@encrypted_pdf))
     end
@@ -553,6 +565,205 @@ defmodule PdfElixide.EditorTest do
       assert_raise ArgumentError, ~r/:encryption/, fn ->
         Editor.to_binary(editor, encryption: [permissions: [copy: "yes"]])
       end
+    end
+  end
+
+  describe ":password on the editor" do
+    setup do
+      path =
+        Path.join(System.tmp_dir!(), "pdf_elixide_src_#{System.unique_integer([:positive])}.pdf")
+
+      on_exit(fn -> File.rm(path) end)
+      {:ok, out_path: path}
+    end
+
+    for {name, fixture, password} <- [
+          {:readable_count, @encrypted_pdf, "secret"},
+          {:object_streams, @encrypted_objstm_pdf, "secret"},
+          {:aes128_latin1, @encrypted_latin1_pdf, "caf" <> <<0xE9>>}
+        ] do
+      @fixture fixture
+      @password password
+
+      test "#{name}: the password opens the source and its content survives a rewrite" do
+        editor = Editor.open!(@fixture, password: @password)
+        bytes = Editor.to_binary!(editor)
+        doc = Document.from_binary!(bytes)
+
+        refute Document.encrypted?(doc)
+
+        assert Enum.map(0..2, &String.trim(Document.text!(doc, &1))) ==
+                 ["Page One", "Page Two", "Page Three"]
+      end
+
+      test "#{name}: a wrong password is refused" do
+        assert {:error, %Error{reason: :wrong_password}} =
+                 Editor.open(@fixture, password: "wrong")
+      end
+
+      test "#{name}: from_binary/2 takes the password too" do
+        editor = Editor.from_binary!(File.read!(@fixture), password: @password)
+
+        assert String.trim(Document.text!(Document.from_binary!(Editor.to_binary!(editor)), 0)) ==
+                 "Page One"
+      end
+
+      test "#{name}: re-keying carries the content to the new password", %{out_path: out_path} do
+        @fixture
+        |> Editor.open!(password: @password)
+        |> Editor.save!(out_path, encryption: [user_password: "second"])
+
+        assert {:error, %Error{reason: :wrong_password}} =
+                 Document.open(out_path, password: @password)
+
+        doc = Document.open!(out_path, password: "second")
+        assert String.trim(Document.text!(doc, 0)) == "Page One"
+      end
+
+      test "#{name}: an incremental save is refused however the editor was built",
+           %{out_path: out_path} do
+        for editor <- [
+              Editor.open!(@fixture, password: @password),
+              Editor.from_binary!(File.read!(@fixture), password: @password)
+            ] do
+          assert {:error, %Error{reason: :unsupported, message: message}} =
+                   Editor.save(editor, out_path, incremental: true)
+
+          assert message =~ "encrypted"
+          refute File.exists?(out_path)
+        end
+      end
+
+      test "#{name}: a pending edit does not change which reason the refusal gives",
+           %{out_path: out_path} do
+        editor = Editor.open!(@fixture, password: @password)
+        assert {:ok, ^editor} = Editor.delete_page(editor, 0)
+
+        assert {:error, %Error{reason: :unsupported, message: message}} =
+                 Editor.save(editor, out_path, incremental: true)
+
+        assert message =~ "encrypted"
+        refute message =~ "page deletions"
+      end
+
+      test "#{name}: the operations that read a source stream are refused" do
+        editor = Editor.open!(@fixture, password: @password)
+
+        rect = %Rect{x: 65.0, y: 690.0, width: 185.0, height: 35.0}
+
+        for call <- [
+              fn -> Editor.add_redaction(editor, 0, rect) end,
+              fn -> Editor.apply_redactions(editor) end,
+              fn -> Editor.flatten_annotations(editor) end,
+              fn -> Editor.flatten_annotations(editor, 0) end,
+              fn -> Form.flatten(editor) end,
+              fn -> Form.flatten(editor, 0) end
+            ] do
+          assert {:error, %Error{reason: :unsupported, message: message}} = call.()
+          assert message =~ "encrypted"
+        end
+      end
+
+      test "#{name}: a refused pass leaves the editor usable" do
+        editor = Editor.open!(@fixture, password: @password)
+
+        assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
+
+        doc = editor |> Editor.to_binary!() |> Document.from_binary!()
+        assert String.trim(Document.text!(doc, 0)) == "Page One"
+      end
+
+      test "#{name}: marking, metadata and page structure still work" do
+        editor = Editor.open!(@fixture, password: @password)
+
+        assert {:ok, ^editor} = Editor.mark_redactions(editor)
+        assert {:ok, ^editor} = Editor.set_title(editor, "Still Editable")
+        assert {:ok, ^editor} = Editor.rotate_page_by(editor, 0, 90)
+        assert Editor.metadata!(editor).title == "Still Editable"
+
+        doc = editor |> Editor.to_binary!() |> Document.from_binary!()
+        assert Document.metadata!(doc).title == "Still Editable"
+      end
+    end
+
+    test "an edit made through the password reaches the output", %{out_path: out_path} do
+      @encrypted_pdf
+      |> Editor.open!(password: "secret")
+      |> Editor.set_title!("Decrypted Title")
+      |> Editor.save!(out_path)
+
+      doc = Document.open!(out_path)
+      assert Document.metadata!(doc).title == "Decrypted Title"
+      assert String.trim(Document.text!(doc, 0)) == "Page One"
+    end
+
+    test "an unencrypted path-opened editor still saves incrementally", %{out_path: out_path} do
+      plain = Editor.open!(@valid_pdf)
+
+      assert Editor.source_path(plain) == @valid_pdf
+      assert {:ok, ^plain} = Editor.save(plain, out_path, incremental: true)
+    end
+
+    test "a rewrite that would drop unencrypted metadata is refused", %{out_path: out_path} do
+      editor = Editor.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+
+      doc = Document.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+      assert {:ok, %{title: "Test Title"}} = Document.xmp_metadata(doc)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} = Editor.to_binary(editor)
+      assert message =~ "metadata"
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.save(editor, out_path)
+      refute File.exists?(out_path)
+    end
+
+    test "the refusal survives an indirect /EncryptMetadata" do
+      editor = Editor.open!(@encrypted_indirect_metadata_flag_pdf, password: "secret")
+
+      assert {:error, %Error{reason: :unsupported, message: message}} = Editor.to_binary(editor)
+      assert message =~ "metadata"
+    end
+
+    test "scrubbing the metadata first lets the rewrite through" do
+      editor = Editor.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+
+      assert {:ok, %PdfElixide.SanitizeReport{}} = Editor.sanitize(editor, scrub_metadata: true)
+
+      doc = editor |> Editor.to_binary!() |> Document.from_binary!()
+      assert {:ok, nil} = Document.xmp_metadata(doc)
+      assert Document.page_count!(doc) == 3
+    end
+
+    test "an encrypted document whose metadata is encrypted too still rewrites" do
+      editor = Editor.open!(@encrypted_pdf, password: "secret")
+
+      assert {:ok, bytes} = Editor.to_binary(editor)
+      refute Document.encrypted?(Document.from_binary!(bytes))
+    end
+
+    test "a string written before the document was encrypted reads back decrypted" do
+      editor = Editor.open!(@encrypted_flatten_pdf, password: "secret")
+
+      assert Form.value!(editor, "full_name") == "John Doe"
+      assert [%Form.Field.Text{name: "full_name"}] = Form.fields!(editor)
+    end
+
+    test "an unknown option raises, naming the key" do
+      assert_raise ArgumentError, ~r/:passwrod/, fn ->
+        Editor.open(@valid_pdf, passwrod: "secret")
+      end
+    end
+
+    test "password: nil is a no-op on an unencrypted document" do
+      assert {:ok, %Editor{}} = Editor.open(@valid_pdf, password: nil)
+    end
+
+    test "a password on an unencrypted document is inert" do
+      editor = Editor.open!(@valid_pdf, password: "ignored")
+
+      assert Editor.source_path(editor) == @valid_pdf
+      assert Editor.page_count!(editor) == 3
     end
   end
 

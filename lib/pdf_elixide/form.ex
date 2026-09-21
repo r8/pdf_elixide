@@ -333,6 +333,9 @@ defmodule PdfElixide.Form do
   A document carrying no form is not an error. The mark cannot be removed —
   reopen the source for an unflattened document.
 
+  **Refused on an encrypted source**; filling is unaffected. See
+  [What an encrypted source cannot do](guides/encryption.md#what-an-encrypted-source-cannot-do).
+
   Returns the editor. Check `PdfElixide.Editor.flatten_warnings/1` after the
   write: a field value can be flattened wrongly and still produce a valid PDF.
   See the "Flattening" section of the [Forms](guides/forms.md) guide.
@@ -356,7 +359,8 @@ defmodule PdfElixide.Form do
   @doc """
   Marks the form fields of the page at the given zero-based index for flattening.
 
-  Deferred until the next full write, exactly as `flatten/1` is. Unlike
+  Deferred until the next full write, exactly as `flatten/1` is, and refused on
+  an encrypted source for the same reason. Unlike
   `flatten/1` the AcroForm is kept, rebuilt to hold only the fields that still
   have a widget on a page left unflattened; a field whose widgets do not name a
   page is kept as it was. A signature field is kept or dropped by that same rule,

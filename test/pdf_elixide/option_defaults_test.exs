@@ -46,6 +46,10 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.__option_defaults__(:open) == %{password: nil}
     end
 
+    test "Editor.open/2 and from_binary/2" do
+      assert Editor.__option_defaults__(:open) == %{password: nil}
+    end
+
     test "inks/3" do
       assert Document.__option_defaults__(:inks) == %{deep: false}
     end

@@ -39,7 +39,8 @@ high-performance PDF library written in Rust. Built with
 - Set a document's title, author, subject, keywords, creator, producer and
   dates, and keep the ones it has through a rewrite
 - Attach files to a document, and list the attachments a document carries
-- Write a password-protected PDF, with the permission flags a reader reads back
+- Write a password-protected PDF, with the permission flags a reader reads back,
+  and edit, re-key or decrypt one that already carries a password
 - Read what a document's digital signatures claim — signer, time, reason, the
   byte range each covers and the field each sits in — and list the fields still
   waiting for a signature

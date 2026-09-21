@@ -295,7 +295,7 @@ defmodule PdfElixide.Signature do
 
   `pdf_bytes` must be the exact bytes of the file the signature came from —
   `File.read!/1` for a document opened from a path, or the binary given to
-  `PdfElixide.Document.from_binary/2` or `PdfElixide.Editor.from_binary/1`. The
+  `PdfElixide.Document.from_binary/2` or `PdfElixide.Editor.from_binary/2`. The
   check reads the struct and these bytes and touches no handle, so it works
   after the document is closed.
 
@@ -425,9 +425,8 @@ defmodule PdfElixide.Signature do
   `{:ok, nil}` means the signature was read and carries no timestamp attribute,
   which is the ordinary shape for `pades_level/1`'s `:b_b`. It is never the
   answer for a signature that could not be read: a document claiming a timestamp
-  it cannot produce, or a signature blob that is damaged beyond recognition, is
-  not a document without one, and reporting `nil` for either would let a broken
-  file pass as an intact one carrying nothing.
+  it cannot produce, and a signature blob too damaged to parse, are both errors
+  rather than `nil`.
 
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` when the signature has no
   `:contents`, when `:contents` is not a CMS blob, and when the timestamp

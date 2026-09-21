@@ -14,14 +14,12 @@ defmodule PdfElixide.Error do
 
   ## Reasons
 
-    * `:encrypted` — the PDF is encrypted. Reading it needs a password first;
-      `PdfElixide.Editor` refuses it outright, taking no password.
-    * `:wrong_password` — the supplied password was rejected. Comes only from
-      the `:password` option of `PdfElixide.Document.open/2`,
-      `PdfElixide.Document.open!/2`, `PdfElixide.Document.from_binary/2` and
-      `PdfElixide.Document.from_binary!/2`;
-      `PdfElixide.Document.authenticate/2` reports a wrong password as
-      `{:ok, false}` instead.
+    * `:encrypted` — the PDF needs authentication. Supply `:password` when
+      opening a document or editor, or call `PdfElixide.Document.authenticate/2`
+      on an open document.
+    * `:wrong_password` — an open function's `:password` was rejected.
+      `PdfElixide.Document.authenticate/2` reports this as `{:ok, false}`
+      instead.
     * `:invalid_pdf` — malformed or unparseable PDF data.
     * `:invalid_pattern` — the search pattern could not be parsed. Comes only
       from `PdfElixide.Document.search/2` and friends under `literal: false`.
@@ -34,12 +32,12 @@ defmodule PdfElixide.Error do
       `PdfElixide.Signature.verify_timestamp/2`.
     * `:out_of_range` — the page index is outside the document or editor.
     * `:io` — an underlying IO error.
-    * `:panic` — the native library panicked on this input, i.e. hit a bug
-      rather than a condition it reports. The handle stays usable, but a panic
-      partway through an operation can leave it holding partially updated
-      state, so close and reopen it if the error recurs.
-    * `:lock_poisoned` — the internal resource lock was poisoned. Should not
-      occur; a native panic is contained and reported as `:panic` instead.
+    * `:panic` — the native layer stopped on this input without reporting a
+      condition of its own. The handle stays usable, but a panic partway
+      through an operation can leave it holding partially updated state, so
+      close and reopen it if the error recurs.
+    * `:lock_poisoned` — the handle's internal lock could not be acquired. A
+      panic arrives as `:panic` instead, so this is not the reason to expect.
     * `:closed` — the handle was released with `PdfElixide.Document.close/1`,
       or with the counterpart on whichever handle it is.
     * `:other` — any error not covered above; `message` is preserved verbatim.
@@ -49,8 +47,8 @@ defmodule PdfElixide.Error do
   ## Errors versus exceptions
 
   This struct is reserved for PDF and runtime failures. A malformed *argument*
-  raises instead, even from a non-bang function, because that is a bug in the
-  calling code rather than a condition of the document:
+  raises instead, even from a non-bang function, because it is a fault in the
+  call rather than a condition of the document:
 
     * `FunctionClauseError` when a guard rejects it — a negative page index, an
       options argument that is not a list.

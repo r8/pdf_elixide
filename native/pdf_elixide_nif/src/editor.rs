@@ -8,12 +8,14 @@ use pdf_oxide::{
     },
     object::Object,
     writer::EmbeddedFile,
+    Error as PdfError, PdfDocument,
 };
 use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc};
 
 use crate::{
     atoms,
     binary::owned_binary,
+    document::OpenOptionsNif,
     embedded_files::{
         embedded_file, ensure_no_name_tree, pending_to_nif, read_embedded_files, EmbeddedFileNif,
         RelationshipNif,
@@ -129,31 +131,47 @@ fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
 }
 
-// Upstream's writer copies stream payloads out through `load_object` without
-// decrypting them, so a save would emit ciphertext under a `/Filter` dict, omit
-// `/Encrypt`, and report success. Nothing upstream guards it:
-// `require_authenticated` is never called from `src/editor/`.
-fn ensure_not_encrypted(editor: &DocumentEditor) -> NifResult<()> {
-    if editor.source().is_encrypted() {
-        return Err(tagged_err(
-            atoms::encrypted(),
-            "This document is encrypted. The editor cannot decrypt it, and saving it \
-             would write unreadable content streams. Read it with PdfElixide.Document, \
-             which takes a password.",
-        ));
+fn needs_password_err() -> rustler::Error {
+    tagged_err(
+        atoms::encrypted(),
+        "This document is encrypted. Supply the :password option to open it for \
+         editing.",
+    )
+}
+
+fn authenticate_source(editor: &DocumentEditor, options: OpenOptionsNif<'_>) -> NifResult<()> {
+    if !editor.source().is_encrypted() {
+        return Ok(());
+    }
+
+    options.apply(editor.source())?;
+
+    if !editor.source().is_authenticated() {
+        return Err(needs_password_err());
     }
 
     Ok(())
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
+fn editor_open(path: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedEditor> {
     let path = path_arg(path)?;
-    let editor = warnings::drained(|| {
-        let editor = DocumentEditor::open(path).map_err(to_nif_err)?;
-        ensure_not_encrypted(&editor)?;
+    let editor = warnings::drained(|| match DocumentEditor::open(&path) {
+        // Keep `source_path`; `from_document` clears it and breaks incremental saves.
+        Ok(editor) => {
+            authenticate_source(&editor, options)?;
 
-        Ok(editor)
+            Ok(editor)
+        }
+        // Preserve the authentication by handing this document to the editor.
+        Err(PdfError::EncryptedPdf) if options.password.is_some() => {
+            let doc = PdfDocument::open(&path).map_err(to_nif_err)?;
+            options.apply(&doc)?;
+
+            DocumentEditor::from_document(doc).map_err(to_nif_err)
+        }
+        Err(PdfError::EncryptedPdf) => Err(needs_password_err()),
+        Err(e) => Err(to_nif_err(e)),
     })?;
 
     let resource = ResourceArc::new(EditorResource {
@@ -165,13 +183,27 @@ fn editor_open(path: Binary) -> NifResult<OpenedEditor> {
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn editor_from_bytes(bytes: Binary) -> NifResult<OpenedEditor> {
-    let editor = warnings::drained(|| {
-        let editor = DocumentEditor::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
-        ensure_not_encrypted(&editor)?;
+fn editor_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedEditor> {
+    // The same two routes as `editor_open`, for the same reason; see there.
+    let editor =
+        warnings::drained(
+            || match DocumentEditor::from_bytes(bytes.as_slice().to_vec()) {
+                Ok(editor) => {
+                    authenticate_source(&editor, options)?;
 
-        Ok(editor)
-    })?;
+                    Ok(editor)
+                }
+                Err(PdfError::EncryptedPdf) if options.password.is_some() => {
+                    let doc =
+                        PdfDocument::from_bytes(bytes.as_slice().to_vec()).map_err(to_nif_err)?;
+                    options.apply(&doc)?;
+
+                    DocumentEditor::from_document(doc).map_err(to_nif_err)
+                }
+                Err(PdfError::EncryptedPdf) => Err(needs_password_err()),
+                Err(e) => Err(to_nif_err(e)),
+            },
+        )?;
 
     let resource = ResourceArc::new(EditorResource {
         editor: Closable::new("Editor", OpenEditor::new(editor)),
@@ -306,6 +338,7 @@ fn editor_to_bytes(
     resource.editor.with_lock(|editor| {
         // Incremental output upstream refuses on its own; this one it does not.
         ensure_scrub_survives_save(editor, &options)?;
+        ensure_metadata_survives_save(editor)?;
 
         // Incremental output is refused below before writing, so resupplying
         // for it would only move the modified flag.
@@ -336,6 +369,74 @@ fn ensure_redaction_survives_save(editor: &OpenEditor, options: &SaveOptionsNif)
     Ok(())
 }
 
+// Refuse a rewrite that would drop cleartext XMP and leave a dangling catalog entry.
+fn carries_unencryptable_metadata(editor: &OpenEditor) -> bool {
+    if !editor.source().is_encrypted() || editor.xmp_scrubbed() {
+        return false;
+    }
+
+    if !declares_cleartext_metadata(editor.source()) {
+        return false;
+    }
+
+    editor
+        .source()
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.as_dict().map(|dict| dict.contains_key("Metadata")))
+        .unwrap_or(false)
+}
+
+// An absent or unreadable `/EncryptMetadata` takes its default value, `true`.
+fn declares_cleartext_metadata(doc: &PdfDocument) -> bool {
+    let Some(trailer) = doc.trailer().as_dict() else {
+        return false;
+    };
+
+    let encrypt = match trailer.get("Encrypt") {
+        Some(Object::Reference(r)) => match doc.load_object(*r) {
+            Ok(object) => object,
+            Err(_) => return false,
+        },
+        Some(direct) => direct.clone(),
+        None => return false,
+    };
+
+    let Some(flag) = encrypt
+        .as_dict()
+        .and_then(|dict| dict.get("EncryptMetadata"))
+    else {
+        return false;
+    };
+
+    // The flag may be indirect; treating that shape as absent would lose XMP.
+    let flag = match flag {
+        Object::Reference(r) => match doc.load_object(*r) {
+            Ok(object) => object,
+            Err(_) => return false,
+        },
+        direct => direct.clone(),
+    };
+
+    matches!(flag, Object::Boolean(false))
+}
+
+fn ensure_metadata_survives_save(editor: &OpenEditor) -> NifResult<()> {
+    if !carries_unencryptable_metadata(editor) {
+        return Ok(());
+    }
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        "This editor was opened from an encrypted document that stores its XMP \
+         metadata unencrypted, which a write cannot carry: the metadata would be \
+         absent from the output and the document would still point at it. \
+         Nothing has been written. Drop the metadata deliberately with \
+         sanitize(editor, scrub_metadata: true, remove_javascript: false, \
+         remove_embedded_files: false), then write.",
+    ))
+}
+
 // GC must drop orphaned /ObjStm containers or their scrubbed values survive.
 fn ensure_scrub_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
     if !options.garbage_collect && editor.sanitized() {
@@ -352,7 +453,25 @@ fn ensure_scrub_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> 
     Ok(())
 }
 
-// Binary-sourced editors have no path for the incremental writer to copy.
+// Keep this before source and pending-edit checks so encryption owns the reason.
+fn ensure_incremental_is_not_encrypted(
+    editor: &DocumentEditor,
+    options: &SaveOptionsNif,
+) -> NifResult<()> {
+    if options.incremental && editor.source().is_encrypted() {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This editor was opened from an encrypted document, which an \
+             incremental save cannot extend: the update is appended in the clear \
+             after a verbatim copy of the original file, where a reader would try \
+             to decrypt it. Nothing has been written. Save a full rewrite instead.",
+        ));
+    }
+
+    Ok(())
+}
+
+// The encryption guard above removes the other case with an empty source path.
 fn ensure_incremental_has_a_source(
     editor: &DocumentEditor,
     options: &SaveOptionsNif,
@@ -414,6 +533,8 @@ fn editor_save(
     resource.editor.with_lock(|editor| {
         ensure_redaction_survives_save(editor, &options)?;
         ensure_scrub_survives_save(editor, &options)?;
+        ensure_metadata_survives_save(editor)?;
+        ensure_incremental_is_not_encrypted(editor, &options)?;
         ensure_incremental_has_a_source(editor, &options)?;
         // Report destructive edits and a missing source before omitted changes.
         ensure_edits_survive_save(editor, &options)?;
@@ -686,6 +807,24 @@ fn unusable_contents_shape(
     } else {
         "an indirect object that is not a content stream"
     }))
+}
+
+// Authentication does not decrypt streams consumed by edit-time readers.
+pub fn ensure_source_is_not_encrypted(editor: &OpenEditor, operation: &str) -> NifResult<()> {
+    if !editor.source().is_encrypted() {
+        return Ok(());
+    }
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "This editor was opened from an encrypted document, whose content and \
+             appearance streams stay encrypted until they are written out. \
+             {operation} reads them, so it cannot run here and nothing has been \
+             changed. Write the document out with a full rewrite, which decrypts \
+             it, then reopen the result and repeat the call on that."
+        ),
+    ))
 }
 
 // The refusal for a *queued* region, and unconditional where the mark's is not:
@@ -1106,6 +1245,8 @@ fn editor_clear_erase_regions(
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_flatten_forms(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
+        ensure_source_is_not_encrypted(editor, "Flattening form fields")?;
+
         editor.flatten_forms().map_err(to_nif_err)?;
         editor.mark(Marked::Forms);
 
@@ -1128,6 +1269,7 @@ fn editor_flatten_forms_on_page(
         // Inside the guard so the check and the mark cannot straddle a writer
         // that changes the page count.
         ensure_editor_page_in_range(editor, page_index)?;
+        ensure_source_is_not_encrypted(editor, "Flattening form fields")?;
 
         editor
             .flatten_forms_on_page(page_index)
@@ -1143,6 +1285,8 @@ fn editor_flatten_forms_on_page(
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_flatten_all_annotations(resource: ResourceArc<EditorResource>) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
+        ensure_source_is_not_encrypted(editor, "Flattening annotations")?;
+
         editor.flatten_all_annotations().map_err(to_nif_err)?;
         editor.mark(Marked::Annotations);
 
@@ -1163,6 +1307,7 @@ fn editor_flatten_page_annotations(
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
         ensure_editor_page_in_range(editor, page_index)?;
+        ensure_source_is_not_encrypted(editor, "Flattening annotations")?;
 
         editor
             .flatten_page_annotations(page_index)
@@ -1678,6 +1823,153 @@ mod tests {
         EncryptionConfig::new("secret", "owner").with_algorithm(algorithm)
     }
 
+    fn authenticated(name: &str) -> DocumentEditor {
+        let editor = DocumentEditor::open(fixture(name)).expect("fixture opens");
+        assert!(
+            editor
+                .source()
+                .authenticate(b"secret")
+                .expect("the fixture authenticates"),
+            "the fixture's password is still `secret`"
+        );
+        editor
+    }
+
+    // A decrypted control prevents fixture drift from passing the canary.
+    fn decrypted_twin(name: &str) -> DocumentEditor {
+        let bytes = authenticated(name)
+            .save_to_bytes_with_options(SaveOptions::full_rewrite())
+            .expect("a full rewrite decrypts");
+
+        DocumentEditor::from_bytes(bytes).expect("the rewritten bytes open")
+    }
+
+    // Uncompressed, so an appearance that reached the page is greppable.
+    fn flattened(mut editor: DocumentEditor, forms: bool) -> Vec<u8> {
+        if forms {
+            editor.flatten_forms().expect("every page is marked");
+        } else {
+            editor
+                .flatten_all_annotations()
+                .expect("every page is marked");
+        }
+
+        editor
+            .save_to_bytes_with_options(SaveOptions {
+                compress: false,
+                ..SaveOptions::full_rewrite()
+            })
+            .expect("full rewrite")
+    }
+
+    fn holds(bytes: &[u8], needle: &str) -> bool {
+        bytes
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    }
+
+    fn xmp_title(bytes: Vec<u8>) -> Option<String> {
+        let doc = PdfDocument::from_bytes(bytes).expect("the rewritten bytes open");
+
+        pdf_oxide::extractors::xmp::XmpExtractor::extract(&doc)
+            .ok()
+            .flatten()
+            .and_then(|xmp| xmp.dc_title)
+    }
+
+    fn rewritten(mut editor: DocumentEditor) -> Vec<u8> {
+        editor
+            .save_to_bytes_with_options(SaveOptions::full_rewrite())
+            .expect("full rewrite")
+    }
+
+    #[test]
+    fn upstream_still_drops_unencrypted_metadata_on_a_rewrite() {
+        let encrypted_metadata = {
+            let mut plain = DocumentEditor::open(fixture("metadata.pdf")).expect("fixture opens");
+            plain
+                .save_to_bytes_with_options(SaveOptions::with_encryption(encryption_config(
+                    EncryptionAlgorithm::Aes128,
+                )))
+                .expect("an encrypted write")
+        };
+        let twin = DocumentEditor::from_bytes(encrypted_metadata).expect("the twin opens");
+        assert!(twin
+            .source()
+            .authenticate(b"secret")
+            .expect("the twin authenticates"));
+
+        assert_eq!(
+            xmp_title(rewritten(twin)).as_deref(),
+            Some("Test Title"),
+            "the control lost its metadata too; the canary proves nothing"
+        );
+
+        assert_eq!(
+            xmp_title(rewritten(authenticated("encrypted_cleartext_metadata.pdf"))),
+            None,
+            "upstream now carries an unencrypted /Metadata stream through a rewrite"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_annotation_appearances_from_an_encrypted_source() {
+        assert!(
+            holds(
+                &flattened(decrypted_twin("encrypted_flatten.pdf"), false),
+                "SQUAREAP"
+            ),
+            "the fixture's /Square no longer flattens; fix it before reading the canary"
+        );
+
+        assert!(
+            !holds(
+                &flattened(authenticated("encrypted_flatten.pdf"), false),
+                "SQUAREAP"
+            ),
+            "upstream now decrypts the appearance streams an annotation flatten reads"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_widget_appearances_from_an_encrypted_source() {
+        assert!(
+            holds(
+                &flattened(decrypted_twin("encrypted_flatten.pdf"), true),
+                "WIDGETAP"
+            ),
+            "the fixture's widget no longer flattens; fix it before reading the canary"
+        );
+
+        assert!(
+            !holds(
+                &flattened(authenticated("encrypted_flatten.pdf"), true),
+                "WIDGETAP"
+            ),
+            "upstream now decrypts the appearance streams a form flatten reads"
+        );
+    }
+
+    #[test]
+    fn upstream_still_refuses_an_incremental_save_of_an_encrypted_source() {
+        let path = temp_path("incremental_encrypted");
+        let mut editor = authenticated("encrypted.pdf");
+
+        let result = editor.save_with_options(
+            &path,
+            SaveOptions {
+                incremental: true,
+                ..SaveOptions::full_rewrite()
+            },
+        );
+
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            result.is_err(),
+            "upstream now writes an incremental update for an encrypted source"
+        );
+    }
+
     fn temp_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "pdf_elixide_drift_{name}_{}.pdf",
@@ -1686,7 +1978,7 @@ mod tests {
     }
 
     #[test]
-    fn upstream_still_encrypts_aes256_with_a_key_it_does_not_publish() {
+    fn upstream_still_omits_perms_from_an_aes256_encrypt_dict() {
         let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
         let bytes = editor
             .save_to_bytes_with_options(SaveOptions::with_encryption(encryption_config(
@@ -1694,16 +1986,20 @@ mod tests {
             )))
             .expect("full rewrite");
 
-        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+        // Pin the algorithm so a different write cannot satisfy the refutation.
         assert!(
-            doc.authenticate(b"secret").expect("authenticates"),
-            "the /U hash is self-consistent even though the body key is not"
+            bytes.windows(4).any(|w| w == b"/V 5"),
+            "the write is no longer AES-256, so the check below proves nothing"
+        );
+        assert!(
+            bytes.windows(4).any(|w| w == b"/R 6"),
+            "the write is no longer revision 6, so the check below proves nothing"
         );
 
-        let text = doc.extract_text(0).unwrap_or_default();
         assert!(
-            !text.contains("Page One"),
-            "upstream now encrypts an AES-256 body with the key it publishes: {text:?}"
+            !bytes.windows(6).any(|w| w == b"/Perms"),
+            "upstream now writes /Perms for R6 — re-run the qpdf interop check \
+             and lift the :aes256 refusal if it passes"
         );
     }
 
@@ -1783,53 +2079,6 @@ mod tests {
             working.encrypt_stream(PROBE, 1, 0),
             PROBE,
             "a correct-length key no longer encrypts, so the assertions above prove nothing"
-        );
-    }
-
-    // `Aes128` is set explicitly: `EncryptionConfig`'s `Default` is `Aes256`, whose
-    // body key is never published, so a default-built config would measure that
-    // defect instead of this one.
-    #[test]
-    fn upstream_still_writes_ciphertext_from_an_encrypted_source() {
-        let mut source = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
-        let locked = source
-            .save_to_bytes_with_options(SaveOptions::with_encryption(encryption_config(
-                EncryptionAlgorithm::Aes128,
-            )))
-            .expect("encrypts");
-
-        let mut editor = DocumentEditor::from_bytes(locked).expect("reopens for editing");
-        assert!(
-            editor
-                .source()
-                .authenticate(b"secret")
-                .expect("authenticates"),
-            "the password no longer opens the document, so the read below proves nothing"
-        );
-
-        // Without this the assertion beneath it passes whenever authentication
-        // silently failed, which is the same observable as the defect.
-        assert!(
-            editor
-                .source()
-                .extract_text(0)
-                .expect("reads the source")
-                .contains("Page One"),
-            "an authenticated source no longer reads, so the write below is untested"
-        );
-
-        let written = editor
-            .save_to_bytes_with_options(SaveOptions::full_rewrite())
-            .expect("full rewrite");
-        let reopened = PdfDocument::from_bytes(written).expect("reopens");
-
-        assert!(
-            !reopened
-                .extract_text(0)
-                .unwrap_or_default()
-                .contains("Page One"),
-            "upstream now decrypts stream payloads on the write path: bind a password \
-             option through DocumentEditor::from_document and drop ensure_not_encrypted"
         );
     }
 

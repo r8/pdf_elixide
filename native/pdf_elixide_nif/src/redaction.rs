@@ -6,7 +6,8 @@ use crate::{
     color::RgbNif,
     editor::{
         draws_redactions, ensure_contents_redactable, ensure_editor_page_in_range,
-        ensure_info_is_direct, ensure_redaction_spliceable, redaction_corners,
+        ensure_info_is_direct, ensure_redaction_spliceable, ensure_source_is_not_encrypted,
+        redaction_corners,
     },
     error::{tagged_err, to_nif_err},
     geometry::RectNif,
@@ -234,9 +235,8 @@ fn editor_add_redaction(
 
     resource.editor.with_lock(|editor| {
         ensure_editor_page_in_range(editor, page_index)?;
-        // Strictly stronger than `ensure_redaction_spliceable`, which the two
-        // marking NIFs still use: a queued region reaches only the destructive
-        // pass and cannot be withdrawn, so it is refused unconditionally.
+        // A queued region cannot be withdrawn, so refuse one no pass can apply.
+        ensure_source_is_not_encrypted(editor, "A destructive redaction")?;
         ensure_contents_redactable(editor, page_index)?;
 
         editor
@@ -315,7 +315,8 @@ fn editor_apply_redactions(
     options.validate()?;
 
     resource.editor.with_lock(|editor| {
-        // Before anything is armed: a refused pass changes nothing.
+        // Keep before preflight and arming: preflight decrypts, while apply does not.
+        ensure_source_is_not_encrypted(editor, "A destructive redaction")?;
         ensure_first_pass(editor)?;
         ensure_text_state_measurable(editor)?;
 
@@ -358,7 +359,7 @@ fn editor_sanitize(
 mod tests {
     use pdf_oxide::{
         editor::{DocumentEditor, EditableDocument, SaveOptions},
-        redaction::{OcgPolicy, RedactionOptions},
+        redaction::{OcgPolicy, RedactionOptions, RedactionReport},
     };
 
     fn fixture(name: &str) -> String {
@@ -378,6 +379,80 @@ mod tests {
             compress: false,
             ..SaveOptions::full_rewrite()
         }
+    }
+
+    fn authenticated(name: &str) -> DocumentEditor {
+        let editor = editor(name);
+        assert!(
+            editor
+                .source()
+                .authenticate(b"secret")
+                .expect("the fixture authenticates"),
+            "the fixture's password is still `secret`"
+        );
+        editor
+    }
+
+    // A decrypted control prevents fixture drift from passing the canary.
+    fn decrypted_twin(name: &str) -> DocumentEditor {
+        let bytes = authenticated(name)
+            .save_to_bytes_with_options(SaveOptions::full_rewrite())
+            .expect("a full rewrite decrypts");
+
+        DocumentEditor::from_bytes(bytes).expect("the rewritten bytes open")
+    }
+
+    fn redact(editor: &mut DocumentEditor, rect: [f32; 4]) -> pdf_oxide::Result<RedactionReport> {
+        editor
+            .add_redaction(0, rect, None)
+            .expect("a region is queued");
+        editor.apply_redactions_destructive(RedactionOptions::default())
+    }
+
+    #[test]
+    fn upstream_still_reads_encrypted_page_content_as_ciphertext() {
+        const OVER_PAGE_ONE: [f32; 4] = [65.0, 690.0, 250.0, 725.0];
+
+        assert!(
+            redact(&mut decrypted_twin("encrypted.pdf"), OVER_PAGE_ONE)
+                .expect("the decrypted twin redacts")
+                .glyphs_removed
+                > 0,
+            "the region no longer covers any text; fix it before reading the canary"
+        );
+
+        assert!(
+            redact(&mut authenticated("encrypted.pdf"), OVER_PAGE_ONE).is_err(),
+            "upstream now decrypts the page content a destructive redaction reads"
+        );
+    }
+
+    #[test]
+    fn upstream_still_under_redacts_an_encrypted_page() {
+        const OVER_THE_SECRET: [f32; 4] = [65.0, 630.0, 300.0, 665.0];
+
+        assert!(
+            redact(
+                &mut decrypted_twin("encrypted_array_contents.pdf"),
+                OVER_THE_SECRET
+            )
+            .expect("the decrypted twin redacts")
+            .glyphs_removed
+                > 0,
+            "the region no longer covers any text; fix it before reading the canary"
+        );
+
+        let report = redact(
+            &mut authenticated("encrypted_array_contents.pdf"),
+            OVER_THE_SECRET,
+        )
+        .expect("upstream now fails a redaction it cannot read");
+
+        assert_eq!(
+            (report.regions, report.glyphs_removed),
+            (0, 0),
+            "upstream now redacts an encrypted page whose /Contents is an array"
+        );
     }
 
     #[test]

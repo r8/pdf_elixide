@@ -84,7 +84,7 @@ defmodule PdfElixide.Warning do
       advancing the cursor, so the page renders with a gap that reads as
       whitespace. Raised only while rendering, so always process-wide.
 
-  Reserved by the reader and not produced by any current condition:
+  Two categories are defined but not produced by any current condition:
   `:xref_recovery` and `:font`.
 
   Finally, `:unknown` — the reader recorded a category this version of

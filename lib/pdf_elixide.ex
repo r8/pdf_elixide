@@ -51,9 +51,9 @@ defmodule PdfElixide do
   **On Windows a path must be valid UTF-8**, and one that is not raises
   `ArgumentError` before the filesystem is touched — see the "Errors versus
   exceptions" section of `PdfElixide.Error`. Every well-formed Windows path has
-  a UTF-8 spelling, so this costs nothing in practice — but it does make this
-  library **stricter than `File` there**, which will translate a stray byte into
-  some legal filename and write it rather than refuse.
+  a UTF-8 spelling, so this costs nothing in practice. It does mean this
+  library is **stricter than `File` there**: a byte sequence `File` would accept
+  is refused here rather than written under some other name.
 
   Only the binary form of `Path.t()` is accepted; a charlist raises
   `FunctionClauseError`.

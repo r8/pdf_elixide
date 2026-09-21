@@ -4,10 +4,10 @@
 `PdfElixide.Document` or from a mutable `PdfElixide.Editor` alike. Writing needs
 an editor, since a document cannot be changed.
 
-An **encrypted** document is where those two diverge: `fields/1` reads one
-through a document opened with its password, but `PdfElixide.Editor.open/1`
-refuses it, so such a form can be read and not filled. The
-[Encryption](encryption.md) guide has the reason.
+An **encrypted** document needs its password either way: `fields/1` reads one
+through a document opened with `PdfElixide.Document.open/2`'s `:password`, and
+fills through an editor opened with `PdfElixide.Editor.open/2`'s. The
+[Encryption](encryption.md) guide has the workflow.
 
 ```elixir
 alias PdfElixide.Document
@@ -250,11 +250,11 @@ at all.** `true` writes `/Yes`, which matches no widget state, and no other valu
 writes a PDF name either. `:on_states` reveals the custom name but does not make
 it writable. Writing it as a string is not a workaround: it also puts a string
 in the widget's `/AS`, where the PDF specification requires a name, so a reader
-may render the field wrongly.
+may not render the field as intended.
 
 Either field needs its dictionaries edited directly, which this library does not
-expose. Reading such a field is unaffected; it is only the value produced from
-it — written back, or exported — that is wrong.
+expose. Reading such a field is unaffected; the limitation is in the value
+produced from it — written back, or exported.
 
 ## Filling a form
 
@@ -313,9 +313,8 @@ object is different: ordinary form reads step over it and return the fields they
 could reach, so a successful list can still be partial. Signature reads are
 stricter; see [Damaged documents are refused, not stepped over](signatures.md#damaged-documents-are-refused-not-stepped-over).
 
-Deferred operations such as `flatten/1,2` mark work for the writer rather than
-reading this hierarchy through the same validator, so this refusal guarantee
-does not apply to them.
+Deferred operations such as `flatten/1,2` only mark work to be done on the
+next write, so this refusal guarantee does not apply to them.
 
 ## Several fields at once
 
@@ -515,6 +514,12 @@ editor
 `PdfElixide.Editor.flatten_annotations/1,2` is the same idea for annotations —
 notes, highlights, stamps — and is a separate mark from the form one.
 
+**Neither works on an encrypted source.** Both calls return
+`{:error, %PdfElixide.Error{reason: :unsupported}}`. Write the document out
+first and flatten the result — see
+[What an encrypted source cannot do](encryption.md#what-an-encrypted-source-cannot-do).
+Filling is unaffected.
+
 **Nothing happens until the next full write.** Both calls only *mark* what to
 flatten; the drawing happens inside `PdfElixide.Editor.save/3` or
 `PdfElixide.Editor.to_binary/2`. Until then `Form.fields/1` still reports every
@@ -584,17 +589,17 @@ that flattening was faithful.
 
 Reported cases include:
 
-- **A newly set value containing non-Latin text or emoji that the shipped
-  appearance path cannot render faithfully.** The field may contain incorrect
-  glyphs or none at all while the PDF remains valid. Check the warnings after
-  filling and flattening text outside Latin-1. Existing appearance streams are
-  copied unchanged and are unaffected.
+- **A newly set value containing non-Latin text or emoji that this library
+  cannot draw into an appearance.** The field may contain incorrect glyphs or
+  none at all while the PDF remains valid. Check the warnings after filling and
+  flattening text outside Latin-1. Existing appearance streams are copied
+  unchanged and are unaffected.
 
-  The warning may tell you to rebuild with an optional feature. The installed
-  package is precompiled and cannot be reconfigured that way. Read the warning
-  as "this field did not flatten legibly" and handle it in your own code — leave
-  the form unflattened, substitute a value the field's font can render, or draw
-  the text yourself before flattening.
+  Such a warning may mention a build-time option for wider font support. This
+  package ships precompiled, so that option is not available here. Take the
+  warning to mean the field did not flatten legibly, and handle it in your own
+  code — leave the form unflattened, substitute a value the field's font can
+  render, or draw the text yourself before flattening.
 - **A field with no appearance stream that could not be given one.** The warning
   names the field. If another appearance causes that page to be flattened, the
   field is removed without being drawn; if the page produces no appearances at

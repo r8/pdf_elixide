@@ -42,11 +42,11 @@ defmodule PdfElixide.PathContractTest do
       assert_raise Error, fn -> Document.open!(@missing_path) end
     end
 
-    test "Editor.open/1 reports a filesystem error" do
+    test "Editor.open/2 reports a filesystem error" do
       assert {:error, %Error{reason: :io}} = Editor.open(@missing_path)
     end
 
-    test "Editor.open!/1 raises a PdfElixide.Error" do
+    test "Editor.open!/2 raises a PdfElixide.Error" do
       assert_raise Error, fn -> Editor.open!(@missing_path) end
     end
   end
@@ -62,11 +62,11 @@ defmodule PdfElixide.PathContractTest do
       assert_raise ArgumentError, fn -> Document.open!(@missing_path) end
     end
 
-    test "Editor.open/1 raises ArgumentError" do
+    test "Editor.open/2 raises ArgumentError" do
       assert_raise ArgumentError, fn -> Editor.open(@missing_path) end
     end
 
-    test "Editor.open!/1 raises ArgumentError" do
+    test "Editor.open!/2 raises ArgumentError" do
       assert_raise ArgumentError, fn -> Editor.open!(@missing_path) end
     end
   end
@@ -86,7 +86,7 @@ defmodule PdfElixide.PathContractTest do
       assert Document.source_path(doc) == path
     end
 
-    test "Editor.open/1 reads one", %{tmp_dir: tmp_dir} do
+    test "Editor.open/2 reads one", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, @bad_name)
       File.cp!(@valid_pdf, path)
 
@@ -186,7 +186,7 @@ defmodule PdfElixide.PathContractTest do
       assert_raise FunctionClauseError, fn -> Document.open(untyped(~c"sample.pdf")) end
     end
 
-    test "Editor.open/1 rejects a charlist" do
+    test "Editor.open/2 rejects a charlist" do
       assert_raise FunctionClauseError, fn -> Editor.open(untyped(~c"sample.pdf")) end
     end
 

@@ -207,9 +207,9 @@ defmodule PdfElixide.Document.Page do
       only XObject holds no text still answers `true`, and so does a page whose
       content stream cannot be decoded.
 
-  One asymmetry looks like a bug but is not: a page with no fonts whose sole
-  XObject is an *image* answers `false`. Text drawn in invisible render mode
-  (`Tr 3`) is not considered either way.
+  One asymmetry is worth knowing: a page with no fonts whose sole XObject is
+  an *image* answers `false`. Text drawn in invisible render mode (`Tr 3`) is
+  not considered either way.
   """
   @spec has_text_layer(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_text_layer(%__MODULE__{doc: %Document{ref: ref}, index: index}) do

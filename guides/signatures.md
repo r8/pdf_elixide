@@ -311,8 +311,8 @@ Signature reads are stricter than form reads on a damaged document.
 `PdfElixide.Form.fields/1` steps over a field it cannot read and returns the
 ones it reached, so a form whose `/Fields` names an object the file does not
 contain still answers `{:ok, []}`. `list/1` refuses that same document as
-`%PdfElixide.Error{reason: :invalid_pdf}`: "no signatures" is an answer callers
-act on, and a damaged file must not be able to fake it.
+`%PdfElixide.Error{reason: :invalid_pdf}`, so an empty list from `list/1` means
+the document was read and carries no signatures.
 
 The same rule reaches the value a signature field points at. A `/V` that is not
 a signature dictionary is refused, including one naming an object the file does

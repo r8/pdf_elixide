@@ -82,10 +82,10 @@ Document.to_plain_text!(tagged, 0) == Document.text!(tagged, 0)
 On such a document, `:reading_order` and `:include_form_fields` have no effect:
 the tags determine the order and field values are always inlined.
 
-`PdfElixide.Document.has_structure_tree?/1` is only a hint here: it reports a
-readable tree even when the producer marked its tags suspect, while extraction
-correctly falls back to geometric order in that case. There is no public exact
-predicate for the branch. If the distinction matters for a corpus, compare the
+`PdfElixide.Document.has_structure_tree?/1` is a coarse signal here: it reports
+a readable tree even when the producer marked its tags suspect, while extraction
+falls back to geometric order in that case. There is no public predicate that
+distinguishes the two. If the distinction matters for a corpus, compare the
 two outputs on representative pages rather than deciding from that predicate
 alone.
 

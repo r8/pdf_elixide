@@ -202,9 +202,9 @@ annotation with no `/Rect` marks no area and is not counted.
 
 ### It discards other pending overlays on the page
 
-A destructive pass **replaces** the content of every page it rewrites, rather
-than appending to it. Anything else this editor had queued to be painted onto
-such a page is dropped, silently and without an error:
+A destructive pass rewrites the content of every page it touches. Anything else
+this editor had queued to be painted onto such a page is dropped, silently and
+without an error:
 
   * a region from `PdfElixide.Editor.erase_region/3` or
     `PdfElixide.Editor.erase_regions/3` — the whiteout never appears, so
@@ -240,9 +240,8 @@ PdfElixide.Editor.save!(covered, "clean.pdf")
 PdfElixide.Editor.close(covered)
 ```
 
-A `PdfElixide.Form.flatten/1` is the exception that does survive: it is
-painted after the replacement rather than before it. So is the redaction block
-itself, which the pass draws as part of the new content.
+A `PdfElixide.Form.flatten/1` is the exception that does survive, as is the
+redaction block itself, which the pass draws as part of the new content.
 
 ## Redacting a page removes every annotation on it
 
@@ -315,21 +314,26 @@ would produce a file with no box at all.
 Both recipes above only *mark* the page. **A destructive pass needs one more
 step**, because `PdfElixide.Editor.flatten_annotations/1` does not survive
 `PdfElixide.Editor.apply_redactions/1` on the same editor, where it does survive
-a mark. The pass replaces the content of every page it rewrites, so the
-flattened appearances are dropped from those pages along with every other
-pending overlay: the annotations are still unlinked, but what they drew is gone
-rather than baked in. Flatten in one editor, write it, and redact the reopened
-result — see
+a mark. The flattened appearances are dropped from every page the pass rewrites,
+along with every other pending overlay: the annotations are still unlinked, but
+what they drew is gone rather than baked in. Flatten in one editor, write it,
+and redact the reopened result — see
 [It discards other pending overlays on the page](#it-discards-other-pending-overlays-on-the-page).
 
-`PdfElixide.Form.flatten/1` is the one spliced *after* the replacement, so its
-appearances do survive a destructive pass — and land on top of the redaction
-block, which is the same reason it needs the write-and-reopen detour above
-whichever call draws the box.
+`PdfElixide.Form.flatten/1` is the one whose appearances do survive a
+destructive pass — and they land on top of the redaction block, which is why it
+needs the write-and-reopen detour above whichever call draws the box.
 
 ## What is refused, and why
 
 ### Refused by apply_redactions/1,2
+
+**An editor opened from an encrypted document.** The call returns
+`{:error, %PdfElixide.Error{reason: :unsupported}}` and removes nothing. Write
+the document out first and redact the result — see
+[What an encrypted source cannot do](encryption.md#what-an-encrypted-source-cannot-do).
+Marking is unaffected: `PdfElixide.Editor.mark_redactions/1,2` draws its overlay
+rather than reading what is beneath it.
 
 **A page whose glyph boundaries cannot be computed.** Simple single-byte fonts
 are redacted, and so are horizontal Identity-H composite (Type 0) fonts, whose
@@ -338,20 +342,19 @@ page's resources do not define, a vertical Identity-V font, and any composite
 font using a predefined or custom CMap, whose code lengths cannot be
 reconstructed. The call returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` and removes nothing from
-that page. The alternative would be to guess where the glyphs are and clear what
-it could, producing a page that looks redacted and is not. Nothing here can
-widen that; it is the format's limit, not a setting. The error message says
+that page. Nothing here can widen that; measuring a glyph it cannot place would
+produce a page that looks redacted and is not. The error message says
 "composite/Type0" for every one of these routes, an unresolvable font included,
-so take it as "this page could not be measured" rather than as a diagnosis.
+so it reports that the page could not be measured without identifying which
+route was taken.
 
 **A page whose text state a `q`/`Q` restores.** If a page selects a font, size,
 text spacing or line leading inside a `q` … `Q` block and then draws text, or
 moves to a new line, after the restore, the call returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` and removes nothing from any
-page. Such text is measured with the state the restore discarded, so its glyph
-boxes come out the wrong size and a region over it can match nothing — the pass
-would report success having left the text in place, which is the one outcome
-worth refusing a whole call for. A page that re-sets what the block changed
+page. Such text cannot be measured reliably, so a region over it could match
+nothing while the call reported success and left the text in place. A page that
+re-sets what the block changed
 before drawing is measured correctly and is not refused, so this does not reject
 the ordinary `q … BT /F1 10 Tf … ET Q` shape. Unlike the font refusal above this
 one is checked **before any page is rewritten**, so the editor is left untouched
@@ -368,9 +371,8 @@ too, for the same reason.
 
 **A second destructive pass on the same editor.** The call returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` the second time and
-changes nothing. Each pass rebuilds every processed page from the *unredacted*
-source rather than from the previous result, so a later pass with a smaller
-`:edge_padding` would hand back text an earlier one removed — and report
+changes nothing. A second pass does not build on the first, so one with a
+smaller `:edge_padding` could hand back text an earlier one removed — and report
 success. Queue every region before applying, or reopen the source and start
 again.
 
@@ -380,8 +382,8 @@ An `/Info` value stored as an indirect object, when sanitizing with
 `:scrub_metadata`. `PdfElixide.Editor.sanitize/1` returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` and changes nothing.
 Clearing `/Info` replaces the dictionary, but a value held in its own object
-stays there and stays readable, so the call would report a scrub it did not
-perform. Sanitize with `scrub_metadata: false` to strip JavaScript and
+stays there and stays readable, so the scrub would be reported but not
+performed. Sanitize with `scrub_metadata: false` to strip JavaScript and
 attachments anyway, or rewrite the document's metadata before sanitizing. Most
 producers write `/Info` values inline, where this does not arise.
 
@@ -399,15 +401,13 @@ the mark's refusal where nothing lifts this one.
 **A write with `garbage_collect: false` after a sanitization.**
 `PdfElixide.Editor.save/3` and `PdfElixide.Editor.to_binary/2` both return
 `{:error, %PdfElixide.Error{reason: :unsupported}}`. What
-`PdfElixide.Editor.sanitize/1` removes, it removes by unlinking the object and
-leaving the write to drop it; with collection off, every object the source holds
-is copied out instead, and a document that stored its `/Info`, JavaScript or
-file specifications in a compressed object stream gets that stream copied out
-whole — scrubbed values and all — while the call reports success and
-`PdfElixide.Editor.metadata/1` answers `nil`. Write with garbage collection, the
-default. This refusal is specific to sanitizing: `garbage_collect: false` after
-`PdfElixide.Editor.apply_redactions/1` is allowed, because the cleared page
-content is dropped by object id whatever the setting.
+`PdfElixide.Editor.sanitize/1` removes is only dropped from the file when the
+write collects what nothing references. With collection off, a scrubbed `/Info`,
+JavaScript or file specification can survive in the written bytes while the call
+reports success and `PdfElixide.Editor.metadata/1` answers `nil`. Write with
+garbage collection, the default. This refusal is specific to sanitizing:
+`garbage_collect: false` after `PdfElixide.Editor.apply_redactions/1` is
+allowed, because cleared page content is dropped whatever the setting.
 
 ### Refused by both, on different terms
 
@@ -419,15 +419,13 @@ stream — an array, most often. Both calls return
 carries annotations, because a queued region reaches only
 `PdfElixide.Editor.apply_redactions/1`, which rebuilds the page from its
 content streams and cannot read any indirect `/Contents` that is not a stream.
-The refusal is at the queue because a region cannot be withdrawn once added —
-accepting one that could never be applied would leave reopening the source as the
-only way forward.
+The refusal comes at the queue rather than at the pass, and a region cannot be
+withdrawn once added.
 
 `PdfElixide.Editor.mark_redactions/2` refuses the same shape, but only when the
-page **also** carries redaction annotations. With none there is no overlay to
-splice and nothing for a later pass to apply, so marking is harmless; with them
-the page reaches both — the overlay cannot be appended without losing the page's
-content, and the pass cannot read the content in the first place.
+page **also** carries redaction annotations. With none there is nothing to draw
+and nothing for a later pass to apply, so marking is harmless; with them neither
+the overlay nor a later pass can reach such a page.
 `PdfElixide.Editor.mark_redactions/1` refuses the whole document rather than
 mark part of it.
 

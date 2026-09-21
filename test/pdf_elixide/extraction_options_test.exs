@@ -246,14 +246,21 @@ defmodule PdfElixide.ExtractionOptionsTest do
   describe "spans/3" do
     setup do: %{doc: open(@extraction_pdf)}
 
-    test ":span_merging merge_tm_tj_runs false splits each text-matrix run", %{doc: doc} do
-      # Both columns share a baseline, so the default merges each row into one
-      # span; splitting on Tm yields the eight original runs in stream order.
+    test ":span_merging merge_tm_tj_runs false returns the runs in stream order",
+         %{doc: doc} do
+      # The two columns are far enough apart that the default no longer merges a
+      # row into one span, so both settings yield the eight original runs and
+      # what the option still moves is their order: the default pairs them by
+      # baseline, and splitting on Tm returns them column by column, as drawn.
       assert texts(Document.spans!(doc, @columns)) == [
-               "Alpha oneBeta one",
-               "Alpha twoBeta two",
-               "Alpha threeBeta three",
-               "Alpha fourBeta four"
+               "Alpha one",
+               "Beta one",
+               "Alpha two",
+               "Beta two",
+               "Alpha three",
+               "Beta three",
+               "Alpha four",
+               "Beta four"
              ]
 
       assert texts(Document.spans!(doc, @columns, span_merging: [merge_tm_tj_runs: false])) == [
@@ -277,6 +284,9 @@ defmodule PdfElixide.ExtractionOptionsTest do
     end
 
     test ":span_merging accepts a nested :adaptive config", %{doc: doc} do
+      # The preset resolves in Rust, so the assertion is that the nested config
+      # decodes and reaches it. On this fixture it lands on the same grouping
+      # `merge_tm_tj_runs: false` produces, not on the default's.
       assert texts(
                Document.spans!(doc, @columns,
                  span_merging: [
@@ -284,15 +294,16 @@ defmodule PdfElixide.ExtractionOptionsTest do
                    adaptive: [min_samples: 2, median_multiplier: 2.0]
                  ]
                )
-             ) == texts(Document.spans!(doc, @columns))
+             ) ==
+               texts(Document.spans!(doc, @columns, span_merging: [merge_tm_tj_runs: false]))
     end
 
     test ":reading_order is accepted for every strategy", %{doc: doc} do
-      # This fixture's columns merge into one span per row, so no strategy can
-      # reorder them — the assertion is that each value decodes and returns the
-      # full span set, not that the three differ.
+      # The assertion is that each value decodes and returns the full span set,
+      # not that the three differ: this fixture has no structure tree and its
+      # two columns share every baseline, so none of them reorders it.
       for order <- [:top_to_bottom, :column_aware, :structure_tree] do
-        assert length(Document.spans!(doc, @columns, reading_order: order)) == 4
+        assert length(Document.spans!(doc, @columns, reading_order: order)) == 8
       end
     end
 

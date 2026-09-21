@@ -330,6 +330,10 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!(@table_detection_opts, &Document.text(doc, 0, table_detection: &1))
     end
 
+    test "Editor.open/2 and from_binary/2" do
+      accepts_each!([password: "secret"], &Editor.open(@valid_pdf, &1))
+    end
+
     test "Editor.save/3 and to_binary/2" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)

@@ -156,9 +156,8 @@ defmodule PdfElixide.Document do
       rotated, leaving a horizontal run raw.
 
   Passing `:profile` to `words/2,3` or `text_lines/2,3` opts out of the
-  mapping: that option takes a legacy path which returns raw user space on
-  every page. See the "Legacy extraction controls" section of
-  `t:words_opts/0`.
+  mapping and returns raw user space on every page. See the "Legacy extraction
+  controls" section of `t:words_opts/0`.
 
   So on a `180`-degree page, `spans/1` and `words/1` describing the very same
   line report mirrored boxes. Compare or lay out boxes from **one** extractor,
@@ -278,10 +277,11 @@ defmodule PdfElixide.Document do
   wrong one as an error, use `authenticate/2`, which returns `{:ok, false}`
   rather than a `:wrong_password` error.
 
-  An unknown key, or a `:password` that is not a binary, raises `ArgumentError`
-  — see the "Errors versus exceptions" section of `PdfElixide.Error`.
+  An unknown key, or a `:password` that is neither a binary nor `nil`, raises
+  `ArgumentError` — see the "Errors versus exceptions" section of
+  `PdfElixide.Error`.
   """
-  @type open_opts :: [password: binary()]
+  @type open_opts :: [password: binary() | nil]
 
   @open_opts_keys [:password]
 
@@ -477,9 +477,10 @@ defmodule PdfElixide.Document do
   Returns whether the PDF document contains XFA (XML Forms Architecture) form
   data, reporting a catalog that cannot be read.
 
-  The strict counterpart of `has_xfa?/1`. Only a *broken* document reaches the
-  error: every structural absence — a catalog that is not a dictionary, a
-  missing `/AcroForm`, a missing `/XFA` — already answers `{:ok, false}`.
+  The strict counterpart of `has_xfa?/1`. Only a document that cannot be read
+  reaches the error: every structural absence — a catalog that is not a
+  dictionary, a missing `/AcroForm`, a missing `/XFA` — already answers
+  `{:ok, false}`.
   """
   @spec has_xfa(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_xfa(%__MODULE__{ref: ref}) do
@@ -1234,8 +1235,8 @@ defmodule PdfElixide.Document do
     * `:table_detection` — a keyword list tuning the spatial table
       detector; see `t:table_detection_opts/0`. Only consulted when
       `:extract_tables` is `true`, and its `:text_fallback` key is ignored
-      here: the text path always disables it, so a page with no ruling lines
-      yields no tables regardless. Defaults to `nil`.
+      here, so a page with no ruling lines yields no tables regardless.
+      Defaults to `nil`.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the text inside
       it. An extracted `bbox` can be handed straight back in. Defaults to
       `nil`.
@@ -1285,9 +1286,9 @@ defmodule PdfElixide.Document do
   `ArgumentError` naming the key.
 
   `:reading_order`, `:include_form_fields` and
-  `:strip_running_headers_footers` are valid for `to_markdown/2` but not here,
-  since the text assembler never reads them; passing one raises
-  `ArgumentError`, as any other undeclared key does.
+  `:strip_running_headers_footers` are valid for `to_markdown/2` but have no
+  effect here, so they are not accepted; passing one raises `ArgumentError`, as
+  any other undeclared key does.
 
   There is a second way to read a page as text — `to_plain_text/2`, which
   returns reflowed paragraphs rather than the page's visual lines and takes a
@@ -1462,9 +1463,8 @@ defmodule PdfElixide.Document do
     * `:strip_running_headers_footers` — drop text lines that repeat in
       the top/bottom band of a majority of pages. Defaults to `false`.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
-      component letters (`ﬁ` to `fi`, and so on). Accepted for forward
-      compatibility, but currently has **no effect** on Markdown output; it is
-      applied only on the plain-text path used by `text/2`. Defaults to `false`.
+      component letters (`ﬁ` to `fi`, and so on). Has **no effect** on
+      Markdown output; it takes effect on `text/2`. Defaults to `false`.
     * `:max_image_pixels` — skip images whose width times height exceeds
       this count. `nil` means the built-in 16 MP limit, not "no
       limit" — pass a large integer to lift it, or `0` to skip every
@@ -1840,8 +1840,8 @@ defmodule PdfElixide.Document do
     * `:table_detection` — a keyword list tuning the spatial table
       detector; see `t:table_detection_opts/0`. Only consulted when
       `:extract_tables` is `true`, and its `:text_fallback` key is ignored
-      here just as it is for `text/2`: this path always disables it, so a page
-      with no ruling lines yields no tables regardless. Defaults to `nil`.
+      here just as it is for `text/2`, so a page with no ruling lines yields no
+      tables regardless. Defaults to `nil`.
     * `:reading_order` — how text blocks are ordered: `:structure_tree`,
       `:column_aware` or `:top_to_bottom`. Defaults to `:structure_tree`.
       On an untagged document, `:structure_tree` and `:column_aware` produce
@@ -1973,9 +1973,8 @@ defmodule PdfElixide.Document do
   word-margin thresholds used to turn glyphs into spans, before any word
   clustering happens.
 
-  Passing one also changes which extraction path runs, with consequences for
-  rotated pages — see the "Legacy extraction controls" section of
-  `t:words_opts/0`.
+  Passing one also changes how a rotated page's geometry is reported — see the
+  "Legacy extraction controls" section of `t:words_opts/0`.
   """
   @type extraction_profile ::
           :conservative

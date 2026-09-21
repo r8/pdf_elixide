@@ -2,12 +2,12 @@
 
 `PdfElixide.Editor.save/3` and `PdfElixide.Editor.to_binary/2` take an
 `:encryption` option that writes a password-protected PDF. It is the only way
-this library produces encryption; reading an encrypted document is
-`PdfElixide.Document.open/2`'s `:password` option, which is unrelated and takes
-different values.
+this library produces encryption; opening a document that is *already*
+encrypted is the `:password` option of `PdfElixide.Document.open/2` and
+`PdfElixide.Editor.open/2`, which is unrelated and takes different values — see
+[Editing a document that is already encrypted](#editing-a-document-that-is-already-encrypted).
 
 ```elixir
-alias PdfElixide.Document
 alias PdfElixide.Editor
 
 editor = Editor.open!("path/to/in.pdf")
@@ -33,14 +33,129 @@ Encryption is applied by the writer, so it is a property of the *output*, not of
 the editor: the same editor can write an encrypted file and an unencrypted one,
 and nothing about the source document is changed.
 
-This only ever *adds* encryption. `PdfElixide.Editor.open/1` and
-`PdfElixide.Editor.from_binary/1` refuse an already-encrypted document with
-`{:error, %PdfElixide.Error{reason: :encrypted}}` — the editor takes no password
-and cannot decrypt — so there is no way to change, re-key or remove the
-encryption a document already carries.
+## Editing a document that is already encrypted
 
-Both calls take the editor's exclusive lock, like every other write — see the
-[Concurrency](concurrency.md) guide.
+`PdfElixide.Editor.open/2` and `PdfElixide.Editor.from_binary/2` take a
+`:password`, so an encrypted document can be edited, re-keyed, or written out
+without its encryption. Without one, only the empty password is tried, and a
+document that does not open under it returns
+`{:error, %PdfElixide.Error{reason: :encrypted}}`; a wrong password returns
+`{:error, %PdfElixide.Error{reason: :wrong_password}}`.
+
+The password authenticates the *source*. What the output carries is decided by
+`:encryption` on the write — so omitting `:encryption` writes the document out
+in the clear, and supplying it with different passwords re-keys.
+
+Most of the editor works on such a handle, but not all of it: the operations
+that rewrite a page's existing content are refused. ["What an encrypted source
+cannot do"](#what-an-encrypted-source-cannot-do) below lists them and gives the
+way around.
+
+```elixir
+alias PdfElixide.Editor
+
+editor = Editor.open!("path/to/locked.pdf", password: "open-me")
+
+try do
+  # Re-key: same content, a new password.
+  Editor.save!(editor, "path/to/rekeyed.pdf",
+    encryption: [user_password: "new-password", owner_password: "new-owner"]
+  )
+
+  # Or remove the encryption entirely by writing without `:encryption`.
+  Editor.save!(editor, "path/to/decrypted.pdf")
+after
+  Editor.close(editor)
+end
+```
+
+The source password is a *byte string*, like
+`PdfElixide.Document.open/2`'s. The `:user_password` and `:owner_password` of
+`:encryption` are `t:String.t/0` — see [Passwords](#passwords), which explains
+the difference.
+
+`PdfElixide.Editor.save/3` and `PdfElixide.Editor.to_binary/2` take the editor's
+exclusive lock, like every other write — see the [Concurrency](concurrency.md)
+guide.
+
+## What an encrypted source cannot do
+
+A document stays encrypted in memory until it is written. Operations that need
+to read existing page content or appearances therefore return
+`{:error, %PdfElixide.Error{reason: :unsupported}}`:
+
+  * `PdfElixide.Editor.apply_redactions/1,2`, and `PdfElixide.Editor.add_redaction/3,4`
+    with it
+  * `PdfElixide.Editor.flatten_annotations/1,2`
+  * `PdfElixide.Form.flatten/1,2`
+  * a save with `incremental: true`, for a separate reason given under
+    [Incremental saves](#incremental-saves)
+
+A rewrite is also refused when the source stores its XMP metadata unencrypted,
+because the output would lose that metadata while still pointing at it. To
+write such a document, drop the metadata deliberately first:
+
+```elixir
+alias PdfElixide.Editor
+
+editor = Editor.open!("path/to/searchable-metadata.pdf", password: "open-me")
+
+try do
+  # `sanitize/2` removes JavaScript and embedded files by default; both are
+  # turned off here so the call drops the metadata and nothing else.
+  {:ok, _report} =
+    Editor.sanitize(editor,
+      scrub_metadata: true,
+      remove_javascript: false,
+      remove_embedded_files: false
+    )
+
+  Editor.save!(editor, "path/to/out.pdf")
+after
+  Editor.close(editor)
+end
+```
+
+`scrub_metadata: true` also empties the document information dictionary, so the
+title, author and dates go with the XMP. `PdfElixide.Document.xmp_metadata/1`
+and `PdfElixide.Document.metadata/1` both read from the source perfectly well,
+so read whichever you need before writing if you want to keep a copy.
+Documents this library encrypts are never affected: it always encrypts the
+metadata along with everything else.
+
+Nothing is changed when one of these is refused, and the editor stays usable.
+Other edits, including form filling, document information and ordinary page
+changes, work normally. Redaction marking is also unaffected.
+
+To redact or flatten such a document, write it out first and work on the result:
+
+```elixir
+alias PdfElixide.Editor
+
+source = Editor.open!("path/to/locked.pdf", password: "open-me")
+
+decrypted =
+  try do
+    Editor.to_binary!(source)
+  after
+    Editor.close(source)
+  end
+
+editor = Editor.from_binary!(decrypted)
+
+try do
+  Editor.flatten_annotations!(editor)
+  # Re-encrypt on the way out, if the result should stay protected.
+  Editor.save!(editor, "path/to/flattened.pdf",
+    encryption: [user_password: "open-me", owner_password: "change-me"]
+  )
+after
+  Editor.close(editor)
+end
+```
+
+The intermediate is decrypted, so hold it only as long as it is needed — and
+prefer the in-memory form above to writing it to disk.
 
 ## Algorithms
 
@@ -52,9 +167,10 @@ Both calls take the editor's exclusive lock, like every other write — see the
 | `:aes128` | `/V 4 /R 4 /CFM /AESV2` | PDF 1.6 | The default. The strongest algorithm available here. |
 | `:rc4_128` | `/V 2 /R 3` | PDF 1.4 | RC4 is broken. Legacy readers only. |
 
-`:aes256` and `:rc4_40` raise `ArgumentError`. AES-256 output would be
-unreadable even with the correct password; RC4-40 cannot express the supported
-permission combinations.
+`:aes256` and `:rc4_40` raise `ArgumentError`. RC4-40 cannot express the
+supported permission combinations, and AES-256 output is not interoperable
+with all conforming readers. This concerns output only: an AES-256 document
+produced elsewhere opens here normally, permission flags included.
 
 ### The declared version is not raised to match
 
@@ -67,8 +183,9 @@ mismatch. PDF/A forbids encryption regardless of the version declaration.
 
 This library cannot change the declared version. If a downstream tool requires
 it to match, use a source document of the required version or adjust the version
-with another tool. `:rc4_128` matches PDF 1.4 and later, but its broken cipher
-makes it a poor substitute for AES merely to satisfy a version check.
+with another tool. `:rc4_128` matches PDF 1.4 and later, but RC4 is
+cryptographically broken, so it is not a security-equivalent way to reach that
+version.
 
 ## Passwords
 
@@ -82,8 +199,8 @@ document here, but may not match another tool's PDFDocEncoding representation
 of the same characters. **Use ASCII passwords for anything another tool has to
 open.**
 
-Only the first 32 bytes of a password are used; a longer one is truncated
-without complaint.
+Only the first 32 bytes of a password are used; a longer one is truncated, with
+no error.
 
 Both default to `""`, and each empty value means something distinct:
 
@@ -152,6 +269,13 @@ Neither says anything about an object the reader did not touch.
 `save/3`'s `:encryption` cannot be combined with `incremental: true`, and the
 pair raises `ArgumentError`. Use a full rewrite, which is `save/3`'s default,
 to encrypt the output.
+
+An encrypted *source* cannot be saved incrementally either, whatever the
+options. An incremental update is appended to the original file rather than
+rewritten, and this library does not encrypt what it appends, so the result
+would not open. `incremental: true` returns
+`{:error, %PdfElixide.Error{reason: :unsupported}}` on such an editor, whether
+it was opened from a path or from a binary; write a full rewrite instead.
 
 For other incremental-save restrictions, see [Saving edits](editing.md#saving-edits).
 

@@ -56,6 +56,8 @@ pub(crate) struct OpenEditor {
     // Set once sanitization dropped the source's JavaScript name tree. With
     // `embedded_scrubbed`, the whole record of what the staged catalog lost.
     javascript_scrubbed: bool,
+    // Records staged XMP removal; the source catalog is unchanged until save.
+    xmp_scrubbed: bool,
 }
 
 // A visible page's source identity and pending properties in output order.
@@ -127,6 +129,7 @@ impl OpenEditor {
             forms_marked: false,
             embedded_scrubbed: false,
             javascript_scrubbed: false,
+            xmp_scrubbed: false,
         }
     }
 
@@ -390,6 +393,7 @@ impl OpenEditor {
 
         if scrub_metadata {
             self.info = Some(MetadataNif::scrubbed());
+            self.xmp_scrubbed = true;
         }
         if remove_javascript {
             self.javascript_scrubbed = true;
@@ -416,6 +420,10 @@ impl OpenEditor {
 
     pub(crate) fn embedded_scrubbed(&self) -> bool {
         self.embedded_scrubbed
+    }
+
+    pub(crate) fn xmp_scrubbed(&self) -> bool {
+        self.xmp_scrubbed
     }
 
     pub(crate) fn embedded_files(&self) -> &[EmbeddedFile] {

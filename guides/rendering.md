@@ -229,9 +229,9 @@ can come out substituted or missing while the rest of the page is unaffected. If
 byte-identical output across machines matters, install a known font set, or
 check that your documents embed their fonts.
 
-The first render in an OS process scans the system font directories once and
-caches the result for the life of the node, so that call is measurably slower
-than the ones after it. Renders do not each pay it.
+The first render in an OS process is measurably slower than the ones after it,
+because the available fonts are gathered once and reused. Later renders do not
+repeat that cost.
 
 ## Separation plates
 
