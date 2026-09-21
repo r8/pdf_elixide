@@ -1195,23 +1195,29 @@ mod tests {
         );
     }
 
-    // Justifies the cleanup in `document_rasterize`. The reversed-corner page
-    // fails after page 0 has been written.
+    // Justifies the cleanup in `document_rasterize`.
     #[test]
     fn upstream_still_leaves_its_page_images_behind_on_failure() {
-        let doc = PdfDocument::open(fixture("media_box.pdf")).expect("open");
+        let doc = PdfDocument::open(fixture("degenerate_box.pdf")).expect("open");
         let _ = std::fs::remove_dir_all(flatten_temp_dir());
 
         assert!(
             flatten_to_images(&doc, 18).is_err(),
             "the fixture stopped failing part-way, so nothing here is proven"
         );
-        let left_behind = flatten_temp_dir().exists();
+        // `create_dir_all` runs before the page loop, so the directory alone
+        // survives a failure that wrote nothing and would prove nothing.
+        let page_0_left_behind = flatten_temp_dir().join("page_0.png").exists();
+        let page_1_written = flatten_temp_dir().join("page_1.png").exists();
         let _ = std::fs::remove_dir_all(flatten_temp_dir());
 
         assert!(
-            left_behind,
-            "upstream now removes its temp directory on the error path"
+            !page_1_written,
+            "every page rendered, so the loop no longer stops part-way"
+        );
+        assert!(
+            page_0_left_behind,
+            "upstream now removes its page images on the error path"
         );
     }
 

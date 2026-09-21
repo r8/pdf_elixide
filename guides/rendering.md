@@ -295,8 +295,7 @@ and assemble them with a tool that lets you set the page box.
 Memory grows with page count and compressed image size. Scanned or photographic
 pages typically cost more memory than text pages at the same DPI. The fixed
 limit under [Sizing the output](#sizing-the-output) applies per page, not to the
-document as a whole. Calls are serialized; see
-Concurrency below.
+document as a whole.
 
 ## Concurrency
 
