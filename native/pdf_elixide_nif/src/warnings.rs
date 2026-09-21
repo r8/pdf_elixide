@@ -45,10 +45,8 @@ impl From<WarningCategory> for WarningCategoryNif {
             WarningCategory::GlyphDropped => Self::GlyphDropped,
             WarningCategory::NoTextLayer => Self::NoTextLayer,
             WarningCategory::ImageSuppressed => Self::ImageSuppressed,
-            // `WarningCategory` is `#[non_exhaustive]`, so this arm is
-            // mandatory and the compiler can no longer report an upstream
-            // addition. One reaches a caller as `:unknown` rather than being
-            // mapped onto a category it is not.
+            // `#[non_exhaustive]` upstream: an unmodelled category reaches a
+            // caller as `:unknown` rather than as one it is not.
             _ => Self::Unknown,
         }
     }
@@ -132,14 +130,10 @@ impl OpenDocument {
         }
     }
 
-    // Every upstream per-document read below claims the process-wide sink for
-    // `GLOBAL` first. Upstream drains that sink into *this* document's sink
-    // before returning either way (`structured_warnings` and
-    // `take_structured_warnings` alike), so without the claim whichever handle
-    // happens to be touched absorbs every process-wide warning and the
-    // `Logging` feed goes silent. Claiming leaves upstream an empty sink, so it
-    // hands back only what this document recorded. It has to happen outside
-    // `Buffer::absorb`, which holds the mirror's lock while `fetch` runs.
+    // Every per-document read below claims the process-wide sink first, because
+    // upstream's take drains that sink into whichever document is asked. The
+    // claim stays outside `Buffer::absorb`, which holds the mirror's lock while
+    // `fetch` runs.
     pub(crate) fn drain(&self) {
         collect_global();
         self.warnings.absorb(|| self.doc.take_structured_warnings());
@@ -320,10 +314,7 @@ mod tests {
         assert!(messages(&GLOBAL.snapshot()).contains(&"sentinel for drained"));
     }
 
-    // Why every `OpenDocument` read claims the process-wide sink first: upstream
-    // merges that sink into whichever document is asked, so the first handle
-    // touched would otherwise swallow the `Logging` feed. When this fails, drop
-    // the `collect_global()` calls in `OpenDocument`, not the assertion.
+    // The claim in `OpenDocument` goes when this fails, not the assertion.
     #[test]
     fn upstream_still_merges_the_global_sink_into_a_document_read() {
         let doc = PdfDocument::open(fixture("sample.pdf")).expect("fixture opens");

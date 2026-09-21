@@ -255,13 +255,8 @@ defmodule PdfElixide.WarningsTest do
       assert Logging.structured_warnings() == []
     end
 
-    # Exactly which calls claim a reader-level condition is what
-    # `PdfElixide.Warning`'s "Which feed a warning reaches" promises, and the
-    # set is upstream's rather than ours — `text/3` under a layer or ink filter
-    # takes a route that does not claim, and `to_plain_text` never claims. The
-    # whole-document converters are listed separately because upstream gives
-    # `to_markdown_all` and `to_html_all` their own scope, so they can drift
-    # away from the per-page pair.
+    # The set `PdfElixide.Warning`'s "Which feed a warning reaches" promises,
+    # at every arity, because each arity is a separate upstream scope.
     for route <- [:text, :text_region, :text_all, :markdown, :markdown_all, :html, :html_all] do
       test "#{route} claims the condition for its document" do
         doc = open(@stream_cr)

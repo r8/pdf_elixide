@@ -8,31 +8,25 @@ defmodule PdfElixide.Warning do
 
   ## Which feed a warning reaches
 
-  Two feeds return warnings, and which one a warning reaches depends on the
-  call that raised it rather than on its category.
+  Which feed a warning reaches depends on the call that raised it, not on its
+  category.
 
   `PdfElixide.Document.structured_warnings/1` lists what one document handle
-  recorded. Some conditions are always tied to the document — an object that
-  ran into the end of the file, a page with no text layer. Reader-level ones
-  join them for exactly three calls and their other arities:
-  `PdfElixide.Document.text/2`, `PdfElixide.Document.to_markdown/2` and
-  `PdfElixide.Document.to_html/2`, which attribute what they meet to the
-  document being read. `PdfElixide.Document.text/3` given `:exclude_layers` or
-  `:exclude_inks` is an exception — that combination takes a different route
-  and does not.
+  recorded: conditions always tied to the document — an object that ran into
+  the end of the file, a page with no text layer — and reader-level ones met
+  during `PdfElixide.Document.text/2`, `PdfElixide.Document.to_markdown/2` or
+  `PdfElixide.Document.to_html/2` at any arity, which attribute what they meet
+  to the document being read. `:exclude_layers` and `:exclude_inks` are the
+  exception: either sends `PdfElixide.Document.text/3` down a different route,
+  which does not.
 
-  `PdfElixide.Logging.structured_warnings/0` lists everything else: the same
-  reader-level conditions met during **any other call**, including
-  `PdfElixide.Document.to_plain_text/2` and the span-level extractors
-  (`PdfElixide.Document.chars/2`, `PdfElixide.Document.words/2`,
-  `PdfElixide.Document.spans/2`), as well as rendering, image extraction,
-  search and metadata — and those raised by a parse with no handle behind it
-  at all.
-
-  So the same `:spec_violation` on the same file reaches the document's feed
-  after `PdfElixide.Document.text/2` and the process-wide one after
-  `PdfElixide.Document.search/2`. Read both if you need every condition a call
-  met.
+  `PdfElixide.Logging.structured_warnings/0` lists everything else — the same
+  reader-level conditions met during **any other call**,
+  `PdfElixide.Document.to_plain_text/2` included, and those raised by a parse
+  with no handle behind it at all. So the same `:spec_violation` on the same
+  file reaches the document's feed after `PdfElixide.Document.text/2` and the
+  process-wide one after `PdfElixide.Document.search/2`. Read both if you need
+  every condition a call met.
 
   ## Fields
 
@@ -79,8 +73,7 @@ defmodule PdfElixide.Warning do
     * `:to_unicode_missing` — a Type0 font with no `/ToUnicode` map, so its
       text may extract as wrong or missing characters.
 
-  Reader-level, so tied to the document only for the three calls named under
-  "Which feed a warning reaches" and process-wide for every other:
+  Reader-level, so listed in whichever feed the call chose:
 
     * `:spec_violation` — a `stream` keyword followed by a lone carriage
       return or by no line break, or a stream `/Length` that does not reach
@@ -89,9 +82,7 @@ defmodule PdfElixide.Warning do
       operator limit, so the rest of that page's content is missing.
     * `:glyph_dropped` — a font painted nothing for a glyph while still
       advancing the cursor, so the page renders with a gap that reads as
-      whitespace. Raised while rendering, so it reaches the process-wide feed:
-      `PdfElixide.Document.render/3`, `PdfElixide.Document.rasterize/2` and
-      `PdfElixide.Document.separations/3` are not conversions.
+      whitespace. Raised only while rendering, so always process-wide.
 
   Reserved by the reader and not produced by any current condition:
   `:xref_recovery` and `:font`.

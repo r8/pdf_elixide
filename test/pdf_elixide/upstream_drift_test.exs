@@ -176,9 +176,31 @@ defmodule PdfElixide.UpstreamDriftTest do
   describe "deprecated word and line knobs" do
     setup do: %{doc: open(@extraction_pdf)}
 
-    test ":profile still routes to the legacy span path", %{doc: doc} do
-      assert texts(Document.words!(doc, @columns, profile: :conservative)) !=
-               texts(Document.words!(doc, @columns))
+    # Page 1 has /Rotate 270 and a rotated "Sideways" run.
+    test ":profile still takes a route that skips the rotated-frame mapping" do
+      doc = open(@rotated_run_pdf)
+      sideways = fn items -> Enum.find(items, &(&1.text == "Sideways")) end
+
+      assert %{rotation: 90.0} = mapped_word = sideways.(Document.words!(doc, 1))
+      assert mapped_line = sideways.(Document.text_lines!(doc, 1))
+      assert raw_word = sideways.(Document.words!(doc, 1, profile: :conservative))
+      assert raw_line = sideways.(Document.text_lines!(doc, 1, profile: :conservative))
+
+      assert origin(raw_word) == {300.0, 200.0}
+      assert origin(raw_line) == {300.0, 200.0}
+      refute origin(mapped_word) == origin(raw_word)
+      refute origin(mapped_line) == origin(raw_line)
+    end
+
+    test "a profile still shifts a box on an upright page", %{doc: doc} do
+      default = Document.words!(doc, @kerned)
+      profiled = Document.words!(doc, @kerned, profile: :conservative)
+
+      assert texts(default) == texts(profiled)
+
+      assert beta = Enum.find(default, &(&1.text == "Beta"))
+      assert raw_beta = Enum.find(profiled, &(&1.text == "Beta"))
+      refute_same(beta.bbox, raw_beta.bbox)
     end
 
     test "every profile name still resolves", %{doc: doc} do
@@ -200,11 +222,53 @@ defmodule PdfElixide.UpstreamDriftTest do
       end
     end
 
-    test ":word_gap_threshold still decides word boundaries", %{doc: doc} do
-      default = Document.words!(doc, @ruleless)
-      merged = Document.words!(doc, @ruleless, word_gap_threshold: 200.0)
+    test ":word_gap_threshold still reaches the clusterer, and text_lines keeps the split",
+         %{doc: doc} do
+      # On this fixture, words rejoin upright glyph splits; text_lines keeps them.
+      cells = [
+        "Region",
+        "Units",
+        "Total",
+        "North",
+        "12",
+        "480",
+        "South",
+        "31",
+        "930",
+        "East",
+        "7",
+        "210"
+      ]
 
-      assert length(merged) < length(default)
+      assert texts(Document.words!(doc, @ruleless)) == cells
+      assert texts(Document.words!(doc, @ruleless, word_gap_threshold: -1.0)) == cells
+      assert texts(Document.text_lines!(doc, @ruleless)) == cells
+
+      assert texts(Document.text_lines!(doc, @ruleless, word_gap_threshold: -1.0)) ==
+               [
+                 "R e g i o n",
+                 "U n i t s",
+                 "T o t a l",
+                 "N o r t h",
+                 "1 2",
+                 "4 8 0",
+                 "S o u t h",
+                 "3 1",
+                 "9 3 0",
+                 "E a s t",
+                 "7",
+                 "2 1 0"
+               ]
+    end
+
+    test "a rotated run keeps a threshold split that words/3 otherwise undoes" do
+      doc = open(@rotated_run_pdf)
+
+      # "Sideways" is rotated; "Level" is the upright control on the same page.
+      assert ["Level", "S", "i", "d", "e", "w", "a", "y", "s"] =
+               texts(Document.words!(doc, 1, word_gap_threshold: -1.0))
+
+      assert ["Level", "Sideways"] = texts(Document.words!(doc, 1))
     end
 
     test ":line_gap_threshold still decides line grouping", %{doc: doc} do
@@ -1578,11 +1642,8 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   # Async modules may add unrelated entries to the process-wide feed.
   describe "which sink a structured warning reaches" do
-    # Upstream attributes a free-function warning to the document only for the
-    # five methods that take a `SinkScope` — text extraction and the Markdown
-    # and HTML conversions. If a call outside that set starts claiming them,
-    # the process-wide feed has nothing left to report and the binding's own
-    # claim-first ordering is what would have to change.
+    # A call outside the claiming set must leave the condition where the
+    # process-wide feed can still report it.
     test "a call that is not an extraction leaves the condition process-wide" do
       doc = open(@stream_cr_pdf)
       Document.search!(doc, "Warned")
@@ -1604,9 +1665,7 @@ defmodule PdfElixide.UpstreamDriftTest do
                Document.structured_warnings!(doc)
     end
 
-    # Only what this fixture produces. `:layout`, `:no_text_layer` and
-    # `:image_suppressed` do carry a page index; pinning those needs fixtures
-    # that reach them, which the page-field canaries still owe.
+    # Only what this fixture produces; three categories do carry an index.
     test "an unreadable object reports no page" do
       doc = open(@missing_endobj_pdf)
       Document.text!(doc, 0)

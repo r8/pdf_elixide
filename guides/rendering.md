@@ -61,12 +61,10 @@ Document.render(doc, 0, dpi: 20_000)
 ```
 
 Match on `:unsupported` and retry with a lower `:dpi` or smaller `:fit` box.
-On 32-bit builds the limit is roughly 64 million pixels. The error message
-reports the pixels the render would need and the applicable limit, and names
-the buffer count when more than one full-page buffer is budgeted.
-
-The budget includes all full-page buffers, so CMYK-profiled documents with
-spot inks can reach the limit at a lower DPI than ordinary pages of the same size.
+On 32-bit builds the limit is roughly 64 million pixels. The budget counts
+every full-page buffer, not just the visible one, so a CMYK-profiled document
+with spot inks reaches the limit at a lower DPI than an ordinary page of the
+same size; the message names that buffer count when it is more than one.
 
 By default, a page that exceeds the limit is refused rather than quietly scaled
 down. Set `:max_output_pixels` when a smaller image is preferable:

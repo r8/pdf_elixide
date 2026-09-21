@@ -155,6 +155,11 @@ defmodule PdfElixide.Document do
       `90`- or `270`-degree page maps only text whose own text matrix is
       rotated, leaving a horizontal run raw.
 
+  Passing `:profile` to `words/2,3` or `text_lines/2,3` opts out of the
+  mapping: that option takes a legacy path which returns raw user space on
+  every page. See the "Legacy extraction controls" section of
+  `t:words_opts/0`.
+
   So on a `180`-degree page, `spans/1` and `words/1` describing the very same
   line report mirrored boxes. Compare or lay out boxes from **one** extractor,
   and use `chars/1` or `spans/1` when raw page space is what you want. Page
@@ -1967,6 +1972,10 @@ defmodule PdfElixide.Document do
   A span-extraction tuning preset. A profile changes the TJ-offset and
   word-margin thresholds used to turn glyphs into spans, before any word
   clustering happens.
+
+  Passing one also changes which extraction path runs, with consequences for
+  rotated pages — see the "Legacy extraction controls" section of
+  `t:words_opts/0`.
   """
   @type extraction_profile ::
           :conservative
@@ -1999,10 +2008,17 @@ defmodule PdfElixide.Document do
 
   ## Legacy extraction controls
 
-  `:word_gap_threshold` and `:profile` are retained for compatibility. Passing
-  *any* profile switches to a legacy ordering path, so it can change word
-  **order**, not merely word boundaries — even for `:conservative`, nominally
-  the default profile. Prefer leaving both at `nil`.
+  `:word_gap_threshold` and `:profile` are retained for compatibility but are
+  deprecated. Prefer leaving them at `nil`.
+
+    * `:word_gap_threshold` may have no visible effect because `words/2,3` can
+      merge adjacent pieces again. `text_lines/2,3` preserves those word
+      boundaries; see `t:text_lines_opts/0`.
+
+    * `:profile` may change word order and bounding boxes, even when set to
+      `:conservative`: a box shifts slightly on any page, and on a rotated one
+      it comes back in raw user space rather than the displayed frame — see
+      "Rotated pages and extracted geometry" in `PdfElixide.Document`.
 
   `:region` composes with everything else here: it is applied after
   extraction, so it does not discard the thresholds or the profile.
@@ -2113,6 +2129,10 @@ defmodule PdfElixide.Document do
     * `:line_gap_threshold` — the vertical gap in points that starts a new
       line. `nil` computes it automatically. Defaults to `nil`; like the other
       two legacy controls, prefer leaving it unset.
+
+  `:word_gap_threshold` behaves differently here than it does on `words/2,3`:
+  nothing re-joins the words a line is built from, so the threshold decides
+  the boundaries within a run that a space has not already fixed.
   """
   @type text_lines_opts :: [
           include_artifacts: boolean(),

@@ -818,10 +818,7 @@ mod tests {
         assert_eq!(render(7), (612, 792));
     }
 
-    // Why `render_box` transcribes a private helper rather than calling the
-    // public accessor that answers the same question: the two read `/CropBox`
-    // differently and the renderer follows `get_page_info`. When this fails they
-    // agree, and `render_box` becomes that one call.
+    // When this fails the two readers agree and `render_box` becomes that one call.
     #[test]
     fn upstream_still_rasters_a_crop_box_its_public_accessor_rejects() {
         let doc = PdfDocument::open(fixture("crop_box.pdf")).expect("open");
@@ -855,10 +852,7 @@ mod tests {
         assert_eq!(upstream_want(612.0, 792.0, 600.0 / 72.0), (5100, 6600));
     }
 
-    // Nothing else checks that upstream tests its budget with the f64 product
-    // rather than the pixmap it allocates, which is why `upstream_want` exists.
-    // When this fails it has unified them and `upstream_want` collapses into
-    // `render_dimensions`.
+    // When this fails, `upstream_want` collapses into `render_dimensions`.
     #[test]
     fn upstream_still_reduces_on_the_f64_threshold() {
         let doc = PdfDocument::open(fixture("sample.pdf")).expect("open");
