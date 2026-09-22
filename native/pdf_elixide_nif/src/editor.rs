@@ -338,7 +338,7 @@ fn editor_to_bytes(
     resource.editor.with_lock(|editor| {
         // Incremental output upstream refuses on its own; this one it does not.
         ensure_scrub_survives_save(editor, &options)?;
-        ensure_metadata_survives_save(editor)?;
+        ensure_metadata_survives_save(editor, &options)?;
 
         // Incremental output is refused below before writing, so resupplying
         // for it would only move the modified flag.
@@ -419,8 +419,14 @@ fn declares_cleartext_metadata(doc: &PdfDocument) -> bool {
     matches!(flag, Some(Object::Boolean(false)))
 }
 
-fn ensure_metadata_survives_save(editor: &OpenEditor) -> NifResult<()> {
-    if !carries_unencryptable_metadata(editor) {
+fn ensure_metadata_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
+    // An incremental update appends rather than copying, so it never reaches the
+    // decrypt-on-copy that drops the stream: nothing is lost, and this refusal
+    // would otherwise name a rewrite the caller did not ask for and recommend a
+    // sanitize that leaves the save refused anyway. Encryption owns that refusal
+    // instead - `ensure_incremental_is_not_encrypted` on a save, upstream's own
+    // check on `editor_to_bytes`.
+    if options.incremental || !carries_unencryptable_metadata(editor) {
         return Ok(());
     }
 
@@ -465,7 +471,12 @@ fn ensure_incremental_is_not_encrypted(
     Ok(())
 }
 
-// The encryption guard above removes the other case with an empty source path.
+// The encryption guard above removes the other case with an empty source path:
+// `editor_open`'s `EncryptedPdf` route builds through `from_document`, which
+// clears it, while Elixir keeps the path it was given. So this message and
+// `Editor.source_path/1` would contradict each other on that handle, and only
+// the encryption guard running first keeps it unreachable. Narrow that guard and
+// this one needs the path recorded on the Elixir side instead.
 fn ensure_incremental_has_a_source(
     editor: &DocumentEditor,
     options: &SaveOptionsNif,
@@ -527,7 +538,7 @@ fn editor_save(
     resource.editor.with_lock(|editor| {
         ensure_redaction_survives_save(editor, &options)?;
         ensure_scrub_survives_save(editor, &options)?;
-        ensure_metadata_survives_save(editor)?;
+        ensure_metadata_survives_save(editor, &options)?;
         ensure_incremental_is_not_encrypted(editor, &options)?;
         ensure_incremental_has_a_source(editor, &options)?;
         // Report destructive edits and a missing source before omitted changes.

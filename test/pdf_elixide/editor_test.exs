@@ -720,6 +720,20 @@ defmodule PdfElixide.EditorTest do
       refute File.exists?(out_path)
     end
 
+    # The rewrite refusal must not pre-empt this one: an incremental update
+    # appends, so the metadata is not at risk and sanitizing would not help.
+    test "an incremental save of the same source is refused for being encrypted",
+         %{out_path: out_path} do
+      editor = Editor.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, out_path, incremental: true)
+
+      assert message =~ "cannot be saved incrementally"
+      refute message =~ "metadata"
+      refute File.exists?(out_path)
+    end
+
     test "the refusal survives an indirect /EncryptMetadata" do
       editor = Editor.open!(@encrypted_indirect_metadata_flag_pdf, password: "secret")
 
