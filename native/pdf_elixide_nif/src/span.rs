@@ -11,6 +11,7 @@ pub struct SpanNif {
     text: String,
     page: usize,
     bbox: RectNif,
+    page_bbox: RectNif,
     font_size: f32,
     font: String,
     font_weight: u16,
@@ -49,6 +50,7 @@ fn span_parts_to_nif(text: String, font: String, span: &TextSpan, page: usize) -
         text,
         page,
         bbox: rect_to_nif(span.bbox),
+        page_bbox: rect_to_nif(span.page_bbox()),
         font_size: finite(span.font_size),
         font,
         font_weight: span.font_weight as u16,
@@ -103,6 +105,15 @@ mod tests {
                 x: f32::MAX,
                 y: -f32::MAX,
                 width: 0.0,
+                height: f32::MAX,
+            }
+        );
+        assert_eq!(
+            nif.page_bbox,
+            RectNif {
+                x: 0.0,
+                y: 0.0,
+                width: f32::MAX,
                 height: f32::MAX,
             }
         );

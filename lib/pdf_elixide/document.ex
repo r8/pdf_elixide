@@ -159,6 +159,10 @@ defmodule PdfElixide.Document do
   mapping and returns raw user space on every page. See the "Legacy extraction
   controls" section of `t:words_opts/0`.
 
+  For a span's physical extent, use its `:page_bbox`; it is in the same frame
+  as that span's `:bbox`. See the "`:bbox` and `:page_bbox`" section of
+  `PdfElixide.Document.Span`.
+
   So on a `180`-degree page, `spans/1` and `words/1` describing the very same
   line report mirrored boxes. Compare or lay out boxes from **one** extractor,
   and use `chars/1` or `spans/1` when raw page space is what you want. Page

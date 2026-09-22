@@ -34,6 +34,7 @@ defmodule PdfElixide.DocumentTest do
   @form_pdf Path.join(@fixtures, "form.pdf")
   @xfa_pdf Path.join(@fixtures, "xfa.pdf")
   @table_pdf Path.join(@fixtures, "table.pdf")
+  @rotated_run_pdf Path.join(@fixtures, "rotated_run.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
   @image_placement_pdf Path.join(@fixtures, "image_placement.pdf")
@@ -1415,6 +1416,8 @@ defmodule PdfElixide.DocumentTest do
       assert %Rect{} = span.bbox
       assert span.bbox.width > 0
       assert span.bbox.height > 0
+      assert %Rect{} = span.page_bbox
+      assert span.page_bbox == span.bbox
       assert is_float(span.font_size)
       assert is_binary(span.font)
       assert is_integer(span.font_weight)
@@ -1438,6 +1441,41 @@ defmodule PdfElixide.DocumentTest do
       assert {:ok, s1} = Document.spans(doc, 1)
       assert Enum.map(s0, & &1.text) == ["Page One"]
       assert Enum.map(s1, & &1.text) == ["Page Two"]
+    end
+
+    test "reports a rotated run's physical rect in :page_bbox" do
+      doc = Document.open!(@rotated_run_pdf)
+      spans = Document.spans!(doc, 0)
+
+      upright = Enum.find(spans, &(&1.text == "Level"))
+      assert upright.rotation == 0.0
+      assert upright.page_bbox == upright.bbox
+
+      sideways = Enum.find(spans, &(&1.text == "Sideways"))
+      assert sideways.rotation == 90.0
+
+      assert sideways.bbox.width > sideways.bbox.height
+      assert_in_delta sideways.page_bbox.width, sideways.bbox.height, 0.001
+      assert_in_delta sideways.page_bbox.height, sideways.bbox.width, 0.001
+      assert_in_delta sideways.page_bbox.x, sideways.bbox.x - sideways.bbox.height, 0.001
+      assert_in_delta sideways.page_bbox.y, sideways.bbox.y, 0.001
+    end
+
+    test ":page_bbox stays in whatever frame the call reports :bbox in" do
+      doc = Document.open!(@rotated_run_pdf)
+
+      raw = Enum.find(Document.spans!(doc, 0), &(&1.text == "Sideways"))
+      [match | _] = Document.search!(doc, "Sideways", 0)
+      displayed = hd(match.spans)
+
+      assert raw.page_bbox.width < raw.page_bbox.height
+      assert displayed.bbox.width < displayed.bbox.height
+      assert displayed.page_bbox.width > displayed.page_bbox.height
+
+      assert raw.bbox.width > raw.bbox.height
+      assert raw.bbox.height == raw.font_size
+      assert displayed.bbox.width == displayed.font_size
+      assert_in_delta displayed.bbox.height, raw.bbox.width, 0.001
     end
 
     test "returns {:error, reason} for an out-of-range page index" do

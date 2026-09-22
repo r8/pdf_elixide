@@ -6,6 +6,18 @@ defmodule PdfElixide.Document.Span do
 
   Float fields follow the "Unbounded values" rule in
   `PdfElixide.Geometry.Rect`.
+
+  ## `:bbox` and `:page_bbox`
+
+  In raw user space, `:bbox` measures the run along its writing axis: `width`
+  is its advance and `height` its font size. A displayed frame may transpose
+  those dimensions; see "Rotated pages and extracted geometry" in
+  `PdfElixide.Document`.
+
+  `:page_bbox` is the smallest axis-aligned rectangle covering the run, in the
+  same frame as `:bbox`. It equals `:bbox` when `:rotation` is `0.0`. Use it for
+  layout or hit-testing, and use `:bbox` to measure the text along its writing
+  axis.
   """
   alias PdfElixide.Color.RGB
   alias PdfElixide.Geometry.Rect
@@ -14,6 +26,7 @@ defmodule PdfElixide.Document.Span do
     :text,
     :page,
     :bbox,
+    :page_bbox,
     :font_size,
     :font,
     :font_weight,
@@ -36,6 +49,7 @@ defmodule PdfElixide.Document.Span do
           text: String.t(),
           page: non_neg_integer(),
           bbox: Rect.t(),
+          page_bbox: Rect.t(),
           font_size: float(),
           font: String.t(),
           font_weight: non_neg_integer(),
@@ -58,6 +72,7 @@ defmodule PdfElixide.Document.Span do
         text: text,
         page: page,
         bbox: bbox,
+        page_bbox: page_bbox,
         font_size: font_size,
         font: font,
         font_weight: font_weight,
@@ -77,6 +92,7 @@ defmodule PdfElixide.Document.Span do
       text: text,
       page: page,
       bbox: bbox,
+      page_bbox: page_bbox,
       font_size: font_size,
       font: font,
       font_weight: font_weight,
