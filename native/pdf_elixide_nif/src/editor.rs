@@ -428,12 +428,10 @@ fn ensure_metadata_survives_save(editor: &OpenEditor) -> NifResult<()> {
 
     Err(tagged_err(
         atoms::unsupported(),
-        "This editor was opened from an encrypted document that stores its XMP \
-         metadata unencrypted, which a write cannot carry: the metadata would be \
-         absent from the output and the document would still point at it. \
-         Nothing has been written. Drop the metadata deliberately with \
-         sanitize(editor, scrub_metadata: true, remove_javascript: false, \
-         remove_embedded_files: false), then write.",
+        "This encrypted source stores its XMP metadata unencrypted, which cannot \
+         be preserved by a rewrite. Nothing has been written. Remove the metadata \
+         with sanitize(editor, scrub_metadata: true, remove_javascript: false, \
+         remove_embedded_files: false), then retry.",
     ))
 }
 
@@ -461,10 +459,8 @@ fn ensure_incremental_is_not_encrypted(
     if options.incremental && editor.source().is_encrypted() {
         return Err(tagged_err(
             atoms::unsupported(),
-            "This editor was opened from an encrypted document, which an \
-             incremental save cannot extend: the update is appended in the clear \
-             after a verbatim copy of the original file, where a reader would try \
-             to decrypt it. Nothing has been written. Save a full rewrite instead.",
+            "This encrypted source cannot be saved incrementally. Nothing has been \
+             written. Save a full rewrite instead.",
         ));
     }
 
@@ -818,11 +814,8 @@ pub fn ensure_source_is_not_encrypted(editor: &OpenEditor, operation: &str) -> N
     Err(tagged_err(
         atoms::unsupported(),
         format!(
-            "This editor was opened from an encrypted document, whose content and \
-             appearance streams stay encrypted until they are written out. \
-             {operation} reads them, so it cannot run here and nothing has been \
-             changed. Write the document out with a full rewrite, which decrypts \
-             it, then reopen the result and repeat the call on that."
+            "{operation} is unsupported for an encrypted source. Nothing has \
+             changed. Write a full rewrite, reopen it, and retry."
         ),
     ))
 }

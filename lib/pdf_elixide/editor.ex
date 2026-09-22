@@ -129,18 +129,13 @@ defmodule PdfElixide.Editor do
   Options accepted by `open/2`, `open!/2`, `from_binary/2`, and `from_binary!/2`.
 
     * `:password` — password used to authenticate against an encrypted PDF.
-      When the password is wrong, the call returns
-      `{:error, %PdfElixide.Error{reason: :wrong_password}}` (or raises, for the
-      bang variants). When omitted or `nil`, only the empty password is tried
-      automatically, and an encrypted document that it does not open returns
-      `{:error, %PdfElixide.Error{reason: :encrypted}}`, since the editor cannot
-      write one it cannot read.
+      It has the byte-string semantics of `t:PdfElixide.Document.open_opts/0`.
+      A wrong password returns `:wrong_password`; when omitted or `nil`, only
+      the empty password is tried and a document that needs another returns
+      `:encrypted`.
 
-  The password is a *byte string*, not necessarily valid UTF-8, and takes
-  exactly the values `PdfElixide.Document.open/2`'s `:password` does — see
-  `t:PdfElixide.Document.open_opts/0`. It authenticates the document this editor
-  reads from; it is unrelated to the `:user_password` of `t:encryption_opts/0`,
-  which encrypts the *output* and is a `t:String.t/0`.
+  This authenticates the source. The `:user_password` of
+  `t:encryption_opts/0` encrypts the output and is a `t:String.t/0`.
 
   An unknown key, or a `:password` that is neither a binary nor `nil`, raises
   `ArgumentError` — see the "Errors versus exceptions" section of
@@ -1848,8 +1843,8 @@ defmodule PdfElixide.Editor do
     case Keyword.get(opts, :algorithm, :aes128) do
       :aes256 ->
         raise ArgumentError,
-              "invalid :algorithm :aes256 — the output omits /Perms, which " <>
-                "some readers require before they will open an AES-256 file, " <>
+              "invalid :algorithm :aes256 — AES-256 output is not interoperable " <>
+                "with all supported readers, " <>
                 "expected one of #{inspect(@algorithms)}"
 
       :rc4_40 ->

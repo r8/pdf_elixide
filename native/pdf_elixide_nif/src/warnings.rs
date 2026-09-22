@@ -229,6 +229,36 @@ mod tests {
             .join(name)
     }
 
+    // The right column is what `NifUnitEnum` derives from our own variant
+    // names, so one table pins both spellings. A failure is a decision, not a
+    // deletion: following upstream renames a documented atom.
+    #[test]
+    fn upstream_still_spells_every_category_the_way_our_atoms_do() {
+        for (category, atom) in [
+            (WarningCategory::SpecViolation, "spec_violation"),
+            (WarningCategory::ToUnicodeMissing, "to_unicode_missing"),
+            (WarningCategory::XrefRecovery, "xref_recovery"),
+            (
+                WarningCategory::OperatorCapExceeded,
+                "operator_cap_exceeded",
+            ),
+            (WarningCategory::Type3Font, "type3_font"),
+            (WarningCategory::EofPremature, "eof_premature"),
+            (WarningCategory::Encryption, "encryption"),
+            (WarningCategory::Font, "font"),
+            (WarningCategory::Layout, "layout"),
+            (WarningCategory::GlyphDropped, "glyph_dropped"),
+            (WarningCategory::NoTextLayer, "no_text_layer"),
+            (WarningCategory::ImageSuppressed, "image_suppressed"),
+        ] {
+            assert_eq!(
+                category.as_str(),
+                atom,
+                "upstream renamed a category string every binding shares"
+            );
+        }
+    }
+
     #[test]
     fn collect_absorbs_then_snapshots_and_snapshot_does_not_drain() {
         let buffer = Buffer::new();

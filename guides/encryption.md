@@ -37,19 +37,12 @@ and nothing about the source document is changed.
 
 `PdfElixide.Editor.open/2` and `PdfElixide.Editor.from_binary/2` take a
 `:password`, so an encrypted document can be edited, re-keyed, or written out
-without its encryption. Without one, only the empty password is tried, and a
-document that does not open under it returns
-`{:error, %PdfElixide.Error{reason: :encrypted}}`; a wrong password returns
-`{:error, %PdfElixide.Error{reason: :wrong_password}}`.
+without its encryption. Without one, only the empty password is tried. A
+document that needs another password returns `:encrypted`; a wrong password
+returns `:wrong_password`.
 
-The password authenticates the *source*. What the output carries is decided by
-`:encryption` on the write — so omitting `:encryption` writes the document out
-in the clear, and supplying it with different passwords re-keys.
-
-Most of the editor works on such a handle, but not all of it: the operations
-that rewrite a page's existing content are refused. ["What an encrypted source
-cannot do"](#what-an-encrypted-source-cannot-do) below lists them and gives the
-way around.
+The password authenticates the *source*. Omitting `:encryption` from a write
+removes encryption; supplying new passwords re-keys the output.
 
 ```elixir
 alias PdfElixide.Editor
@@ -57,13 +50,11 @@ alias PdfElixide.Editor
 editor = Editor.open!("path/to/locked.pdf", password: "open-me")
 
 try do
-  # Re-key: same content, a new password.
+  Editor.save!(editor, "path/to/decrypted.pdf")
+
   Editor.save!(editor, "path/to/rekeyed.pdf",
     encryption: [user_password: "new-password", owner_password: "new-owner"]
   )
-
-  # Or remove the encryption entirely by writing without `:encryption`.
-  Editor.save!(editor, "path/to/decrypted.pdf")
 after
   Editor.close(editor)
 end
@@ -74,88 +65,42 @@ The source password is a *byte string*, like
 `:encryption` are `t:String.t/0` — see [Passwords](#passwords), which explains
 the difference.
 
-`PdfElixide.Editor.save/3` and `PdfElixide.Editor.to_binary/2` take the editor's
-exclusive lock, like every other write — see the [Concurrency](concurrency.md)
-guide.
-
 ## What an encrypted source cannot do
 
-A document stays encrypted in memory until it is written. Operations that need
-to read existing page content or appearances therefore return
-`{:error, %PdfElixide.Error{reason: :unsupported}}`:
+These operations return `{:error, %PdfElixide.Error{reason: :unsupported}}`:
 
   * `PdfElixide.Editor.apply_redactions/1,2`, and `PdfElixide.Editor.add_redaction/3,4`
     with it
   * `PdfElixide.Editor.flatten_annotations/1,2`
   * `PdfElixide.Form.flatten/1,2`
-  * a save with `incremental: true`, for a separate reason given under
-    [Incremental saves](#incremental-saves)
+  * a save with `incremental: true`; see [Incremental saves](#incremental-saves)
 
-A rewrite is also refused when the source stores its XMP metadata unencrypted,
-because the output would lose that metadata while still pointing at it. To
-write such a document, drop the metadata deliberately first:
+A rewrite is also refused when an encrypted source stores its XMP metadata in
+the clear. Remove the metadata deliberately before writing:
 
 ```elixir
-alias PdfElixide.Editor
-
 editor = Editor.open!("path/to/searchable-metadata.pdf", password: "open-me")
-
-try do
-  # `sanitize/2` removes JavaScript and embedded files by default; both are
-  # turned off here so the call drops the metadata and nothing else.
-  {:ok, _report} =
-    Editor.sanitize(editor,
-      scrub_metadata: true,
-      remove_javascript: false,
-      remove_embedded_files: false
-    )
-
-  Editor.save!(editor, "path/to/out.pdf")
-after
-  Editor.close(editor)
-end
+Editor.sanitize!(editor,
+  scrub_metadata: true,
+  remove_javascript: false,
+  remove_embedded_files: false
+)
+Editor.save!(editor, "path/to/out.pdf")
+Editor.close(editor)
 ```
 
 `scrub_metadata: true` also empties the document information dictionary, so the
-title, author and dates go with the XMP. `PdfElixide.Document.xmp_metadata/1`
-and `PdfElixide.Document.metadata/1` both read from the source perfectly well,
-so read whichever you need before writing if you want to keep a copy.
-Documents this library encrypts are never affected: it always encrypts the
-metadata along with everything else.
+title, author and dates go with the XMP. Read anything you need with
+`PdfElixide.Document.xmp_metadata/1` or `PdfElixide.Document.metadata/1` first.
 
 Nothing is changed when one of these is refused, and the editor stays usable.
 Other edits, including form filling, document information and ordinary page
 changes, work normally. Redaction marking is also unaffected.
 
-To redact or flatten such a document, write it out first and work on the result:
-
-```elixir
-alias PdfElixide.Editor
-
-source = Editor.open!("path/to/locked.pdf", password: "open-me")
-
-decrypted =
-  try do
-    Editor.to_binary!(source)
-  after
-    Editor.close(source)
-  end
-
-editor = Editor.from_binary!(decrypted)
-
-try do
-  Editor.flatten_annotations!(editor)
-  # Re-encrypt on the way out, if the result should stay protected.
-  Editor.save!(editor, "path/to/flattened.pdf",
-    encryption: [user_password: "open-me", owner_password: "change-me"]
-  )
-after
-  Editor.close(editor)
-end
-```
-
-The intermediate is decrypted, so hold it only as long as it is needed — and
-prefer the in-memory form above to writing it to disk.
+To redact or flatten, first make a full rewrite, reopen it, and repeat the
+operation. Prefer an in-memory intermediate and keep it only as long as needed,
+because that intermediate is decrypted. Add `:encryption` when writing the
+final result if it should remain protected.
 
 ## Algorithms
 
