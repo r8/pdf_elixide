@@ -249,6 +249,17 @@ defmodule PdfElixide.RenderingTest do
       assert {rendered.width, rendered.height} == {1759, 2276}
     end
 
+    test "a budget over the hard limit names the option that is over", %{doc: doc} do
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Document.render(doc, 0, dpi: 20_000, max_output_pixels: 300_000_000)
+
+      assert message =~ ":max_output_pixels"
+      # Lowering :dpi is not the fix here, and the unreduced page is not the
+      # raster this call would allocate, so neither may be what it reports.
+      refute message =~ "lower :dpi"
+      refute message =~ "would need"
+    end
+
     test ":region refuses a budget that would shrink the page it crops", %{doc: doc} do
       region = %Rect{x: 0.0, y: 0.0, width: 100.0, height: 100.0}
 

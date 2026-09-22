@@ -293,7 +293,8 @@ fn ensure_render_budget(
         }
     };
 
-    if within_budget(budgeted_pixels(width, height, cap), buffers) {
+    let budget = budgeted_pixels(width, height, cap);
+    if within_budget(budget, buffers) {
         return Ok(());
     }
 
@@ -305,10 +306,19 @@ fn ensure_render_budget(
 
     Err(tagged_err(
         atoms::unsupported(),
-        format!(
-            "rendering this page would need {width}x{height} pixels{scope}, over \
-             the {MAX_RENDER_PIXELS} pixel limit; {advice}"
-        ),
+        match cap {
+            // The caller's own budget is what the limit rejects, and lowering
+            // `:dpi` only helps once the page falls under it. Naming the page
+            // here would report a raster this call would never allocate.
+            Some(cap) if budget < width.saturating_mul(height) => format!(
+                "the :max_output_pixels budget of {cap} pixels{scope} is over the \
+                 {MAX_RENDER_PIXELS} pixel limit; lower :max_output_pixels"
+            ),
+            _ => format!(
+                "rendering this page would need {width}x{height} pixels{scope}, over \
+                 the {MAX_RENDER_PIXELS} pixel limit; {advice}"
+            ),
+        },
     ))
 }
 
