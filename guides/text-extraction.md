@@ -45,6 +45,10 @@ Reach for it when:
     skipped rather than to fail the call (`:on_page_error`);
   * you want ligatures expanded (`:expand_ligatures`).
 
+Text lying entirely outside the page's crop box is not returned — see "What the
+crop box hides from extraction" in `PdfElixide.Document`, which also names the
+one extractor that reports it anyway.
+
 ## `to_plain_text/2` — the page as prose
 
 `to_plain_text/2` groups spans into blocks, orders the blocks — detecting

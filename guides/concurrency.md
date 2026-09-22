@@ -36,13 +36,13 @@ in-flight native calls on that handle and block new ones for their duration.
   * `PdfElixide.Document.clear_search_index/1` waits for current searches before
     releasing the index, so the memory is gone when it returns. Its sibling
     `PdfElixide.Document.prepare_search/1` is an ordinary shared read.
-  * `PdfElixide.Document.close/1` waits for every in-flight call to return rather
-    than interrupting it — *immediately* means as soon as the handle is idle, not
-    preemptively, and an extraction can hold its share of the lock for seconds.
-    Afterwards every call that reaches the handle gets
+  * `PdfElixide.Document.close/1` waits for the handle to go idle rather than
+    interrupting work in flight, and an extraction can hold its share of the lock
+    for seconds. Afterwards every call that reaches the handle gets
     `{:error, %PdfElixide.Error{reason: :closed}}`, an ordinary error rather than
-    a crash. The values cached on the struct keep answering, as above. A worker racing a close may therefore return this error. Close only
-    once the workers are done.
+    a crash. The values cached on the struct keep answering, as above. A worker
+    racing a close may therefore return this error. Close only once the workers
+    are done.
 
 `PdfElixide.Document.rasterize/2` runs one at a time **across the whole node**,
 whatever document each caller uses. Other *reads* on the same handle are
@@ -67,10 +67,10 @@ one handle at once when these PDFs are in scope.
 
 ## Throughput is not linear
 
-Concurrency does *not* guarantee linear scaling. First-time extraction can
-still contend while the document is being loaded and decoded, while repeated
-work may benefit more from cached data. Benchmark representative PDFs rather
-than expecting speedup proportional to the worker count.
+Concurrency does *not* guarantee linear scaling. A first pass over a page is
+slower than a repeat of the same work, and processes can still wait on each
+other during it. Benchmark representative PDFs rather than expecting speedup
+proportional to the worker count.
 
 A whole-document call such as `PdfElixide.Document.chars/1` runs on one
 scheduler thread for the whole document, however many cores the node has.

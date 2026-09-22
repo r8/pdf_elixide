@@ -76,8 +76,10 @@ rendered = Document.render!(doc, 0, dpi: 600, max_output_pixels: 4_000_000)
 ```
 
 The aspect ratio is preserved, and `:width` and `:height` report the resulting
-size. A `:region` render returns `:unsupported` if the budget would require
-scaling the page before cropping it.
+size. The key only lowers the limit above — a budget set higher than it is
+refused with `:unsupported` naming `:max_output_pixels`, so it is not a way to
+render past the ceiling. A `:region` render returns `:unsupported` if the
+budget would require scaling the page before cropping it.
 
 `separations/3`, `separation/4` and `rasterize/2` instead have a fixed limit of
 16 million pixels — the highest `:dpi` a US Letter page fits in is 413. Retry
@@ -229,9 +231,9 @@ can come out substituted or missing while the rest of the page is unaffected. If
 byte-identical output across machines matters, install a known font set, or
 check that your documents embed their fonts.
 
-The first render in an OS process is measurably slower than the ones after it,
-because the available fonts are gathered once and reused. Later renders do not
-repeat that cost.
+The first render in an OS process is measurably slower than the ones after it.
+Later renders do not repeat that cost, so time a warm render rather than a cold
+one when you benchmark.
 
 ## Separation plates
 

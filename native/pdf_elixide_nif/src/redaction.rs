@@ -134,8 +134,7 @@ fn editor_mark_page_redactions(
     page_index: usize,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        // Inside the guard so the checks and the mark cannot straddle a writer
-        // that changes the page count.
+        // Inside the guard, per `Closable::with_lock`.
         ensure_editor_page_in_range(editor, page_index)?;
         ensure_redaction_spliceable(editor, page_index)?;
 
@@ -176,7 +175,7 @@ fn editor_mark_all_redactions(resource: ResourceArc<EditorResource>) -> NifResul
     })
 }
 
-// Upstream does not bounds-check this one, so the check here is the only one.
+// No upstream bounds check; this one stands alone.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_unmark_page_redactions(
     resource: ResourceArc<EditorResource>,
@@ -192,7 +191,7 @@ fn editor_unmark_page_redactions(
 }
 
 // Shared: upstream's accessor takes `&self` and the bounds check needs no more.
-// Upstream does not bounds-check this one either.
+// No upstream bounds check here either.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_is_page_marked_for_redaction(
     resource: ResourceArc<EditorResource>,
@@ -393,7 +392,7 @@ mod tests {
         editor
     }
 
-    // A decrypted control prevents fixture drift from passing the canary.
+    // Same control as `editor`'s `decrypted_twin`.
     fn decrypted_twin(name: &str) -> DocumentEditor {
         let bytes = authenticated(name)
             .save_to_bytes_with_options(SaveOptions::full_rewrite())
@@ -612,9 +611,8 @@ mod tests {
         annotated
             .apply_page_redactions(0)
             .expect("page 0 is marked");
-        // Non-vacuity: the annotation is what makes the region set non-empty.
-        // Without one the pass returns early and never reads the contents, which
-        // is why marking such a page is still allowed.
+        // Non-vacuity: without the annotation the pass returns early and never
+        // reads the contents, which is why marking such a page is allowed.
         assert_eq!(
             annotated.redaction_count(0).expect("the page is in range"),
             1

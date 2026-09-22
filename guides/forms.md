@@ -348,8 +348,8 @@ current value and writing back whatever it returns:
 end)
 ```
 
-This is not an atomic read-modify-write. Another process holding the same editor
-can write between the read and the write.
+This is not an atomic read-modify-write; see the [Concurrency](concurrency.md)
+guide.
 
 ## Saving
 

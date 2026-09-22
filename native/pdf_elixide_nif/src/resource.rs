@@ -31,6 +31,8 @@ impl<T> Closable<T> {
     }
 
     // Use only for `&mut` work or effects that must be atomic against readers.
+    // Pre-flight checks whose answer the work depends on belong inside the
+    // closure: run outside, they can straddle a writer that invalidates them.
     pub fn with_lock<R>(&self, f: impl FnOnce(&mut T) -> NifResult<R>) -> NifResult<R> {
         // The guard is bound here, in the caller's frame, rather than inside the
         // closure — that is what keeps a panic from poisoning the lock (see

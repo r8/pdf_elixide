@@ -5,7 +5,7 @@ defmodule PdfElixide.Color do
     * `PdfElixide.Color.RGB` — three channels (DeviceRGB).
     * `PdfElixide.Color.CMYK` — four channels (DeviceCMYK).
     * `PdfElixide.Color.Gray` — one channel (DeviceGray).
-    * `PdfElixide.Color.Unknown` — components whose colorspace we can't identify.
+    * `PdfElixide.Color.Unknown` — components whose colorspace could not be identified.
 
   ## Component range
 

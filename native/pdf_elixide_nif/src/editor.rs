@@ -292,7 +292,7 @@ fn editor_embed_file(
     relationship: Option<RelationshipNif>,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        // Inside the guard so the check and the push cannot straddle a writer.
+        // Inside the guard, per `Closable::with_lock`.
         ensure_no_name_tree(editor.source(), &editor.scrubbed_name_tree_entries())?;
 
         let file = embedded_file(name, data.as_slice().to_vec(), description, relationship);
@@ -736,6 +736,8 @@ impl From<PageError> for rustler::Error {
 // Upstream bounds-checks every page-taking method but reports a bad index as a
 // generic `InvalidPdf`, so the check is repeated here to reach `:out_of_range`.
 // The editor's count is live rather than cached, so it must be read per call.
+// Some callers get no upstream check at all and rely on this one alone; they
+// are marked at their own definition.
 pub fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -> NifResult<()> {
     let count = editor.current_page_count();
     if page_index >= count {
@@ -939,8 +941,7 @@ pub fn ensure_info_is_direct(editor: &DocumentEditor) -> NifResult<()> {
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_delete_page(resource: ResourceArc<EditorResource>, page_index: usize) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        // Inside the guard so the check and the removal cannot straddle a writer
-        // that changes the page count.
+        // Inside the guard, per `Closable::with_lock`.
         ensure_editor_page_in_range(editor, page_index)?;
 
         editor.delete_page(page_index).map_err(to_nif_err)?;
@@ -1227,7 +1228,7 @@ fn editor_erase_regions(
     })
 }
 
-// Upstream does not bounds-check this one, so the check here is the only one.
+// No upstream bounds check; this one stands alone.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_clear_erase_regions(
     resource: ResourceArc<EditorResource>,
@@ -1268,8 +1269,7 @@ fn editor_flatten_forms_on_page(
     page_index: usize,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        // Inside the guard so the check and the mark cannot straddle a writer
-        // that changes the page count.
+        // Inside the guard, per `Closable::with_lock`.
         ensure_editor_page_in_range(editor, page_index)?;
         ensure_source_is_not_encrypted(editor, "Flattening form fields")?;
 

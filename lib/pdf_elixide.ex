@@ -3,7 +3,7 @@ defmodule PdfElixide do
   Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide),
   a high-performance PDF library written in Rust.
 
-  The public API lives under the submodules:
+  The entry points are:
 
     * `PdfElixide.Document` — read-only inspection (open, page count,
       version, text extraction).
@@ -16,6 +16,10 @@ defmodule PdfElixide do
       the certificate and timestamp in one, which fields are still
       unsigned, and the security store. Producing signatures is not
       offered.
+
+  `PdfElixide.Error` is what every one of them reports a failure as,
+  `PdfElixide.Warning` what they record for a condition they read past, and
+  `PdfElixide.Logging` the switch that captures those diagnostics.
 
   Reading a document is open, extract, close:
 

@@ -815,7 +815,7 @@ fn signature_pades_level(contents: Option<Binary>, dss: Option<DssNif>) -> NifRe
         // told about.
         other => Err(tagged_err(
             atoms::unsupported(),
-            format!("pdf_oxide reported an unmapped PAdES level: {other:?}"),
+            format!("unsupported PAdES baseline level: {other:?}"),
         )),
     }
 }

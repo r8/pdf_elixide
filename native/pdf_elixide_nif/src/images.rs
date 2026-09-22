@@ -217,7 +217,6 @@ fn image_closed(resource: ResourceArc<ImageResource>) -> bool {
     resource.image.is_closed()
 }
 
-// Decodes the image and re-encodes it as JPEG bytes in memory.
 fn encode_jpeg(image: &PdfImage) -> NifResult<Vec<u8>> {
     let dynamic = image.to_dynamic_image().map_err(to_nif_err)?;
     let mut buffer = Cursor::new(Vec::new());

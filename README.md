@@ -17,9 +17,16 @@ high-performance PDF library written in Rust. Built with
 
 ## Features
 
+**Reading**
+
 - Open PDFs from file paths or in-memory binaries
 - Read page count, PDF version, metadata, permissions, page labels, outlines,
   optional-content layers, and spot inks
+- Read annotations and AcroForm fields, with check boxes, radio groups, combo
+  boxes and the rest classified from their field flags
+
+**Extraction and conversion**
+
 - Extract text, words, lines, characters, and spans with page geometry and
   typographic metadata, or read a page as typed regions grouped by column
 - Convert individual pages or whole documents to Markdown, HTML, or plain text
@@ -27,10 +34,16 @@ high-performance PDF library written in Rust. Built with
 - Detect tables and render them as Markdown, HTML, or plain text
 - Extract vector paths, rectangles, straight lines, raster images, and embedded
   fonts
+- Restrict extraction by region and configure artifacts, layers, inks, reading
+  order, table detection, and span merging
+
+**Rendering**
+
 - Render pages to PNG, JPEG or raw RGBA at a chosen resolution or into a
   thumbnail box, render prepress ink separations, and rasterize a whole document
-- Read annotations and AcroForm fields, with check boxes, radio groups, combo
-  boxes and the rest classified from their field flags
+
+**Editing and forms**
+
 - Fill AcroForm fields, flatten forms and annotations, export field data as FDF
   or XFDF, and save edited PDFs to a file or binary
 - Delete, reorder, rotate and crop pages, and paint over regions, in a mutable editor
@@ -39,6 +52,9 @@ high-performance PDF library written in Rust. Built with
 - Set a document's title, author, subject, keywords, creator, producer and
   dates, and keep the ones it has through a rewrite
 - Attach files to a document, and list the attachments a document carries
+
+**Security and signatures**
+
 - Write a password-protected PDF, with the permission flags a reader reads back,
   and edit, re-key or decrypt one that already carries a password
 - Read what a document's digital signatures claim — signer, time, reason, the
@@ -50,8 +66,9 @@ high-performance PDF library written in Rust. Built with
   authority issued it and that it covers that signature
 - Report a signature's PAdES baseline level, reach a document's archival
   timestamp, and read the security store kept for validating them later
-- Restrict extraction by region and configure artifacts, layers, inks, reading
-  order, table detection, and span merging
+
+**Diagnostics and lifecycle**
+
 - Capture diagnostics for content a damaged page drops without failing, and
   forward them to `Logger`, or read the conditions the reader tolerated as
   structured warnings
@@ -109,9 +126,7 @@ Document.version(doc)
 {:ok, all_text} = Document.text(doc)
 ```
 
-Page indices are zero-based. The version and source path are stored on the
-Elixir struct. The page count is also cached when it can be determined while
-opening; if not, `page_count/1` asks the open native document.
+Page indices are zero-based.
 
 Most fallible functions have a bang variant that returns the value directly and
 raises `PdfElixide.Error` on failure:
@@ -136,20 +151,11 @@ memory_doc = Document.from_binary!(bytes)
 
 ### Extract structured content
 
-Use the extractor that matches the level of detail you need:
+Extractors return structs carrying their page and geometry:
 
 ```elixir
 {:ok, words} = Document.words(doc, 0)
-{:ok, lines} = Document.text_lines(doc, 0)
-{:ok, spans} = Document.spans(doc, 0)
-{:ok, chars} = Document.chars(doc, 0)
-{:ok, page} = Document.structured(doc, 0)
 ```
-
-Each returned struct includes its page and geometry. Words and lines provide a
-convenient reading-level view; spans retain PDF text-state runs; characters
-retain per-glyph details. `structured/2` groups a page's spans into typed
-regions — body text per column, running header and footer, page number.
 
 Every extractor is also available from a page value, and a document is
 enumerable over its pages:
@@ -162,9 +168,10 @@ doc
 |> Page.words!()
 ```
 
-The same pattern applies to tables, paths, images, fonts, and annotations. See
-the [`PdfElixide.Document`](https://pdf-elixide.hexdocs.pm/PdfElixide.Document.html)
-documentation for their return types and extraction options.
+See the
+[`PdfElixide.Document`](https://pdf-elixide.hexdocs.pm/PdfElixide.Document.html)
+documentation for the full set of extractors, their return types and their
+extraction options.
 
 ### Convert to Markdown, HTML, or plain text
 

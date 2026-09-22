@@ -716,8 +716,7 @@ defmodule PdfElixide.DocumentTest do
                  image_output_dir: tmp_dir
                )
 
-      # Upstream joins with a literal `/`, not the platform separator, so this
-      # is not `Path.join/2`: on Windows that would assert a `\` never emitted.
+      # Same `:image_output_dir` contract as the to_markdown/3 block above.
       assert html =~ ~s(<img src="#{tmp_dir}/page1_1.png")
       refute html =~ "data:image/png;base64,"
       assert File.exists?(Elixir.Path.join(tmp_dir, "page1_1.png"))
@@ -743,7 +742,6 @@ defmodule PdfElixide.DocumentTest do
     test "an image_output_dir that cannot be created is an :io error", %{tmp_dir: tmp_dir} do
       doc = Document.open!(@markdown_pdf)
 
-      # A regular file cannot hold a subdirectory, so create_dir_all fails.
       blocker = Elixir.Path.join(tmp_dir, "blocker")
       File.write!(blocker, "not a directory")
 

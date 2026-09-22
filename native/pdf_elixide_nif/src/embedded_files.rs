@@ -148,7 +148,7 @@ enum Refused {
 
 fn refused_err(refused: Refused) -> rustler::Error {
     match refused {
-        // A cycle is a malformed document; the caps are this binding declining.
+        // Same split as `form_tree::refused_err`.
         Refused::Cycle => tagged_err(
             atoms::invalid_pdf(),
             "Embedded-file name tree contains a /Kids cycle",

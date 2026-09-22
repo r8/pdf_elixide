@@ -186,8 +186,9 @@ to be `true`. Setting `print_low_res: false` denies printing altogether.
 
 ## A failed encryption is not reported
 
-If the platform's cipher or random source fails during encryption, an affected
-string or stream may be written in the clear while the write continues.
+When this library cannot encrypt an individual string or stream, it writes that
+object in the clear and carries on with the rest of the file rather than
+stopping.
 
 Nothing in the result distinguishes such a file from a fully encrypted one:
 `save/3` still returns `{:ok, editor}`, the file still declares itself

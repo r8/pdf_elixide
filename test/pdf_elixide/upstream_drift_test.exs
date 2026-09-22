@@ -29,6 +29,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
   @rotated_run_pdf Path.join(@fixtures, "rotated_run.pdf")
   @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
+  @cropped_text_pdf Path.join(@fixtures, "cropped_text.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
@@ -727,8 +728,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   describe "the ancestor an inherited page box comes from" do
     # Page 0 nests two /Pages nodes that both declare all three entries; the
-    # inner one (300 x 500) is the nearest. The two page-tree walkers used to
-    # disagree, so the answer depended on how many pages had been read.
+    # inner one (300 x 500) is the nearest.
     test "the nearest ancestor wins on a cold read, editor included" do
       page = Document.page!(open(@inherited_boxes_pdf), 0)
 
@@ -754,6 +754,28 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert %{width: 300.0, height: 500.0} = Page.media_box!(page)
       assert %{width: 260.0, height: 460.0} = Page.crop_box!(page)
       assert Page.rotation!(page) == 180
+    end
+  end
+
+  describe "the crop box as a boundary on extracted text" do
+    # /CropBox [50 50 250 250] on a 300x300 sheet. "Slugline" sits wholly above
+    # the crop top, "Straddler" crosses it, "Visible" is well inside.
+    test "a run wholly outside is dropped and one crossing the edge is kept whole" do
+      doc = open(@cropped_text_pdf)
+
+      assert Enum.map(Document.words!(doc, 0), & &1.text) == ["Straddler", "Visible"]
+      refute Document.text!(doc, 0) =~ "Slugline"
+      assert Document.search!(doc, "Slugline") == []
+    end
+
+    # chars/2 does not share that boundary, which is why the Document moduledoc
+    # tells callers not to assemble text from it.
+    test "chars/2 still reports the cropped-away glyphs" do
+      doc = open(@cropped_text_pdf)
+      text = Document.chars!(doc, 0) |> Enum.map_join(& &1.text)
+
+      assert text =~ "Slugline"
+      assert text =~ "Visible"
     end
   end
 

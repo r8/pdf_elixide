@@ -128,6 +128,24 @@ defmodule PdfElixide.Document do
   that sheet a viewer shows — on the same terms, answering `nil` when there is
   none. There is no reader for `/BleedBox`, `/TrimBox` or `/ArtBox`.
 
+  ### What the crop box hides from extraction
+
+  Text extraction reads a page as a viewer shows it, so text lying **entirely**
+  outside the crop box — a print master's slug line, a proof's marginal
+  numbering — is not returned. `text/2`, `spans/2`, `words/2`, `text_lines/2`,
+  `structured/2`, `search/2`, `to_markdown/2`, `to_html/2` and
+  `to_plain_text/2` all omit it, at every arity. A run that straddles the crop
+  edge is returned whole rather than cut. A page with no crop box is read to
+  its whole media box.
+
+  `chars/2` is the exception: it reports every glyph on the sheet, cropped away
+  or not. A page can therefore yield characters that its own words and lines do
+  not contain, so do not assemble text from `chars/2` and expect it to match
+  `text/2`.
+
+  To reach cropped-away text, widen the crop box to the media box with
+  `PdfElixide.Editor.set_crop_box/3` and extract from the saved result.
+
   ### Which ancestor an inherited box comes from
 
   `/MediaBox`, `/CropBox` and `/Rotate` are inheritable: a page declaring none
@@ -857,8 +875,11 @@ defmodule PdfElixide.Document do
       for using extractor boxes on rotated pages;
       `PdfElixide.Geometry.Rect.to_user_space/3` maps a displayed box back.
     * `:max_output_pixels` — a positive pixel budget. When set, scales an
-      oversized render down instead of refusing it. Defaults to `nil`, which
-      preserves the requested scale or returns an error.
+      oversized render down instead of refusing it. It can only lower the
+      library's own ceiling, never raise it: a budget above that ceiling is
+      refused with `%PdfElixide.Error{reason: :unsupported}` naming the key.
+      Defaults to `nil`, which preserves the requested scale or returns an
+      error.
 
   Cropping still renders the full page, so `:region` does not reduce rendering
   cost or the size limit. A `:region` render returns `:unsupported` when
@@ -905,7 +926,8 @@ defmodule PdfElixide.Document do
 
   Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` when the requested
   size exceeds the pixel limit. Lower `:dpi`, use a smaller `:fit` box, or set
-  `:max_output_pixels` to have the page rendered smaller instead.
+  `:max_output_pixels` to have the page rendered smaller instead — a budget
+  that is itself over the limit is refused rather than applied.
   See the [Rendering](guides/rendering.md) guide for sizing, page coverage,
   fonts and differences from text extraction.
 
@@ -3540,7 +3562,8 @@ defmodule PdfElixide.Document do
   zero-based index.
 
   Builds nothing but the handle itself, and reads no page content until an
-  extractor is called on it.
+  extractor is called on it. An index at or past the page count is
+  `%PdfElixide.Error{reason: :out_of_range}`.
   """
   @spec page(t(), non_neg_integer()) :: {:ok, Page.t()} | {:error, Error.t()}
   def page(%__MODULE__{} = doc, index) when is_integer(index) and index >= 0 do

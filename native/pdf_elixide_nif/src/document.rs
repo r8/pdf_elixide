@@ -1565,11 +1565,14 @@ mod tests {
         );
     }
 
+    // Both `to_plain_text` canaries below carry the same two guards: a vacuity
+    // assert, because the tagged branch is the one that reads the option and the
+    // fixture has to take the untagged one, and a control showing that same
+    // option live on the text path.
     #[test]
     fn upstream_still_ignores_region_filters_in_to_plain_text() {
         let doc = PdfDocument::open(fixture("extraction.pdf")).expect("fixture opens");
 
-        // Vacuity guard: the tagged branch reads the option.
         assert!(!doc.prefers_structure_reading_order());
 
         let unfiltered = doc
@@ -1584,7 +1587,6 @@ mod tests {
             ..Default::default()
         };
 
-        // Control: the same exclusion is live on the text path.
         assert!(doc
             .extract_text_with_options(3, &filtered)
             .expect("text")
@@ -1601,7 +1603,6 @@ mod tests {
     fn upstream_still_ignores_expand_ligatures_in_to_plain_text() {
         let doc = PdfDocument::open(fixture("extraction.pdf")).expect("fixture opens");
 
-        // Vacuity guard: the tagged branch reads the option.
         assert!(!doc.prefers_structure_reading_order());
 
         let expand = ConversionOptions {
@@ -1609,7 +1610,6 @@ mod tests {
             ..Default::default()
         };
 
-        // Control: the same option is live on the text path.
         assert!(doc
             .extract_text_with_options(2, &expand)
             .expect("text")

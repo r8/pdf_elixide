@@ -93,7 +93,8 @@ defmodule PdfElixide.Document.Page do
 
   Returns `nil` when the box is absent or `null`; a malformed box yields
   `%PdfElixide.Error{reason: :invalid_pdf}`. See "Page boxes and the coordinate
-  origin" in `PdfElixide.Document`.
+  origin" in `PdfElixide.Document`, whose "What the crop box hides from
+  extraction" subsection says which extractors stop at this box.
   """
   @spec crop_box(t()) :: {:ok, Rect.t() | nil} | {:error, Error.t()}
   def crop_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do

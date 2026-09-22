@@ -86,15 +86,12 @@ defmodule PdfElixide.Editor do
 
   ## Concurrency
 
-  Every call that writes or mutates takes the handle's lock exclusively — and so
-  does `PdfElixide.Form.fields/1`, which only reads — so concurrent *editing* of
-  a single editor serializes. `page_count/1`, `modified?/1`, `rotation/2`,
-  `media_box/2`, `crop_box/2`, `metadata/1`, `embedded_files/1`,
-  `flatten_warnings/1`, `marked_for_redaction?/2` and `closed?/1` take the lock
-  shared, as do the `PdfElixide.Signature` reads given an editor, which reach the
-  document it was opened from. `redaction_count/2` is the exception among the
-  reads: it takes the lock exclusively. Give each process its own editor if you need them
-  to work at once; see the [Concurrency](guides/concurrency.md) guide.
+  Every call that writes or mutates takes the handle's lock exclusively, so
+  concurrent *editing* of a single editor serializes; give each process its own
+  editor if you need them to work at once. Most accessors take the lock shared,
+  but not all of them — `redaction_count/2` is one that does not. The
+  [Concurrency](guides/concurrency.md) guide lists which calls fall on which
+  side.
   """
 
   alias PdfElixide.Color.RGB

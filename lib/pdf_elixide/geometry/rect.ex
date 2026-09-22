@@ -57,8 +57,8 @@ defmodule PdfElixide.Geometry.Rect do
   into raw, unrotated user space.
 
   This is the inverse of `to_display_frame/3` and takes the same raw media box.
-  Convert only boxes known to be in the displayed frame; the `PdfElixide.Document`
-  geometry section explains how to identify them.
+  Convert only boxes known to be in the displayed frame; "Telling which frame a
+  box is in" in `PdfElixide.Document` explains how to identify them.
   """
   @spec to_user_space(t(), PdfElixide.Document.Page.rotation(), t()) :: t()
   def to_user_space(%__MODULE__{} = rect, rotation, %__MODULE__{} = media_box)

@@ -33,7 +33,7 @@ defmodule PdfElixide.Logging do
   `Logger` metadata. Use `:pdf_source`, the message and the timestamp instead;
   the `:pid` added by `Logger` identifies only the forwarding process.
 
-  ## Cost, and why it is off by default
+  ## Cost
 
   Capture is process-global, not per-document or per-process: it affects every
   document handle in the VM. Records are buffered as they are produced and

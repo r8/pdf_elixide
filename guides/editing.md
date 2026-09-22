@@ -162,9 +162,13 @@ reported in the displayed frame should pass through
 it is written, and the getters report the box as it will land in the file.
 
 **Cropping hides content; it does not remove it.** Whatever lies outside the crop box
-is still in the written file and still extracted by `PdfElixide.Document.text/1`. A
-viewer clips the crop box to the media box, so a crop box larger than the media box
-shows the whole page, and nothing here checks one against the other.
+is still in the written file, and anything that reads the content stream still finds
+it. Text extraction is not such a reader: a run lying entirely outside the crop box
+is dropped from `PdfElixide.Document.text/1` and its siblings, so cropping is a way to
+hide text from extraction but not a way to delete it — use
+[Redaction](redaction.md) for that. A viewer clips the crop box to the media box, so a
+crop box larger than the media box shows the whole page, and nothing here checks one
+against the other.
 
 **Setting the media box leaves an existing crop box alone.** A page whose crop box was
 declared by the document keeps it after `PdfElixide.Editor.set_media_box/3`, wherever
