@@ -5,6 +5,35 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.20.0](https://github.com/r8/pdf_elixide/compare/v0.19.0...v0.20.0) (2026-09-22)
+
+
+
+
+### Features:
+
+* add page visible box getter by [@r8](https://github.com/r8)
+
+* report a rotated run's physical rect by [@r8](https://github.com/r8)
+
+* support editing password-protected PDFs by [@r8](https://github.com/r8)
+
+* drop annotate_skipped_pages so a scanned page reports as a warning by [@r8](https://github.com/r8)
+
+* upgrade pdf_oxide to 0.3.78 by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* name :max_output_pixels when the caller's own budget is over the limit by [@r8](https://github.com/r8)
+
+* let encryption own the refusal when an incremental save is encrypted by [@r8](https://github.com/r8)
+
+* resolve the catalog /Metadata entry by [@r8](https://github.com/r8)
+
+* correct render sizing by [@r8](https://github.com/r8)
+
+* preserve process-wide warnings so document reads cannot claim them by [@r8](https://github.com/r8)
+
 ## [v0.19.0](https://github.com/r8/pdf_elixide/compare/v0.18.0...v0.19.0) (2026-09-19)
 
 
