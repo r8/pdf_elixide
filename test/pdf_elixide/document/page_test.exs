@@ -26,6 +26,7 @@ defmodule PdfElixide.Document.PageTest do
   @rotation_pdf Path.join(@fixtures, "rotation.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
   @crop_box_pdf Path.join(@fixtures, "crop_box.pdf")
+  @crop_box_fallbacks_pdf Path.join(@fixtures, "crop_box_fallbacks.pdf")
   @text_layer_pdf Path.join(@fixtures, "text_layer.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
@@ -210,6 +211,111 @@ defmodule PdfElixide.Document.PageTest do
     test "raises for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert_raise Error, fn -> Page.crop_box!(%Page{doc: doc, index: 99}) end
+    end
+  end
+
+  describe "visible_box/1" do
+    test "intersects the crop box with the medium" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: 10.0, y: 20.0, width: 200.0, height: 300.0}} =
+               Page.visible_box(Document.page!(doc, 0))
+    end
+
+    test "resolves an inherited and an indirect crop box" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: 50.0, y: 50.0, width: 250.0, height: 350.0}} =
+               Page.visible_box(Document.page!(doc, 1))
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 100.0, height: 100.0}} =
+               Page.visible_box(Document.page!(doc, 2))
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 150.0, height: 150.0}} =
+               Page.visible_box(Document.page!(doc, 3))
+    end
+
+    test "normalizes a box whose corners are written in reverse" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 200.0, height: 300.0}} =
+               Page.visible_box(Document.page!(doc, 6))
+    end
+
+    # The three crop boxes this reader declines, against the same medium. Page 5
+    # is also where `crop_box/1` errors instead, which the drift test pins.
+    test "falls back to the medium for an absent, null or short crop box" do
+      doc = Document.open!(@crop_box_pdf)
+      medium = %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}
+
+      for index <- [4, 5, 7] do
+        assert {:ok, ^medium} = Page.visible_box(Document.page!(doc, index))
+      end
+    end
+
+    # The only fixture page whose crop box leaves the sheet, so the only one that
+    # can tell an intersection from a crop box handed back unchanged.
+    test "clips a crop box that runs off the sheet" do
+      page = Document.page!(Document.open!(@crop_box_fallbacks_pdf), 0)
+
+      assert %Rect{x: -50.0, y: -50.0, width: 350.0, height: 350.0} = Page.crop_box!(page)
+
+      assert {:ok, %Rect{x: +0.0, y: +0.0, width: 300.0, height: 300.0}} =
+               Page.visible_box(page)
+    end
+
+    # Pages 1 and 2 describe nothing to show; page 3 is a parse failure with the
+    # right element count, where the other two readers do not fall back.
+    test "falls back to the medium for an empty or unreadable crop box" do
+      doc = Document.open!(@crop_box_fallbacks_pdf)
+      medium = %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}
+
+      for index <- [1, 2, 3] do
+        assert {:ok, ^medium} = Page.visible_box(Document.page!(doc, index))
+      end
+    end
+
+    test "keeps a non-zero medium origin when there is no crop box" do
+      doc = Document.open!(@media_box_pdf)
+
+      assert {:ok, %Rect{x: 10.0, y: 20.0, width: 612.0, height: 792.0}} =
+               Page.visible_box(Document.page!(doc, 0))
+    end
+
+    test "reports an unreadable /MediaBox as :invalid_pdf" do
+      doc = Document.open!(@media_box_pdf)
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Page.visible_box(Document.page!(doc, 5))
+    end
+
+    test "returns {:error, reason} for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Page.visible_box(%Page{doc: doc, index: 99})
+    end
+
+    test "returns {:error, reason} for a closed document" do
+      doc = Document.open!(@valid_pdf)
+      page = Document.page!(doc, 0)
+      :ok = Document.close(doc)
+
+      assert {:error, %Error{reason: :closed}} = Page.visible_box(page)
+    end
+  end
+
+  describe "visible_box!/1" do
+    test "returns the rect directly" do
+      doc = Document.open!(@crop_box_pdf)
+
+      assert Page.visible_box!(Document.page!(doc, 0)) ==
+               %Rect{x: 10.0, y: 20.0, width: 200.0, height: 300.0}
+    end
+
+    test "raises for an out-of-range page" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise Error, fn -> Page.visible_box!(%Page{doc: doc, index: 99}) end
     end
   end
 

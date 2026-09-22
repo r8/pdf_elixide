@@ -89,9 +89,16 @@ with a lower `:dpi`, or use `render/3` when you need its higher ceiling or
 ## What the raster covers
 
 The raster covers the intersection of the page's CropBox and MediaBox, matching
-what a viewer shows. The MediaBox is used when there is no usable CropBox.
-`PdfElixide.Document.Page.crop_box/1` still reports the box declared by the
-page, which can extend beyond the rendered area. `:dpi` scales the intersection.
+what a viewer shows. The MediaBox is used when there is no CropBox, or when it
+does not overlap the sheet. `PdfElixide.Document.Page.crop_box/1` still reports
+the box declared by the page, which can extend beyond the rendered area. `:dpi`
+scales the intersection.
+
+`PdfElixide.Document.Page.visible_box/1` returns that intersection, and it is
+the frame text extraction stops at — but it is not a way to predict the raster:
+a page whose CropBox is malformed rather than absent can render to a different
+box. Read the output size from the `:width` and `:height` of the
+`PdfElixide.Document.RenderedPage`.
 
 `:fit` chooses its scale from the MediaBox before drawing the CropBox, so a
 cropped page can stop short of the requested box. For example, a 100 × 100 pt

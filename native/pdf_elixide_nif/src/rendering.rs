@@ -786,9 +786,15 @@ mod tests {
         assert_eq!(with_crop(Some(Rect::new(10.0, 10.0, 0.0, 50.0))), media);
     }
 
+    // Page 0 of `crop_box_fallbacks.pdf` is the only crop box anywhere that
+    // leaves the sheet; the skips are the two shapes the public accessor
+    // rejects and `get_page_info` fills from its own defaults.
     #[test]
     fn the_render_box_agrees_with_upstreams_public_visible_box() {
-        for name in ["crop_box.pdf", "media_box.pdf"] {
+        let skip = [("crop_box.pdf", 5), ("crop_box_fallbacks.pdf", 3)];
+        let mut compared = 0;
+
+        for name in ["crop_box.pdf", "crop_box_fallbacks.pdf", "media_box.pdf"] {
             let doc = PdfDocument::open(fixture(name)).expect("open");
             let pages = doc.page_count().expect("page count");
 
@@ -798,16 +804,19 @@ mod tests {
                 else {
                     continue;
                 };
-                // Its malformed CropBox is parsed differently by the public accessor.
-                if name == "crop_box.pdf" && page == 5 {
+                if skip.contains(&(name, page)) {
                     continue;
                 }
 
                 let ours = render_box(&info);
                 let corners = (ours.x, ours.y, ours.x + ours.width, ours.y + ours.height);
                 assert_eq!(corners, visible, "{name} page {page}");
+                compared += 1;
             }
         }
+
+        // Every skip above is silent, so without this the loop could go vacuous.
+        assert_eq!(compared, 15);
     }
 
     #[test]

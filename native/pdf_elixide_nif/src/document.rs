@@ -1333,6 +1333,28 @@ fn document_get_page_crop_box(
     })
 }
 
+// This demands four *numeric* `/CropBox` elements where the renderer's reader
+// fills a missing or non-numeric one, so `rendering::render_box` must not be
+// simplified into a call to this.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_get_page_visible_box(
+    resource: ResourceArc<DocumentResource>,
+    page_index: usize,
+) -> NifResult<RectNif> {
+    resource.doc.with_read(|doc| {
+        ensure_page_in_range(doc, page_index)?;
+
+        let (llx, lly, urx, ury) = doc.get_page_visible_box(page_index).map_err(to_nif_err)?;
+
+        Ok(rect_from_corners(
+            llx.into(),
+            lly.into(),
+            urx.into(),
+            ury.into(),
+        ))
+    })
+}
+
 // `get_page_rotation` already resolves inheritance and normalizes the value.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_get_page_rotation(

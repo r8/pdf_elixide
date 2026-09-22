@@ -91,10 +91,15 @@ defmodule PdfElixide.Document.Page do
   a normalized `PdfElixide.Geometry.Rect` in unrotated user space. It is
   inherited and reported unclipped, on the same terms as `media_box/1`.
 
-  Returns `nil` when the box is absent or `null`; a malformed box yields
-  `%PdfElixide.Error{reason: :invalid_pdf}`. See "Page boxes and the coordinate
-  origin" in `PdfElixide.Document`, whose "What the crop box hides from
-  extraction" subsection says which extractors stop at this box.
+  Returns `nil` when the box is absent or `null`. A box whose entry is not an
+  array, or is an array of fewer than four elements, yields
+  `%PdfElixide.Error{reason: :invalid_pdf}`; as with `media_box/1`, an element
+  that is *not a number* is not reported and reads as `0.0`.
+
+  The box is reported as declared, so it may extend past the sheet. Extraction
+  stops at the two intersected — `visible_box/1` — not at this box. See "Page
+  boxes and the coordinate origin" in `PdfElixide.Document`, whose "What the
+  crop box hides from extraction" subsection says what that frame omits.
   """
   @spec crop_box(t()) :: {:ok, Rect.t() | nil} | {:error, Error.t()}
   def crop_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -107,6 +112,37 @@ defmodule PdfElixide.Document.Page do
   @spec crop_box!(t()) :: Rect.t() | nil
   def crop_box!(page) do
     crop_box(page) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns the page's visible region — its `/CropBox` intersected with its
+  `/MediaBox` — as a normalized `PdfElixide.Geometry.Rect` in unrotated user
+  space.
+
+  Unlike `crop_box/1` this always answers a box: the media box stands in
+  whenever the crop box is absent, `null`, written with fewer than four
+  elements, written with an element that is not a number, or leaves nothing
+  once intersected. Only an unreadable `/MediaBox` fails, with
+  `%PdfElixide.Error{reason: :invalid_pdf}`.
+
+  This is the frame text extraction stops at — see "What the crop box hides
+  from extraction" in `PdfElixide.Document` for which extractors it bounds. It
+  is not what `render/1,2` draws: on a page with a malformed `/CropBox` the two
+  part. Measure a raster from the `:width` and `:height` of the returned
+  `PdfElixide.Document.RenderedPage`, and see "What the raster covers" in the
+  [Rendering](guides/rendering.md) guide.
+  """
+  @spec visible_box(t()) :: {:ok, Rect.t()} | {:error, Error.t()}
+  def visible_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
+    Wrap.call(fn -> Native.document_get_page_visible_box(ref, index) end)
+  end
+
+  @doc """
+  Same as `visible_box/1` but raises an error if it fails.
+  """
+  @spec visible_box!(t()) :: Rect.t()
+  def visible_box!(page) do
+    visible_box(page) |> Wrap.unwrap!()
   end
 
   @doc """

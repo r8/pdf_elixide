@@ -30,6 +30,8 @@ defmodule PdfElixide.UpstreamDriftTest do
   @rotated_run_pdf Path.join(@fixtures, "rotated_run.pdf")
   @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
   @cropped_text_pdf Path.join(@fixtures, "cropped_text.pdf")
+  @crop_box_pdf Path.join(@fixtures, "crop_box.pdf")
+  @crop_box_fallbacks_pdf Path.join(@fixtures, "crop_box_fallbacks.pdf")
   @layers_and_inks_pdf Path.join(@fixtures, "layers_and_inks.pdf")
   @vector_shapes_pdf Path.join(@fixtures, "vector_shapes.pdf")
   @tagged_pdf Path.join(@fixtures, "tagged.pdf")
@@ -797,6 +799,43 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       rendered = Page.render!(page, dpi: 72)
       assert {rendered.width, rendered.height} == {trunc(box.width), trunc(box.height)}
+    end
+  end
+
+  describe "the three readers of a malformed /CropBox" do
+    # `crop_box.pdf` page 5 is `/CropBox [0 0 100]` on a 612x792 medium: three
+    # elements where four are wanted.
+    test "a short array: the crop box is refused and the raster keeps 100 pt" do
+      page = Document.page!(open(@crop_box_pdf), 5)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Page.crop_box(page)
+      assert %Rect{width: 612.0, height: 792.0} = Page.visible_box!(page)
+
+      rendered = Page.render!(page, dpi: 72)
+      assert {rendered.width, rendered.height} == {100, 792}
+    end
+
+    # `crop_box_fallbacks.pdf` page 3 is `/CropBox [0 0 /Bad 100]` on the same
+    # medium: the count is right, so nothing refuses it.
+    test "a non-numeric element: nothing refuses it and all three differ" do
+      page = Document.page!(open(@crop_box_fallbacks_pdf), 3)
+
+      assert %Rect{x: +0.0, y: +0.0, width: +0.0, height: 100.0} = Page.crop_box!(page)
+      assert %Rect{width: 612.0, height: 792.0} = Page.visible_box!(page)
+
+      rendered = Page.render!(page, dpi: 72)
+      assert {rendered.width, rendered.height} == {612, 100}
+    end
+
+    # A well-formed box is the control: there the three agree.
+    test "a readable crop box is the control" do
+      page = Document.page!(open(@crop_box_pdf), 0)
+
+      assert %Rect{width: 200.0, height: 300.0} = Page.crop_box!(page)
+      assert %Rect{width: 200.0, height: 300.0} = Page.visible_box!(page)
+
+      rendered = Page.render!(page, dpi: 72)
+      assert {rendered.width, rendered.height} == {200, 300}
     end
   end
 

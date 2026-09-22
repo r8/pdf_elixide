@@ -126,7 +126,9 @@ defmodule PdfElixide.Document do
   `%PdfElixide.Error{reason: :invalid_pdf}` rather than an assumed page size.
   `PdfElixide.Document.Page.crop_box/1` reads the `/CropBox` — the part of
   that sheet a viewer shows — on the same terms, answering `nil` when there is
-  none. There is no reader for `/BleedBox`, `/TrimBox` or `/ArtBox`.
+  none and reporting it as declared, which may be larger than the sheet.
+  `PdfElixide.Document.Page.visible_box/1` is the two intersected, and always
+  answers a box. There is no reader for `/BleedBox`, `/TrimBox` or `/ArtBox`.
 
   ### What the crop box hides from extraction
 
@@ -135,13 +137,16 @@ defmodule PdfElixide.Document do
   numbering — is not returned. `text/2`, `spans/2`, `words/2`, `text_lines/2`,
   `structured/2`, `search/2`, `to_markdown/2`, `to_html/2` and
   `to_plain_text/2` all omit it, at every arity. A run that straddles the crop
-  edge is returned whole rather than cut. A page with no crop box is read to
-  its whole media box.
+  edge is returned whole rather than cut.
 
   `chars/2` is the exception: it reports every glyph on the sheet, cropped away
   or not. A page can therefore yield characters that its own words and lines do
   not contain, so do not assemble text from `chars/2` and expect it to match
   `text/2`.
+
+  The frame all of this is measured against is the crop box reduced to the media
+  box, which `PdfElixide.Document.Page.visible_box/1` returns; a page with no
+  usable crop box is read to its whole media box.
 
   To reach cropped-away text, widen the crop box to the media box with
   `PdfElixide.Editor.set_crop_box/3` and extract from the saved result.
