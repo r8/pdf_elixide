@@ -379,46 +379,44 @@ fn carries_unencryptable_metadata(editor: &OpenEditor) -> bool {
         return false;
     }
 
-    editor
-        .source()
-        .catalog()
-        .ok()
-        .and_then(|catalog| catalog.as_dict().map(|dict| dict.contains_key("Metadata")))
-        .unwrap_or(false)
+    carries_metadata_stream(editor.source())
+}
+
+// `/Metadata null` is absent (ISO 32000 §7.3.9), so the entry is resolved rather
+// than counted: only a stream reaches the writer's decrypt-on-copy and is dropped.
+fn carries_metadata_stream(doc: &PdfDocument) -> bool {
+    let Ok(catalog) = doc.catalog() else {
+        return false;
+    };
+
+    let Some(entry) = catalog.as_dict().and_then(|dict| dict.get("Metadata")) else {
+        return false;
+    };
+
+    match doc.resolve_object(entry) {
+        Ok(resolved) => matches!(resolved, Object::Stream { .. }),
+        // An entry the reader cannot load is the loss this refusal is for.
+        Err(_) => true,
+    }
 }
 
 // An absent or unreadable `/EncryptMetadata` takes its default value, `true`.
+// Either spelling may be indirect; treating that shape as absent would lose XMP.
 fn declares_cleartext_metadata(doc: &PdfDocument) -> bool {
-    let Some(trailer) = doc.trailer().as_dict() else {
+    let Some(encrypt) = doc.trailer().as_dict().and_then(|dict| dict.get("Encrypt")) else {
         return false;
     };
 
-    let encrypt = match trailer.get("Encrypt") {
-        Some(Object::Reference(r)) => match doc.load_object(*r) {
-            Ok(object) => object,
-            Err(_) => return false,
-        },
-        Some(direct) => direct.clone(),
-        None => return false,
+    let Ok(encrypt) = doc.resolve_object(encrypt) else {
+        return false;
     };
 
-    let Some(flag) = encrypt
+    let flag = encrypt
         .as_dict()
         .and_then(|dict| dict.get("EncryptMetadata"))
-    else {
-        return false;
-    };
+        .and_then(|flag| doc.resolve_object(flag).ok());
 
-    // The flag may be indirect; treating that shape as absent would lose XMP.
-    let flag = match flag {
-        Object::Reference(r) => match doc.load_object(*r) {
-            Ok(object) => object,
-            Err(_) => return false,
-        },
-        direct => direct.clone(),
-    };
-
-    matches!(flag, Object::Boolean(false))
+    matches!(flag, Some(Object::Boolean(false)))
 }
 
 fn ensure_metadata_survives_save(editor: &OpenEditor) -> NifResult<()> {

@@ -47,6 +47,8 @@ defmodule PdfElixide.EditorTest do
                                           @fixtures,
                                           "encrypted_indirect_metadata_flag.pdf"
                                         )
+  # The same shape again, with the catalog entry written as `null`.
+  @encrypted_null_metadata_pdf Path.join(@fixtures, "encrypted_null_metadata.pdf")
   # The one encrypted fixture carrying a form field and appearance streams.
   @encrypted_flatten_pdf Path.join(@fixtures, "encrypted_flatten.pdf")
   # AES-128 revision 4, and a user password with no UTF-8 spelling.
@@ -723,6 +725,22 @@ defmodule PdfElixide.EditorTest do
 
       assert {:error, %Error{reason: :unsupported, message: message}} = Editor.to_binary(editor)
       assert message =~ "metadata"
+    end
+
+    test "a null /Metadata entry is not metadata to preserve" do
+      editor = Editor.open!(@encrypted_null_metadata_pdf, password: "secret")
+
+      assert {:ok, bytes} = Editor.to_binary(editor)
+      out = Document.from_binary!(bytes)
+      assert Document.page_count!(out) == 3
+
+      # Upstream's reader is null-blind too, so both sides answer alike rather
+      # than `{:ok, nil}`; the equality is what survives that being fixed.
+      src = Document.open!(@encrypted_null_metadata_pdf, password: "secret")
+      assert Document.xmp_metadata(out) == Document.xmp_metadata(src)
+      assert Document.metadata!(src).title == "Test Title"
+      assert Document.metadata!(out).title == "Test Title"
+      :ok = Document.close(src)
     end
 
     test "scrubbing the metadata first lets the rewrite through" do
