@@ -13,9 +13,9 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-# Match `pdf_oxide` so Cargo unifies the CMS and DER dependency graph.
-cms = "0.2"
-der = "0.7"
+# Keep CMS/DER aligned with `pdf_oxide`; `alloc`/`oid` expose the ASN.1 APIs used here.
+cms = "0.3.0-pre.1"
+der = { version = "0.8", features = ["alloc", "oid"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log = "0.4"
 pdf_oxide = { version = "=0.3.78", features = ["signatures", "rendering"] }

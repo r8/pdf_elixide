@@ -4,7 +4,11 @@ use std::collections::HashMap;
 
 use cms::{
     cert::{
-        x509::{name::Name, time::Time, Certificate},
+        x509::{
+            name::{Name, RdnSequence, RelativeDistinguishedName},
+            time::Time,
+            Certificate,
+        },
         CertificateChoices,
     },
     content_info::ContentInfo,
@@ -675,8 +679,8 @@ fn signer_certificate(cms: &[u8]) -> Result<Certificate, MalformedCms> {
         .filter_map(as_certificate)
         .find(|cert| match &signer.sid {
             SignerIdentifier::IssuerAndSerialNumber(issuer_and_serial) => {
-                cert.tbs_certificate.issuer == issuer_and_serial.issuer
-                    && cert.tbs_certificate.serial_number == issuer_and_serial.serial_number
+                *cert.tbs_certificate().issuer() == issuer_and_serial.issuer
+                    && *cert.tbs_certificate().serial_number() == issuer_and_serial.serial_number
             }
             SignerIdentifier::SubjectKeyIdentifier(_) => true,
         });
@@ -717,16 +721,16 @@ fn certificate_to_nif<'a>(
             "certificate cannot be re-encoded".to_string(),
         )
     })?;
-    let tbs = &certificate.tbs_certificate;
+    let tbs = certificate.tbs_certificate();
 
     Ok(CertificateNif {
         der: owned_binary(&der, "certificate")?.release(env),
-        subject: render_name(&tbs.subject),
-        subject_common_name: common_name(&tbs.subject),
-        issuer: render_name(&tbs.issuer),
-        serial: hex_upper(tbs.serial_number.as_bytes()),
-        not_before: validity_epoch(tbs.validity.not_before)?,
-        not_after: validity_epoch(tbs.validity.not_after)?,
+        subject: render_name(tbs.subject()),
+        subject_common_name: common_name(tbs.subject()),
+        issuer: render_name(tbs.issuer()),
+        serial: hex_upper(tbs.serial_number().as_bytes()),
+        not_before: validity_epoch(tbs.validity().not_before)?,
+        not_after: validity_epoch(tbs.validity().not_after)?,
     })
 }
 
@@ -754,13 +758,14 @@ fn render_name(name: &Name) -> Option<String> {
 // `id-at-commonName` (RFC 4519 §2.3).
 const OID_COMMON_NAME: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.3");
 
-// The common name nearest the leaf, which is last in encoded order and so the
-// first element of the rendered name.
+// Return the leaf-nearest common name; the public RDN iterators cannot be reversed.
 fn common_name(name: &Name) -> Option<String> {
-    name.0
-        .iter()
+    let rdns: &RdnSequence = name.as_ref();
+    let rdns: &Vec<RelativeDistinguishedName> = rdns.as_ref();
+
+    rdns.iter()
         .rev()
-        .flat_map(|rdn| rdn.0.iter())
+        .flat_map(|rdn| rdn.iter())
         .find(|attribute| attribute.oid == OID_COMMON_NAME)
         .and_then(|attribute| attribute_string(&attribute.value))
 }
@@ -1509,14 +1514,7 @@ mod tests {
     }
 
     fn non_string_common_name() -> Name {
-        let attribute = AttributeTypeAndValue {
-            oid: OID_COMMON_NAME,
-            value: Any::new(Tag::Integer, vec![1]).expect("an integer"),
-        };
-
-        RdnSequence(vec![RelativeDistinguishedName::from(
-            SetOfVec::try_from(vec![attribute]).expect("a set"),
-        )])
+        common_name_of(Any::new(Tag::Integer, vec![1]).expect("an integer"))
     }
 
     #[test]
@@ -1537,14 +1535,20 @@ mod tests {
 
     // "Kü" as big-endian UCS-2.
     fn bmp_string_common_name() -> Name {
+        common_name_of(Any::new(Tag::BmpString, vec![0x00, 0x4B, 0x00, 0xFC]).expect("a BMPString"))
+    }
+
+    // Construct an arbitrary-valued `Name` by round-tripping its RDN through DER.
+    fn common_name_of(value: Any) -> Name {
         let attribute = AttributeTypeAndValue {
             oid: OID_COMMON_NAME,
-            value: Any::new(Tag::BmpString, vec![0x00, 0x4B, 0x00, 0xFC]).expect("a BMPString"),
+            value,
         };
-
-        RdnSequence(vec![RelativeDistinguishedName::from(
+        let rdns = RdnSequence::from(vec![RelativeDistinguishedName::from(
             SetOfVec::try_from(vec![attribute]).expect("a set"),
-        )])
+        )]);
+
+        Name::from_der(&rdns.to_der().expect("encodes")).expect("decodes")
     }
 
     #[test]
@@ -1558,19 +1562,14 @@ mod tests {
     #[test]
     fn upstream_still_renders_an_unreadable_name_as_a_placeholder() {
         let blob = signature_blob("form_signature_cms.pdf");
-        let mut certificate = signer_certificate(&blob).expect("the fixture's signer");
+        let certificate = signer_certificate(&blob).expect("the fixture's signer");
 
         // A T.61 string containing non-UTF-8.
-        let attribute = AttributeTypeAndValue {
-            oid: OID_COMMON_NAME,
-            value: Any::new(Tag::TeletexString, vec![0xE9]).expect("a T.61 string"),
-        };
-        certificate.tbs_certificate.subject = RdnSequence(vec![RelativeDistinguishedName::from(
-            SetOfVec::try_from(vec![attribute]).expect("a set"),
-        )]);
+        let subject =
+            common_name_of(Any::new(Tag::TeletexString, vec![0xE9]).expect("a T.61 string"));
+        let der = certificate_with_subject(&certificate, &subject);
 
-        let der = certificate.to_der().expect("re-encodes");
-        let theirs = SigningCredentials::from_der(der)
+        let theirs = SigningCredentials::from_der(der.clone())
             .expect("upstream reads the certificate")
             .subject()
             .expect("upstream renders a subject");
@@ -1579,10 +1578,50 @@ mod tests {
             theirs, "<X509Error: Invalid X.509 name>",
             "upstream now renders the name; delete render_name, not this assertion"
         );
+
+        let ours = Certificate::from_der(&der).expect("the spliced certificate decodes");
+
         assert_eq!(
-            render_name(&certificate.tbs_certificate.subject).as_deref(),
+            render_name(ours.tbs_certificate().subject()).as_deref(),
             Some("2.5.4.3=#1401e9")
         );
+    }
+
+    // Replace the private subject in DER and reseal its enclosing SEQUENCEs.
+    fn certificate_with_subject(certificate: &Certificate, subject: &Name) -> Vec<u8> {
+        let reseal = |body: Vec<u8>| {
+            Any::new(Tag::Sequence, body)
+                .expect("a SEQUENCE")
+                .to_der()
+                .expect("encodes")
+        };
+
+        let whole = certificate.to_der().expect("re-encodes");
+        let tbs = certificate.tbs_certificate().to_der().expect("re-encodes");
+        let body = Any::from_der(&whole).expect("a SEQUENCE").value().to_vec();
+        assert!(
+            body.starts_with(&tbs),
+            "the certificate no longer opens with its own TBS encoding"
+        );
+
+        let old = certificate
+            .tbs_certificate()
+            .subject()
+            .to_der()
+            .expect("re-encodes");
+        let mut fields = Any::from_der(&tbs).expect("a SEQUENCE").value().to_vec();
+        // The self-signed fixture repeats the name; the subject is the later occurrence.
+        let at = fields
+            .windows(old.len())
+            .rposition(|w| w == old)
+            .expect("the subject in the TBS encoding");
+
+        fields.splice(at..at + old.len(), subject.to_der().expect("encodes"));
+
+        let mut out = reseal(fields);
+        out.extend_from_slice(&body[tbs.len()..]);
+
+        reseal(out)
     }
 
     // Compare only values this binding still takes from upstream.
