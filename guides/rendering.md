@@ -80,8 +80,8 @@ size. A `:region` render returns `:unsupported` if the budget would require
 scaling the page before cropping it.
 
 `separations/3`, `separation/4` and `rasterize/2` instead have a fixed limit of
-roughly 16 million pixels — about 414 DPI on a US Letter page. Retry with a
-lower `:dpi`, or use `render/3` when you need its higher ceiling or
+16 million pixels — the highest `:dpi` a US Letter page fits in is 413. Retry
+with a lower `:dpi`, or use `render/3` when you need its higher ceiling or
 `:max_output_pixels`.
 
 ## What the raster covers
