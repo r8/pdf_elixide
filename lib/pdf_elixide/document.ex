@@ -28,7 +28,9 @@ defmodule PdfElixide.Document do
   twice — natively and as the Elixir terms encoded from it — so peak usage is
   roughly double what the caller ends up holding. `search/2` given a
   `:max_results` is the one that need not walk every page; see
-  `t:search_opts/0`.
+  `t:search_opts/0`. The Office exports, `to_docx/2`, `to_pptx/2` and
+  `to_xlsx/2`, are whole-document calls of the same kind, returning the file
+  as one binary.
 
   Three of them hold native memory *after* the call as well, since each returned
   struct carries a handle that BEAM memory accounting cannot see:
@@ -1864,6 +1866,99 @@ defmodule PdfElixide.Document do
   end
 
   @typedoc """
+  Options accepted by `to_docx/2`, `to_pptx/2` and `to_xlsx/2`, and their bang
+  variants.
+
+    * `:mode` — how pages are laid out in the Office file. Defaults to `:auto`.
+      * `:layout` places each run of text at its position on the PDF page.
+      * `:flow` groups text into paragraphs or cells that flow like an ordinary
+        document.
+      * `:auto` uses `:layout` for short documents and `:flow` for long ones.
+
+  See [Choosing a mode](guides/office.md#choosing-a-mode) in the Office guide
+  for the trade-off, and [Round trips](guides/office.md#round-trips) before
+  converting the result back to PDF.
+
+  An unknown key, or a `:mode` other than those three, raises `ArgumentError`.
+  """
+  @type office_opts :: [mode: :auto | :layout | :flow]
+
+  @office_opts_keys [:mode]
+
+  @doc """
+  Converts the whole document to a Word (DOCX) file and returns its bytes.
+  See `t:office_opts/0` for options.
+
+  An encrypted document must be authenticated first; until then this returns
+  `{:error, %PdfElixide.Error{reason: :encrypted}}`. See "Whole-document
+  extraction and memory" above for its memory use, and the [Office
+  documents](guides/office.md) guide for fidelity and conversion back to PDF.
+  """
+  @spec to_docx(t(), office_opts()) :: {:ok, binary()} | {:error, Error.t()}
+  def to_docx(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_office_options(opts)
+    Wrap.call(fn -> Native.document_to_docx(ref, options) end)
+  end
+
+  @doc """
+  Converts the whole document to a Word (DOCX) file, raising an error if it fails.
+  """
+  @spec to_docx!(t(), office_opts()) :: binary()
+  def to_docx!(%__MODULE__{} = doc, opts \\ []) when is_list(opts) do
+    to_docx(doc, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Converts the whole document to a PowerPoint (PPTX) file and returns its
+  bytes. See `t:office_opts/0` for options.
+
+  It accepts the same options and has the same authentication requirement as
+  `to_docx/2`.
+  """
+  @spec to_pptx(t(), office_opts()) :: {:ok, binary()} | {:error, Error.t()}
+  def to_pptx(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_office_options(opts)
+    Wrap.call(fn -> Native.document_to_pptx(ref, options) end)
+  end
+
+  @doc """
+  Converts the whole document to a PowerPoint (PPTX) file, raising an error if
+  it fails.
+  """
+  @spec to_pptx!(t(), office_opts()) :: binary()
+  def to_pptx!(%__MODULE__{} = doc, opts \\ []) when is_list(opts) do
+    to_pptx(doc, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Converts the whole document to an Excel (XLSX) file and returns its bytes.
+  See `t:office_opts/0` for options.
+
+  It accepts the same options and has the same authentication requirement as
+  `to_docx/2`.
+  """
+  @spec to_xlsx(t(), office_opts()) :: {:ok, binary()} | {:error, Error.t()}
+  def to_xlsx(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_office_options(opts)
+    Wrap.call(fn -> Native.document_to_xlsx(ref, options) end)
+  end
+
+  @doc """
+  Converts the whole document to an Excel (XLSX) file, raising an error if it
+  fails.
+  """
+  @spec to_xlsx!(t(), office_opts()) :: binary()
+  def to_xlsx!(%__MODULE__{} = doc, opts \\ []) when is_list(opts) do
+    to_xlsx(doc, opts) |> Wrap.unwrap!()
+  end
+
+  # Option contract: see `__option_defaults__/1`.
+  defp build_office_options(opts) do
+    opts = Keyword.validate!(opts, @office_opts_keys)
+    %{mode: Keyword.get(opts, :mode, :auto)}
+  end
+
+  @typedoc """
   Options accepted by the `to_plain_text` and `to_plain_text!` functions.
 
     * `:extract_tables` — detect tables and render them inline as
@@ -2962,6 +3057,7 @@ defmodule PdfElixide.Document do
   def __option_defaults__(:inks), do: build_inks_options([])
   def __option_defaults__(:render), do: build_render_options([])
   def __option_defaults__(:dpi), do: build_dpi_options([])
+  def __option_defaults__(:office), do: build_office_options([])
   def __option_defaults__(:text), do: build_text_options([])
   def __option_defaults__(:markdown), do: build_markdown_options([])
   def __option_defaults__(:html), do: build_html_options([])

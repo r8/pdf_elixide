@@ -86,6 +86,31 @@ defmodule PdfElixide.ConcurrencyTest do
       |> Enum.each(fn {:ok, {name, actual}} -> assert actual == expected[name] end)
     end
 
+    test "concurrent Office exports of one handle match the serial packages", %{doc: doc} do
+      unzip = fn package ->
+        {:ok, files} = :zip.unzip(package, [:memory])
+        Map.new(files)
+      end
+
+      exports = [
+        docx: &Document.to_docx!(&1, mode: :flow),
+        pptx: &Document.to_pptx!/1,
+        xlsx: &Document.to_xlsx!/1
+      ]
+
+      expected = Map.new(exports, fn {name, export} -> {name, unzip.(export.(doc))} end)
+
+      exports
+      |> List.duplicate(@concurrency)
+      |> List.flatten()
+      |> Task.async_stream(fn {name, export} -> {name, unzip.(export.(doc))} end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, {name, actual}} -> assert actual == expected[name] end)
+    end
+
     test "concurrent attachment reads from one handle match the serial result" do
       doc = Document.open!(@attachments_pdf)
       on_exit(fn -> Document.close(doc) end)

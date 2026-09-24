@@ -13,6 +13,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   alias PdfElixide.Form
   alias PdfElixide.Geometry.Rect
   alias PdfElixide.Logging
+  alias PdfElixide.Office
   alias PdfElixide.Signature
   alias PdfElixide.Warning
 
@@ -81,7 +82,10 @@ defmodule PdfElixide.UpstreamDriftTest do
     search: ["One"],
     to_markdown: [],
     to_html: [],
-    to_plain_text: []
+    to_plain_text: [],
+    to_docx: [],
+    to_pptx: [],
+    to_xlsx: []
   ]
 
   # In @layers_and_inks_pdf: DeviceN plus /All and /None on one page, a tiling
@@ -1857,6 +1861,30 @@ defmodule PdfElixide.UpstreamDriftTest do
       written = Document.from_binary!(Editor.to_binary!(editor))
       on_exit(fn -> Document.close(written) end)
       assert Document.text!(written, 0) == ""
+    end
+  end
+
+  describe "converting a DOCX with positioned text frames" do
+    test "still puts every page's text on one page" do
+      docx = File.read!(Path.join(@fixtures, "sample_layout.docx"))
+
+      doc = Document.from_binary!(Office.to_pdf!(docx))
+      on_exit(fn -> Document.close(doc) end)
+
+      assert doc.page_count == 1
+      assert Document.text!(doc) =~ ~r/Page One.*Page Two.*Page Three/s
+    end
+  end
+
+  describe "round-tripping a :flow DOCX whose last page has no text" do
+    test "still loses that page and keeps the blank pages before it" do
+      source = open(Path.join(@fixtures, "text_layer.pdf"))
+      assert [1, 2, 4] = for(i <- 0..4, Document.text!(source, i) =~ ~r/\A\s*\z/, do: i)
+
+      back = Document.from_binary!(Office.to_pdf!(Document.to_docx!(source, mode: :flow)))
+      on_exit(fn -> Document.close(back) end)
+
+      assert back.page_count == 4
     end
   end
 end

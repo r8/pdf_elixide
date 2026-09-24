@@ -30,6 +30,8 @@ high-performance PDF library written in Rust. Built with
 - Extract text, words, lines, characters, and spans with page geometry and
   typographic metadata, or read a page as typed regions grouped by column
 - Convert individual pages or whole documents to Markdown, HTML, or plain text
+- Convert whole documents to Word, PowerPoint, or Excel files, and convert
+  those files to PDF
 - Search literal text or regular expressions and locate matches on the page
 - Detect tables and render them as Markdown, HTML, or plain text
 - Extract vector paths, rectangles, straight lines, raster images, and embedded

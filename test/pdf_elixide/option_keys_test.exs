@@ -313,6 +313,13 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!([dpi: 36], &Document.rasterize(doc, &1))
     end
 
+    test "to_docx/2, to_pptx/2 and to_xlsx/2" do
+      doc = doc()
+      accepts_each!([mode: :flow], &Document.to_docx(doc, &1))
+      accepts_each!([mode: :layout], &Document.to_pptx(doc, &1))
+      accepts_each!([mode: :auto], &Document.to_xlsx(doc, &1))
+    end
+
     test "search/3,4" do
       doc = doc()
       accepts_each!(@search_opts, &Document.search(doc, "Page", &1))
@@ -454,6 +461,9 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.separations(doc, 0, opts) end,
         fn opts -> Document.separation(doc, 0, "Cyan", opts) end,
         fn opts -> Document.rasterize(doc, opts) end,
+        fn opts -> Document.to_docx(doc, opts) end,
+        fn opts -> Document.to_pptx(doc, opts) end,
+        fn opts -> Document.to_xlsx(doc, opts) end,
         fn opts -> Document.search(doc, "Page", opts) end,
         fn opts -> Document.search(doc, "Page", 0, opts) end,
         fn opts -> Document.text(doc, 0, table_detection: opts) end,

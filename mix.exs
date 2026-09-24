@@ -77,6 +77,7 @@ defmodule PdfElixide.MixProject do
         "guides/signatures.md": [],
         "guides/encryption.md": [],
         "guides/rendering.md": [],
+        "guides/office.md": [],
         # `filename:` because ExDoc reserves `search.html` for its own search
         # page and refuses an extra that would generate it.
         "guides/search.md": [filename: "text-search"],
@@ -92,6 +93,7 @@ defmodule PdfElixide.MixProject do
         PdfElixide,
         PdfElixide.Document,
         PdfElixide.Document.Page,
+        PdfElixide.Office,
         PdfElixide.Error,
         PdfElixide.Warning,
         PdfElixide.Logging

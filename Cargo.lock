@@ -1377,6 +1377,7 @@ dependencies = [
  "der",
  "image",
  "log",
+ "office_oxide",
  "pdf_oxide",
  "rustler",
  "sha1",

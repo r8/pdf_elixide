@@ -107,6 +107,9 @@ defmodule PdfElixide.Native do
   def document_render_separations(_doc, _page_index, _options), do: err()
   def document_render_separation(_doc, _page_index, _ink, _options), do: err()
   def document_rasterize(_doc, _options), do: err()
+  def document_to_docx(_doc, _options), do: err()
+  def document_to_pptx(_doc, _options), do: err()
+  def document_to_xlsx(_doc, _options), do: err()
   def document_embedded_files(_doc), do: err()
   def document_structured_warnings(_doc), do: err()
 
@@ -171,6 +174,8 @@ defmodule PdfElixide.Native do
   def certificate_parse(_der), do: err()
   def timestamp_parse(_token), do: err()
   def timestamp_verify(_token), do: err()
+
+  def office_to_pdf(_bytes), do: err()
 
   def log_set_level(_level), do: err()
   def log_drain, do: err()

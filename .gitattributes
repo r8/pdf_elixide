@@ -9,3 +9,6 @@
 # must stay *below* the wildcard: the last matching pattern wins.
 *.pdf binary
 *.bin binary
+*.docx binary
+*.pptx binary
+*.xlsx binary

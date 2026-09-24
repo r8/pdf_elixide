@@ -16,6 +16,8 @@ defmodule PdfElixide do
       the certificate and timestamp in one, which fields are still
       unsigned, and the security store. Producing signatures is not
       offered.
+    * `PdfElixide.Office` — converts DOCX, PPTX and XLSX files to PDF; the
+      exports to those formats are `PdfElixide.Document` functions.
 
   `PdfElixide.Error` is what every one of them reports a failure as,
   `PdfElixide.Warning` what they record for a condition they read past, and

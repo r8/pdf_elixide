@@ -63,7 +63,8 @@ the calls overlap or run one after another.
 
 Fanning work out **by page** avoids cross-contamination between workers that
 never share a page. Avoid running two whole-document text-family extractions on
-one handle at once when these PDFs are in scope.
+one handle at once when these PDFs are in scope; the Office exports,
+`PdfElixide.Document.to_docx/2`, `to_pptx/2` and `to_xlsx/2`, count as such.
 
 ## Throughput is not linear
 

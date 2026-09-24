@@ -21,6 +21,7 @@ mod geometry;
 mod images;
 mod logging;
 mod metadata;
+mod office;
 mod open_editor;
 mod optional_content;
 mod outline;

@@ -72,6 +72,10 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.__option_defaults__(:dpi) == %{dpi: 150}
     end
 
+    test "to_docx/2, to_pptx/2 and to_xlsx/2" do
+      assert Document.__option_defaults__(:office) == %{mode: :auto}
+    end
+
     test "text/2,3" do
       assert Document.__option_defaults__(:text) == %{
                extract_tables: true,
