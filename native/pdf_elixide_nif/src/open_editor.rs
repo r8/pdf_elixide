@@ -1,18 +1,23 @@
 use std::{
     collections::HashSet,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     sync::OnceLock,
 };
 
 use pdf_oxide::{
     editor::{DocumentEditor, EditableDocument},
     writer::EmbeddedFile,
+    PdfDocument,
 };
 use rustler::NifResult;
 
 use crate::{
     document::read_crop_box,
     form_tree::{self, Resolved},
+    merge::{
+        declares_structure, on_import_stack, root_declares_resources, Incoming, MergeError,
+        PageAttrs,
+    },
     metadata::{has_info_text, read_metadata, to_document_info, MetadataNif},
 };
 
@@ -44,7 +49,7 @@ pub(crate) struct OpenEditor {
     // write completes.
     sanitized: bool,
     // Set once a destructive pass has run; a second one is refused from here on.
-    applied_redactions: bool,
+    applied: Option<AppliedPass>,
     // Monotonic scan gates, not current marks: marks can be removed or their
     // pages deleted. Each flag skips a quadratic scan of an untouched category.
     redactions_marked: bool,
@@ -58,6 +63,29 @@ pub(crate) struct OpenEditor {
     javascript_scrubbed: bool,
     // Records staged XMP removal; the source catalog is unchanged until save.
     xmp_scrubbed: bool,
+    // Set once a merge has replaced the editor with one built from bytes, which
+    // an incremental save cannot append to. Never cleared.
+    merged: bool,
+    // The replacement starts unmodified; this reports the merge until a full
+    // write carries it.
+    merge_unsaved: bool,
+    // The replaced editor's flatten warnings, which upstream offers no way to
+    // hand to its successor.
+    carried_warnings: Vec<String>,
+    // Upstream's flatten warnings from a merge snapshot that did not land, which
+    // upstream never clears and the next write reports again.
+    discarded_warnings: Vec<Range<usize>>,
+}
+
+// Upstream keeps every region and mark a pass applied, so what that pass covered
+// has to be recorded to tell it from what was queued or marked since.
+struct AppliedPass {
+    // Source pages marked when the pass ran.
+    marked: HashSet<usize>,
+    // Source pages given a region after it.
+    queued_since: HashSet<usize>,
+    // False until the pass finishes; after an error its committed pages are unknown.
+    completed: bool,
 }
 
 // A visible page's source identity and pending properties in output order.
@@ -82,9 +110,10 @@ pub(crate) struct OutOfRange {
     pub(crate) count: usize,
 }
 
-// What a page read or write can fail with, for the same reason as `OutOfRange`.
+#[derive(Debug)]
 pub(crate) enum PageError {
     OutOfRange(OutOfRange),
+    BadSelection,
     Upstream(pdf_oxide::Error),
 }
 
@@ -123,14 +152,155 @@ impl OpenEditor {
             pages_deleted: false,
             redacted: false,
             sanitized: false,
-            applied_redactions: false,
+            applied: None,
             redactions_marked: false,
             annotations_marked: false,
             forms_marked: false,
             embedded_scrubbed: false,
             javascript_scrubbed: false,
             xmp_scrubbed: false,
+            merged: false,
+            merge_unsaved: false,
+            carried_warnings: Vec::new(),
+            discarded_warnings: Vec::new(),
         }
+    }
+
+    pub(crate) fn modified(&self) -> bool {
+        self.editor.is_modified() || self.merge_unsaved
+    }
+
+    pub(crate) fn merged(&self) -> bool {
+        self.merged
+    }
+
+    // Only a successful full write carries a merge.
+    pub(crate) fn record_full_write(&mut self) {
+        self.merge_unsaved = false;
+    }
+
+    pub(crate) fn all_flatten_warnings(&self) -> Vec<String> {
+        let mut warnings = self.carried_warnings.clone();
+        warnings.extend(
+            self.editor
+                .flatten_warnings()
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !self.discarded_warnings.iter().any(|r| r.contains(index)))
+                .map(|(_, warning)| warning.clone()),
+        );
+
+        warnings
+    }
+
+    // Normalize imported pages through a snapshot so later page operations treat
+    // them as ordinary pages. Build and validate the replacement before swapping it in.
+    pub(crate) fn merge(&mut self, incoming: &Incoming) -> Result<usize, MergeError> {
+        if incoming.pages.is_empty() {
+            return Ok(0);
+        }
+
+        // A page-less snapshot reopens by scanning, which finds deleted pages.
+        let count = self.pages.len();
+        if count == 0 {
+            return Err(MergeError::NoPages);
+        }
+
+        let every_page: Vec<usize> = (0..count).collect();
+        self.check_selection(&every_page)?;
+        // Decide before the snapshot, whose pending flattens append warnings.
+        let takes_resources = incoming.pages.iter().position(|page| !page.owns_resources);
+        if let Some(page) = takes_resources {
+            if root_declares_resources(self.editor.source()) {
+                return Err(MergeError::TakesDestinationResources { page });
+            }
+        }
+        if let Some(page) = incoming.tagged_page {
+            if declares_structure(self.editor.source()) {
+                return Err(MergeError::CollidesWithStructure { page });
+            }
+        }
+        let written = self.editor.flatten_warnings().len();
+        let (added, fresh) = match self.merge_snapshot(incoming, &every_page, takes_resources) {
+            Ok(merged) => merged,
+            Err(e) => {
+                let now = self.editor.flatten_warnings().len();
+                if now > written {
+                    self.discarded_warnings.push(written..now);
+                }
+
+                return Err(e);
+            }
+        };
+
+        let fixes = inheritance_fixes(fresh.source(), count, &incoming.pages);
+        let carried_warnings = self.all_flatten_warnings();
+        *self = Self {
+            merged: true,
+            merge_unsaved: true,
+            carried_warnings,
+            ..Self::new(fresh)
+        };
+
+        for (index, fix) in fixes {
+            if let Some(rotation) = fix.rotation {
+                self.write_rotation(index, rotation)?;
+            }
+            if let Some(media_box) = fix.media_box {
+                self.write_media_box(index, media_box)?;
+            }
+            if let Some(crop_box) = fix.crop_box {
+                self.write_crop_box(index, crop_box)?;
+            }
+        }
+
+        Ok(added)
+    }
+
+    // Discard warnings appended by a snapshot that fails to land.
+    fn merge_snapshot(
+        &mut self,
+        incoming: &Incoming,
+        every_page: &[usize],
+        takes_resources: Option<usize>,
+    ) -> Result<(usize, DocumentEditor), MergeError> {
+        // Avoid `extract_pages`, whose resupply would make a failed merge modified.
+        // State drained by the snapshot is restored on the scratch editor.
+        self.editor.clear_embedded_files();
+        let snapshot = self.editor.extract_pages_to_bytes(every_page)?;
+
+        let info = self.seeded_info();
+        let info = has_info_text(&info).then(|| to_document_info(&info));
+        let embedded = &self.embedded;
+        let (added, fresh) = on_import_stack(|| {
+            let mut scratch = DocumentEditor::from_bytes(snapshot)?;
+            for file in embedded {
+                scratch.embed_file_with_options(file.clone())?;
+            }
+            if let Some(info) = info {
+                scratch.set_info(info)?;
+            }
+            let added = scratch.merge_from_bytes(&incoming.bytes)?;
+            let fresh = DocumentEditor::from_bytes(scratch.save_to_bytes()?)?;
+
+            Ok((added, fresh))
+        })?;
+
+        let count = every_page.len();
+        let expected = count + incoming.pages.len();
+        let got = fresh.current_page_count();
+        if added != incoming.pages.len() || got != expected {
+            return Err(MergeError::Miscount { expected, got });
+        }
+
+        // A backstop, should the written root ever gain resources the source's lacked.
+        if let Some(page) = takes_resources {
+            if root_declares_resources(fresh.source()) {
+                return Err(MergeError::TakesDestinationResources { page });
+            }
+        }
+
+        Ok((added, fresh))
     }
 
     // Failed builds are not cached, so malformed trees fail consistently. The
@@ -222,6 +392,89 @@ impl OpenEditor {
         self.pages.insert(to, page);
 
         Ok(())
+    }
+
+    // Validate before mutation: rebuilding the mirror requires unique indices,
+    // and unreadable pages must not be silently omitted.
+    pub(crate) fn check_selection(&self, pages: &[usize]) -> Result<(), PageError> {
+        if pages.is_empty() {
+            return Err(PageError::BadSelection);
+        }
+
+        let count = self.pages.len();
+        let mut seen = HashSet::with_capacity(pages.len());
+        for &index in pages {
+            if index >= count {
+                return Err(OutOfRange { index, count }.into());
+            }
+            if !seen.insert(index) {
+                return Err(PageError::BadSelection);
+            }
+        }
+
+        self.check_readable(pages.iter().copied())
+    }
+
+    // `check_selection` for the inclusive `first..=last`, without materializing
+    // it: the bounds must be known before a caller-sized range is allocated.
+    // Inclusive so a range ending at `usize::MAX` needs no `+ 1` to reach here.
+    pub(crate) fn check_span(&self, first: usize, last: usize) -> Result<(), PageError> {
+        if last < first {
+            return Err(PageError::BadSelection);
+        }
+
+        let count = self.pages.len();
+        if last >= count {
+            return Err(OutOfRange {
+                index: first.max(count),
+                count,
+            }
+            .into());
+        }
+
+        self.check_readable(first..=last)
+    }
+
+    fn check_readable(&self, indices: impl Iterator<Item = usize>) -> Result<(), PageError> {
+        for index in indices {
+            self.editor.source().get_page(self.pages[index].source)?;
+        }
+
+        Ok(())
+    }
+
+    // Keep the upstream page order and binding mirror in one operation.
+    pub(crate) fn keep_pages(&mut self, pages: &[usize]) -> Result<(), PageError> {
+        self.check_selection(pages)?;
+        self.editor.select_pages(pages)?;
+
+        // Dropping a page leaves the same gap between output and source
+        // indices a deletion does, which whole-document marks must re-map.
+        if pages.len() < self.pages.len() {
+            self.pages_deleted = true;
+        }
+
+        let mut entries: Vec<Option<PageEdits>> = std::mem::take(&mut self.pages)
+            .into_iter()
+            .map(Some)
+            .collect();
+        self.pages = pages
+            .iter()
+            .filter_map(|&index| entries[index].take())
+            .collect();
+
+        Ok(())
+    }
+
+    // Re-supply state that a full write drains or omits before every extraction.
+    // Callers validate first, with `check_selection` or `check_span`, so a bad
+    // selection is reported before the rewrite refusals they check in between; a
+    // repeated index would reach upstream, which writes the page twice.
+    pub(crate) fn extract_pages(&mut self, pages: &[usize]) -> Result<Vec<u8>, PageError> {
+        self.resupply_embedded()?;
+        self.resupply_info()?;
+
+        Ok(self.editor.extract_pages_to_bytes(pages)?)
     }
 
     pub(crate) fn pages_deleted(&self) -> bool {
@@ -353,6 +606,9 @@ impl OpenEditor {
 
         if let Some(page) = self.pages.get(page_index) {
             self.redaction_regions.insert(page.source);
+            if let Some(pass) = &mut self.applied {
+                pass.queued_since.insert(page.source);
+            }
         }
         self.mark(Marked::Redactions);
 
@@ -363,14 +619,63 @@ impl OpenEditor {
         &self.redaction_regions
     }
 
+    // Visible pages carrying a queued region or a redaction mark no pass has
+    // applied, as `(output, source, queued)`. The mark predicate scans
+    // `page_order` per page, so that sweep is gated on the category ever having
+    // been marked.
+    pub(crate) fn pages_pending_redaction(&self) -> Vec<(usize, usize, bool)> {
+        self.pages
+            .iter()
+            .enumerate()
+            .filter_map(|(output, page)| {
+                let queued = match &self.applied {
+                    None => self.redaction_regions.contains(&page.source),
+                    Some(pass) => pass.queued_since.contains(&page.source),
+                };
+                let marked = self.redactions_marked
+                    && self.editor.is_page_marked_for_redaction(output)
+                    && self
+                        .applied
+                        .as_ref()
+                        .is_none_or(|pass| !pass.marked.contains(&page.source));
+
+                (queued || marked).then_some((output, page.source, queued))
+            })
+            .collect()
+    }
+
     pub(crate) fn applied_redactions(&self) -> bool {
-        self.applied_redactions
+        self.applied.is_some()
     }
 
     // Arm before applying: an error can leave pages rewritten.
     pub(crate) fn arm_redaction(&mut self) {
+        let marked = self
+            .pages
+            .iter()
+            .enumerate()
+            .filter(|&(output, _)| {
+                self.redactions_marked && self.editor.is_page_marked_for_redaction(output)
+            })
+            .map(|(_, page)| page.source)
+            .collect();
+
         self.redacted = true;
-        self.applied_redactions = true;
+        self.applied = Some(AppliedPass {
+            marked,
+            queued_since: HashSet::new(),
+            completed: false,
+        });
+    }
+
+    pub(crate) fn complete_redaction(&mut self) {
+        if let Some(pass) = &mut self.applied {
+            pass.completed = true;
+        }
+    }
+
+    pub(crate) fn failed_redaction(&self) -> bool {
+        self.applied.as_ref().is_some_and(|pass| !pass.completed)
     }
 
     pub(crate) fn redacted(&self) -> bool {
@@ -561,6 +866,45 @@ impl OpenEditor {
     }
 }
 
+// Materialize inherited attributes that the destination would change. Use the
+// media box to cancel a crop box newly inherited from the destination.
+struct PageFix {
+    rotation: Option<i32>,
+    media_box: Option<[f32; 4]>,
+    crop_box: Option<[f32; 4]>,
+}
+
+fn inheritance_fixes(
+    merged: &PdfDocument,
+    first: usize,
+    wanted: &[PageAttrs],
+) -> Vec<(usize, PageFix)> {
+    let mut fixes = Vec::new();
+
+    for (offset, want) in wanted.iter().enumerate() {
+        let index = first + offset;
+        let rotation = merged.get_page_rotation(index).ok();
+        let media_box = merged
+            .get_page_media_box(index)
+            .ok()
+            .map(|(llx, lly, urx, ury)| [llx, lly, urx, ury]);
+        let crop_box = read_crop_box(merged, index).ok();
+
+        let fix = PageFix {
+            rotation: (rotation != Some(want.rotation)).then_some(want.rotation),
+            media_box: (media_box != Some(want.media_box)).then_some(want.media_box),
+            crop_box: (crop_box != Some(want.crop_box))
+                .then_some(want.crop_box.unwrap_or(want.media_box)),
+        };
+
+        if fix.rotation.is_some() || fix.media_box.is_some() || fix.crop_box.is_some() {
+            fixes.push((index, fix));
+        }
+    }
+
+    fixes
+}
+
 // Avoid scanning pages when no regions were queued.
 fn pending_on_a_visible_page(sources: &[usize], pending: &HashSet<usize>) -> bool {
     !pending.is_empty() && sources.iter().any(|source| pending.contains(source))
@@ -656,9 +1000,111 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_reorders_the_mirror_and_reports_what_it_dropped() {
+        let mut editor = open("sample.pdf");
+        editor.write_rotation(0, 90).expect("rotation written");
+
+        editor.keep_pages(&[2, 0]).expect("pages kept");
+
+        assert_eq!(editor.source_pages(), [2, 0]);
+        assert_eq!(editor.effective_rotation(1).ok(), Some(90));
+        assert!(editor.pages_deleted());
+        assert_eq!(
+            editor.dropped_by_an_incremental_save(),
+            ["page deletions", "page moves", "page rotations"]
+        );
+    }
+
+    #[test]
+    fn selecting_every_page_in_order_leaves_nothing_to_report() {
+        let mut editor = open("sample.pdf");
+
+        editor.keep_pages(&[0, 1, 2]).expect("pages kept");
+
+        assert!(!editor.pages_deleted());
+        assert!(editor.dropped_by_an_incremental_save().is_empty());
+    }
+
+    #[test]
+    fn a_repeated_or_empty_selection_is_refused_before_upstream_runs() {
+        let mut editor = open("sample.pdf");
+
+        assert!(matches!(
+            editor.keep_pages(&[1, 1]),
+            Err(PageError::BadSelection)
+        ));
+        assert!(matches!(
+            editor.keep_pages(&[]),
+            Err(PageError::BadSelection)
+        ));
+        assert!(matches!(
+            editor.keep_pages(&[0, 3]),
+            Err(PageError::OutOfRange(OutOfRange { index: 3, count: 3 }))
+        ));
+        assert_eq!(editor.source_pages(), [0, 1, 2]);
+        assert!(!editor.is_modified());
+    }
+
+    #[test]
+    fn a_span_is_bounded_without_being_materialized() {
+        let editor = open("sample.pdf");
+
+        assert!(editor.check_span(1, 2).is_ok());
+        assert!(editor.check_span(2, 2).is_ok());
+        assert!(matches!(
+            editor.check_span(2, 1),
+            Err(PageError::BadSelection)
+        ));
+        assert!(matches!(
+            editor.check_span(0, usize::MAX),
+            Err(PageError::OutOfRange(OutOfRange { index: 3, count: 3 }))
+        ));
+        assert!(matches!(
+            editor.check_span(5, 9),
+            Err(PageError::OutOfRange(OutOfRange { index: 5, count: 3 }))
+        ));
+    }
+
+    #[test]
+    fn a_page_the_source_cannot_resolve_is_refused() {
+        let mut editor = open("broken_page.pdf");
+
+        assert!(matches!(
+            editor.keep_pages(&[0, 2]),
+            Err(PageError::Upstream(_))
+        ));
+        assert_eq!(editor.source_pages(), [0, 1, 2]);
+        assert!(editor.check_selection(&[1, 0]).is_ok());
+    }
+
+    // No fixture fails a merge after its snapshot, so the incoming bytes are
+    // ones `prepare` would never accept.
+    #[test]
+    fn a_merge_failing_after_its_snapshot_discards_the_snapshot_flatten_warnings() {
+        let mut editor = open("flatten_root_resources.pdf");
+        editor.flatten_forms().expect("forms marked");
+        let incoming = Incoming {
+            bytes: b"not a pdf".to_vec(),
+            pages: vec![PageAttrs {
+                rotation: 0,
+                media_box: [0.0, 0.0, 612.0, 792.0],
+                crop_box: None,
+                owns_resources: true,
+            }],
+            tagged_page: None,
+        };
+
+        assert!(editor.merge(&incoming).is_err());
+        assert!(editor.all_flatten_warnings().is_empty());
+
+        editor.save_to_bytes().expect("editor writes");
+        assert_eq!(editor.all_flatten_warnings().len(), 1);
+    }
+
+    #[test]
     fn page_properties_and_erases_are_reported_by_visible_page() {
         let mut editor = open("sample.pdf");
-        editor.write_rotation(0, 90).ok().expect("rotation written");
+        editor.write_rotation(0, 90).expect("rotation written");
         editor
             .erase(2, &[[0.0, 0.0, 10.0, 10.0]])
             .expect("erase recorded");

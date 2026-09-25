@@ -25,9 +25,16 @@ defmodule PdfElixide.Editor do
 
   ## Page structure
 
-  `delete_page/2` and `move_page/3` use zero-based indices in the current page
-  order. **Deleting a page is not redaction**, and bookmarks and links are not
-  remapped. See [Page structure](guides/editing.md#page-structure).
+  `delete_page/2`, `move_page/3` and `keep_pages/2` use zero-based indices in
+  the current page order. **Deleting a page is not redaction**, and bookmarks and
+  links are not remapped. See [Page structure](guides/editing.md#page-structure).
+
+  ## Merging and splitting
+
+  `merge/2` and `merge_binary/2` append another document's pages, and
+  refuse a document they cannot carry intact. `extract_pages/2` and
+  `extract_page_ranges/2` write chosen pages to new binaries without changing the
+  editor. See the [Merging and splitting](guides/merging-and-splitting.md) guide.
 
   ## Page rotation
 
@@ -570,6 +577,189 @@ defmodule PdfElixide.Editor do
   def move_page!(%__MODULE__{} = editor, from, to)
       when is_integer(from) and from >= 0 and is_integer(to) and to >= 0 do
     editor |> move_page(from, to) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Keeps only the pages at the given zero-based indices, in the order given, and
+  returns the editor.
+
+  `keep_pages(editor, [2, 0])` on a three-page document leaves two pages: the
+  old last page, then the old first. Pending edits stay with their pages.
+  Dropping a page **is not redaction**; see
+  [Page structure](guides/editing.md#page-structure).
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if an index does
+  not exist, or `:invalid_pdf` if a listed page cannot be read. Raises
+  `ArgumentError` for an empty list or a repeated index.
+  """
+  @spec keep_pages(t(), [non_neg_integer(), ...]) :: {:ok, t()} | {:error, Error.t()}
+  def keep_pages(%__MODULE__{ref: ref} = editor, pages) when is_list(pages) do
+    validate_page_list!(pages)
+
+    case Wrap.call(fn -> Native.editor_keep_pages(ref, pages) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Keeps only the pages at the given zero-based indices, in the order given,
+  raising an error if it fails.
+  """
+  @spec keep_pages!(t(), [non_neg_integer(), ...]) :: t()
+  def keep_pages!(%__MODULE__{} = editor, pages) when is_list(pages) do
+    editor |> keep_pages(pages) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Writes the pages at the given zero-based indices, in the order given, to a new
+  PDF binary. The editor's pages and pending edits are not changed, but an editor
+  with no unsaved edits can report `modified?/1` as `true` afterwards if its
+  document has an information dictionary, or if an attachment added with
+  `embed_file/4` has already been written.
+
+  The result includes pending edits, like `to_binary/2` with its default
+  options, and is never encrypted. Extraction is not a way to remove
+  confidential content; see
+  [Splitting a document](guides/merging-and-splitting.md#splitting-a-document).
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if an index does
+  not exist, or `:invalid_pdf` if a listed page cannot be read. Raises
+  `ArgumentError` for an empty list or a repeated index. A source that stores
+  its XMP metadata unencrypted is refused, as in `save/3`.
+  """
+  @spec extract_pages(t(), [non_neg_integer(), ...]) :: {:ok, binary()} | {:error, Error.t()}
+  def extract_pages(%__MODULE__{ref: ref}, pages) when is_list(pages) do
+    validate_page_list!(pages)
+
+    Wrap.call(fn -> Native.editor_extract_pages(ref, pages) end)
+  end
+
+  @doc """
+  Writes the pages at the given zero-based indices to a new PDF binary, raising
+  an error if it fails.
+  """
+  @spec extract_pages!(t(), [non_neg_integer(), ...]) :: binary()
+  def extract_pages!(%__MODULE__{} = editor, pages) when is_list(pages) do
+    editor |> extract_pages(pages) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Writes each range of zero-based page indices to its own PDF binary, as
+  `extract_pages/2` does, and returns the binaries in the order of `ranges`.
+
+  Each range is inclusive with a step of 1, so `[0..9, 10..19]` splits a
+  twenty-page document in two. Ranges may overlap. All ranges are checked
+  before anything is written.
+
+  Every binary is held in memory until the call returns. To keep only one at a
+  time, call `extract_pages/2` once per range. See
+  [Parts and chunks](guides/merging-and-splitting.md#parts-and-chunks).
+
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if a range reaches
+  past the last page, or `:invalid_pdf` if a listed page cannot be read. Raises
+  `ArgumentError` for an empty list, an empty range or a range whose step is not
+  1.
+  """
+  @spec extract_page_ranges(t(), [Range.t(), ...]) :: {:ok, [binary()]} | {:error, Error.t()}
+  def extract_page_ranges(%__MODULE__{ref: ref}, ranges) when is_list(ranges) do
+    if ranges == [] do
+      raise ArgumentError, "extract_page_ranges/2 needs at least one range, got []"
+    end
+
+    spans = Enum.map(ranges, &inclusive!/1)
+
+    Wrap.call(fn -> Native.editor_extract_page_ranges(ref, spans) end)
+  end
+
+  @doc """
+  Writes each range of zero-based page indices to its own PDF binary, raising an
+  error if it fails.
+  """
+  @spec extract_page_ranges!(t(), [Range.t(), ...]) :: [binary()]
+  def extract_page_ranges!(%__MODULE__{} = editor, ranges) when is_list(ranges) do
+    editor |> extract_page_ranges(ranges) |> Wrap.unwrap!()
+  end
+
+  defp validate_page_list!([]) do
+    raise ArgumentError, "expected at least one page index, got []"
+  end
+
+  defp validate_page_list!(pages), do: distinct_pages!(pages, %{})
+
+  defp distinct_pages!([], _seen), do: :ok
+
+  defp distinct_pages!([page | rest], seen) when is_integer(page) and page >= 0 do
+    if Map.has_key?(seen, page) do
+      raise ArgumentError, "page index #{page} is given more than once"
+    end
+
+    distinct_pages!(rest, Map.put(seen, page, true))
+  end
+
+  defp distinct_pages!([page | _rest], _seen) do
+    raise ArgumentError, "expected a non-negative page index, got #{inspect(page)}"
+  end
+
+  defp inclusive!(first..last//1) when first >= 0 and last >= first, do: {first, last}
+
+  defp inclusive!(range) do
+    raise ArgumentError,
+          "expected a non-empty range of non-negative page indices with step 1, got " <>
+            inspect(range)
+  end
+
+  @doc """
+  Appends every page of the PDF file at `path` to the end of the editor, and
+  returns the editor.
+
+  A merge incorporates pending edits into the combined document. Afterwards,
+  `modified?/1` reports `true` until the next full write, and an incremental
+  `save/3` is refused. Documents whose pages cannot be carried safely return
+  `:unsupported` without changing the editor; encrypted documents return
+  `:encrypted`. See
+  [Merging documents](guides/merging-and-splitting.md#merging-documents) for the
+  complete behavior and limitations.
+
+  The path is handed to the operating system unchanged — see the "File paths"
+  section of `PdfElixide`.
+  """
+  @spec merge(t(), Path.t()) :: {:ok, t()} | {:error, Error.t()}
+  def merge(%__MODULE__{ref: ref} = editor, path) when is_binary(path) do
+    case Wrap.call(fn -> Native.editor_merge(ref, path) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Appends every page of the PDF file at `path` to the end of the editor, raising
+  an error if it fails.
+  """
+  @spec merge!(t(), Path.t()) :: t()
+  def merge!(%__MODULE__{} = editor, path) when is_binary(path) do
+    editor |> merge(path) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Appends every page of a PDF binary to the end of the editor, and returns the
+  editor. Behaves as `merge/2` does for a file.
+  """
+  @spec merge_binary(t(), binary()) :: {:ok, t()} | {:error, Error.t()}
+  def merge_binary(%__MODULE__{ref: ref} = editor, bytes) when is_binary(bytes) do
+    case Wrap.call(fn -> Native.editor_merge_bytes(ref, bytes) end) do
+      {:ok, _} -> {:ok, editor}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Appends every page of a PDF binary to the end of the editor, raising an error
+  if it fails.
+  """
+  @spec merge_binary!(t(), binary()) :: t()
+  def merge_binary!(%__MODULE__{} = editor, bytes) when is_binary(bytes) do
+    editor |> merge_binary(bytes) |> Wrap.unwrap!()
   end
 
   @doc """

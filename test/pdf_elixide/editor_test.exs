@@ -53,7 +53,32 @@ defmodule PdfElixide.EditorTest do
   @encrypted_flatten_pdf Path.join(@fixtures, "encrypted_flatten.pdf")
   # AES-128 revision 4, and a user password with no UTF-8 spelling.
   @encrypted_latin1_pdf Path.join(@fixtures, "encrypted_latin1.pdf")
+  # `fonts.pdf` under AES-128 with an empty user password, so it opens without one.
+  @encrypted_owner_only_pdf Path.join(@fixtures, "encrypted_owner_only.pdf")
   @media_box_pdf Path.join(@fixtures, "media_box.pdf")
+  # Two pages that declare their own resources and carry no annotations.
+  @fonts_pdf Path.join(@fixtures, "fonts.pdf")
+  @inherited_boxes_pdf Path.join(@fixtures, "inherited_boxes.pdf")
+  # Its root `/Pages` declares no resources, unlike `sample.pdf`'s.
+  @structured_pdf Path.join(@fixtures, "structured.pdf")
+  # One of its two layers is hidden by default.
+  @render_layers_pdf Path.join(@fixtures, "render_layers.pdf")
+  @degenerate_box_pdf Path.join(@fixtures, "degenerate_box.pdf")
+  # `flatten.pdf` with fonts on its root `/Pages`, so a page without resources of
+  # its own is refused, and a widget that warns when flattened.
+  @flatten_root_resources_pdf Path.join(@fixtures, "flatten_root_resources.pdf")
+  @merge_page_references_pdf Path.join(@fixtures, "merge_page_references.pdf")
+  # Page 0 is allowed; pages 1 to 3 name a destination or thread indirectly.
+  @merge_indirect_destinations_pdf Path.join(@fixtures, "merge_indirect_destinations.pdf")
+  @merge_deep_chain_pdf Path.join(@fixtures, "merge_deep_chain.pdf")
+  @merge_too_deep_pdf Path.join(@fixtures, "merge_too_deep.pdf")
+  # Page 0 is allowed; pages 1 to 6 carry a page action on the form.
+  @merge_named_fields_pdf Path.join(@fixtures, "merge_named_fields.pdf")
+  # Its page draws a form XObject carrying `/StructParent`.
+  @merge_tagged_xobject_pdf Path.join(@fixtures, "merge_tagged_xobject.pdf")
+  @merge_tagged_xobject_plural_pdf Path.join(@fixtures, "merge_tagged_xobject_plural.pdf")
+  # Its page carries `/StructParents`.
+  @actualtext_pdf Path.join(@fixtures, "actualtext.pdf")
   @crop_box_pdf Path.join(@fixtures, "crop_box.pdf")
 
   describe "open/1" do
@@ -1112,6 +1137,891 @@ defmodule PdfElixide.EditorTest do
       editor |> Editor.delete_page!(1) |> Editor.move_page!(1, 0)
 
       assert page_texts(editor) == ["Page Three", "Page One"]
+    end
+  end
+
+  defp binary_texts(bytes) do
+    doc = Document.from_binary!(bytes)
+    texts = doc |> Enum.map(&Document.Page.text!/1) |> Enum.map(&String.trim/1)
+    Document.close(doc)
+
+    texts
+  end
+
+  describe "keep_pages/2" do
+    test "returns the same editor and marks it modified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:ok, ^editor} = Editor.keep_pages(editor, [2, 0])
+      assert Editor.modified?(editor)
+    end
+
+    test "keeps the listed pages in the order given" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.keep_pages!(editor, [2, 0])
+
+      assert Editor.page_count!(editor) == 2
+      assert page_texts(editor) == ["Page Three", "Page One"]
+    end
+
+    test "later page operations count over the selection" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.keep_pages!([2, 0, 1])
+      |> Editor.delete_page!(0)
+      |> Editor.move_page!(1, 0)
+
+      assert page_texts(editor) == ["Page Two", "Page One"]
+    end
+
+    test "a pending rotation stays with its page" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.set_rotation!(0, 90) |> Editor.keep_pages!([2, 0])
+
+      assert rotations(editor) == [0, 90]
+      assert saved_rotations(editor) == [0, 90]
+    end
+
+    test "a whole-document form flatten reaches the page that was kept" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      bytes =
+        editor
+        |> Editor.keep_pages!([1])
+        |> Form.flatten!()
+        |> Editor.to_binary!()
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Form.fields!(doc) == []
+      assert Document.annotations!(doc, 0) == []
+    end
+
+    test "returns {:error, :out_of_range} and leaves the pages alone" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.keep_pages(editor, [0, 3])
+      refute Editor.modified?(editor)
+      assert Editor.page_count!(editor) == 3
+    end
+
+    test "returns {:error, :invalid_pdf} for a page the document cannot resolve" do
+      editor = Editor.open!(@broken_page_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.keep_pages(editor, [2])
+      assert Editor.page_count!(editor) == 3
+    end
+
+    test "raises for an empty list, a repeated index or a negative one" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/at least one/, fn -> Editor.keep_pages(editor, []) end
+
+      assert_raise ArgumentError, ~r/more than once/, fn ->
+        Editor.keep_pages(editor, [1, 1])
+      end
+
+      assert_raise ArgumentError, ~r/non-negative/, fn -> Editor.keep_pages(editor, [-1]) end
+      assert_raise FunctionClauseError, fn -> Editor.keep_pages(editor, untyped(0)) end
+      refute Editor.modified?(editor)
+    end
+  end
+
+  describe "extract_pages/2" do
+    test "writes the listed pages in the order given" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, bytes} = Editor.extract_pages(editor, [2, 0])
+      assert binary_texts(bytes) == ["Page Three", "Page One"]
+    end
+
+    test "leaves the editor's pages and pending edits alone" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 0, 2)
+      Editor.extract_pages!(editor, [0])
+
+      assert Editor.modified?(editor)
+      assert page_texts(editor) == ["Page Two", "Page Three", "Page One"]
+    end
+
+    test "counts over pending page operations and carries pending edits" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.move_page!(0, 2) |> Editor.set_rotation!(2, 90)
+      doc = Document.from_binary!(Editor.extract_pages!(editor, [2]))
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [page] = Enum.to_list(doc)
+      assert String.trim(Document.Page.text!(page)) == "Page One"
+      assert Document.Page.rotation!(page) == 90
+    end
+
+    test "carries a pending attachment on every call" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n")
+
+      for _ <- 1..2 do
+        doc = Document.from_binary!(Editor.extract_pages!(editor, [0]))
+        assert [%EmbeddedFile{name: "data.csv"}] = Document.embedded_files!(doc)
+        Document.close(doc)
+      end
+    end
+
+    test "leaves an unedited editor without /Info unmodified" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.extract_pages!(editor, [0])
+
+      refute Editor.modified?(editor)
+    end
+
+    test "marks an unedited editor whose source has /Info as modified" do
+      editor = Editor.open!(@metadata_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      bytes = Editor.extract_pages!(editor, [0])
+
+      assert Editor.modified?(editor)
+      assert Document.metadata!(Document.from_binary!(bytes)).title == "Test Title"
+    end
+
+    test "marks an unedited editor as modified once an attachment has been written" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      editor |> Editor.embed_file!("data.csv", "a,b\n") |> Editor.to_binary!()
+      refute Editor.modified?(editor)
+
+      bytes = Editor.extract_pages!(editor, [0])
+
+      assert Editor.modified?(editor)
+      extracted = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(extracted) end)
+      assert [%EmbeddedFile{name: "data.csv"}] = Document.embedded_files!(extracted)
+    end
+
+    test "writes an encrypted source without encryption" do
+      editor = Editor.open!(@encrypted_pdf, password: "secret")
+      on_exit(fn -> Editor.close(editor) end)
+
+      doc = Document.from_binary!(Editor.extract_pages!(editor, [0]))
+      on_exit(fn -> Document.close(doc) end)
+
+      refute Document.encrypted?(doc)
+      assert Document.page_count!(doc) == 1
+    end
+
+    test "refuses a source whose unencrypted metadata a rewrite would drop" do
+      editor = Editor.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.extract_pages(editor, [0])
+
+      assert message =~ "metadata"
+    end
+
+    test "reports a bad selection before refusing the source" do
+      editor = Editor.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.extract_pages(editor, [9])
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Editor.extract_page_ranges(editor, [0..9])
+    end
+
+    test "returns {:error, :out_of_range} for a page past the end" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.extract_pages(editor, [3])
+    end
+
+    test "returns {:error, :invalid_pdf} rather than writing a page it cannot resolve" do
+      editor = Editor.open!(@broken_page_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.extract_pages(editor, [2])
+      assert {:ok, bytes} = Editor.extract_pages(editor, [1, 0])
+      assert length(binary_texts(bytes)) == 2
+    end
+
+    test "raises for an empty list or a repeated index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, fn -> Editor.extract_pages(editor, []) end
+      assert_raise ArgumentError, fn -> Editor.extract_pages(editor, [0, 0]) end
+    end
+  end
+
+  describe "extract_page_ranges/2" do
+    test "writes one binary per inclusive range, overlaps allowed" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, chunks} = Editor.extract_page_ranges(editor, [0..0, 1..2, 0..1])
+
+      assert Enum.map(chunks, &binary_texts/1) == [
+               ["Page One"],
+               ["Page Two", "Page Three"],
+               ["Page One", "Page Two"]
+             ]
+    end
+
+    test "carries a pending attachment in every chunk" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.embed_file!(editor, "data.csv", "a,b\n")
+
+      for bytes <- Editor.extract_page_ranges!(editor, [0..0, 1..1, 2..2]) do
+        doc = Document.from_binary!(bytes)
+        assert [%EmbeddedFile{name: "data.csv"}] = Document.embedded_files!(doc)
+        Document.close(doc)
+      end
+    end
+
+    test "returns {:error, :out_of_range} for a range past the last page" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Editor.extract_page_ranges(editor, [0..0, 2..3])
+    end
+
+    test "refuses a vast range before expanding it" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Editor.extract_page_ranges(editor, [0..1_000_000_000_000])
+    end
+
+    # The largest 64-bit index, which a half-open end one past it would overflow.
+    test "returns {:error, :out_of_range} for a range ending at the largest index" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} =
+               Editor.extract_page_ranges(editor, [0..18_446_744_073_709_551_615])
+    end
+
+    test "raises for no ranges, an empty range or a step other than 1" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for ranges <- [[], [1..0//1], [0..2//2], [2..0//-1], [-1..0//1]] do
+        assert_raise ArgumentError, fn -> Editor.extract_page_ranges(editor, ranges) end
+      end
+    end
+  end
+
+  describe "merge/2 and merge_binary/2" do
+    defp merged_texts(editor), do: binary_texts(Editor.to_binary!(editor))
+
+    defp source_texts(path), do: binary_texts(File.read!(path))
+
+    test "appends every page of a file, returning the same editor" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.merge(editor, @fonts_pdf)
+
+      assert Editor.page_count!(editor) == 5
+      assert merged_texts(editor) == source_texts(@valid_pdf) ++ source_texts(@fonts_pdf)
+    end
+
+    test "appends every page of a binary" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.merge_binary!(editor, File.read!(@fonts_pdf))
+
+      assert merged_texts(editor) == source_texts(@valid_pdf) ++ source_texts(@fonts_pdf)
+    end
+
+    test "reports the editor modified until a full write" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      Editor.merge!(editor, @fonts_pdf)
+      assert Editor.modified?(editor)
+
+      Editor.to_binary!(editor)
+      refute Editor.modified?(editor)
+      assert Editor.page_count!(editor) == 5
+    end
+
+    test "leaves the cached version alone" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert Editor.version(Editor.merge!(editor, @fonts_pdf)) == Editor.version(editor)
+      assert Editor.version(editor) == {1, 4}
+    end
+
+    test "merged pages move and delete like any other" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      [first_merged, second_merged] = source_texts(@fonts_pdf)
+
+      editor
+      |> Editor.merge!(@fonts_pdf)
+      |> Editor.move_page!(4, 0)
+      |> Editor.delete_page!(4)
+
+      assert merged_texts(editor) == [second_merged, "Page One", "Page Two", "Page Three"]
+      refute first_merged in merged_texts(editor)
+    end
+
+    # Its first pages inherit rotation and both boxes from nested `/Pages` nodes.
+    # They declare no resources, so the base is one whose root declares none.
+    test "merged pages keep the rotation and boxes they inherited" do
+      editor = Editor.open!(@structured_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      source = Document.open!(@inherited_boxes_pdf)
+      on_exit(fn -> Document.close(source) end)
+      first = Editor.page_count!(editor)
+
+      Editor.merge!(editor, @inherited_boxes_pdf)
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      for index <- 0..2 do
+        page = Enum.at(source, index)
+        merged = Enum.at(written, first + index)
+
+        assert Editor.rotation!(editor, first + index) == Document.Page.rotation!(page)
+        assert Editor.media_box!(editor, first + index) == Document.Page.media_box!(page)
+        assert Document.Page.rotation!(merged) == Document.Page.rotation!(page)
+        assert Document.Page.media_box!(merged) == Document.Page.media_box!(page)
+        assert Document.Page.crop_box!(merged) == Document.Page.crop_box!(page)
+      end
+    end
+
+    test "applies pending edits and keeps them" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.set_rotation!(0, 90)
+      |> Editor.set_title!("Merged")
+      |> Editor.embed_file!("data.csv", "a,b\n")
+      |> Editor.merge!(@fonts_pdf)
+
+      assert Editor.rotation!(editor, 0) == 90
+      assert Editor.metadata!(editor).title == "Merged"
+      assert [%EmbeddedFile{name: "data.csv"}] = Editor.embedded_files!(editor)
+      assert saved_rotations(editor) |> hd() == 90
+    end
+
+    test "attachments become part of the document, so another is refused" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.embed_file!("data.csv", "a,b\n") |> Editor.merge!(@fonts_pdf)
+
+      assert {:error, %Error{reason: :unsupported}} =
+               Editor.embed_file(editor, "more.csv", "c,d\n")
+    end
+
+    test "keeps the flatten warnings a pending flatten produced" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Form.flatten!() |> Editor.merge!(@fonts_pdf)
+
+      assert Enum.any?(Editor.flatten_warnings!(editor), &(&1 =~ "orphan"))
+    end
+
+    test "refuses a document whose pages carry annotations, changing nothing" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @flatten_pdf)
+
+      assert message =~ "annotations"
+      assert Editor.page_count!(editor) == 3
+      refute Editor.modified?(editor)
+    end
+
+    # Its second page names pages through `/SeparationInfo`, not an annotation.
+    test "refuses a page that refers to other pages through any entry" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @merge_page_references_pdf)
+
+      assert message =~ "Page 1"
+      assert message =~ "separation"
+      assert Editor.page_count!(editor) == 3
+      refute Editor.modified?(editor)
+    end
+
+    test "refuses a page that uses layers, changing nothing" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @render_layers_pdf)
+
+      assert message =~ "layers"
+      assert Editor.page_count!(editor) == 3
+      refute Editor.modified?(editor)
+    end
+
+    # Deeper than a dirty scheduler's stack holds, so this is a live-VM check of
+    # the thread the import runs on.
+    test "merges a page whose objects nest deeply" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.merge(editor, @merge_deep_chain_pdf)
+      assert Editor.page_count!(editor) == 3
+    end
+
+    test "refuses a page nested more deeply than a merge can copy, changing nothing" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @merge_too_deep_pdf)
+
+      assert message =~ "Page 0"
+      assert message =~ "nests its objects"
+      assert Editor.page_count!(editor) == 2
+      refute Editor.modified?(editor)
+    end
+
+    test "refuses a page action that acts on the form, changing nothing" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @merge_named_fields_pdf)
+
+      assert message =~ "Page 1"
+      assert message =~ "runs JavaScript or acts on form fields"
+      assert Editor.page_count!(editor) == 2
+      refute Editor.modified?(editor)
+    end
+
+    test "refuses a tagged page into a tagged document, changing nothing" do
+      for incoming <- [
+            @actualtext_pdf,
+            @merge_tagged_xobject_pdf,
+            @merge_tagged_xobject_plural_pdf
+          ] do
+        editor = Editor.open!(@structured_pdf)
+        on_exit(fn -> Editor.close(editor) end)
+        count = Editor.page_count!(editor)
+
+        assert {:error, %Error{reason: :unsupported, message: message}} =
+                 Editor.merge(editor, incoming)
+
+        assert message =~ "structure"
+        assert Editor.page_count!(editor) == count
+        refute Editor.modified?(editor)
+      end
+    end
+
+    test "merges a tagged page into an untagged document" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.merge!(@actualtext_pdf)
+      |> Editor.merge!(@merge_tagged_xobject_pdf)
+
+      assert Editor.page_count!(editor) == 4
+    end
+
+    test "keeps this document's form fields and a pending value" do
+      editor = Editor.open!(@flatten_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      names = editor |> Form.fields!() |> Enum.map(& &1.name) |> Enum.sort()
+
+      editor
+      |> Form.put_value!("full_name", "Ada")
+      |> Editor.merge!(@fonts_pdf)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      assert written |> Form.fields!() |> Enum.map(& &1.name) |> Enum.sort() == names
+      assert Form.value!(written, "full_name") == "Ada"
+    end
+
+    test "merges into an encrypted source opened with its password" do
+      editor = Editor.open!(@encrypted_pdf, password: "secret")
+      on_exit(fn -> Editor.close(editor) end)
+      source = Document.open!(@encrypted_pdf, password: "secret")
+      on_exit(fn -> Document.close(source) end)
+      own = source |> Enum.map(&Document.Page.text!/1) |> Enum.map(&String.trim/1)
+
+      Editor.merge!(editor, @fonts_pdf)
+
+      assert editor |> merged_texts() |> Enum.take(length(own)) == own
+    end
+
+    test "carries a pending rotation to the right page after a deletion" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor
+      |> Editor.delete_page!(0)
+      |> Editor.set_rotation!(1, 90)
+      |> Editor.merge!(@fonts_pdf)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+      pages = Enum.to_list(written)
+
+      assert pages |> Enum.take(2) |> Enum.map(&String.trim(Document.Page.text!(&1))) ==
+               ["Page Two", "Page Three"]
+
+      assert Enum.map(pages, &Document.Page.rotation!/1) == [0, 90, 0, 0]
+    end
+
+    # Page 1 inherits its 180 from an intermediate `/Pages` node.
+    test "keeps the rotation this document's pages inherit" do
+      editor = Editor.open!(@rotation_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      source = Document.open!(@rotation_pdf)
+      on_exit(fn -> Document.close(source) end)
+      own = Enum.map(source, &Document.Page.rotation!/1)
+
+      Editor.merge!(editor, @fonts_pdf)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+
+      assert written |> Enum.map(&Document.Page.rotation!/1) |> Enum.take(length(own)) == own
+    end
+
+    test "keeps the editor's declared version when merging a newer document" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      assert Editor.version(editor) == {1, 3}
+
+      Editor.merge!(editor, @structured_pdf)
+
+      assert Editor.version(editor) == {1, 3}
+      assert "%PDF-1.3" <> _ = Editor.to_binary!(editor)
+    end
+
+    test "refuses a named destination or thread given indirectly, changing nothing" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @merge_indirect_destinations_pdf)
+
+      assert message =~ "Page 1"
+      assert Editor.page_count!(editor) == 3
+      refute Editor.modified?(editor)
+    end
+
+    test "merges a document once its annotations are flattened" do
+      flattened =
+        @flatten_pdf
+        |> Editor.open!()
+        |> Editor.flatten_annotations!()
+        |> Form.flatten!()
+        |> Editor.to_binary!()
+
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.merge_binary(editor, flattened)
+      assert Editor.page_count!(editor) == 4
+    end
+
+    # `sample.pdf` declares its font on the `/Pages` node, not on each page.
+    test "refuses a document whose pages inherit their resources" do
+      editor = Editor.open!(@fonts_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @valid_pdf)
+
+      assert message =~ "resources"
+      assert Editor.page_count!(editor) == 2
+    end
+
+    # `degenerate_box.pdf`'s pages declare no resources; `sample.pdf`'s root
+    # declares a font, `structured.pdf`'s root nothing.
+    test "refuses a page that would take this document's resources" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @degenerate_box_pdf)
+
+      assert message =~ "Page 0"
+      assert message =~ "resources of its own"
+      assert Editor.page_count!(editor) == 3
+      refute Editor.modified?(editor)
+    end
+
+    test "a refused merge leaves an unmodified editor with an information dictionary unmodified" do
+      bytes = @valid_pdf |> Editor.open!() |> Editor.set_title!("Kept") |> Editor.to_binary!()
+      editor = Editor.from_binary!(bytes)
+      on_exit(fn -> Editor.close(editor) end)
+      refute Editor.modified?(editor)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.merge(editor, @degenerate_box_pdf)
+      refute Editor.modified?(editor)
+
+      Editor.merge!(editor, @fonts_pdf)
+      assert Editor.metadata!(editor).title == "Kept"
+    end
+
+    test "a refused merge leaves an editor unmodified after a full write carried an attachment" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      editor |> Editor.embed_file!("data.csv", "a,b\n") |> Editor.to_binary!()
+      refute Editor.modified?(editor)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.merge(editor, @degenerate_box_pdf)
+      refute Editor.modified?(editor)
+
+      Editor.merge!(editor, @fonts_pdf)
+      assert [%EmbeddedFile{name: "data.csv"}] = Editor.embedded_files!(editor)
+    end
+
+    test "a refused merge leaves the flatten warnings alone" do
+      editor = Editor.open!(@flatten_root_resources_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Form.flatten!(editor)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.merge(editor, @degenerate_box_pdf)
+      assert Editor.flatten_warnings!(editor) == []
+
+      Editor.to_binary!(editor)
+      assert [_] = Editor.flatten_warnings!(editor)
+    end
+
+    test "merges a page without resources where this document declares none" do
+      editor = Editor.open!(@structured_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      first = Editor.page_count!(editor)
+
+      Editor.merge!(editor, @degenerate_box_pdf)
+
+      written = Document.from_binary!(Editor.to_binary!(editor))
+      on_exit(fn -> Document.close(written) end)
+      assert Document.fonts!(written, first) == []
+    end
+
+    test "refuses an editor with no pages" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for _ <- 1..3, do: Editor.delete_page!(editor, 0)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.merge(editor, @fonts_pdf)
+    end
+
+    test "refuses an editor with a queued redaction region, keeping it queued" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.add_redaction!(editor, 1, %Rect{x: 95.0, y: 695.0, width: 155.0, height: 30.0})
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @fonts_pdf)
+
+      assert message =~ "apply_redactions"
+      assert Editor.redaction_count!(editor, 1) == 1
+      assert Editor.page_count!(editor) == 2
+
+      assert %{glyphs_removed: removed} = Editor.apply_redactions!(editor)
+      assert removed > 0
+      Editor.merge!(editor, @fonts_pdf)
+      assert page_text(editor, 1) == ""
+    end
+
+    # Page 0 carries `/Redact` annotations, which a mark alone only covers.
+    test "refuses an editor with a page marked for redaction" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.mark_redactions!(editor, 0)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.merge(editor, @fonts_pdf)
+      assert Editor.marked_for_redaction?(editor, 0)
+
+      editor |> Editor.unmark_redactions!(0) |> Editor.merge!(@fonts_pdf)
+      assert Editor.page_count!(editor) == 4
+    end
+
+    # Page 0 is redacted before page 1's undefined font fails the pass.
+    test "refuses an editor whose destructive pass failed partway" do
+      editor = Editor.open!(@redact_partial_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.mark_redactions!(editor)
+      assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @fonts_pdf)
+
+      assert message =~ "reopen the source"
+      assert Editor.page_count!(editor) == 2
+      assert Editor.marked_for_redaction?(editor, 1)
+    end
+
+    test "refuses an editor with a region queued after a destructive pass" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.add_redaction!(editor, 1, %Rect{x: 95.0, y: 695.0, width: 155.0, height: 30.0})
+      Editor.apply_redactions!(editor)
+      Editor.add_redaction!(editor, 0, %Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0})
+      count = Editor.redaction_count!(editor, 0)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @fonts_pdf)
+
+      assert message =~ "to_binary"
+      assert Editor.redaction_count!(editor, 0) == count
+      assert Editor.page_count!(editor) == 2
+    end
+
+    test "refuses an editor with a page marked after a destructive pass" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.add_redaction!(editor, 1, %Rect{x: 95.0, y: 695.0, width: 155.0, height: 30.0})
+      Editor.apply_redactions!(editor)
+      Editor.mark_redactions!(editor, 0)
+
+      assert {:error, %Error{reason: :unsupported}} = Editor.merge(editor, @fonts_pdf)
+
+      editor |> Editor.unmark_redactions!(0) |> Editor.merge!(@fonts_pdf)
+      assert Editor.page_count!(editor) == 4
+    end
+
+    test "merging a document with no pages changes nothing" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.merge(editor, @no_pages_pdf)
+      assert Editor.page_count!(editor) == 3
+      refute Editor.modified?(editor)
+    end
+
+    test "merging a document with no pages succeeds even into an editor with none" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      for _ <- 1..3, do: Editor.delete_page!(editor, 0)
+
+      assert {:ok, ^editor} = Editor.merge(editor, @no_pages_pdf)
+      assert Editor.page_count!(editor) == 0
+    end
+
+    test "merging a document with no pages succeeds where a rewrite would be refused" do
+      editor = Editor.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:ok, ^editor} = Editor.merge(editor, @no_pages_pdf)
+      refute Editor.modified?(editor)
+    end
+
+    test "returns :encrypted for a document that needs a password" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :encrypted}} = Editor.merge(editor, @encrypted_pdf)
+    end
+
+    test "returns :encrypted for a document that opens without a password, changing nothing" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :encrypted}} =
+               Editor.merge(editor, @encrypted_owner_only_pdf)
+
+      assert Editor.page_count!(editor) == 3
+      refute Editor.modified?(editor)
+
+      plain = @encrypted_owner_only_pdf |> Editor.open!() |> Editor.to_binary!()
+      Editor.merge_binary!(editor, plain)
+      assert merged_texts(editor) == source_texts(@valid_pdf) ++ source_texts(@fonts_pdf)
+    end
+
+    test "returns :invalid_pdf for bytes that are not a PDF or a page tree it cannot walk" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Editor.merge_binary(editor, File.read!(@invalid_pdf))
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.merge(editor, @broken_page_pdf)
+      assert Editor.page_count!(editor) == 3
+    end
+
+    test "refuses an editor whose unencrypted metadata a rewrite would drop" do
+      editor = Editor.open!(@encrypted_cleartext_metadata_pdf, password: "secret")
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.merge(editor, @fonts_pdf)
+
+      assert message =~ "metadata"
+    end
+
+    @tag :tmp_dir
+    test "an incremental save is refused, even after a full one", %{tmp_dir: tmp_dir} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.merge!(editor, @fonts_pdf)
+      Editor.save!(editor, Path.join(tmp_dir, "full.pdf"))
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, Path.join(tmp_dir, "incremental.pdf"), incremental: true)
+
+      assert message =~ "merged"
+    end
+
+    test "returns :closed on a closed editor" do
+      editor = Editor.open!(@valid_pdf)
+      Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.merge(editor, @fonts_pdf)
+      assert {:error, %Error{reason: :closed}} = Editor.merge(editor, "missing.pdf")
+
+      assert {:error, %Error{reason: :closed}} =
+               Editor.merge_binary(editor, File.read!(@invalid_pdf))
+    end
+
+    test "rejects a path or binary that is not a binary" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise FunctionClauseError, fn -> Editor.merge_binary(editor, untyped(nil)) end
     end
   end
 
@@ -2757,6 +3667,18 @@ defmodule PdfElixide.EditorTest do
       Editor.delete_page!(editor, 1)
 
       assert refuses(editor, path) =~ "page deletions"
+    end
+
+    @tag :tmp_dir
+    test "refuses keeping only some pages", %{path: path} do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.keep_pages!(editor, [2, 0])
+
+      message = refuses(editor, path)
+      assert message =~ "page deletions"
+      assert message =~ "page moves"
     end
 
     @tag :tmp_dir

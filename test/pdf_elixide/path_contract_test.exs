@@ -11,6 +11,8 @@ defmodule PdfElixide.PathContractTest do
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
+  # Two pages that declare their own resources and carry no annotations.
+  @mergeable_pdf Path.join(@fixtures, "fonts.pdf")
 
   # A lone 0xFF byte is not valid UTF-8 in any position, so this is a filename
   # no `String` decode could accept — and a perfectly legal one on Linux.
@@ -49,6 +51,11 @@ defmodule PdfElixide.PathContractTest do
     test "Editor.open!/2 raises a PdfElixide.Error" do
       assert_raise Error, fn -> Editor.open!(@missing_path) end
     end
+
+    test "Editor.merge/2 reports a filesystem error" do
+      editor = Editor.open!(@valid_pdf)
+      assert {:error, %Error{reason: :io}} = Editor.merge(editor, @missing_path)
+    end
   end
 
   describe "a path with no UTF-8 spelling, on Windows" do
@@ -68,6 +75,11 @@ defmodule PdfElixide.PathContractTest do
 
     test "Editor.open!/2 raises ArgumentError" do
       assert_raise ArgumentError, fn -> Editor.open!(@missing_path) end
+    end
+
+    test "Editor.merge/2 raises ArgumentError" do
+      editor = Editor.open!(@valid_pdf)
+      assert_raise ArgumentError, fn -> Editor.merge(editor, @missing_path) end
     end
   end
 
@@ -92,6 +104,14 @@ defmodule PdfElixide.PathContractTest do
 
       assert {:ok, editor} = Editor.open(path)
       assert Editor.source_path(editor) == path
+    end
+
+    test "Editor.merge/2 reads one", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, @bad_name)
+      File.cp!(@mergeable_pdf, path)
+
+      assert {:ok, editor} = Editor.open!(@valid_pdf) |> Editor.merge(path)
+      assert Editor.page_count!(editor) == 5
     end
 
     test "Editor.save/3 writes one, and it reopens", %{tmp_dir: tmp_dir} do
@@ -188,6 +208,11 @@ defmodule PdfElixide.PathContractTest do
 
     test "Editor.open/2 rejects a charlist" do
       assert_raise FunctionClauseError, fn -> Editor.open(untyped(~c"sample.pdf")) end
+    end
+
+    test "Editor.merge/2 rejects a charlist" do
+      editor = Editor.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Editor.merge(editor, untyped(~c"in.pdf")) end
     end
 
     test "Editor.save/3 rejects a charlist" do

@@ -10,11 +10,11 @@ use pdf_oxide::{
     writer::EmbeddedFile,
     Error as PdfError, PdfDocument,
 };
-use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc};
+use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, ResourceArc, Term};
 
 use crate::{
     atoms,
-    binary::owned_binary,
+    binary::{binary_term, owned_binary},
     document::OpenOptionsNif,
     embedded_files::{
         embedded_file, ensure_no_name_tree, pending_to_nif, read_embedded_files, EmbeddedFileNif,
@@ -28,6 +28,7 @@ use crate::{
     form_tree::Resolved,
     fs_path::path_arg,
     geometry::{rect_from_corners, rect_from_nif, RectNif},
+    merge::{self, MergeError},
     metadata::{normalize_text, read_metadata, MetadataNif},
     open_editor::{Marked, OpenEditor, OutOfRange, PageError},
     resource::Closable,
@@ -225,7 +226,7 @@ fn editor_page_count(resource: ResourceArc<EditorResource>) -> NifResult<usize> 
 // takes `&self`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_is_modified(resource: ResourceArc<EditorResource>) -> NifResult<bool> {
-    resource.editor.with_read(|editor| Ok(editor.is_modified()))
+    resource.editor.with_read(|editor| Ok(editor.modified()))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -350,6 +351,7 @@ fn editor_to_bytes(
         let bytes = editor
             .save_to_bytes_with_options(options.into())
             .map_err(to_nif_err)?;
+        editor.record_full_write();
 
         owned_binary(&bytes, "editor")
     })
@@ -426,7 +428,15 @@ fn ensure_metadata_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) 
     // sanitize that leaves the save refused anyway. Encryption owns that refusal
     // instead - `ensure_incremental_is_not_encrypted` on a save, upstream's own
     // check on `editor_to_bytes`.
-    if options.incremental || !carries_unencryptable_metadata(editor) {
+    if options.incremental {
+        return Ok(());
+    }
+
+    ensure_rewrite_keeps_metadata(editor)
+}
+
+fn ensure_rewrite_keeps_metadata(editor: &OpenEditor) -> NifResult<()> {
+    if !carries_unencryptable_metadata(editor) {
         return Ok(());
     }
 
@@ -494,6 +504,21 @@ fn ensure_incremental_has_a_source(
     Ok(())
 }
 
+// Before `ensure_incremental_has_a_source`, whose message would otherwise call a
+// path-opened editor binary-built: a merge rebuilds it from bytes.
+fn ensure_incremental_has_no_merge(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
+    if options.incremental && editor.merged() {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This editor has merged another document, which an incremental save \
+             cannot carry: the update is appended to a verbatim copy of the original \
+             file. Nothing has been written. Save a full rewrite instead.",
+        ));
+    }
+
+    Ok(())
+}
+
 // The incremental writer silently omits changes outside field values and /Info.
 fn ensure_edits_survive_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
     if !options.incremental {
@@ -540,6 +565,7 @@ fn editor_save(
         ensure_scrub_survives_save(editor, &options)?;
         ensure_metadata_survives_save(editor, &options)?;
         ensure_incremental_is_not_encrypted(editor, &options)?;
+        ensure_incremental_has_no_merge(editor, &options)?;
         ensure_incremental_has_a_source(editor, &options)?;
         // Report destructive edits and a missing source before omitted changes.
         ensure_edits_survive_save(editor, &options)?;
@@ -549,9 +575,13 @@ fn editor_save(
         }
         editor.resupply_info().map_err(to_nif_err)?;
 
+        let incremental = options.incremental;
         editor
             .save_with_options(&path, options.into())
             .map_err(to_nif_err)?;
+        if !incremental {
+            editor.record_full_write();
+        }
 
         Ok(atoms::ok())
     })
@@ -728,6 +758,7 @@ impl From<PageError> for rustler::Error {
     fn from(e: PageError) -> Self {
         match e {
             PageError::OutOfRange(e) => e.into(),
+            PageError::BadSelection => rustler::Error::BadArg,
             PageError::Upstream(e) => to_nif_err(e),
         }
     }
@@ -966,6 +997,232 @@ fn editor_move_page(
 
         Ok(atoms::ok())
     })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_keep_pages(resource: ResourceArc<EditorResource>, pages: Vec<usize>) -> NifResult<Atom> {
+    resource.editor.with_lock(|editor| {
+        editor.keep_pages(&pages)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+// Extraction temporarily swaps page order and stages a trimmed `/Pages`, so it
+// requires exclusive access.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_extract_pages(
+    resource: ResourceArc<EditorResource>,
+    pages: Vec<usize>,
+) -> NifResult<OwnedBinary> {
+    resource.editor.with_lock(|editor| {
+        // Preserve selection-error precedence over source rewrite restrictions.
+        editor.check_selection(&pages)?;
+        ensure_rewrite_keeps_metadata(editor)?;
+
+        owned_binary(&editor.extract_pages(&pages)?, "extracted pages")
+    })
+}
+
+// Loop locally so each chunk re-supplies drained state; validate every bound
+// before expanding one range at a time.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_extract_page_ranges<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<EditorResource>,
+    ranges: Vec<(usize, usize)>,
+) -> NifResult<Vec<Term<'a>>> {
+    resource.editor.with_lock(|editor| {
+        for &(first, last) in &ranges {
+            editor.check_span(first, last)?;
+        }
+        ensure_rewrite_keeps_metadata(editor)?;
+
+        ranges
+            .iter()
+            .map(|&(first, last)| {
+                let pages: Vec<usize> = (first..=last).collect();
+
+                binary_term(env, &editor.extract_pages(&pages)?, "extracted pages")
+            })
+            .collect()
+    })
+}
+
+// Reading the file needs no editor, and an exclusive guard serializes every other
+// call on the handle.
+#[rustler::nif(schedule = "DirtyIo")]
+fn editor_merge(resource: ResourceArc<EditorResource>, path: Binary) -> NifResult<Atom> {
+    let path = path_arg(path)?;
+
+    merge_incoming(&resource, || {
+        std::fs::read(&path).map_err(|e| to_nif_err(PdfError::from(e)))
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_merge_bytes(resource: ResourceArc<EditorResource>, bytes: Binary) -> NifResult<Atom> {
+    merge_incoming(&resource, || Ok(bytes.as_slice().to_vec()))
+}
+
+// The incoming document is parsed and rewritten before the lock, like an open.
+// A closed editor answers `:closed` before its input is read; the exclusive lock
+// still catches a close landing during the parse.
+fn merge_incoming(
+    resource: &EditorResource,
+    load: impl FnOnce() -> NifResult<Vec<u8>>,
+) -> NifResult<Atom> {
+    resource.editor.with_read(|_| Ok(()))?;
+    let bytes = load()?;
+    let incoming = warnings::drained(|| merge::prepare(bytes).map_err(Into::into))?;
+
+    resource.editor.with_lock(|editor| {
+        // Nothing to merge rewrites nothing, so no editor state can refuse it.
+        if incoming.pages.is_empty() {
+            return Ok(atoms::ok());
+        }
+
+        ensure_rewrite_keeps_metadata(editor)?;
+        ensure_merge_keeps_redactions(editor)?;
+        editor.merge(&incoming)?;
+
+        Ok(atoms::ok())
+    })
+}
+
+// Rebuilding the editor would discard unapplied redactions. A failed pass cannot
+// identify which of its requested pages were committed.
+fn ensure_merge_keeps_redactions(editor: &OpenEditor) -> NifResult<()> {
+    if editor.failed_redaction() {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "A destructive redaction on this editor failed partway, so pages it was \
+             asked to redact may still hold their content, and a merge would drop what \
+             was pending on them. Nothing has been merged. Discard this editor and \
+             reopen the source.",
+        ));
+    }
+
+    for (output, source, queued) in editor.pages_pending_redaction() {
+        if queued || draws_redactions(editor, source)? {
+            let message = if editor.applied_redactions() {
+                format!(
+                    "Page {output} has a redaction queued or marked after this editor \
+                     applied one, which no pass in this editor can apply and a merge \
+                     would lose. Nothing has been merged. Withdraw a mark with \
+                     unmark_redactions/2. A queued region cannot be withdrawn: write \
+                     the editor with to_binary/2, open the result, and redact it there."
+                )
+            } else {
+                format!(
+                    "Page {output} has a pending redaction, which a merge would lose: \
+                     the merged editor would hold neither the queued region nor the \
+                     redaction annotation a later apply_redactions/1,2 reads. Nothing \
+                     has been merged. Apply it with apply_redactions/1,2, or withdraw a \
+                     mark with unmark_redactions/2, then merge."
+                )
+            };
+
+            return Err(tagged_err(atoms::unsupported(), message));
+        }
+    }
+
+    Ok(())
+}
+
+impl From<MergeError> for rustler::Error {
+    fn from(e: MergeError) -> Self {
+        match e {
+            MergeError::Encrypted => tagged_err(
+                atoms::encrypted(),
+                "The document to merge is encrypted. Open it as an editor, with its \
+                 password if it needs one, write it without encryption, and merge the \
+                 result. Nothing has been merged.",
+            ),
+            MergeError::NamesAnotherPage { page, entry } => tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page} of the document to merge has {}, which a merge cannot \
+                     carry: it would refer to pages outside the merged document. \
+                     Nothing has been merged.",
+                    match entry.as_str() {
+                        "Annots" => "annotations (links, comments or form fields)".to_string(),
+                        "B" => "article threads that continue on other pages".to_string(),
+                        "AA" => "page actions that go to other pages".to_string(),
+                        "SeparationInfo" =>
+                            "a color separation group naming other pages".to_string(),
+                        "PresSteps" => "presentation steps that go to other pages".to_string(),
+                        other => format!("a /{other} entry that refers to other pages"),
+                    }
+                ),
+            ),
+            MergeError::TakesDestinationResources { page } => tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page} of the document to merge declares no fonts, images or \
+                     other resources of its own, so it would take this document's \
+                     instead. Nothing has been merged."
+                ),
+            ),
+            MergeError::UsesOptionalContent { page } => tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page} of the document to merge uses layers (optional content), \
+                     whose settings a merge cannot carry: a hidden layer would show and \
+                     the list of layers would be lost. Nothing has been merged."
+                ),
+            ),
+            MergeError::InheritsResources { page } => tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page} of the document to merge takes its fonts, images or other \
+                     resources from its page tree, which a merge cannot carry: the page \
+                     would lose them. Nothing has been merged."
+                ),
+            ),
+            MergeError::ActsOnForm { page, entry } => tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page} of the document to merge has {} that runs JavaScript or \
+                     acts on form fields or attachments, which a merge cannot carry: it \
+                     would act on this document's instead. Nothing has been merged.",
+                    match entry.as_str() {
+                        "AA" => "a page action".to_string(),
+                        other => format!("a /{other} entry"),
+                    }
+                ),
+            ),
+            MergeError::CollidesWithStructure { page } => tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page} of the document to merge carries structure (tagging) \
+                     entries, which in this tagged document would attach its content to \
+                     this document's structure elements. Nothing has been merged."
+                ),
+            ),
+            MergeError::TooDeep { page } => tagged_err(
+                atoms::unsupported(),
+                format!(
+                    "Page {page} of the document to merge nests its objects more deeply \
+                     than a merge can copy. Nothing has been merged."
+                ),
+            ),
+            MergeError::NoPages => tagged_err(
+                atoms::unsupported(),
+                "This editor has no pages, which a merge cannot start from. Nothing has \
+                 been merged. Merge before deleting the last page.",
+            ),
+            MergeError::Miscount { expected, got } => tagged_err(
+                atoms::invalid_pdf(),
+                format!(
+                    "The merge produced {got} pages where {expected} were expected. \
+                     Nothing has been merged."
+                ),
+            ),
+            MergeError::Page(e) => e.into(),
+            MergeError::Upstream(e) => to_nif_err(e),
+        }
+    }
 }
 
 // Treat a non-quadrant base as zero, as the reader does rather than as upstream does.
@@ -1326,7 +1583,7 @@ fn editor_flatten_page_annotations(
 fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<Vec<String>> {
     resource
         .editor
-        .with_read(|editor| Ok(editor.flatten_warnings().to_vec()))
+        .with_read(|editor| Ok(editor.all_flatten_warnings()))
 }
 
 #[cfg(test)]
@@ -1335,6 +1592,7 @@ mod tests {
         editor::{form_fields::FormFieldValue, DocumentInfo},
         encryption::{Algorithm, EncryptionWriteHandler},
         extractors::FormExtractor,
+        object::ObjectRef,
         PdfDocument,
     };
 
@@ -1505,6 +1763,355 @@ mod tests {
             doc.extract_text(copy).is_err(),
             "the duplicated page is readable, so upstream now writes a real copy"
         );
+    }
+
+    #[test]
+    fn upstream_still_repeats_a_kid_for_a_repeated_selection() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+
+        let bytes = editor.extract_pages_to_bytes(&[0, 0]).expect("extracts");
+        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+
+        assert_eq!(doc.page_count().expect("counts pages"), 2);
+        assert!(
+            doc.extract_text(1).is_err(),
+            "the repeated page is readable, so upstream now writes a real copy"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drains_attachments_after_the_first_range() {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        editor
+            .embed_file("data.csv", b"a,b".to_vec())
+            .expect("embeds");
+
+        let chunks = editor
+            .extract_page_ranges_to_bytes(&[(0, 1), (1, 2)])
+            .expect("extracts");
+        let attachments = |bytes: &[u8]| {
+            PdfDocument::from_bytes(bytes.to_vec())
+                .expect("reopens")
+                .extract_embedded_files()
+                .expect("reads attachments")
+                .len()
+        };
+
+        assert_eq!(attachments(&chunks[0]), 1);
+        assert_eq!(
+            attachments(&chunks[1]),
+            0,
+            "a later range carries the attachment, so upstream no longer drains it"
+        );
+    }
+
+    // Why `check_selection` resolves every selected page first.
+    #[test]
+    fn upstream_still_extracts_an_unresolvable_page_as_nothing() {
+        let mut editor = DocumentEditor::open(fixture("broken_page.pdf")).expect("fixture opens");
+
+        let bytes = editor.extract_pages_to_bytes(&[2]).expect("extracts");
+        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+
+        assert_eq!(
+            doc.page_count().expect("counts pages"),
+            0,
+            "the unresolvable page is now written or refused"
+        );
+    }
+
+    #[test]
+    fn upstream_still_writes_only_the_readable_pages_of_a_broken_tree() {
+        let mut editor = DocumentEditor::open(fixture("broken_page.pdf")).expect("fixture opens");
+        assert_eq!(editor.current_page_count(), 3);
+
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+
+        assert_eq!(doc.page_count().expect("counts pages"), 2);
+    }
+
+    fn merged(base: &str, incoming: &str) -> Vec<u8> {
+        let mut editor = DocumentEditor::open(fixture(base)).expect("fixture opens");
+        let bytes = std::fs::read(fixture(incoming)).expect("fixture reads");
+        editor.merge_from_bytes(&bytes).expect("merges");
+
+        editor.save_to_bytes().expect("full rewrite")
+    }
+
+    fn page_tree_kids(doc: &PdfDocument) -> Vec<ObjectRef> {
+        let catalog = doc.catalog().expect("reads the catalog");
+        let pages = doc
+            .resolve_object(
+                catalog
+                    .as_dict()
+                    .and_then(|d| d.get("Pages"))
+                    .expect("/Pages"),
+            )
+            .expect("resolves /Pages");
+        let kids = doc
+            .resolve_object(pages.as_dict().and_then(|d| d.get("Kids")).expect("/Kids"))
+            .expect("resolves /Kids");
+
+        kids.as_array()
+            .expect("/Kids is an array")
+            .iter()
+            .map(|kid| kid.as_reference().expect("each kid is a reference"))
+            .collect()
+    }
+
+    fn entry(doc: &PdfDocument, obj: &Object, key: &str) -> Object {
+        let value = obj.as_dict().and_then(|d| d.get(key)).expect(key);
+
+        doc.resolve_object(value).expect("resolves")
+    }
+
+    fn page_dicts(bytes: &[u8]) -> usize {
+        let key = b"/Type /Page";
+        (0..bytes.len().saturating_sub(key.len()))
+            .filter(|&i| &bytes[i..i + key.len()] == key && bytes[i + key.len()] != b's')
+            .count()
+    }
+
+    // `flatten.pdf`'s annotations carry `/P`, which re-imports the source page
+    // with its `/Parent`, and with it the whole source page tree, per page.
+    #[test]
+    fn upstream_still_copies_the_source_tree_through_an_annotation_p() {
+        let bytes = merged("sample.pdf", "flatten.pdf");
+        let doc = PdfDocument::from_bytes(bytes.clone()).expect("reopens");
+        assert_eq!(doc.page_count().expect("counts pages"), 5);
+
+        assert!(
+            page_dicts(&bytes) > 5,
+            "only the merged pages were written, so a merge no longer follows /P"
+        );
+    }
+
+    // `/SeparationInfo` names sibling pages; the import follows it like `/P`.
+    #[test]
+    fn upstream_still_copies_the_source_tree_through_separation_info() {
+        let bytes = merged("fonts.pdf", "merge_page_references.pdf");
+        let doc = PdfDocument::from_bytes(bytes.clone()).expect("reopens");
+        assert_eq!(doc.page_count().expect("counts pages"), 7);
+
+        assert!(
+            page_dicts(&bytes) > 7,
+            "only the merged pages were written, so a merge no longer follows /SeparationInfo"
+        );
+    }
+
+    #[test]
+    fn upstream_still_points_a_merged_annotation_at_an_orphan_page() {
+        let doc = PdfDocument::from_bytes(merged("sample.pdf", "flatten.pdf")).expect("reopens");
+        let kids = page_tree_kids(&doc);
+        let page = doc.load_object(kids[3]).expect("loads the merged page");
+
+        let annots = entry(&doc, &page, "Annots");
+        let first = annots
+            .as_array()
+            .and_then(|a| a.first())
+            .expect("an annotation");
+        let annot = doc.resolve_object(first).expect("resolves the annotation");
+        let target = annot
+            .as_dict()
+            .and_then(|d| d.get("P"))
+            .and_then(Object::as_reference)
+            .expect("/P");
+
+        assert!(
+            !kids.contains(&target),
+            "a merged annotation's /P now names a page in the tree"
+        );
+    }
+
+    // Both `flatten.pdf` pages name the same `/Helv` font object.
+    #[test]
+    fn upstream_still_copies_a_shared_font_per_merged_page() {
+        let doc = PdfDocument::from_bytes(merged("sample.pdf", "flatten.pdf")).expect("reopens");
+        let kids = page_tree_kids(&doc);
+        let font = |index: usize| {
+            let page = doc.load_object(kids[index]).expect("loads the merged page");
+            let fonts = entry(&doc, &entry(&doc, &page, "Resources"), "Font");
+
+            fonts
+                .as_dict()
+                .and_then(|d| d.get("Helv"))
+                .and_then(Object::as_reference)
+                .expect("/Helv")
+        };
+
+        assert_ne!(
+            font(3),
+            font(4),
+            "merged pages now share the font their source shared"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_the_acroform_on_merge() {
+        let bytes = merged("sample.pdf", "flatten.pdf");
+        let doc = PdfDocument::from_bytes(bytes.clone()).expect("reopens");
+        let catalog = doc.catalog().expect("reads the catalog");
+
+        assert!(catalog
+            .as_dict()
+            .is_some_and(|d| !d.contains_key("AcroForm")));
+        let mut reopened = DocumentEditor::from_bytes(bytes).expect("reopens");
+        assert!(reopened.get_form_fields().expect("reads fields").is_empty());
+    }
+
+    // Why `merge::prepare` refuses an encrypted document it could open.
+    #[test]
+    fn upstream_still_copies_ciphertext_into_a_merge() {
+        let doc = PdfDocument::from_bytes(merged("sample.pdf", "encrypted_owner_only.pdf"))
+            .expect("reopens");
+
+        assert_eq!(doc.page_count().ok(), Some(5));
+        assert!(
+            !doc.extract_text(3).expect("extracts").contains("Arial"),
+            "a merged page now reads, so upstream decrypts what it imports"
+        );
+    }
+
+    // Why `merge::prepare` refuses a page that reaches an `/OCG`.
+    #[test]
+    fn upstream_still_drops_optional_content_on_merge() {
+        let doc =
+            PdfDocument::from_bytes(merged("sample.pdf", "render_layers.pdf")).expect("reopens");
+        let catalog = doc.catalog().expect("reads the catalog");
+
+        assert!(
+            catalog
+                .as_dict()
+                .is_some_and(|d| !d.contains_key("OCProperties")),
+            "a merge now carries the layer settings"
+        );
+    }
+
+    // `sample.pdf` puts its font on the `/Pages` node, which import strips;
+    // `flatten.pdf`'s own `/Pages` node carries no resources to fall back on.
+    #[test]
+    fn upstream_still_drops_inherited_resources_on_merge() {
+        let doc = PdfDocument::from_bytes(merged("flatten.pdf", "sample.pdf")).expect("reopens");
+
+        assert_eq!(
+            doc.extract_text(2).expect("extracts").trim(),
+            "",
+            "a merged page now keeps the resources it inherited"
+        );
+    }
+
+    // `sample.pdf`'s `/Pages` node names the same `/F1`, so the stripped page
+    // resolves it against the destination's tree instead.
+    #[test]
+    fn upstream_still_lets_a_merged_page_inherit_from_the_destination() {
+        let doc = PdfDocument::from_bytes(merged("sample.pdf", "sample.pdf")).expect("reopens");
+        let kids = page_tree_kids(&doc);
+        let page = doc.load_object(kids[3]).expect("loads the merged page");
+
+        assert!(page.as_dict().is_some_and(|d| !d.contains_key("Resources")));
+        assert_eq!(doc.extract_text(3).expect("extracts").trim(), "Page One");
+    }
+
+    #[test]
+    fn upstream_still_drops_an_inherited_rotation_on_merge() {
+        let source = PdfDocument::open(fixture("rotation.pdf")).expect("fixture opens");
+        assert_eq!(source.get_page_rotation(1).expect("reads rotation"), 180);
+
+        let doc = PdfDocument::from_bytes(merged("flatten.pdf", "rotation.pdf")).expect("reopens");
+
+        assert_eq!(
+            doc.get_page_rotation(2 + 1).expect("reads rotation"),
+            0,
+            "a merged page now keeps the rotation it inherited"
+        );
+    }
+
+    #[test]
+    fn upstream_still_drops_an_inherited_media_box_on_merge() {
+        let source = PdfDocument::open(fixture("inherited_boxes.pdf")).expect("fixture opens");
+        assert_eq!(
+            source.get_page_media_box(0).expect("reads the box"),
+            (0.0, 0.0, 300.0, 500.0)
+        );
+
+        let doc =
+            PdfDocument::from_bytes(merged("flatten.pdf", "inherited_boxes.pdf")).expect("reopens");
+
+        assert_ne!(
+            doc.get_page_media_box(2).expect("reads the box"),
+            (0.0, 0.0, 300.0, 500.0),
+            "a merged page now keeps the media box it inherited"
+        );
+    }
+
+    fn with_merged_pages() -> DocumentEditor {
+        let mut editor = DocumentEditor::open(fixture("sample.pdf")).expect("fixture opens");
+        let bytes = std::fs::read(fixture("sample.pdf")).expect("fixture reads");
+        editor.merge_from_bytes(&bytes).expect("merges");
+        assert_eq!(editor.current_page_count(), 6);
+
+        editor
+    }
+
+    // The panic is caught here; it is why a merge must never leave merged pages.
+    #[test]
+    fn upstream_still_panics_moving_a_merged_page() {
+        let mut editor = with_merged_pages();
+
+        let moved =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| editor.move_page(4, 0)));
+
+        assert!(moved.is_err(), "moving a merged page no longer panics");
+    }
+
+    #[test]
+    fn upstream_still_ignores_removing_a_merged_page() {
+        let mut editor = with_merged_pages();
+
+        assert!(editor.remove_page(4).is_ok());
+        assert_eq!(
+            editor.current_page_count(),
+            6,
+            "removing a merged page now removes it"
+        );
+    }
+
+    #[test]
+    fn upstream_still_writes_a_dead_null_per_merged_page() {
+        let mut editor = with_merged_pages();
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+        let doc = PdfDocument::from_bytes(bytes.clone()).expect("reopens");
+        let id = page_tree_kids(&doc)[3].id;
+
+        let header = format!("\n{id} 0 obj");
+        let definitions = bytes
+            .windows(header.len())
+            .filter(|w| *w == header.as_bytes())
+            .count();
+
+        assert_eq!(definitions, 2, "a merged page is now written once");
+    }
+
+    // Not inverted: the binding's normalization relies on it.
+    #[test]
+    fn a_save_and_reopen_still_makes_merged_pages_ordinary() {
+        let mut editor = with_merged_pages();
+        let snapshot = editor.save_to_bytes().expect("full rewrite");
+
+        let mut normalized = DocumentEditor::from_bytes(snapshot).expect("reopens");
+        normalized
+            .move_page(4, 0)
+            .expect("moves a formerly merged page");
+        normalized
+            .remove_page(5)
+            .expect("removes a formerly merged page");
+        assert_eq!(normalized.current_page_count(), 5);
+
+        let bytes = normalized.save_to_bytes().expect("full rewrite");
+        let doc = PdfDocument::from_bytes(bytes).expect("reopens");
+        assert_eq!(doc.page_count().expect("counts pages"), 5);
+        assert_eq!(doc.extract_text(1).expect("extracts").trim(), "Page One");
     }
 
     #[test]

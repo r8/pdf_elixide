@@ -20,6 +20,7 @@ mod fs_path;
 mod geometry;
 mod images;
 mod logging;
+mod merge;
 mod metadata;
 mod office;
 mod open_editor;

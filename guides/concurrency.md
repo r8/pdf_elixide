@@ -112,10 +112,11 @@ will queue behind an in-flight exclusive operation such as a save on the same
 handle. For `flatten_warnings/1`, this ensures an in-flight save finishes before
 the warnings are read.
 
-`PdfElixide.Editor.redaction_count/2` is the one `PdfElixide.Editor` call that
-reads without sharing: counting a page's redactions has to reach the annotations behind it,
-which takes the handle exclusively. It serializes against every other call on
-that editor even though it changes nothing.
+Three `PdfElixide.Editor` calls read without sharing:
+`PdfElixide.Editor.redaction_count/2`, `PdfElixide.Editor.extract_pages/2` and
+`PdfElixide.Editor.extract_page_ranges/2`. Each takes the handle exclusively and
+serializes against every other call on that editor, even though none of them changes
+its pages or pending edits.
 
 `PdfElixide.Form.fields/1` and `PdfElixide.Form.export/3` inherit whichever
 source they are handed — a shared read on a document, the editor's exclusive

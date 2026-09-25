@@ -3,7 +3,8 @@
 `PdfElixide.Editor` changes page structure, rotates and crops pages, covers regions
 and adds attachments. Changes stay in memory until you write the document. The [Forms](forms.md)
 guide covers filling fields and flattening annotations; the [Encryption](encryption.md)
-guide covers password-protected output.
+guide covers password-protected output; [Merging and splitting](merging-and-splitting.md)
+covers combining documents and writing parts of one to new files.
 
 ## Saving edits
 
@@ -53,6 +54,10 @@ It has no source file to copy, so `incremental: true` returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` even with no edits or only field
 values. Use `PdfElixide.Editor.open/2` for incremental saving, or write a full rewrite.
 
+**An editor that has merged another document cannot save incrementally.** The merge
+rebuilds the editor from the combined document, which has no source file to append to;
+see [Merging documents](merging-and-splitting.md#merging-documents).
+
 **An encrypted source cannot be saved incrementally.** The call returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}`; see
 [Incremental saves](encryption.md#incremental-saves).
@@ -87,16 +92,22 @@ it moves as soon as a page is deleted rather than waiting for a save:
 #=> :ok
 ```
 
+`PdfElixide.Editor.keep_pages/2` does several of those at once: it keeps the listed
+pages in the order given and drops the rest. Pending edits such as a rotation stay with
+their pages. To write some pages to a new document instead of changing this one, see
+[Splitting a document](merging-and-splitting.md#splitting-a-document).
+
 There are two further limitations:
 
 **Deleting a page is not redaction.** It removes the page from the document's page tree,
 so the written file has one fewer page and nothing displays it — but the page's objects
 and content stream are still in that file as unreferenced data, with
-`garbage_collect: true` as much as without. Anyone reading the bytes can recover them. Do not use
-`PdfElixide.Editor.delete_page/2` to remove confidential content; write the pages you
-want to keep to a new document instead. If every page is deleted, reopening the written
-file can discover those orphaned page objects again, so this is not a way to create a
-safely page-less PDF either.
+`garbage_collect: true` as much as without. Anyone reading the bytes can recover them.
+The same is true of a page `PdfElixide.Editor.keep_pages/2` drops. Do not use either,
+or extraction, to remove confidential content; see
+[Extraction is not redaction](merging-and-splitting.md#extraction-is-not-redaction).
+If every page is deleted, reopening the written file can discover those orphaned page
+objects again, so this is not a way to create a safely page-less PDF either.
 
 **Bookmarks and links are not remapped.** Nothing updates the outline, link annotations,
 named destinations, page labels, the structure tree or a form field's widget references,

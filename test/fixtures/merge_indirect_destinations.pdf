@@ -1,0 +1,53 @@
+%PDF-1.5
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Dests 9 0 R /Names << /Dests << /Names [(chapter2) [3 0 R /Fit]] >> >> /Threads [10 0 R] >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /GoToR /F (other.pdf) /D 7 0 R >> >> >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /GoTo /D 7 0 R >> >> >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /C << /S 8 0 R /D /chapter2 >> >> >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /Thread /D 0 >> >> >>
+endobj
+7 0 obj
+(chapter2)
+endobj
+8 0 obj
+/GoTo
+endobj
+9 0 obj
+<< /chapter2 [3 0 R /Fit] >>
+endobj
+10 0 obj
+<< /Type /Thread /F 11 0 R >>
+endobj
+11 0 obj
+<< /Type /Bead /T 10 0 R /N 11 0 R /V 11 0 R /P 3 0 R /R [0 0 100 100] >>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000009 00000 n 
+0000000148 00000 n 
+0000000223 00000 n 
+0000000364 00000 n 
+0000000489 00000 n 
+0000000618 00000 n 
+0000000741 00000 n 
+0000000767 00000 n 
+0000000788 00000 n 
+0000000832 00000 n 
+0000000878 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R >>
+startxref
+968
+%%EOF

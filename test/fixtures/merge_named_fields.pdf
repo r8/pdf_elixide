@@ -1,0 +1,80 @@
+%PDF-1.5
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [20 0 R] >> /Names << /EmbeddedFiles << /Names [(attachment.pdf) 21 0 R] >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R] /Count 9 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /GoToE /F (other.pdf) /D (x) /T << /R /C /N (attachment.pdf) >> >> >> >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /ResetForm >> >> >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /SubmitForm /F << /FS /URL /F (https://example.com/collect) >> >> >> >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /ImportData /F (values.fdf) >> >> >>
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /Hide /T 23 0 R >> >> >>
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /Hide /T [(total)] >> >> >>
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /GoToE /T << /R /C /N (attachment.pdf) >> >> >> >>
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /JavaScript /JS (this.resetForm();) >> >> >>
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /AA << /O << /S /Rendition /OP 0 /JS (this.resetForm();) >> >> >>
+endobj
+20 0 obj
+<< /T (total) /FT /Tx /V (1) >>
+endobj
+21 0 obj
+<< /Type /Filespec /F (attachment.pdf) /EF << /F 22 0 R >> >>
+endobj
+22 0 obj
+<< /Type /EmbeddedFile /Length 4 >>
+stream
+data
+endstream
+endobj
+23 0 obj
+(total)
+endobj
+xref
+0 24
+0000000000 65535 f 
+0000000009 00000 n 
+0000000158 00000 n 
+0000000265 00000 n 
+0000000439 00000 n 
+0000000560 00000 n 
+0000000733 00000 n 
+0000000871 00000 n 
+0000000997 00000 n 
+0000001126 00000 n 
+0000001278 00000 n 
+0000001425 00000 n 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000000 65535 f 
+0000001577 00000 n 
+0000001625 00000 n 
+0000001703 00000 n 
+0000001777 00000 n 
+trailer
+<< /Size 24 /Root 1 0 R >>
+startxref
+1801
+%%EOF

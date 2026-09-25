@@ -73,6 +73,7 @@ defmodule PdfElixide.MixProject do
         "guides/concurrency.md": [],
         "guides/forms.md": [],
         "guides/editing.md": [],
+        "guides/merging-and-splitting.md": [],
         "guides/redaction.md": [],
         "guides/signatures.md": [],
         "guides/encryption.md": [],

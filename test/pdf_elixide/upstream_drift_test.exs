@@ -1045,6 +1045,63 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
+  describe "what keeping or extracting some pages leaves in the saved file" do
+    test "a page the selection dropped is still in a written file" do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.keep_pages!(editor, [0, 2])
+      bytes = Editor.to_binary!(editor, compress: false, garbage_collect: true)
+
+      assert String.contains?(bytes, "Page Two"),
+             "the dropped page's content stream was dropped, so selection now redacts"
+    end
+
+    # The extracted file is compressed, so every stream is inflated first.
+    test "a page extraction left out is not in the extracted file" do
+      editor = Editor.open!(@sample_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      bytes = Editor.extract_pages!(editor, [0, 2])
+
+      streams =
+        ~r/stream\r?\n(.*?)endstream/s
+        |> Regex.scan(bytes, capture: :all_but_first)
+        |> Enum.map(fn [data] -> inflate(data) end)
+
+      assert Enum.any?(streams, &String.contains?(&1, "Page One"))
+      refute Enum.any?(streams, &String.contains?(&1, "Page Two"))
+    end
+
+    # Every bookmark in the fixture targets a page by reference.
+    test "a page a bookmark points at is still in the extracted file" do
+      editor = Editor.open!(Path.join(@fixtures, "outline.pdf"))
+      on_exit(fn -> Editor.close(editor) end)
+
+      bytes = Editor.extract_pages!(editor, [0])
+
+      assert length(Regex.scan(~r{/Type\s*/Page(?![s\w])}, bytes)) == 3,
+             "a left-out page no longer survives through a bookmark"
+    end
+
+    # Page 1's widget is in `/Fields` and names its page through `/P`.
+    test "a page a form field's widget sits on is still in the extracted file" do
+      editor = Editor.open!(Path.join(@fixtures, "flatten.pdf"))
+      on_exit(fn -> Editor.close(editor) end)
+
+      bytes = Editor.extract_pages!(editor, [0])
+
+      assert length(Regex.scan(~r{/Type\s*/Page(?![s\w])}, bytes)) == 2,
+             "a left-out page no longer survives through a form field"
+    end
+  end
+
+  defp inflate(data) do
+    :zlib.uncompress(data)
+  rescue
+    ErlangError -> data
+  end
+
   describe "what an incremental save carries out of the editor" do
     @tag :tmp_dir
     test "a metadata edit survives an incremental save", %{tmp_dir: tmp_dir} do

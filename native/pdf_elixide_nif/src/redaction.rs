@@ -324,6 +324,7 @@ fn editor_apply_redactions(
         let report = editor
             .apply_redactions_destructive(options.into())
             .map_err(to_nif_err)?;
+        editor.complete_redaction();
 
         Ok(redaction_report_to_nif(report))
     })
