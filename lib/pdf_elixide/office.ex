@@ -15,7 +15,7 @@ defmodule PdfElixide.Office do
 
   To convert the other way, see `PdfElixide.Document.to_docx/2`,
   `PdfElixide.Document.to_pptx/2` and `PdfElixide.Document.to_xlsx/2`. The
-  [Office documents](guides/office.md) guide covers both directions, including
+  [Office conversion](guides/office.md) guide covers both directions, including
   how an import depends on fonts installed on the host.
   """
 

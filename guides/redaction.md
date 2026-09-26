@@ -13,32 +13,37 @@ and choosing the wrong one is the mistake this guide exists to prevent.
 | reversible | yes, `unmark_redactions/2` | no |
 | what it acts on | the page's `/Redact` annotations | those plus `add_redaction/3,4` regions |
 
-**Only `PdfElixide.Editor.apply_redactions/1,2` removes covered page text.** If
-the point is that nobody can recover that text, those are the calls you need,
-and the check that one worked is that the words are gone from the written
-document's text:
+**Only `PdfElixide.Editor.apply_redactions/1` and
+`PdfElixide.Editor.apply_redactions/2` remove covered page text.** If the point
+is that nobody can recover that text, those are the calls you need, and the
+check that one worked is that the words are gone from the written document's
+text:
 
 ```elixir
-editor = PdfElixide.Editor.open!("report.pdf")
+alias PdfElixide.Document
+alias PdfElixide.Editor
+alias PdfElixide.Form
+
+editor = Editor.open!("path/to/report.pdf")
 
 report =
   editor
-  |> PdfElixide.Editor.mark_redactions!(0)
-  |> PdfElixide.Editor.apply_redactions!()
+  |> Editor.mark_redactions!(0)
+  |> Editor.apply_redactions!()
 
 report.glyphs_removed
 #=> 6
 
 written =
   editor
-  |> PdfElixide.Editor.to_binary!()
-  |> PdfElixide.Document.from_binary!()
+  |> Editor.to_binary!()
+  |> Document.from_binary!()
 
-PdfElixide.Document.text!(written, 0) =~ "Secret"
+Document.text!(written, 0) =~ "Secret"
 #=> false
 
-PdfElixide.Document.close(written)
-PdfElixide.Editor.close(editor)
+Document.close(written)
+Editor.close(editor)
 ```
 
 Extracting the text rather than scanning the written bytes is deliberate: a
@@ -52,12 +57,12 @@ answer `:nomatch` for text that is still in the file. See
 `PdfElixide.Editor.mark_redactions/1` every page. Neither draws anything by
 itself: the boxes come from the `/Redact` annotations the document already
 carries — placed by whatever tool prepared it — using each annotation's `/IC`
-colour, or black where it declares none.
+color, or black where it declares none.
 
 Nothing happens until the next full write, `PdfElixide.Editor.save/3` without
-`:incremental` or `PdfElixide.Editor.to_binary/2`. An incremental save is refused
-while the mark is pending, since it could only write the original back unmarked;
-see [Saving edits](editing.md#saving-edits).
+`:incremental` or `PdfElixide.Editor.to_binary/2`. An incremental save is
+refused while the mark is pending, since it could only write the original back
+unmarked; see [Saving edits](editing.md#saving-edits).
 `PdfElixide.Editor.unmark_redactions/2` takes the mark back — and with it the
 refusal — and `PdfElixide.Editor.marked_for_redaction?/2` reports it.
 
@@ -118,9 +123,9 @@ content stream draws. It does not touch:
 
 For all of that, the block drawn on top is the same cosmetic overlay
 `PdfElixide.Editor.mark_redactions/2` paints, with the same worthlessness as a
-secret-keeping measure. A scanned document is the case to watch: its page text is
-usually an invisible OCR layer, so a region over a name deletes the OCR text and
-leaves the name legible in the image underneath.
+secret-keeping measure. A scanned document is the case to watch: its page text
+is usually an invisible OCR layer, so a region over a name deletes the OCR text
+and leaves the name legible in the image underneath.
 
 There is no option that widens this and no count that reveals it —
 `:glyphs_removed` reports the text that went and nothing about an image. When a
@@ -133,34 +138,34 @@ A page is processed when `PdfElixide.Editor.mark_redactions/2` has marked it, or
 when it carries a region from `PdfElixide.Editor.add_redaction/3`. **A `/Redact`
 annotation is not enough on its own.** Without one of the two the pass has
 nothing to work on, removes nothing, and returns a `PdfElixide.RedactionReport`
-of zeros rather than an error — which is why the report, and `:glyphs_removed` in
-particular, is worth checking.
+of zeros rather than an error — which is why the report, and `:glyphs_removed`
+in particular, is worth checking.
 
 **Deleting a page does not take its mark or its regions back.**
 `PdfElixide.Editor.delete_page/2` removes the page from the output and leaves
 everything queued against it in place, so the pass still processes it. Its text
 is counted in the report although the written document does not carry the page —
-a `:glyphs_removed` above zero can come entirely from a deleted page — and a font
-it uses can refuse the whole call, naming an index the document no longer has.
-Mark and queue after the deletions, or reopen the source.
+a `:glyphs_removed` above zero can come entirely from a deleted page — and a
+font it uses can refuse the whole call, naming an index the document no longer
+has. Mark and queue after the deletions, or reopen the source.
 
 ### Queuing your own regions
 
 `PdfElixide.Editor.add_redaction/3` is how to redact an area the document does
-not already annotate, and `PdfElixide.Editor.add_redaction/4` takes the colour of
-the block drawn over it. A `PdfElixide.Geometry.Rect` from an extractor reporting
-raw page space can be handed straight back:
+not already annotate, and `PdfElixide.Editor.add_redaction/4` takes the color of
+the block drawn over it. A `PdfElixide.Geometry.Rect` from an extractor
+reporting raw page space can be handed straight back:
 
 ```elixir
-doc = PdfElixide.Document.open!("report.pdf")
-[span | _] = PdfElixide.Document.spans!(doc, 0)
-PdfElixide.Document.close(doc)
+doc = Document.open!("path/to/report.pdf")
+[span | _] = Document.spans!(doc, 0)
+Document.close(doc)
 
-editor = PdfElixide.Editor.open!("report.pdf")
-PdfElixide.Editor.add_redaction!(editor, 0, span.bbox)
-PdfElixide.Editor.apply_redactions!(editor)
-PdfElixide.Editor.save!(editor, "redacted.pdf")
-PdfElixide.Editor.close(editor)
+editor = Editor.open!("path/to/report.pdf")
+Editor.add_redaction!(editor, 0, span.bbox)
+Editor.apply_redactions!(editor)
+Editor.save!(editor, "redacted.pdf")
+Editor.close(editor)
 ```
 
 **Rectangles are in the page's raw, unrotated user space.** That is what
@@ -175,10 +180,11 @@ as a success, so it can quietly redact the wrong area.
 
 The queued rectangle reaches no writer but
 `PdfElixide.Editor.apply_redactions/1`, and **cannot be withdrawn** once added:
-`PdfElixide.Editor.unmark_redactions/2` does not remove it and nothing else does.
-Reopen the source if you change your mind. One consequence is that the first
-queued region ends incremental saving for that editor — the refusal it causes is
-one of the ones nothing lifts; see [Saving edits](editing.md#saving-edits).
+`PdfElixide.Editor.unmark_redactions/2` does not remove it and nothing else
+does. Reopen the source if you change your mind. One consequence is that the
+first queued region ends incremental saving for that editor — the refusal it
+causes is one of the ones nothing lifts; see
+[Saving edits](editing.md#saving-edits).
 
 Queuing a region does, however, **mark the page** exactly as
 `PdfElixide.Editor.mark_redactions/2` would. On a page that carries `/Redact`
@@ -224,20 +230,20 @@ redactions, write, reopen what was written, and erase there, reusing the `span`
 from the example above:
 
 ```elixir
-editor = PdfElixide.Editor.open!("report.pdf")
-PdfElixide.Editor.add_redaction!(editor, 0, span.bbox)
-PdfElixide.Editor.apply_redactions!(editor)
-bytes = PdfElixide.Editor.to_binary!(editor)
-PdfElixide.Editor.close(editor)
+editor = Editor.open!("path/to/report.pdf")
+Editor.add_redaction!(editor, 0, span.bbox)
+Editor.apply_redactions!(editor)
+bytes = Editor.to_binary!(editor)
+Editor.close(editor)
 
-written = PdfElixide.Document.from_binary!(bytes)
-[photo | _] = PdfElixide.Document.images!(written, 0)
-PdfElixide.Document.close(written)
+written = Document.from_binary!(bytes)
+[photo | _] = Document.images!(written, 0)
+Document.close(written)
 
-covered = PdfElixide.Editor.from_binary!(bytes)
-PdfElixide.Editor.erase_region!(covered, 0, photo.bbox)
-PdfElixide.Editor.save!(covered, "clean.pdf")
-PdfElixide.Editor.close(covered)
+covered = Editor.from_binary!(bytes)
+Editor.erase_region!(covered, 0, photo.bbox)
+Editor.save!(covered, "clean.pdf")
+Editor.close(covered)
 ```
 
 A `PdfElixide.Form.flatten/1` is the exception that does survive, as is the
@@ -276,12 +282,12 @@ content. Which call to use, and whether it can share the editor, differ.
 appearances are painted *under* the redaction box, which is where they belong:
 
 ```elixir
-"annotated.pdf"
-|> PdfElixide.Editor.open!()
-|> PdfElixide.Editor.flatten_annotations!()
-|> PdfElixide.Editor.mark_redactions!(0)
-|> PdfElixide.Editor.save!("marked.pdf")
-|> PdfElixide.Editor.close()
+"path/to/annotated.pdf"
+|> Editor.open!()
+|> Editor.flatten_annotations!()
+|> Editor.mark_redactions!(0)
+|> Editor.save!("marked.pdf")
+|> Editor.close()
 #=> :ok
 ```
 
@@ -290,16 +296,16 @@ redaction box, so the field appearances cover the very area the box was meant to
 hide, and it needs a write and a reopen in between:
 
 ```elixir
-flattened = PdfElixide.Editor.open!("form.pdf")
-PdfElixide.Form.flatten!(flattened)
-bytes = PdfElixide.Editor.to_binary!(flattened)
-PdfElixide.Editor.close(flattened)
+flattened = Editor.open!("path/to/form.pdf")
+Form.flatten!(flattened)
+bytes = Editor.to_binary!(flattened)
+Editor.close(flattened)
 
 bytes
-|> PdfElixide.Editor.from_binary!()
-|> PdfElixide.Editor.mark_redactions!(0)
-|> PdfElixide.Editor.save!("marked.pdf")
-|> PdfElixide.Editor.close()
+|> Editor.from_binary!()
+|> Editor.mark_redactions!(0)
+|> Editor.save!("marked.pdf")
+|> Editor.close()
 #=> :ok
 ```
 
@@ -326,13 +332,13 @@ needs the write-and-reopen detour above whichever call draws the box.
 
 ## What is refused, and why
 
-### Refused by apply_redactions/1,2
+### Refused by `apply_redactions/1,2`
 
 **An editor opened from an encrypted document.** The call returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` and removes nothing. Write
 the document out first and redact the result — see
 [What an encrypted source cannot do](encryption.md#what-an-encrypted-source-cannot-do).
-Marking is unaffected: `PdfElixide.Editor.mark_redactions/1,2` draws its overlay
+Marking is unaffected: `PdfElixide.Editor.mark_redactions/1` draws its overlay
 rather than reading what is beneath it.
 
 **A page whose glyph boundaries cannot be computed.** Simple single-byte fonts
@@ -376,7 +382,7 @@ smaller `:edge_padding` could hand back text an earlier one removed — and repo
 success. Queue every region before applying, or reopen the source and start
 again.
 
-### Refused by sanitize/1,2
+### Refused by `sanitize/1,2`
 
 An `/Info` value stored as an indirect object, when sanitizing with
 `:scrub_metadata`. `PdfElixide.Editor.sanitize/1` returns
@@ -445,31 +451,30 @@ It is a separate call, not a part of the other one:
 JavaScript or embedded files, and a document that must give up both needs both.
 
 ```elixir
-editor = PdfElixide.Editor.open!("report.pdf")
+editor = Editor.open!("path/to/report.pdf")
 region = %PdfElixide.Geometry.Rect{x: 72.0, y: 700.0, width: 228.0, height: 20.0}
 
 editor
-|> PdfElixide.Editor.add_redaction!(0, region)
-|> PdfElixide.Editor.apply_redactions!()
+|> Editor.add_redaction!(0, region)
+|> Editor.apply_redactions!()
 
-PdfElixide.Editor.sanitize!(editor)
-PdfElixide.Editor.save!(editor, "clean.pdf")
-PdfElixide.Editor.close(editor)
+Editor.sanitize!(editor)
+Editor.save!(editor, "clean.pdf")
+Editor.close(editor)
 ```
 
 `:remove_embedded_files` also discards any file queued with
 `PdfElixide.Editor.embed_file/4` that has not been written yet, so sanitizing
 after attaching one drops it rather than writing it into the "clean" output, and
-`PdfElixide.Editor.embedded_files/1` reports the empty list afterwards. The other
-order works: attaching *after* a sanitize that emptied the name tree writes the
-new file and none of what was removed. See
+`PdfElixide.Editor.embedded_files/1` reports the empty list afterwards. The
+other order works: attaching *after* a sanitize that emptied the name tree
+writes the new file and none of what was removed. See
 [Attachments](editing.md#attachments).
 
 It removes the name tree and **not** a `/FileAttachment` annotation, which keeps
 its own file specification and so keeps its bytes reachable. Nothing here
-removes them: redacting the page and
-`PdfElixide.Editor.flatten_annotations/1` both only unlink the annotation from
-the page — see
+removes them: redacting the page and `PdfElixide.Editor.flatten_annotations/1`
+both only unlink the annotation from the page — see
 [Redacting a page removes every annotation on it](#redacting-a-page-removes-every-annotation-on-it)
 — so the attachment stops being offered by a viewer and stays in the file. A
 document that must not carry it has to be rebuilt from the pages you want.
@@ -493,7 +498,7 @@ failure a report of zeros exists to signal. Run it only on output whose streams
 are uncompressed, and only as a second check:
 
 ```elixir
-bytes = PdfElixide.Editor.to_binary!(editor, compress: false)
+bytes = Editor.to_binary!(editor, compress: false)
 :binary.match(bytes, "Secret")
 #=> :nomatch
 ```

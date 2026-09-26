@@ -4,11 +4,19 @@
 reports what it changed and what remains unresolved:
 
 ```elixir
-{:ok, editor} = PdfElixide.Editor.open("report.pdf")
-{:ok, conversion} = PdfElixide.Compliance.convert(editor, :pdf_a_2b)
+alias PdfElixide.Compliance
+alias PdfElixide.Editor
 
-if conversion.report.compliant? do
-  {:ok, pdf} = PdfElixide.Editor.to_binary(editor)
+editor = Editor.open!("path/to/report.pdf")
+
+try do
+  conversion = Compliance.convert!(editor, :pdf_a_2b)
+
+  if conversion.report.compliant? do
+    Editor.save!(editor, "report-pdfa.pdf")
+  end
+after
+  Editor.close(editor)
 end
 ```
 
@@ -21,8 +29,8 @@ certification.
 
 Conversion can declare the requested level in XMP metadata, add an sRGB output
 intent, remove JavaScript, remove attachments where the level forbids them, and
-set the document language to `en` for a level `a` target that declares none.
-The options to `convert/3` can disable some of these fixes.
+set the document language to `en` for a level `a` target that declares none. The
+options to `PdfElixide.Compliance.convert/3` can disable some of these fixes.
 
 Anything else stays in the report. In particular:
 
@@ -73,7 +81,7 @@ metadata, because the existing stream would remain compressed. Remove it first
 when replacing its properties is acceptable:
 
 ```elixir
-PdfElixide.Editor.sanitize(editor,
+Editor.sanitize!(editor,
   scrub_metadata: true,
   remove_javascript: false,
   remove_embedded_files: false

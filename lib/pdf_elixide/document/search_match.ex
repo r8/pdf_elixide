@@ -12,9 +12,9 @@ defmodule PdfElixide.Document.SearchMatch do
   frame; a match's spans may use different frames. See "Rotated pages and
   extracted geometry" in `PdfElixide.Document`.
 
-  The [Search](guides/search.md) guide has the rest, including how far `:bbox`
-  over-covers, why a match can cross what looks like a line break, and when the
-  spans come back empty.
+  The [Text search](guides/text-search.md) guide has the rest, including how
+  far `:bbox` over-covers, why a match can cross what looks like a line break,
+  and when the spans come back empty.
   """
   alias PdfElixide.Document.Span
   alias PdfElixide.Geometry.Rect

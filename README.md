@@ -209,8 +209,8 @@ Document.search!(doc, ~S"Figure \d+", literal: false)
 ```
 
 Patterns are literal by default. Regular expressions use Rust `regex` syntax.
-The [Search](guides/search.md) guide covers pattern options, match geometry, and
-the per-page search index.
+The [Text search](guides/text-search.md) guide covers pattern options, match
+geometry, and the per-page search index.
 
 ### Fill a form
 

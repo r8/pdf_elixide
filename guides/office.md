@@ -1,4 +1,4 @@
-# Office documents
+# Office conversion
 
 `PdfElixide.Document.to_docx/2`, `PdfElixide.Document.to_pptx/2` and
 `PdfElixide.Document.to_xlsx/2` convert a PDF to a Word, PowerPoint or Excel
@@ -183,14 +183,15 @@ copies of the Office file while it reads it, and two copies of the PDF bytes as
 it returns them.
 
 An import's memory follows the size of the file's contents once unzipped, not
-the size of the upload. Each part of the package may unpack to as much as
-512 MiB, so a file of well under a megabyte can take hundreds of megabytes to
-convert. Summing the sizes `:zip.list_dir/2` reports before calling `to_pdf/1`
-lets a service reject a well-formed package whose declared uncompressed size
-exceeds its limit. Those sizes are supplied by the file, and a crafted file can
-declare less than it holds. For such a file, the 512 MiB limit per part is the
-only bound. A service converting untrusted uploads should budget memory against
-that limit and limit how many conversions run at once.
+the size of the upload. Each part of the package may unpack to as much as 512
+MiB, so a file of well under a megabyte can take hundreds of megabytes to
+convert. Summing the sizes `:zip.list_dir/2` reports before calling
+`PdfElixide.Office.to_pdf/1` lets a service reject a well-formed package whose
+declared uncompressed size exceeds its limit. Those sizes are supplied by the
+file, and a crafted file can declare less than it holds. For such a file, the
+512 MiB limit per part is the only bound. A service converting untrusted uploads
+should budget memory against that limit and limit how many conversions run at
+once.
 
 Exports read the document the way the other extractors do, so many processes
 can export from one open document concurrently. They extract the document's

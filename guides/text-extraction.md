@@ -23,16 +23,18 @@ Document.to_plain_text!(doc, 0)
 The examples below reuse this `doc`; close it when you are done.
 
 This guide focuses on those two functions. The geometric extractors —
-`chars/2`, `words/2`, `text_lines/2`, `spans/2` — return glyphs and geometry,
-`structured/2` returns typed regions, and `to_markdown/2` and `to_html/2`
+`PdfElixide.Document.chars/2`, `PdfElixide.Document.words/2`,
+`PdfElixide.Document.text_lines/2`, `PdfElixide.Document.spans/2` — return
+glyphs and geometry, `PdfElixide.Document.structured/2` returns typed regions,
+and `PdfElixide.Document.to_markdown/2` and `PdfElixide.Document.to_html/2`
 return markup. The last section summarizes them.
 
 ## `text/2` — the page as laid out
 
-`text/2` walks the page's glyph runs and assembles them row by row. It keeps its
-inferred visual line breaks, can rejoin lowercase words split across lines by
-hyphenation, and can restrict what it reads. The rejoining is conservative, not
-a general-purpose dehyphenator.
+`PdfElixide.Document.text/2` walks the page's glyph runs and assembles them row
+by row. It keeps its inferred visual line breaks, can rejoin lowercase words
+split across lines by hyphenation, and can restrict what it reads. The rejoining
+is conservative, not a general-purpose dehyphenator.
 
 Reach for it when:
 
@@ -51,19 +53,19 @@ one extractor that reports it anyway.
 
 ## `to_plain_text/2` — the page as prose
 
-`to_plain_text/2` groups spans into blocks, orders the blocks — detecting
-columns, not just sorting by height — and generally reflows prose paragraphs
-onto one line, separating them with a blank line. Tables and some columnar
-layouts retain internal line breaks.
+`PdfElixide.Document.to_plain_text/2` groups spans into blocks, orders the
+blocks — detecting columns, not just sorting by height — and generally reflows
+prose paragraphs onto one line, separating them with a blank line. Tables and
+some columnar layouts retain internal line breaks.
 
 Reach for it when you want paragraph text rather than page text: indexing,
 chunking for retrieval, feeding a model, or diffing two versions of a document
 whose line wrapping has changed.
 
-On typeset or OCR-backed scanned prose, **a hyphen at a line break stays where it
-fell.** Where `text/2` rejoins `in-` and `dex` into `index`, this returns
-`in- dex`. Prefer `text/2` when rejoining such words matters more than paragraph
-shape.
+On typeset or OCR-backed scanned prose, **a hyphen at a line break stays where
+it fell.** Where `PdfElixide.Document.text/2` rejoins `in-` and `dex` into
+`index`, this returns `in- dex`. Prefer `text/2` when rejoining such words
+matters more than paragraph shape.
 
 Neither function performs OCR. An image-only scanned page normally returns an
 empty string; supply an OCR text layer before using either extractor.
@@ -71,11 +73,12 @@ empty string; supply an OCR text layer before using either extractor.
 ## A tagged PDF collapses the difference
 
 When a document carries a readable structure tree and its producer has not
-marked the tags suspect, `to_plain_text/2` reads the page in the order those
-tags declare and returns **exactly** what `text/2` returns for it.
+marked the tags suspect, `PdfElixide.Document.to_plain_text/2` reads the page in
+the order those tags declare and returns **exactly** what
+`PdfElixide.Document.text/2` returns for it.
 
 ```elixir
-tagged = Document.open!("tagged.pdf")
+tagged = Document.open!("path/to/tagged.pdf")
 
 Document.to_plain_text!(tagged, 0) == Document.text!(tagged, 0)
 #=> true
@@ -115,7 +118,7 @@ rather than being accepted and ignored.
 `:region_mode`; any other key given a non-default value alongside them raises
 `ArgumentError`. See `t:PdfElixide.Document.text_opts/0`.
 
-On an untagged document, `:reading_order` has three values and two behaviours:
+On an untagged document, `:reading_order` has three values and two behaviors:
 `:structure_tree` and `:column_aware` both run the column-detecting pass, and
 `:top_to_bottom` sorts blocks by vertical position instead. On a single-column
 page all three agree.
@@ -132,14 +135,15 @@ Document.text!(doc)            # pages separated by a form feed, "\f"
 Document.to_plain_text!(doc)   # pages separated by "\n\n---\n\n"
 ```
 
-For a document with at least one page, splitting `text/1` on the form feed
-recovers exactly `page_count/1` parts, because a page that fails to extract still
-gets its separator. A zero-page document returns `""`, which `String.split/2`
-represents as one empty part rather than none. The `---` boundary is not as safe:
-`to_plain_text/2` separates paragraphs with a blank line, so a page whose own
-text has a `---` line between two paragraphs emits the same bytes and splits
-into an extra part, shifting every page after it. Enumerate pages when page
-boundaries must be unambiguous.
+For a document with at least one page, splitting `PdfElixide.Document.text/1` on
+the form feed recovers exactly `PdfElixide.Document.page_count/1` parts, because
+a page that fails to extract still gets its separator. A zero-page document
+returns `""`, which `String.split/2` represents as one empty part rather than
+none. The `---` boundary is not as safe: `PdfElixide.Document.to_plain_text/2`
+separates paragraphs with a blank line, so a page whose own text has a `---`
+line between two paragraphs emits the same bytes and splits into an extra part,
+shifting every page after it. Enumerate pages when page boundaries must be
+unambiguous.
 
 Neither bounds memory: each builds the whole result before returning. A document
 is enumerable over its pages, so process each page's result without accumulating
@@ -188,36 +192,41 @@ that produce empty text instead.
 
 ## Tables inside a text result
 
-With `:extract_tables` on — the default for both — a recognised table is
+With `:extract_tables` on — the default for both — a recognized table is
 rendered from its detected cells. Both assemblers try to suppress flowing spans
 that those cells already represent, so ordinary cell text appears once.
 
 Some PDFs can still repeat cell text when their page text cannot be associated
 reliably with the detected cells. Trustworthy tagged extraction avoids adding a
-second table rendering. For matching rather than reading, prefer `words/2`, or
-`search/2` when the query is known in advance. The "Choosing an extractor for
-search and matching" section of `PdfElixide.Document` compares these surfaces.
+second table rendering. For matching rather than reading, prefer
+`PdfElixide.Document.words/2`, or `PdfElixide.Document.search/2` when the query
+is known in advance. The "Choosing an extractor for search and matching" section
+of `PdfElixide.Document` compares these surfaces.
 
-When the separate cell rendering is emitted, `to_plain_text/2` keeps its column
-padding while `text/2` collapses the padding to single spaces.
+When the separate cell rendering is emitted,
+`PdfElixide.Document.to_plain_text/2` keeps its column padding while
+`PdfElixide.Document.text/2` collapses the padding to single spaces.
 
 ## Beyond plain text
 
-  * **Glyphs and geometry.** `chars/2`, `spans/2`, `words/2` and
-    `text_lines/2` return structs with bounding boxes, fonts and colors. Use
-    them to locate text on the page rather than to read it.
-  * **Typed regions.** `structured/2` groups a page's spans into
-    `PdfElixide.Document.StructuredPage.Region`s — body text with one region
-    per column, running header, footer and page number where the PDF marks
-    them as artifacts, marginal numerals — each carrying its spans and their
-    union box. The reading to reach for when the role of a block matters more
-    than its glyphs.
-  * **Markup.** `to_markdown/2` represents detected headings, lists and tables;
-    `to_html/2` returns an escaped fragment, optionally absolutely positioned.
-    Both take markup options the plain-text surfaces have no use for, and
-    `to_markdown/2` takes the largest set of the four.
+  * **Glyphs and geometry.** `PdfElixide.Document.chars/2`,
+    `PdfElixide.Document.spans/2`, `PdfElixide.Document.words/2` and
+    `PdfElixide.Document.text_lines/2` return structs with bounding boxes, fonts
+    and colors. Use them to locate text on the page rather than to read it.
+  * **Typed regions.** `PdfElixide.Document.structured/2` groups a page's spans
+    into `PdfElixide.Document.StructuredPage.Region`s — body text with one
+    region per column, running header, footer and page number where the PDF
+    marks them as artifacts, marginal numerals — each carrying its spans and
+    their union box. The reading to reach for when the role of a block matters
+    more than its glyphs.
+  * **Markup.** `PdfElixide.Document.to_markdown/2` represents detected
+    headings, lists and tables; `PdfElixide.Document.to_html/2` returns an
+    escaped fragment, optionally absolutely positioned. Both take markup options
+    the plain-text surfaces have no use for, and `to_markdown/2` takes the
+    largest set of the four.
   * **Finding a known string.** `PdfElixide.Document.search/2` indexes each page
-    once and returns match geometry — see the [Search](search.md) guide.
+    once and returns match geometry — see the [Text search](text-search.md)
+    guide.
 
 ```elixir
 :ok = Document.close(doc)

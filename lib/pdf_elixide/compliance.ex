@@ -56,7 +56,7 @@ defmodule PdfElixide.Compliance do
   it can finish with `compliant?: false`. Convert last, then validate the bytes
   you write.
 
-  See the [PDF/A conversion guide](guides/pdf-a-conversion.md) for the fixes,
+  See the [PDF/A conversion](guides/pdf-a-conversion.md) guide for the fixes,
   editor restrictions, metadata caveats and font-embedding trade-offs.
 
   ## Memory and locking
@@ -188,7 +188,7 @@ defmodule PdfElixide.Compliance do
 
   Returns `{:ok, conversion}` whether or not the result complies; see
   `PdfElixide.Compliance.Conversion` and
-  the [PDF/A conversion guide](guides/pdf-a-conversion.md). The editor is
+  the [PDF/A conversion](guides/pdf-a-conversion.md) guide. The editor is
   changed in place, and a full write produces the converted document. A
   different declared PDF/A level, or existing XMP metadata for a PDF/A-1
   target, is refused with `:unsupported`. A standard that is not a

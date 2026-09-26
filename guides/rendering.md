@@ -27,6 +27,8 @@ doc
 |> Stream.run()
 ```
 
+The examples below reuse this `doc` and `page`; close `doc` after the last one.
+
 ## Sizing the output
 
 `:dpi` is the direct control — 72 DPI makes one pixel per PDF point, so the
@@ -44,7 +46,7 @@ Document.Page.render!(page, fit: {240, 320})
 #=> #PdfElixide.Document.RenderedPage<240x311 png>
 ```
 
-A Letter page is proportionally wider than a 240 x 320 box is, so the width
+A Letter page is proportionally wider than a 240 × 320 box is, so the width
 binds and the result stops short of the box's height.
 
 `:dpi` and `:fit` cannot be given together; passing both raises `ArgumentError`
@@ -72,7 +74,7 @@ down. Set `:max_output_pixels` when a smaller image is preferable:
 ```elixir
 rendered = Document.render!(doc, 0, dpi: 600, max_output_pixels: 4_000_000)
 {rendered.width, rendered.height}
-#=> {1759, 2276}      # rather than the 5100x6600 that `dpi: 600` asks for
+#=> {1759, 2276}      # rather than the 5100 × 6600 that `dpi: 600` asks for
 ```
 
 The aspect ratio is preserved, and `:width` and `:height` report the resulting
@@ -81,10 +83,11 @@ refused with `:unsupported` naming `:max_output_pixels`, so it is not a way to
 render past the ceiling. A `:region` render returns `:unsupported` if the
 budget would require scaling the page before cropping it.
 
-`separations/3`, `separation/4` and `rasterize/2` instead have a fixed limit of
-16 million pixels — the highest `:dpi` a US Letter page fits in is 413. Retry
-with a lower `:dpi`, or use `render/3` when you need its higher ceiling or
-`:max_output_pixels`.
+`PdfElixide.Document.separations/3`, `PdfElixide.Document.separation/4` and
+`PdfElixide.Document.rasterize/2` instead have a fixed limit of 16 million
+pixels — the highest `:dpi` a US Letter page fits in is 413. Retry with a lower
+`:dpi`, or use `PdfElixide.Document.render/3` when you need its higher ceiling
+or `:max_output_pixels`.
 
 ## What the raster covers
 
@@ -106,12 +109,13 @@ CropBox on a 200 × 200 pt page fitted into 400 × 400 renders at 200 × 200. Us
 `:dpi` when the output size must be exact.
 
 **A page whose `/MediaBox` cannot be read still renders, at US Letter.** Where
-`PdfElixide.Document.Page.media_box/1` reports `{:error, %{reason: :invalid_pdf}}`
-for a missing or malformed box, the renderer substitutes 612 × 792 points and
-carries on. A successful render is therefore never evidence that the page's
-geometry is sound — check the box directly if that matters. The one exception
-is `:region`: a crop needs the real box, so on such a page it returns
-`{:error, %PdfElixide.Error{reason: :invalid_pdf}}` instead.
+`PdfElixide.Document.Page.media_box/1` reports
+`{:error, %{reason: :invalid_pdf}}` for a missing or malformed box, the renderer
+substitutes 612 × 792 points and carries on. A successful render is therefore
+never evidence that the page's geometry is sound — check the box directly if
+that matters. The one exception is `:region`: a crop needs the real box, so on
+such a page it returns `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`
+instead.
 
 A page that declares no box or rotation of its own inherits from the nearest
 ancestor that declares one; see the "Page boxes and the coordinate origin"
@@ -178,7 +182,7 @@ two formats. A value outside that range raises rather than being clamped.
 Use `:rgba8` to feed an image pipeline without encoding and decoding an image.
 See `PdfElixide.Document.RenderedPage` for the byte layout and alpha convention.
 
-`:background` is the colour painted before the page's own content. It defaults
+`:background` is the color painted before the page's own content. It defaults
 to opaque white; `nil` paints nothing at all, so everything the page does not
 cover stays transparent:
 
@@ -192,7 +196,7 @@ outside that range raises instead of being quietly replaced with white.
 
 **`nil` is only transparency in a format that has alpha.** JPEG has none, so a
 `format: :jpeg` render with `background: nil` comes back with every uncovered
-area **black** — which on a page with margins is most of it. Name the colour you
+area **black** — which on a page with margins is most of it. Name the color you
 want whenever the format cannot carry the absence of one.
 
 ## Annotations
@@ -208,14 +212,15 @@ permanently is `PdfElixide.Editor`'s; see the [Forms](forms.md) guide.
 
 ## Layers, and how rendering differs from extraction
 
-**A render honours the document's own layer configuration; text extraction does
+**A render honors the document's own layer configuration; text extraction does
 not.** An optional-content group the document marks off by default is left
 unpainted here, while `PdfElixide.Document.text/2` still reads the text inside
 it. The same document can therefore render without a watermark whose words the
 extractor returns.
 
-Both surfaces take the same vocabulary — the names `PdfElixide.Document.layers/1`
-reports — so passing the same list to both is how you make them agree:
+Both surfaces take the same vocabulary — the names
+`PdfElixide.Document.layers/1` reports — so passing the same list to both is how
+you make them agree:
 
 ```elixir
 hidden = ["Draft watermark"]
@@ -224,9 +229,9 @@ Document.Page.render!(page, exclude_layers: hidden)
 Document.text!(doc, 0, exclude_layers: hidden)
 ```
 
-Pass a name back exactly as `layers/1` gave it; the match is on the whole string.
-A name that matches no group is ignored rather than reported, so a typo shows up
-as a layer that failed to disappear.
+Pass a name back exactly as `layers/1` gave it; the match is on the whole
+string. A name that matches no group is ignored rather than reported, so a typo
+shows up as a layer that failed to disappear.
 
 ## Fonts
 
@@ -290,10 +295,10 @@ anything the page showed.
 **It does not preserve the original's page geometry.** Look at one before you
 adopt it:
 
-  * every page comes back **US Letter**, 612 x 792 points, whatever the source
-    page measured — a 200 x 200 pt page and an A4 page both become Letter;
+  * every page comes back **US Letter**, 612 × 792 points, whatever the source
+    page measured — a 200 × 200 pt page and an A4 page both become Letter;
   * the rendered page is scaled into a **one-inch margin** on all four sides and
-    centred, so a full-bleed original ends up as a smaller picture with a white
+    centered, so a full-bleed original ends up as a smaller picture with a white
     border around it;
   * page rotation is baked into the pixels and `/Rotate` resets to `0` — the one
     part of this that is faithful, since the raster is already turned.
@@ -305,6 +310,10 @@ Memory grows with page count and compressed image size. Scanned or photographic
 pages typically cost more memory than text pages at the same DPI. The fixed
 limit under [Sizing the output](#sizing-the-output) applies per page, not to the
 document as a whole.
+
+```elixir
+:ok = Document.close(doc)
+```
 
 ## Concurrency
 

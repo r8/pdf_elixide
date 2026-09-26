@@ -320,7 +320,7 @@ defmodule PdfElixide.Editor do
       rewrite. Defaults to `false`. See `save/3` and `to_binary/2` for restrictions.
     * `:compress` — compress streams. Defaults to `true`. An editor converted
       to PDF/A-1 refuses `true`; see the
-      [PDF/A conversion guide](guides/pdf-a-conversion.md).
+      [PDF/A conversion](guides/pdf-a-conversion.md) guide.
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`. `false` is refused after `sanitize/1,2` with
       `{:error, %PdfElixide.Error{reason: :unsupported}}`, since the write
@@ -331,7 +331,7 @@ defmodule PdfElixide.Editor do
       Cannot be combined with `incremental: true`; see the
       [Encryption](guides/encryption.md) guide. An editor converted to PDF/A
       refuses it; see the
-      [PDF/A conversion guide](guides/pdf-a-conversion.md).
+      [PDF/A conversion](guides/pdf-a-conversion.md) guide.
 
   An unknown key, or a declared key given a value of the wrong type, raises
   `ArgumentError` naming the offending key; see the "Errors versus

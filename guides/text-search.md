@@ -1,4 +1,4 @@
-# Search
+# Text search
 
 `PdfElixide.Document.search/2` finds every non-overlapping occurrence of a
 pattern in a document's text and reports where each one sits on the page, as
@@ -24,8 +24,9 @@ per-page index and reuses it. Each match includes the boxes needed to locate it.
 
 ## Literal text and regular expressions
 
-**The pattern is literal by default.** `Document.search(doc, "Fig. 3 (a)")` looks
-for exactly that text; the `.` is a period and the parentheses are parentheses.
+**The pattern is literal by default.** `Document.search(doc, "Fig. 3 (a)")`
+looks for exactly that text; the `.` is a period and the parentheses are
+parentheses.
 
 Pass `literal: false` to use a regular expression:
 
@@ -45,11 +46,11 @@ PCRE. The important differences are:
     as usual.
 
 A pattern that does not parse comes back as
-`%PdfElixide.Error{reason: :invalid_pattern}` — and `search!/2` raises it, the
-same split `Regex.compile/1` and `Regex.compile!/1` make. It is only reachable
-under `literal: false`, since the default path escapes the pattern first. The
-error message quotes the pattern as you wrote it, whatever other options are
-set.
+`%PdfElixide.Error{reason: :invalid_pattern}` — and
+`PdfElixide.Document.search!/2` raises it, the same split `Regex.compile/1` and
+`Regex.compile!/1` make. It is only reachable under `literal: false`, since the
+default path escapes the pattern first. The error message quotes the pattern as
+you wrote it, whatever other options are set.
 
 ### `:whole_word`
 
@@ -75,23 +76,23 @@ the *(a)* in *Fig. 3 (a)*, on either path, because a space precedes it.
 `:bbox` and `:spans` locate a match on the page — but they are coarser than
 the matched text, in two ways that matter if you are drawing on top of them.
 
-**They cover whole runs of text.** A PDF stores text in runs, and a match reports
-every run it touches — each a whole `PdfElixide.Document.Span`, with its text,
-font and box — rather than the extents of the matched characters. Searching
-`"Widgets"` in a line reading *Introduction to Widgets* gives back the span of
-the entire line. The search API provides no narrower box.
+**They cover whole runs of text.** A PDF stores text in runs, and a match
+reports every run it touches — each a whole `PdfElixide.Document.Span`, with its
+text, font and box — rather than the extents of the matched characters.
+Searching `"Widgets"` in a line reading *Introduction to Widgets* gives back the
+span of the entire line. The search API provides no narrower box.
 
-**`:bbox` is the union of the spans' boxes.** For a match inside one run they are
-the same rectangle. For a match crossing two runs — including two on different
-lines — the union is a single rectangle covering everything between them,
-including whatever sits in the gap. Draw from each span's `:bbox`, one per run,
-and keep `:bbox` for coarse questions like "which part of the page".
+**`:bbox` is the union of the spans' boxes.** For a match inside one run they
+are the same rectangle. For a match crossing two runs — including two on
+different lines — the union is a single rectangle covering everything between
+them, including whatever sits in the gap. Draw from each span's `:bbox`, one per
+run, and keep `:bbox` for coarse questions like "which part of the page".
 
-**A match can cross a line.** Runs are concatenated before matching, with a space
-inserted after a run only when that run does not already end in one. No newline
-is inserted, so a phrase split across two lines still matches as one. The page
-behaves as a single line: `^` and `$` anchor to the page rather than to a line,
-and `.` never stops at a line end.
+**A match can cross a line.** Runs are concatenated before matching, with a
+space inserted after a run only when that run does not already end in one. No
+newline is inserted, so a phrase split across two lines still matches as one.
+The page behaves as a single line: `^` and `$` anchor to the page rather than to
+a line, and `.` never stops at a line end.
 
 A match consisting entirely of inserted spaces — possible with a pattern such
 as `~S"\s+"` — belongs to no run and returns empty `:spans` and a zero-sized
@@ -104,8 +105,8 @@ recipe.
 
 ## Searching one page
 
-`search/3` takes a zero-based page index in place of the option list, and
-`search/4` takes both:
+`PdfElixide.Document.search/3` takes a zero-based page index in place of the
+option list, and `PdfElixide.Document.search/4` takes both:
 
 ```elixir
 Document.search!(doc, "Figure 3", 4)
@@ -129,15 +130,16 @@ Enum.flat_map(3..7, &Document.search!(doc, "Figure", &1))
 
 The first search on a page builds an index on the document handle, and later
 searches reuse it regardless of their pattern. For every page that had a match,
-the page's spans are retained as well, and `prepare_search/1` retains them for
-every page; both are released together.
+the page's spans are retained as well, and
+`PdfElixide.Document.prepare_search/1` retains them for every page; both are
+released together.
 
 Nothing evicts pages from the index during the handle's lifetime. Searching a
 thousand-page PDF end to end therefore retains a thousand pages of text in
 native memory without creating VM collection pressure. A whole-document
-`search/2` with `:max_results` stops at the page that reaches the limit and does
-not index later pages. Pages indexed by earlier calls remain until explicitly
-cleared.
+`PdfElixide.Document.search/2` with `:max_results` stops at the page that
+reaches the limit and does not index later pages. Pages indexed by earlier calls
+remain until explicitly cleared.
 
 Two calls control it:
 

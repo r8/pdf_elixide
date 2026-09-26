@@ -1877,7 +1877,7 @@ defmodule PdfElixide.Document do
         document.
       * `:auto` uses `:layout` for short documents and `:flow` for long ones.
 
-  See [Choosing a mode](guides/office.md#choosing-a-mode) in the Office guide
+  See [Choosing a mode](guides/office.md#choosing-a-mode) in the Office conversion guide
   for the trade-off, and [Round trips](guides/office.md#round-trips) before
   converting the result back to PDF.
 
@@ -1894,7 +1894,7 @@ defmodule PdfElixide.Document do
   An encrypted document must be authenticated first; until then this returns
   `{:error, %PdfElixide.Error{reason: :encrypted}}`. See "Whole-document
   extraction and memory" above for its memory use, and the [Office
-  documents](guides/office.md) guide for fidelity and conversion back to PDF.
+  conversion](guides/office.md) guide for fidelity and conversion back to PDF.
   """
   @spec to_docx(t(), office_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_docx(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
@@ -3240,8 +3240,9 @@ defmodule PdfElixide.Document do
   Options accepted by the `search` and `search!` functions.
 
     * `:literal` — treat the pattern as plain text rather than a regular
-      expression. Defaults to `true`; see the [Search](guides/search.md) guide
-      for the regular expression syntax `literal: false` accepts.
+      expression. Defaults to `true`; see the
+      [Text search](guides/text-search.md) guide for the regular expression
+      syntax `literal: false` accepts.
     * `:case_insensitive` — match regardless of case. Defaults to `false`.
     * `:whole_word` — require a word boundary at each end of the match, so
       `"cat"` finds *cat* but not *category*. Defaults to `false`. The
@@ -3289,7 +3290,7 @@ defmodule PdfElixide.Document do
   A match's boxes cover whole runs of text rather than the matched characters —
   see `PdfElixide.Document.SearchMatch`. Searching builds a per-page index that
   is reused by later searches and released by `clear_search_index/1` or
-  `close/1`. The [Search](guides/search.md) guide covers both.
+  `close/1`. The [Text search](guides/text-search.md) guide covers both.
 
   The whole-document form builds every page's matches in memory at once — see the
   "Whole-document extraction and memory" section of `PdfElixide.Document` for
@@ -3379,7 +3380,7 @@ defmodule PdfElixide.Document do
   the whole document at once.
 
   Searching already builds the index lazily, so this only moves that cost — see
-  the [Search](guides/search.md) guide.
+  the [Text search](guides/text-search.md) guide.
   """
   @spec prepare_search(t()) :: :ok | {:error, Error.t()}
   def prepare_search(%__MODULE__{ref: ref}) do
@@ -3408,7 +3409,8 @@ defmodule PdfElixide.Document do
 
   The document stays usable; a later `search/2` rebuilds what it needs. Nothing
   evicts from this index on its own, so on a large document this is the only
-  release short of `close/1` — see the [Search](guides/search.md) guide.
+  release short of `close/1` — see the [Text search](guides/text-search.md)
+  guide.
 
   Unlike the other reads here it takes the handle's lock *exclusively*, so it
   waits for calls already in flight — see [Concurrency](guides/concurrency.md).

@@ -475,8 +475,8 @@ defmodule PdfElixide.Signature do
       PdfElixide.Signature.verify_timestamp(signature, File.read!("signed.pdf"))
       #=> {:ok, :valid}
 
-  Attachment is one of the three questions a timestamp raises; ["Timestamp
-  checks are independent"](guides/signatures.md#timestamp-checks-are-independent)
+  Attachment is one of the three questions a timestamp raises; [Timestamp
+  checks are independent](guides/signatures.md#timestamp-checks-are-independent)
   says what the other two are and which call answers each.
 
   Reports `%PdfElixide.Error{reason: :not_found}` when the signature carries no

@@ -2,8 +2,8 @@
 
 `PdfElixide.Editor.save/3` and `PdfElixide.Editor.to_binary/2` take an
 `:encryption` option that writes a password-protected PDF. It is the only way
-this library produces encryption; opening a document that is *already*
-encrypted is the `:password` option of `PdfElixide.Document.open/2` and
+this library produces encryption; opening a document that is *already* encrypted
+is the `:password` option of `PdfElixide.Document.open/2` and
 `PdfElixide.Editor.open/2`, which is unrelated and takes different values — see
 [Editing a document that is already encrypted](#editing-a-document-that-is-already-encrypted).
 
@@ -69,10 +69,10 @@ the difference.
 
 These operations return `{:error, %PdfElixide.Error{reason: :unsupported}}`:
 
-  * `PdfElixide.Editor.apply_redactions/1,2`, and `PdfElixide.Editor.add_redaction/3,4`
-    with it
-  * `PdfElixide.Editor.flatten_annotations/1,2`
-  * `PdfElixide.Form.flatten/1,2`
+  * `PdfElixide.Editor.apply_redactions/1`, and
+    `PdfElixide.Editor.add_redaction/3` with it
+  * `PdfElixide.Editor.flatten_annotations/1`
+  * `PdfElixide.Form.flatten/1`
   * a save with `incremental: true`; see [Incremental saves](#incremental-saves)
 
 A rewrite is also refused when an encrypted source stores its XMP metadata in
@@ -138,11 +138,11 @@ version.
   * `:owner_password` grants full access and the right to change the security
     settings.
 
-Both are UTF-8 `t:String.t/0`; `PdfElixide.Document.open/2`'s `:password` accepts
-arbitrary bytes. Non-ASCII passwords written here can be used to reopen the
-document here, but may not match another tool's PDFDocEncoding representation
-of the same characters. **Use ASCII passwords for anything another tool has to
-open.**
+Both are UTF-8 `t:String.t/0`; `PdfElixide.Document.open/2`'s `:password`
+accepts arbitrary bytes. Non-ASCII passwords written here can be used to reopen
+the document here, but may not match another tool's PDFDocEncoding
+representation of the same characters. **Use ASCII passwords for anything
+another tool has to open.**
 
 Only the first 32 bytes of a password are used; a longer one is truncated, with
 no error.
@@ -166,7 +166,7 @@ defaulting to `true`. They are written into the `/P` entry of the encryption
 dictionary.
 
 Per the PDF specification these flags are **advisory**. A conforming reader is
-asked to honour them; nothing enforces them, and a reader that holds the user
+asked to honor them; nothing enforces them, and a reader that holds the user
 password holds everything needed to ignore them. Treat them as a statement of
 intent, not as access control. Encryption protects the bytes from someone
 without the password; permissions do not protect them from someone with it.
@@ -191,10 +191,10 @@ object in the clear and carries on with the rest of the file rather than
 stopping.
 
 Nothing in the result distinguishes such a file from a fully encrypted one:
-`save/3` still returns `{:ok, editor}`, the file still declares itself
-encrypted, `PdfElixide.Document.encrypted?/1` is still `true`, and the password
-still authenticates. The consequence runs the other way — an object left in the
-clear is readable by someone **without** the password.
+`PdfElixide.Editor.save/3` still returns `{:ok, editor}`, the file still
+declares itself encrypted, `PdfElixide.Document.encrypted?/1` is still `true`,
+and the password still authenticates. The consequence runs the other way — an
+object left in the clear is readable by someone **without** the password.
 
 Reopening the output with its password is only a partial check:
 
@@ -212,9 +212,9 @@ Neither says anything about an object the reader did not touch.
 
 ## Incremental saves
 
-`save/3`'s `:encryption` cannot be combined with `incremental: true`, and the
-pair raises `ArgumentError`. Use a full rewrite, which is `save/3`'s default,
-to encrypt the output.
+`PdfElixide.Editor.save/3`'s `:encryption` cannot be combined with
+`incremental: true`, and the pair raises `ArgumentError`. Use a full rewrite,
+which is `save/3`'s default, to encrypt the output.
 
 An encrypted *source* cannot be saved incrementally either, whatever the
 options. An incremental update is appended to the original file rather than
@@ -223,7 +223,8 @@ would not open. `incremental: true` returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` on such an editor, whether
 it was opened from a path or from a binary; write a full rewrite instead.
 
-For other incremental-save restrictions, see [Saving edits](editing.md#saving-edits).
+For other incremental-save restrictions, see
+[Saving edits](editing.md#saving-edits).
 
 ## What a rewrite changes
 

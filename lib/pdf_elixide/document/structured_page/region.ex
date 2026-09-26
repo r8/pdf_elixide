@@ -1,10 +1,11 @@
 defmodule PdfElixide.Document.StructuredPage.Region do
   @moduledoc """
   A group of spans sharing one role on a structured page, with their joined
-  text and union bounding box. See `t:kind/0` for the roles.
+  text and union bounding box.
 
-  Spans are grouped by role, column and section. Body text and marginal labels
-  can have columns: `0` for left and `1` for right, each read top to bottom.
+  `t:kind/0` lists the roles. Spans are grouped by role, column and section.
+  Body text and marginal labels can have columns: `0` for left and `1` for
+  right, each read top to bottom.
 
   Gaps, blank lines and indents do not split regions, so consecutive body
   paragraphs can merge. Labels in the same column can also merge across
