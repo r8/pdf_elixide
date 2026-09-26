@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use pdf_oxide::{
     annotation_types::AnnotationSubtype,
+    compliance::PdfAPart,
     editor::{
         DocumentEditor, EditableDocument, EncryptionAlgorithm, EncryptionConfig, Permissions,
         SaveOptions,
@@ -30,7 +31,7 @@ use crate::{
     geometry::{rect_from_corners, rect_from_nif, RectNif},
     merge::{self, MergeError},
     metadata::{normalize_text, read_metadata, MetadataNif},
-    open_editor::{Marked, OpenEditor, OutOfRange, PageError},
+    open_editor::{Marked, OpenEditor, OutOfRange, PageError, Rebuild},
     resource::Closable,
     signatures::well_formed_pdf_date_len,
     split::{self, BookmarkSegmentNif, SplitOptionsNif},
@@ -341,6 +342,7 @@ fn editor_to_bytes(
         // Incremental output upstream refuses on its own; this one it does not.
         ensure_scrub_survives_save(editor, &options)?;
         ensure_metadata_survives_save(editor, &options)?;
+        ensure_write_keeps_conversion(editor, &options)?;
 
         // Incremental output is refused below before writing, so resupplying
         // for it would only move the modified flag.
@@ -436,7 +438,7 @@ fn ensure_metadata_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) 
     ensure_rewrite_keeps_metadata(editor)
 }
 
-fn ensure_rewrite_keeps_metadata(editor: &OpenEditor) -> NifResult<()> {
+pub(crate) fn ensure_rewrite_keeps_metadata(editor: &OpenEditor) -> NifResult<()> {
     if !carries_unencryptable_metadata(editor) {
         return Ok(());
     }
@@ -506,14 +508,53 @@ fn ensure_incremental_has_a_source(
 }
 
 // Before `ensure_incremental_has_a_source`, whose message would otherwise call a
-// path-opened editor binary-built: a merge rebuilds it from bytes.
-fn ensure_incremental_has_no_merge(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
-    if options.incremental && editor.merged() {
+// path-opened editor binary-built: a merge or conversion rebuilds it from bytes.
+fn ensure_incremental_has_no_rebuild(
+    editor: &OpenEditor,
+    options: &SaveOptionsNif,
+) -> NifResult<()> {
+    if !options.incremental {
+        return Ok(());
+    }
+
+    let done = match editor.rebuilt() {
+        None => return Ok(()),
+        Some(Rebuild::Merge) => "merged another document",
+        Some(Rebuild::Conversion(_)) => "been converted to PDF/A",
+    };
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "This editor has {done}, which an incremental save cannot carry: the \
+             update is appended to a verbatim copy of the original file. Nothing has \
+             been written. Save a full rewrite instead."
+        ),
+    ))
+}
+
+// Preserve the constraints declared by conversion unless XMP was scrubbed.
+fn ensure_write_keeps_conversion(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
+    let Some(level) = editor.pdf_a() else {
+        return Ok(());
+    };
+
+    if options.encryption.is_some() {
         return Err(tagged_err(
             atoms::unsupported(),
-            "This editor has merged another document, which an incremental save \
-             cannot carry: the update is appended to a verbatim copy of the original \
-             file. Nothing has been written. Save a full rewrite instead.",
+            "This editor has been converted to PDF/A, which forbids encryption: the \
+             written file would declare PDF/A and fail it. Nothing has been written. \
+             Write without :encryption.",
+        ));
+    }
+
+    // PDF/A-1 metadata streams must remain unfiltered.
+    if options.compress && !options.incremental && level.part() == PdfAPart::Part1 {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This editor has been converted to PDF/A-1, which forbids compressing the \
+             document's XMP metadata: the written file would declare PDF/A-1 and fail \
+             it. Nothing has been written. Write with compress: false.",
         ));
     }
 
@@ -565,8 +606,9 @@ fn editor_save(
         ensure_redaction_survives_save(editor, &options)?;
         ensure_scrub_survives_save(editor, &options)?;
         ensure_metadata_survives_save(editor, &options)?;
+        ensure_write_keeps_conversion(editor, &options)?;
         ensure_incremental_is_not_encrypted(editor, &options)?;
-        ensure_incremental_has_no_merge(editor, &options)?;
+        ensure_incremental_has_no_rebuild(editor, &options)?;
         ensure_incremental_has_a_source(editor, &options)?;
         // Report destructive edits and a missing source before omitted changes.
         ensure_edits_survive_save(editor, &options)?;
@@ -1151,23 +1193,50 @@ fn merge_incoming(
         }
 
         ensure_rewrite_keeps_metadata(editor)?;
-        ensure_merge_keeps_redactions(editor)?;
+        ensure_rebuild_keeps_redactions(editor, Rebuild::Merge)?;
+        ensure_merge_keeps_pdf_a_1(editor)?;
         editor.merge(&incoming)?;
 
         Ok(atoms::ok())
     })
 }
 
-// Rebuilding the editor would discard unapplied redactions. A failed pass cannot
-// identify which of its requested pages were committed.
-fn ensure_merge_keeps_redactions(editor: &OpenEditor) -> NifResult<()> {
+// The merge's rewrite compresses the declaration's XMP, and no later write
+// decompresses a stream.
+fn ensure_merge_keeps_pdf_a_1(editor: &OpenEditor) -> NifResult<()> {
+    if !editor
+        .pdf_a()
+        .is_some_and(|level| level.part() == PdfAPart::Part1)
+    {
+        return Ok(());
+    }
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        "This editor has been converted to PDF/A-1, and a merge would compress the \
+         document's XMP metadata, which PDF/A-1 forbids and no later write can undo. \
+         Nothing has been merged. Merge first, then convert.",
+    ))
+}
+
+pub(crate) fn ensure_rebuild_keeps_redactions(
+    editor: &OpenEditor,
+    cause: Rebuild,
+) -> NifResult<()> {
+    let (noun, done, verb) = match cause {
+        Rebuild::Merge => ("a merge", "merged", "merge"),
+        Rebuild::Conversion(_) => ("a conversion", "converted", "convert"),
+    };
+
     if editor.failed_redaction() {
         return Err(tagged_err(
             atoms::unsupported(),
-            "A destructive redaction on this editor failed partway, so pages it was \
-             asked to redact may still hold their content, and a merge would drop what \
-             was pending on them. Nothing has been merged. Discard this editor and \
-             reopen the source.",
+            format!(
+                "A destructive redaction on this editor failed partway, so pages it was \
+                 asked to redact may still hold their content, and {noun} would drop \
+                 what was pending on them. Nothing has been {done}. Discard this editor \
+                 and reopen the source."
+            ),
         ));
     }
 
@@ -1176,18 +1245,18 @@ fn ensure_merge_keeps_redactions(editor: &OpenEditor) -> NifResult<()> {
             let message = if editor.applied_redactions() {
                 format!(
                     "Page {output} has a redaction queued or marked after this editor \
-                     applied one, which no pass in this editor can apply and a merge \
-                     would lose. Nothing has been merged. Withdraw a mark with \
+                     applied one, which no pass in this editor can apply and {noun} \
+                     would lose. Nothing has been {done}. Withdraw a mark with \
                      unmark_redactions/2. A queued region cannot be withdrawn: write \
                      the editor with to_binary/2, open the result, and redact it there."
                 )
             } else {
                 format!(
-                    "Page {output} has a pending redaction, which a merge would lose: \
-                     the merged editor would hold neither the queued region nor the \
+                    "Page {output} has a pending redaction, which {noun} would lose: \
+                     the rebuilt editor would hold neither the queued region nor the \
                      redaction annotation a later apply_redactions/1,2 reads. Nothing \
-                     has been merged. Apply it with apply_redactions/1,2, or withdraw a \
-                     mark with unmark_redactions/2, then merge."
+                     has been {done}. Apply it with apply_redactions/1,2, or withdraw a \
+                     mark with unmark_redactions/2, then {verb}."
                 )
             };
 

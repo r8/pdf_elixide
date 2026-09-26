@@ -2,6 +2,7 @@ defmodule PdfElixide.OptionDefaultsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  alias PdfElixide.Compliance
   alias PdfElixide.Document
   alias PdfElixide.Editor
 
@@ -302,6 +303,15 @@ defmodule PdfElixide.OptionDefaultsTest do
     test "Editor.sanitize/2" do
       assert Editor.__option_defaults__(:sanitize) ==
                Editor.__option_defaults__(:redaction)
+    end
+
+    test "Compliance.convert/3" do
+      assert Compliance.__option_defaults__(:convert) == %{
+               embed_fonts: false,
+               remove_javascript: true,
+               remove_embedded_files: true,
+               icc_profile: nil
+             }
     end
 
     test "Table.to_markdown/2" do

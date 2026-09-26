@@ -109,6 +109,9 @@ the editor is left as it was:
     `PdfElixide.Editor.apply_redactions/1` failed is refused too: discard it and reopen
     the source.
   * **An editor with no pages.** Merge before deleting the last page.
+  * **An editor converted to PDF/A-1** with `PdfElixide.Compliance.convert/3`. The merge
+    would compress the document's XMP metadata, which PDF/A-1 forbids. Merge first, then
+    convert; see the [PDF/A conversion guide](pdf-a-conversion.md).
 
 Merging an unencrypted document with no pages changes nothing and succeeds.
 

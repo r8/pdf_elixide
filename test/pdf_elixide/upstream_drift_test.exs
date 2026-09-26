@@ -4,6 +4,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   @moduletag :upstream_drift
 
+  alias PdfElixide.Compliance
   alias PdfElixide.Document
   alias PdfElixide.Document.Image
   alias PdfElixide.Document.Page
@@ -1942,6 +1943,87 @@ defmodule PdfElixide.UpstreamDriftTest do
       on_exit(fn -> Document.close(back) end)
 
       assert back.page_count == 4
+    end
+  end
+
+  describe "converting to PDF/A" do
+    test "still drops the document information dictionary" do
+      editor = Editor.open!(Path.join(@fixtures, "metadata.pdf"))
+      on_exit(fn -> Editor.close(editor) end)
+      assert Editor.metadata!(editor).title == "Test Title"
+
+      Compliance.convert!(editor, :pdf_a_2b)
+
+      assert Editor.metadata!(editor).title == nil
+      assert Document.metadata!(Document.from_binary!(Editor.to_binary!(editor))).title == nil
+    end
+
+    test "a PDF/A report still ignores the level the document declares" do
+      editor = Editor.open!(Path.join(@fixtures, "sample.pdf"))
+      on_exit(fn -> Editor.close(editor) end)
+      Compliance.convert!(editor, :pdf_a_2b)
+      doc = Document.from_binary!(Editor.to_binary!(editor))
+
+      assert %{declared: :pdf_a_2b, compliant?: true} = Compliance.validate!(doc, :pdf_a_1b)
+    end
+
+    test "a written conversion still has no document identifier" do
+      editor = Editor.open!(Path.join(@fixtures, "sample.pdf"))
+      on_exit(fn -> Editor.close(editor) end)
+      Compliance.convert!(editor, :pdf_a_2b)
+      pdf = Editor.to_binary!(editor)
+
+      assert pdf =~ ~r{/Root\s+\d+\s+\d+\s+R}
+      refute pdf =~ ~r{/ID\s*\[}
+    end
+
+    test "a compressed write still filters the XMP metadata stream" do
+      editor = Editor.open!(Path.join(@fixtures, "sample.pdf"))
+      on_exit(fn -> Editor.close(editor) end)
+      Compliance.convert!(editor, :pdf_a_2b)
+
+      assert [dict] =
+               Regex.run(~r{<<[^>]*/Type\s*/Metadata[^>]*>>}, Editor.to_binary!(editor))
+
+      assert dict =~ "/Filter"
+    end
+
+    test "still compresses a declaration it adds to existing metadata" do
+      editor = Editor.open!(Path.join(@fixtures, "metadata.pdf"))
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert :added_pdfa_identification in Enum.map(
+               Compliance.convert!(editor, :pdf_a_2b).actions,
+               & &1.type
+             )
+
+      assert [dict] =
+               Regex.run(
+                 ~r{<<[^>]*/Type\s*/Metadata[^>]*>>},
+                 Editor.to_binary!(editor, compress: false)
+               )
+
+      assert dict =~ "/Filter"
+    end
+
+    test "keeps the document information dictionary when nothing needs converting" do
+      converted = Editor.open!(Path.join(@fixtures, "metadata.pdf"))
+      Compliance.convert!(converted, :pdf_a_2b)
+      titled = Editor.from_binary!(Editor.to_binary!(converted))
+      Editor.set_title!(titled, "Test Title")
+      editor = Editor.from_binary!(Editor.to_binary!(titled))
+
+      on_exit(fn ->
+        Enum.each([converted, titled, editor], &Editor.close/1)
+      end)
+
+      assert %{actions: [], report: %{compliant?: true}} =
+               Compliance.convert!(editor, :pdf_a_2b)
+
+      assert Editor.metadata!(editor).title == "Test Title"
+
+      assert Document.metadata!(Document.from_binary!(Editor.to_binary!(editor))).title ==
+               "Test Title"
     end
   end
 end

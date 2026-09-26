@@ -5,7 +5,8 @@ use std::{
 };
 
 use pdf_oxide::{
-    editor::{DocumentEditor, EditableDocument},
+    compliance::PdfALevel,
+    editor::{DocumentEditor, DocumentInfo, EditableDocument},
     writer::EmbeddedFile,
     PdfDocument,
 };
@@ -63,18 +64,28 @@ pub(crate) struct OpenEditor {
     javascript_scrubbed: bool,
     // Records staged XMP removal; the source catalog is unchanged until save.
     xmp_scrubbed: bool,
-    // Set once a merge has replaced the editor with one built from bytes, which
-    // an incremental save cannot append to. Never cleared.
-    merged: bool,
-    // The replacement starts unmodified; this reports the merge until a full
+    // Set once a merge or conversion has replaced the editor with one built from
+    // bytes, which an incremental save cannot append to. Never cleared.
+    rebuilt: Option<Rebuild>,
+    // The replacement starts unmodified; this reports the rebuild until a full
     // write carries it.
-    merge_unsaved: bool,
+    rebuild_unsaved: bool,
+    // The PDF/A level a conversion declared. A merge keeps the catalog, and so
+    // the declaration, unless a scrub had already removed it.
+    pdf_a: Option<PdfALevel>,
     // The replaced editor's flatten warnings, which upstream offers no way to
     // hand to its successor.
     carried_warnings: Vec<String>,
-    // Upstream's flatten warnings from a merge snapshot that did not land, which
+    // Upstream's flatten warnings from a snapshot that did not land, which
     // upstream never clears and the next write reports again.
     discarded_warnings: Vec<Range<usize>>,
+}
+
+// What last replaced the editor with one built from bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Rebuild {
+    Merge,
+    Conversion(PdfALevel),
 }
 
 // Upstream keeps every region and mark a pass applied, so what that pass covered
@@ -159,24 +170,25 @@ impl OpenEditor {
             embedded_scrubbed: false,
             javascript_scrubbed: false,
             xmp_scrubbed: false,
-            merged: false,
-            merge_unsaved: false,
+            rebuilt: None,
+            rebuild_unsaved: false,
+            pdf_a: None,
             carried_warnings: Vec::new(),
             discarded_warnings: Vec::new(),
         }
     }
 
     pub(crate) fn modified(&self) -> bool {
-        self.editor.is_modified() || self.merge_unsaved
+        self.editor.is_modified() || self.rebuild_unsaved
     }
 
-    pub(crate) fn merged(&self) -> bool {
-        self.merged
+    pub(crate) fn rebuilt(&self) -> Option<Rebuild> {
+        self.rebuilt
     }
 
-    // Only a successful full write carries a merge.
+    // Only a successful full write carries a rebuild.
     pub(crate) fn record_full_write(&mut self) {
-        self.merge_unsaved = false;
+        self.rebuild_unsaved = false;
     }
 
     pub(crate) fn all_flatten_warnings(&self) -> Vec<String> {
@@ -224,23 +236,14 @@ impl OpenEditor {
         let (added, fresh) = match self.merge_snapshot(incoming, &every_page, takes_resources) {
             Ok(merged) => merged,
             Err(e) => {
-                let now = self.editor.flatten_warnings().len();
-                if now > written {
-                    self.discarded_warnings.push(written..now);
-                }
+                self.discard_warnings_since(written);
 
                 return Err(e);
             }
         };
 
         let fixes = inheritance_fixes(fresh.source(), count, &incoming.pages);
-        let carried_warnings = self.all_flatten_warnings();
-        *self = Self {
-            merged: true,
-            merge_unsaved: true,
-            carried_warnings,
-            ..Self::new(fresh)
-        };
+        self.replace(fresh, Rebuild::Merge);
 
         for (index, fix) in fixes {
             if let Some(rotation) = fix.rotation {
@@ -257,6 +260,73 @@ impl OpenEditor {
         Ok(added)
     }
 
+    // Apply `transform` to a full-write snapshot and replace only on success.
+    // Callers ensure every page is readable before taking the snapshot.
+    pub(crate) fn rebuild<T, E: From<pdf_oxide::Error>>(
+        &mut self,
+        cause: Rebuild,
+        transform: impl FnOnce(DocumentEditor) -> Result<(T, DocumentEditor), E>,
+    ) -> Result<T, E> {
+        let every_page: Vec<usize> = (0..self.pages.len()).collect();
+        let written = self.editor.flatten_warnings().len();
+
+        let built = self
+            .snapshot(&every_page)
+            .and_then(|(snapshot, info)| scratch_editor(snapshot, &self.embedded, info))
+            .map_err(E::from)
+            .and_then(transform);
+
+        match built {
+            Ok((value, fresh)) => {
+                self.replace(fresh, cause);
+
+                Ok(value)
+            }
+            Err(e) => {
+                self.discard_warnings_since(written);
+
+                Err(e)
+            }
+        }
+    }
+
+    fn replace(&mut self, fresh: DocumentEditor, cause: Rebuild) {
+        let carried_warnings = self.all_flatten_warnings();
+        let pdf_a = match cause {
+            Rebuild::Merge => self.pdf_a(),
+            Rebuild::Conversion(level) => Some(level),
+        };
+        *self = Self {
+            rebuilt: Some(cause),
+            rebuild_unsaved: true,
+            pdf_a,
+            carried_warnings,
+            ..Self::new(fresh)
+        };
+    }
+
+    fn discard_warnings_since(&mut self, written: usize) {
+        let now = self.editor.flatten_warnings().len();
+        if now > written {
+            self.discarded_warnings.push(written..now);
+        }
+    }
+
+    // Avoid `extract_pages`, whose resupply would make a failed rebuild modified.
+    // The attachments and `/Info` the snapshot drops go onto the scratch editor.
+    fn snapshot(
+        &mut self,
+        every_page: &[usize],
+    ) -> pdf_oxide::error::Result<(Vec<u8>, Option<DocumentInfo>)> {
+        self.editor.clear_embedded_files();
+        let snapshot = self.editor.extract_pages_to_bytes(every_page)?;
+
+        let info = self.seeded_info();
+        let info = has_info_text(&info).then(|| to_document_info(&info));
+
+        Ok((snapshot, info))
+    }
+
     // Discard warnings appended by a snapshot that fails to land.
     fn merge_snapshot(
         &mut self,
@@ -264,22 +334,10 @@ impl OpenEditor {
         every_page: &[usize],
         takes_resources: Option<usize>,
     ) -> Result<(usize, DocumentEditor), MergeError> {
-        // Avoid `extract_pages`, whose resupply would make a failed merge modified.
-        // State drained by the snapshot is restored on the scratch editor.
-        self.editor.clear_embedded_files();
-        let snapshot = self.editor.extract_pages_to_bytes(every_page)?;
-
-        let info = self.seeded_info();
-        let info = has_info_text(&info).then(|| to_document_info(&info));
+        let (snapshot, info) = self.snapshot(every_page)?;
         let embedded = &self.embedded;
         let (added, fresh) = on_import_stack(|| {
-            let mut scratch = DocumentEditor::from_bytes(snapshot)?;
-            for file in embedded {
-                scratch.embed_file_with_options(file.clone())?;
-            }
-            if let Some(info) = info {
-                scratch.set_info(info)?;
-            }
+            let mut scratch = scratch_editor(snapshot, embedded, info)?;
             let added = scratch.merge_from_bytes(&incoming.bytes)?;
             let fresh = DocumentEditor::from_bytes(scratch.save_to_bytes()?)?;
 
@@ -731,6 +789,10 @@ impl OpenEditor {
         self.xmp_scrubbed
     }
 
+    pub(crate) fn pdf_a(&self) -> Option<PdfALevel> {
+        self.pdf_a.filter(|_| !self.xmp_scrubbed)
+    }
+
     pub(crate) fn embedded_files(&self) -> &[EmbeddedFile] {
         &self.embedded
     }
@@ -872,6 +934,22 @@ struct PageFix {
     rotation: Option<i32>,
     media_box: Option<[f32; 4]>,
     crop_box: Option<[f32; 4]>,
+}
+
+fn scratch_editor(
+    snapshot: Vec<u8>,
+    embedded: &[EmbeddedFile],
+    info: Option<DocumentInfo>,
+) -> pdf_oxide::error::Result<DocumentEditor> {
+    let mut scratch = DocumentEditor::from_bytes(snapshot)?;
+    for file in embedded {
+        scratch.embed_file_with_options(file.clone())?;
+    }
+    if let Some(info) = info {
+        scratch.set_info(info)?;
+    }
+
+    Ok(scratch)
 }
 
 fn inheritance_fixes(
@@ -1095,6 +1173,23 @@ mod tests {
         };
 
         assert!(editor.merge(&incoming).is_err());
+        assert!(editor.all_flatten_warnings().is_empty());
+
+        editor.save_to_bytes().expect("editor writes");
+        assert_eq!(editor.all_flatten_warnings().len(), 1);
+    }
+
+    #[test]
+    fn a_rebuild_failing_after_its_snapshot_leaves_the_editor_as_it_was() {
+        let mut editor = open("flatten_root_resources.pdf");
+        editor.flatten_forms().expect("forms marked");
+
+        let failed = editor.rebuild(Rebuild::Conversion(PdfALevel::A2b), |_| {
+            Err::<((), DocumentEditor), _>(pdf_oxide::Error::InvalidPdf("refused".into()))
+        });
+
+        assert!(failed.is_err());
+        assert_eq!(editor.rebuilt(), None);
         assert!(editor.all_flatten_warnings().is_empty());
 
         editor.save_to_bytes().expect("editor writes");

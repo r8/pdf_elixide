@@ -2,6 +2,7 @@ defmodule PdfElixide.OptionKeysTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  alias PdfElixide.Compliance
   alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Form
@@ -438,6 +439,21 @@ defmodule PdfElixide.OptionKeysTest do
         &Editor.sanitize(editor, &1)
       )
     end
+
+    test "Compliance.convert/3" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      accepts_each!(
+        [
+          embed_fonts: false,
+          remove_javascript: false,
+          remove_embedded_files: false,
+          icc_profile: "profile"
+        ],
+        &Compliance.convert(editor, :pdf_a_2b, &1)
+      )
+    end
   end
 
   describe "an undeclared key is rejected" do
@@ -496,6 +512,7 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Editor.crop_margins(editor, opts) end,
         fn opts -> Editor.apply_redactions(editor, opts) end,
         fn opts -> Editor.sanitize(editor, opts) end,
+        fn opts -> Compliance.convert(editor, :pdf_a_2b, opts) end,
         fn opts -> Editor.bookmark_segments(editor, opts) end,
         fn opts -> Editor.split_by_bookmarks(editor, opts) end
       ]

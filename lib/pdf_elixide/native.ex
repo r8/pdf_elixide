@@ -164,6 +164,8 @@ defmodule PdfElixide.Native do
   def editor_add_redaction(_editor, _page_index, _rect, _fill), do: err()
   def editor_apply_redactions(_editor, _options), do: err()
   def editor_sanitize(_editor, _options), do: err()
+  def editor_convert_to_pdf_a(_editor, _standard, _options), do: err()
+  def editor_convert_to_pdf_a_embedding(_editor, _standard, _options), do: err()
   def editor_flatten_forms(_editor), do: err()
   def editor_flatten_forms_on_page(_editor, _page_index), do: err()
   def editor_flatten_all_annotations(_editor), do: err()

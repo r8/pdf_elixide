@@ -73,6 +73,7 @@ defmodule PdfElixide.MixProject do
         "guides/concurrency.md": [],
         "guides/forms.md": [],
         "guides/editing.md": [],
+        "guides/pdf-a-conversion.md": [],
         "guides/merging-and-splitting.md": [],
         "guides/redaction.md": [],
         "guides/signatures.md": [],
@@ -162,7 +163,10 @@ defmodule PdfElixide.MixProject do
       Compliance: [
         PdfElixide.Compliance,
         PdfElixide.Compliance.Report,
-        PdfElixide.Compliance.Issue
+        PdfElixide.Compliance.Issue,
+        PdfElixide.Compliance.Conversion,
+        PdfElixide.Compliance.Conversion.Action,
+        PdfElixide.Compliance.Conversion.Failure
       ]
     ]
   end

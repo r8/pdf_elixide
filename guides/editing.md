@@ -54,9 +54,10 @@ It has no source file to copy, so `incremental: true` returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` even with no edits or only field
 values. Use `PdfElixide.Editor.open/2` for incremental saving, or write a full rewrite.
 
-**An editor that has merged another document cannot save incrementally.** The merge
-rebuilds the editor from the combined document, which has no source file to append to;
-see [Merging documents](merging-and-splitting.md#merging-documents).
+**An editor that has merged another document, or been converted to PDF/A, cannot
+save incrementally.** Both rebuild the editor from the resulting document, which has no
+source file to append to; see [Merging documents](merging-and-splitting.md#merging-documents) and
+the [PDF/A conversion guide](pdf-a-conversion.md).
 
 **An encrypted source cannot be saved incrementally.** The call returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}`; see

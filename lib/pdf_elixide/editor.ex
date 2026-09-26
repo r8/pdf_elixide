@@ -318,7 +318,9 @@ defmodule PdfElixide.Editor do
 
     * `:incremental` — write an incremental update instead of a full
       rewrite. Defaults to `false`. See `save/3` and `to_binary/2` for restrictions.
-    * `:compress` — compress streams. Defaults to `true`.
+    * `:compress` — compress streams. Defaults to `true`. An editor converted
+      to PDF/A-1 refuses `true`; see the
+      [PDF/A conversion guide](guides/pdf-a-conversion.md).
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`. `false` is refused after `sanitize/1,2` with
       `{:error, %PdfElixide.Error{reason: :unsupported}}`, since the write
@@ -327,7 +329,9 @@ defmodule PdfElixide.Editor do
     * `:encryption` — encrypt the written document, as a `t:encryption_opts/0`
       keyword list. Defaults to `nil`, which writes an unencrypted PDF.
       Cannot be combined with `incremental: true`; see the
-      [Encryption](guides/encryption.md) guide.
+      [Encryption](guides/encryption.md) guide. An editor converted to PDF/A
+      refuses it; see the
+      [PDF/A conversion guide](guides/pdf-a-conversion.md).
 
   An unknown key, or a declared key given a value of the wrong type, raises
   `ArgumentError` naming the offending key; see the "Errors versus
