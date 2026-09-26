@@ -2,6 +2,7 @@ defmodule PdfElixide.ConcurrencyTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  alias PdfElixide.Compliance
   alias PdfElixide.Document
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
@@ -22,6 +23,7 @@ defmodule PdfElixide.ConcurrencyTest do
   @form_pdf Path.join(@fixtures_dir, "form.pdf")
   @attachments_pdf Path.join(@fixtures_dir, "attachments.pdf")
   @layers_pdf Path.join(@fixtures_dir, "layers_and_inks.pdf")
+  @encrypted_pdf Path.join(@fixtures_dir, "encrypted.pdf")
 
   @concurrency 16
 
@@ -54,6 +56,31 @@ defmodule PdfElixide.ConcurrencyTest do
       |> Enum.each(fn {:ok, actual} -> assert actual == expected end)
     end
 
+    # A password handle is validated under the exclusive lock rather than on a
+    # re-parse; interleaved reads must still see a consistent document.
+    test "validating a password handle interleaves with reads" do
+      doc = Document.open!(@encrypted_pdf, password: "secret")
+      on_exit(fn -> Document.close(doc) end)
+
+      expected = %{text: Document.text!(doc, 0), validate: Compliance.validate!(doc, :pdf_ua_1)}
+      refute expected.text == ""
+
+      [:text, :validate]
+      |> List.duplicate(@concurrency)
+      |> List.flatten()
+      |> Enum.shuffle()
+      |> Task.async_stream(
+        fn
+          :text -> {:text, Document.text!(doc, 0)}
+          :validate -> {:validate, Compliance.validate!(doc, :pdf_ua_1)}
+        end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, {name, actual}} -> assert actual == expected[name] end)
+    end
+
     test "concurrent mixed extractors on one handle match their serial results", %{doc: doc} do
       calls = [
         text: &Document.text!/1,
@@ -69,7 +96,9 @@ defmodule PdfElixide.ConcurrencyTest do
         fonts: fn d -> d |> Document.fonts!() |> Enum.map(&Map.delete(&1, :ref)) end,
         page_count: &Document.page_count/1,
         has_xfa?: &Document.has_xfa?/1,
-        structured_warnings: &Document.structured_warnings!/1
+        structured_warnings: &Document.structured_warnings!/1,
+        validate_pdf_a: &Compliance.validate!(&1, :pdf_a_2b),
+        validate_pdf_x: &Compliance.validate!(&1, :pdf_x_4)
       ]
 
       expected = Map.new(calls, fn {name, call} -> {name, call.(doc)} end)

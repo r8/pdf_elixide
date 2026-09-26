@@ -9,7 +9,8 @@ defmodule PdfElixide.Document do
   one document — or rendering different pages of it — do not queue on that
   lock. `version/1`, `source_path/1` and, normally, `page_count/1` read cached
   struct fields instead and take no native lock. `authenticate/2`,
-  `clear_search_index/1` and `close/1` take the handle lock exclusively, and
+  `clear_search_index/1` and `close/1` take the handle lock exclusively, as does
+  `PdfElixide.Compliance.validate/2` on a document that needs a password, and
   `rasterize/2` serializes against itself across the node. The
   [Concurrency](guides/concurrency.md) guide has the rest, including contention
   inside the PDF reader and the tagged-PDF hazard that makes fanning out *by

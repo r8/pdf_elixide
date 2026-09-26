@@ -8,6 +8,7 @@ mod annotations;
 mod binary;
 mod char;
 mod color;
+mod compliance;
 mod document;
 mod editor;
 mod embedded_files;

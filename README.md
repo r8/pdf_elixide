@@ -73,6 +73,8 @@ high-performance PDF library written in Rust. Built with
 
 **Diagnostics and lifecycle**
 
+- Check a document against PDF/A, PDF/UA and PDF/X, with each finding's code,
+  clause and location
 - Capture diagnostics for content a damaged page drops without failing, and
   forward them to `Logger`, or read the conditions the reader tolerated as
   structured warnings

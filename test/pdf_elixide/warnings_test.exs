@@ -6,6 +6,8 @@ defmodule PdfElixide.WarningsTest do
 
   import ExUnit.CaptureLog
 
+  alias PdfElixide.Compliance
+  alias PdfElixide.Compliance.Report
   alias PdfElixide.Document
   alias PdfElixide.Editor
   alias PdfElixide.Error
@@ -199,6 +201,17 @@ defmodule PdfElixide.WarningsTest do
       # Already authenticated, so this authenticates in place with no re-parse.
       assert Document.authenticate!(doc, @password)
       assert Document.structured_warnings!(doc) == parse_entries(1)
+    end
+
+    # A password handle is validated in place, after a re-parse that could not
+    # authenticate; that re-parse still records its read.
+    test "validation keeps what its re-parse recorded" do
+      doc = open(@encrypted_missing_endobj, password: @password)
+      assert Document.structured_warnings!(doc) == parse_entries(1)
+
+      assert %Report{} = Compliance.validate!(doc, :pdf_a_2b)
+      assert Document.structured_warnings!(doc) == parse_entries(2)
+      assert Logging.structured_warnings() == []
     end
 
     test "reads interleaved with the first extraction see nothing or the entry" do

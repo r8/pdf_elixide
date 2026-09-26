@@ -158,6 +158,11 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Signature.Timestamp,
         PdfElixide.Signature.DSS,
         PdfElixide.Signature.DSS.VRI
+      ],
+      Compliance: [
+        PdfElixide.Compliance,
+        PdfElixide.Compliance.Report,
+        PdfElixide.Compliance.Issue
       ]
     ]
   end

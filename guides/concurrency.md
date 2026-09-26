@@ -36,6 +36,10 @@ in-flight native calls on that handle and block new ones for their duration.
   * `PdfElixide.Document.clear_search_index/1` waits for current searches before
     releasing the index, so the memory is gone when it returns. Its sibling
     `PdfElixide.Document.prepare_search/1` is an ordinary shared read.
+  * `PdfElixide.Compliance.validate/2` takes the handle exclusively, for the
+    whole validation, only on a document that cannot be opened without a
+    password. On every other document it is a shared read that works on a
+    private copy of the document, at the cost of that copy's memory.
   * `PdfElixide.Document.close/1` waits for the handle to go idle rather than
     interrupting work in flight, and an extraction can hold its share of the lock
     for seconds. Afterwards every call that reaches the handle gets
@@ -47,7 +51,7 @@ in-flight native calls on that handle and block new ones for their duration.
 `PdfElixide.Document.rasterize/2` runs one at a time **across the whole node**,
 whatever document each caller uses. Other *reads* on the same handle are
 unaffected; it holds that handle's shared guard for the whole render, so the
-three exclusive calls above wait for it.
+exclusive calls above wait for it.
 Queued callers wait in their own processes without occupying scheduler threads;
 under contention, the wait can add a few seconds beyond the rendering time.
 Calling `rasterize/2` from one process avoids this contention. The other

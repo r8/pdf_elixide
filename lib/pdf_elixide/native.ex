@@ -96,6 +96,7 @@ defmodule PdfElixide.Native do
   def document_unsigned_signature_fields(_doc), do: err()
   def document_signature_count(_doc), do: err()
   def document_dss(_doc), do: err()
+  def document_validate(_doc, _standard), do: err()
   def document_info(_doc), do: err()
   def document_xmp_metadata(_doc), do: err()
   def document_permissions(_doc), do: err()
