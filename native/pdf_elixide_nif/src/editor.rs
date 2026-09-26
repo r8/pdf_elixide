@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use pdf_oxide::{
     annotation_types::AnnotationSubtype,
@@ -33,6 +33,7 @@ use crate::{
     open_editor::{Marked, OpenEditor, OutOfRange, PageError},
     resource::Closable,
     signatures::well_formed_pdf_date_len,
+    split::{self, BookmarkSegmentNif, SplitOptionsNif},
     warnings, EditorResource,
 };
 
@@ -1047,6 +1048,73 @@ fn editor_extract_page_ranges<'a>(
             })
             .collect()
     })
+}
+
+// A shared read: planning reaches only `source()` and the page mirror.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_bookmark_segments(
+    resource: ResourceArc<EditorResource>,
+    options: SplitOptionsNif,
+) -> NifResult<Vec<BookmarkSegmentNif>> {
+    options.validate()?;
+
+    resource
+        .editor
+        .with_read(|editor| plan_in_output_order(editor, &options))
+}
+
+// Exclusive for the same reason as `editor_extract_pages`, and looped locally
+// for the same reason as `editor_extract_page_ranges`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn editor_split_by_bookmarks<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<EditorResource>,
+    options: SplitOptionsNif,
+) -> NifResult<Vec<(BookmarkSegmentNif, Term<'a>)>> {
+    options.validate()?;
+
+    resource.editor.with_lock(|editor| {
+        let segments = plan_in_output_order(editor, &options)?;
+        if segments.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        for segment in &segments {
+            editor.check_span(segment.first, segment.last)?;
+        }
+        ensure_rewrite_keeps_metadata(editor)?;
+
+        segments
+            .into_iter()
+            .map(|segment| {
+                let pages: Vec<usize> = (segment.first..=segment.last).collect();
+                let bytes = binary_term(env, &editor.extract_pages(&pages)?, "split part")?;
+
+                Ok((segment, bytes))
+            })
+            .collect()
+    })
+}
+
+// The outline names source pages; the plan is in the order the editor writes,
+// and a bookmark on a deleted page has no position.
+fn plan_in_output_order(
+    editor: &OpenEditor,
+    options: &SplitOptionsNif,
+) -> NifResult<Vec<BookmarkSegmentNif>> {
+    let positions: HashMap<usize, usize> = editor
+        .source_pages()
+        .into_iter()
+        .enumerate()
+        .map(|(output, source)| (source, output))
+        .collect();
+
+    split::plan(
+        editor.source(),
+        editor.visible_page_count(),
+        |source| positions.get(&source).copied(),
+        options,
+    )
 }
 
 // Reading the file needs no editor, and an exclusive guard serializes every other

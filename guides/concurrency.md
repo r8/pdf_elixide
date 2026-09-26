@@ -106,15 +106,16 @@ The editor's shared reads are `PdfElixide.Editor.page_count/1`,
 `PdfElixide.Editor.modified?/1`, `PdfElixide.Editor.rotation/2`,
 `PdfElixide.Editor.media_box/2`, `PdfElixide.Editor.crop_box/2`,
 `PdfElixide.Editor.metadata/1`, `PdfElixide.Editor.embedded_files/1`,
-`PdfElixide.Editor.flatten_warnings/1`, `PdfElixide.Editor.marked_for_redaction?/2`
-and `PdfElixide.Editor.closed?/1`. They do not wait on each other, but any of them
-will queue behind an in-flight exclusive operation such as a save on the same
-handle. For `flatten_warnings/1`, this ensures an in-flight save finishes before
-the warnings are read.
+`PdfElixide.Editor.flatten_warnings/1`, `PdfElixide.Editor.marked_for_redaction?/2`,
+`PdfElixide.Editor.bookmark_segments/2` and `PdfElixide.Editor.closed?/1`. They do
+not wait on each other, but any of them will queue behind an in-flight exclusive
+operation such as a save on the same handle. For `flatten_warnings/1`, this
+ensures an in-flight save finishes before the warnings are read.
 
-Three `PdfElixide.Editor` calls read without sharing:
-`PdfElixide.Editor.redaction_count/2`, `PdfElixide.Editor.extract_pages/2` and
-`PdfElixide.Editor.extract_page_ranges/2`. Each takes the handle exclusively and
+Four `PdfElixide.Editor` calls read without sharing:
+`PdfElixide.Editor.redaction_count/2`, `PdfElixide.Editor.extract_pages/2`,
+`PdfElixide.Editor.extract_page_ranges/2` and
+`PdfElixide.Editor.split_by_bookmarks/2`. Each takes the handle exclusively and
 serializes against every other call on that editor, even though none of them changes
 its pages or pending edits.
 

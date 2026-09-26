@@ -34,7 +34,8 @@ defmodule PdfElixide.Editor do
   `merge/2` and `merge_binary/2` append another document's pages, and
   refuse a document they cannot carry intact. `extract_pages/2` and
   `extract_page_ranges/2` write chosen pages to new binaries without changing the
-  editor. See the [Merging and splitting](guides/merging-and-splitting.md) guide.
+  editor, and `split_by_bookmarks/2` writes one per bookmarked section. See the
+  [Merging and splitting](guides/merging-and-splitting.md) guide.
 
   ## Page rotation
 
@@ -102,6 +103,8 @@ defmodule PdfElixide.Editor do
   """
 
   alias PdfElixide.Color.RGB
+  alias PdfElixide.Document
+  alias PdfElixide.Document.BookmarkSegment
   alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Error
@@ -679,6 +682,77 @@ defmodule PdfElixide.Editor do
   @spec extract_page_ranges!(t(), [Range.t(), ...]) :: [binary()]
   def extract_page_ranges!(%__MODULE__{} = editor, ranges) when is_list(ranges) do
     editor |> extract_page_ranges(ranges) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Plans a split of the editor's pages at the document's bookmarks, without
+  writing anything, as `PdfElixide.Document.bookmark_segments/2` does.
+
+  Segments follow the editor's current page order, and bookmarks on removed
+  pages are skipped. `split_by_bookmarks/2` writes the same parts. See
+  [Splitting at bookmarks](guides/merging-and-splitting.md#splitting-at-bookmarks).
+  """
+  @spec bookmark_segments(t(), Document.bookmark_opts()) ::
+          {:ok, [BookmarkSegment.t()]} | {:error, Error.t()}
+  def bookmark_segments(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = Document.__bookmark_options__(opts)
+
+    with {:ok, segments} <- Wrap.call(fn -> Native.editor_bookmark_segments(ref, options) end) do
+      {:ok, Enum.map(segments, &BookmarkSegment.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Plans a split of the editor's pages at the document's bookmarks, raising an
+  error if it fails.
+  """
+  @spec bookmark_segments!(t(), Document.bookmark_opts()) :: [BookmarkSegment.t()]
+  def bookmark_segments!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
+    editor |> bookmark_segments(opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Splits the editor's pages at the document's bookmarks, writing each part to
+  its own PDF binary as `extract_page_ranges/2` does.
+
+  Returns a `{segment, binary}` pair per part, where each
+  `PdfElixide.Document.BookmarkSegment` is the one `bookmark_segments/2` plans,
+  and `{:ok, []}` when there are no bookmarks or none matches `opts`; see
+  `t:PdfElixide.Document.bookmark_opts/0`. The editor's pages and pending edits
+  are not changed, but `modified?/1` can report `true` afterwards, as after
+  `extract_pages/2`.
+
+  Parts may retain pages outside their visible page range through the document's
+  bookmarks. Do not use splitting to separate confidential content; see
+  [Extraction is not redaction](guides/merging-and-splitting.md#extraction-is-not-redaction).
+
+  Every binary is held in memory until the call returns. See
+  [Splitting at bookmarks](guides/merging-and-splitting.md#splitting-at-bookmarks),
+  which also shows how to write one part at a time.
+
+  Returns `{:error, %PdfElixide.Error{reason: :invalid_pdf}}` if a page cannot
+  be read. A source that stores its XMP metadata unencrypted is refused, as in
+  `save/3`.
+  """
+  @spec split_by_bookmarks(t(), Document.bookmark_opts()) ::
+          {:ok, [{BookmarkSegment.t(), binary()}]} | {:error, Error.t()}
+  def split_by_bookmarks(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = Document.__bookmark_options__(opts)
+
+    with {:ok, parts} <- Wrap.call(fn -> Native.editor_split_by_bookmarks(ref, options) end) do
+      {:ok,
+       Enum.map(parts, fn {segment, bytes} -> {BookmarkSegment.from_nif(segment), bytes} end)}
+    end
+  end
+
+  @doc """
+  Splits the editor's pages at the document's bookmarks, raising an error if it
+  fails.
+  """
+  @spec split_by_bookmarks!(t(), Document.bookmark_opts()) ::
+          [{BookmarkSegment.t(), binary()}]
+  def split_by_bookmarks!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
+    editor |> split_by_bookmarks(opts) |> Wrap.unwrap!()
   end
 
   defp validate_page_list!([]) do

@@ -33,6 +33,7 @@ use crate::{
     resource::Closable,
     search::{search_match_to_nif, SearchMatchNif},
     span::{span_to_nif, SpanNif},
+    split::{self, BookmarkSegmentNif, SplitOptionsNif},
     table::{table_to_nif, TableNif},
     text_line::{text_line_to_nif, TextLineNif},
     warnings::{self, OpenDocument, WarningNif},
@@ -1092,6 +1093,20 @@ fn document_outline(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<Ou
     resource.doc.with_read(|doc| {
         let items = doc.get_outline().map_err(to_nif_err)?.unwrap_or_default();
         outline_to_nif(items)
+    })
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_bookmark_segments(
+    resource: ResourceArc<DocumentResource>,
+    options: SplitOptionsNif,
+) -> NifResult<Vec<BookmarkSegmentNif>> {
+    options.validate()?;
+
+    resource.doc.with_read(|doc| {
+        let count = doc.page_count().map_err(to_nif_err)?;
+
+        split::plan(doc, count, Some, &options)
     })
 }
 

@@ -241,6 +241,7 @@ defmodule PdfElixide.Document do
   # filesystem-path `Path.t()` in this module into the struct type.
   alias PdfElixide.Color
   alias PdfElixide.Document.Annotation
+  alias PdfElixide.Document.BookmarkSegment
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Document.Font
@@ -3055,6 +3056,7 @@ defmodule PdfElixide.Document do
   @spec __option_defaults__(atom()) :: map()
   def __option_defaults__(:open), do: build_open_options([])
   def __option_defaults__(:inks), do: build_inks_options([])
+  def __option_defaults__(:bookmarks), do: build_bookmark_options([])
   def __option_defaults__(:render), do: build_render_options([])
   def __option_defaults__(:dpi), do: build_dpi_options([])
   def __option_defaults__(:office), do: build_office_options([])
@@ -3518,6 +3520,90 @@ defmodule PdfElixide.Document do
   def outline!(%__MODULE__{} = doc) do
     outline(doc) |> Wrap.unwrap!()
   end
+
+  @typedoc """
+  Options for `bookmark_segments/2`, `PdfElixide.Editor.bookmark_segments/2` and
+  `PdfElixide.Editor.split_by_bookmarks/2`.
+
+    * `:depth` — how deep in the outline a bookmark may sit and still start a
+      segment: a positive integer, `1` being the top level, or `:all`.
+      Defaults to `1`.
+    * `:title_prefix` — start segments only at bookmarks whose title, with
+      surrounding whitespace trimmed, begins with this string. Defaults to
+      `nil`, which matches every bookmark.
+    * `:ignore_case` — match `:title_prefix` ignoring case, including letters
+      whose case forms differ in length, such as `ß` and `SS`. Defaults to
+      `false`.
+    * `:include_front_matter` — return the pages before the first matching
+      bookmark as a segment of their own, with a `nil` title. Defaults to
+      `true`.
+  """
+  @type bookmark_opts :: [
+          depth: pos_integer() | :all,
+          title_prefix: String.t() | nil,
+          ignore_case: boolean(),
+          include_front_matter: boolean()
+        ]
+
+  @bookmark_opts_keys [:depth, :title_prefix, :ignore_case, :include_front_matter]
+
+  @doc """
+  Plans a split of the document at its bookmarks, without writing anything.
+
+  Returns one `PdfElixide.Document.BookmarkSegment` per part in page order, or
+  `{:ok, []}` when no bookmark matches. See `t:bookmark_opts/0` and
+  [Splitting at bookmarks](guides/merging-and-splitting.md#splitting-at-bookmarks).
+  """
+  @spec bookmark_segments(t(), bookmark_opts()) ::
+          {:ok, [BookmarkSegment.t()]} | {:error, Error.t()}
+  def bookmark_segments(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_bookmark_options(opts)
+
+    with {:ok, segments} <- Wrap.call(fn -> Native.document_bookmark_segments(ref, options) end) do
+      {:ok, Enum.map(segments, &BookmarkSegment.from_nif/1)}
+    end
+  end
+
+  @doc """
+  Plans a split of the document at its bookmarks, raising an error if it fails.
+  """
+  @spec bookmark_segments!(t(), bookmark_opts()) :: [BookmarkSegment.t()]
+  def bookmark_segments!(%__MODULE__{} = doc, opts \\ []) when is_list(opts) do
+    bookmark_segments(doc, opts) |> Wrap.unwrap!()
+  end
+
+  # `PdfElixide.Editor` plans with the same options; one builder keeps the
+  # two from disagreeing about a default or a refusal.
+  @doc false
+  @spec __bookmark_options__(bookmark_opts()) :: map()
+  def __bookmark_options__(opts), do: build_bookmark_options(opts)
+
+  # Option contract: see `__option_defaults__/1`.
+  defp build_bookmark_options(opts) do
+    opts = Keyword.validate!(opts, @bookmark_opts_keys)
+
+    %{
+      depth: depth_option(Keyword.get(opts, :depth, 1)),
+      title_prefix: Keyword.get(opts, :title_prefix),
+      ignore_case: Keyword.get(opts, :ignore_case, false),
+      include_front_matter: Keyword.get(opts, :include_front_matter, true)
+    }
+  end
+
+  # `:all` crosses as `nil`, so an explicit `nil` must not reach the NIF as a
+  # second spelling of it. Other non-integers are the NIF decoder's to reject.
+  defp depth_option(:all), do: nil
+
+  defp depth_option(depth) when is_nil(depth) or (is_integer(depth) and depth < 1) do
+    raise ArgumentError,
+          "invalid :depth #{inspect(depth)}: the depth must be a positive integer or :all"
+  end
+
+  # Every depth past the outline's nesting limit reaches every level, so an
+  # integer too wide for the NIF's decoder is capped rather than refused.
+  defp depth_option(depth) when is_integer(depth) and depth > 0xFFFF_FFFF, do: 0xFFFF_FFFF
+
+  defp depth_option(depth), do: depth
 
   @doc """
   Reads the annotations of the whole document.

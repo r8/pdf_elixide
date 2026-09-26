@@ -34,6 +34,7 @@ mod ring;
 mod search;
 mod signatures;
 mod span;
+mod split;
 mod structured;
 mod table;
 mod text_line;

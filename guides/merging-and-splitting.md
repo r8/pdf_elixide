@@ -179,6 +179,60 @@ editor
 All the binaries from one call are in memory together. To hold only one at a time, call
 `PdfElixide.Editor.extract_pages/2` once per part.
 
+### Splitting at bookmarks
+
+`PdfElixide.Editor.split_by_bookmarks/2` cuts the document where its bookmarks point, so a
+book with one bookmark per chapter becomes one binary per chapter. It returns each part
+with the `PdfElixide.Document.BookmarkSegment` describing it:
+
+```elixir
+editor = PdfElixide.Editor.open!("book.pdf")
+
+editor
+|> PdfElixide.Editor.split_by_bookmarks!()
+|> Enum.each(fn {segment, bytes} -> File.write!("#{segment.file_stem}.pdf", bytes) end)
+```
+
+A part runs from its bookmark's page to the page before the next bookmark's; the last runs
+to the end. Parts include pending edits and document information, and are not encrypted.
+
+Every part also keeps the whole document's bookmarks, and with them every page a bookmark
+points to, including the first page of each other part that starts at a bookmark. Those
+bookmarks lead to pages the part does not show. That adds to each part's size, and anyone
+reading a part's bytes can recover those pages; see
+[Extraction is not redaction](#extraction-is-not-redaction).
+
+Plan the parts without writing them with `PdfElixide.Document.bookmark_segments/2` on a
+read-only document, or `PdfElixide.Editor.bookmark_segments/2` on an editor. By default
+each top-level bookmark starts a part, and the pages before the first become a part of
+their own, with a `nil` title and the stem `"front-matter"`. Options choose deeper
+bookmarks, filter them by title, or leave the front matter out; see
+`t:PdfElixide.Document.bookmark_opts/0`:
+
+```elixir
+segments = PdfElixide.Document.bookmark_segments!(doc, depth: 2, title_prefix: "Chapter")
+```
+
+Bookmarks that do not point to a page are skipped. When several point to the same page,
+the first starts the part. No matching bookmarks returns `{:ok, []}`; use
+[parts or chunks](#parts-and-chunks) instead.
+
+On an editor, the parts follow the pages the editor would write now. After
+`PdfElixide.Editor.move_page/3`, `PdfElixide.Editor.delete_page/2` or
+`PdfElixide.Editor.keep_pages/2`, each bookmark follows its page to its new position, and a
+bookmark whose page is gone is skipped. `PdfElixide.Document.bookmark_segments/2` always
+plans the pages as they are in the file.
+
+Every part is in memory until `PdfElixide.Editor.split_by_bookmarks/2` returns. To hold
+one at a time, plan on the editor and extract each part yourself:
+
+```elixir
+for segment <- PdfElixide.Editor.bookmark_segments!(editor) do
+  [bytes] = PdfElixide.Editor.extract_page_ranges!(editor, [segment.pages])
+  File.write!("#{segment.file_stem}.pdf", bytes)
+end
+```
+
 ### Extraction is not redaction
 
 `PdfElixide.Editor.extract_pages/2` leaves out the pages you did not list, but only when

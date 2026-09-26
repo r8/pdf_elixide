@@ -104,6 +104,7 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Document.XmpMetadata,
         PdfElixide.Document.Permissions,
         PdfElixide.Document.OutlineItem,
+        PdfElixide.Document.BookmarkSegment,
         PdfElixide.Document.PageLabelRange,
         PdfElixide.Document.EmbeddedFile
       ],

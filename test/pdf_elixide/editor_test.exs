@@ -14,6 +14,7 @@ defmodule PdfElixide.EditorTest do
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @valid_pdf Path.join(@fixtures, "sample.pdf")
+  @outline_pdf Path.join(@fixtures, "outline.pdf")
   @indirect_contents_pdf Path.join(@fixtures, "contents_indirect_array.pdf")
   @form_pdf Path.join(@fixtures, "form.pdf")
   @no_pages_pdf Path.join(@fixtures, "no_pages.pdf")
@@ -1435,6 +1436,101 @@ defmodule PdfElixide.EditorTest do
       for ranges <- [[], [1..0//1], [0..2//2], [2..0//-1], [-1..0//1]] do
         assert_raise ArgumentError, fn -> Editor.extract_page_ranges(editor, ranges) end
       end
+    end
+  end
+
+  describe "bookmark_segments/1,2 and split_by_bookmarks/1,2" do
+    defp planned(editor, opts \\ []) do
+      editor |> Editor.bookmark_segments!(opts) |> Enum.map(&{&1.title, &1.pages})
+    end
+
+    test "plans what the document plans, and writes each part" do
+      editor = Editor.open!(@outline_pdf)
+      doc = Document.open!(@outline_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:ok, segments} = Editor.bookmark_segments(editor, depth: :all)
+      assert segments == Document.bookmark_segments!(doc, depth: :all)
+
+      assert {:ok, parts} = Editor.split_by_bookmarks(editor, depth: :all)
+      assert Enum.map(parts, &elem(&1, 0)) == segments
+      assert Enum.map(parts, &(&1 |> elem(1) |> binary_texts() |> length())) == [1, 1, 1]
+    end
+
+    test "carries pending edits and the information dictionary into every part" do
+      editor = Editor.open!(@outline_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.set_title!("Book") |> Editor.set_rotation!(2, 90)
+
+      assert [{%{title: "Chapter 1"}, first}, {%{title: "Chapter 2"}, second}] =
+               Editor.split_by_bookmarks!(editor)
+
+      for bytes <- [first, second] do
+        doc = Document.from_binary!(bytes)
+        assert Document.metadata!(doc).title == "Book"
+        Document.close(doc)
+      end
+
+      doc = Document.from_binary!(second)
+      assert [page] = Enum.to_list(doc)
+      assert Document.Page.rotation!(page) == 90
+      Document.close(doc)
+    end
+
+    test "follows each bookmark's page after page operations" do
+      editor = Editor.open!(@outline_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.move_page!(editor, 2, 0)
+      assert planned(editor) == [{"Chapter 2", 0..0}, {"Chapter 1", 1..2}]
+
+      Editor.delete_page!(editor, 1)
+      assert planned(editor) == [{"Chapter 2", 0..1}]
+    end
+
+    test "skips a bookmark whose page was deleted" do
+      editor = Editor.open!(@outline_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.delete_page!(editor, 0)
+
+      assert planned(editor) == [{nil, 0..0}, {"Chapter 2", 1..1}]
+      assert planned(editor, include_front_matter: false) == [{"Chapter 2", 1..1}]
+    end
+
+    test "returns {:ok, []} with no outline, and refuses nothing for it" do
+      for {path, opts} <- [
+            {@valid_pdf, []},
+            {@encrypted_cleartext_metadata_pdf, [password: "secret"]}
+          ] do
+        editor = Editor.open!(path, opts)
+        assert {:ok, []} = Editor.bookmark_segments(editor)
+        assert {:ok, []} = Editor.split_by_bookmarks(editor)
+        Editor.close(editor)
+      end
+    end
+
+    test "accepts a depth too wide for 32 bits as every level" do
+      editor = Editor.open!(@outline_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      every_level = Editor.bookmark_segments!(editor, depth: :all)
+
+      for depth <- [4_294_967_296, Integer.pow(10, 30)] do
+        assert Editor.bookmark_segments!(editor, depth: depth) == every_level
+
+        assert editor |> Editor.split_by_bookmarks!(depth: depth) |> Enum.map(&elem(&1, 0)) ==
+                 every_level
+      end
+    end
+
+    test "returns {:error, :closed} on a closed editor" do
+      editor = Editor.open!(@outline_pdf)
+      Editor.close(editor)
+
+      assert {:error, %Error{reason: :closed}} = Editor.bookmark_segments(editor)
+      assert {:error, %Error{reason: :closed}} = Editor.split_by_bookmarks(editor)
     end
   end
 

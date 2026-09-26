@@ -3,8 +3,9 @@ use rustler::{NifMap, NifResult, NifTaggedEnum};
 
 use crate::{atoms, error::tagged_err};
 
-// Bound both this recursion and the recursive NifMap encoder. This remains
-// defence in depth because the outline is already parsed before it reaches us.
+// Bound this recursion, the recursive NifMap encoder and upstream's
+// `flatten_outline` in the bookmark split. This remains defence in depth
+// because the outline is already parsed before it reaches us.
 const MAX_OUTLINE_DEPTH: usize = 256;
 
 #[derive(NifMap, Debug)]
@@ -20,9 +21,31 @@ pub enum DestinationNif {
     Named(String),
 }
 
-// Keep the recursive conversion BEAM-independent; build the reason atom outside.
+// Keep the recursive walks BEAM-independent; build the reason atom outside.
 #[derive(Debug)]
-struct TooDeep;
+pub(crate) struct TooDeep;
+
+pub(crate) fn too_deep() -> rustler::Error {
+    tagged_err(
+        atoms::unsupported(),
+        format!("Outline nesting exceeds the supported depth of {MAX_OUTLINE_DEPTH}"),
+    )
+}
+
+// The same cap for callers that walk upstream's tree without converting it.
+pub(crate) fn check_depth(items: &[OutlineItem]) -> Result<(), TooDeep> {
+    check_depth_from(items, 0)
+}
+
+fn check_depth_from(items: &[OutlineItem], depth: usize) -> Result<(), TooDeep> {
+    items.iter().try_for_each(|item| {
+        if depth >= MAX_OUTLINE_DEPTH {
+            return Err(TooDeep);
+        }
+
+        check_depth_from(&item.children, depth + 1)
+    })
+}
 
 // Rejects an outline nested past `MAX_OUTLINE_DEPTH` with `:unsupported`.
 //
@@ -34,12 +57,7 @@ pub fn outline_to_nif(items: Vec<OutlineItem>) -> NifResult<Vec<OutlineItemNif>>
         .into_iter()
         .map(|item| outline_item_to_nif(item, 0))
         .collect::<Result<_, TooDeep>>()
-        .map_err(|TooDeep| {
-            tagged_err(
-                atoms::unsupported(),
-                format!("Outline nesting exceeds the supported depth of {MAX_OUTLINE_DEPTH}"),
-            )
-        })
+        .map_err(|TooDeep| too_deep())
 }
 
 // Converts one item and its subtree. `depth` is zero for a top-level item.
@@ -101,6 +119,12 @@ mod tests {
     #[test]
     fn rejects_an_outline_one_level_past_the_depth_cap() {
         assert!(outline_item_to_nif(chain(MAX_OUTLINE_DEPTH + 1), 0).is_err());
+    }
+
+    #[test]
+    fn check_depth_agrees_with_the_conversion_cap() {
+        assert!(check_depth(&[chain(MAX_OUTLINE_DEPTH)]).is_ok());
+        assert!(check_depth(&[chain(MAX_OUTLINE_DEPTH + 1)]).is_err());
     }
 
     #[test]

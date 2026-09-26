@@ -281,6 +281,19 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!([deep: true], &Document.inks(doc, 0, &1))
     end
 
+    test "bookmark_segments/2 and the Editor's bookmark calls" do
+      doc = doc()
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      opts = [depth: 2, title_prefix: "Page", ignore_case: true, include_front_matter: false]
+
+      accepts_each!(opts, &Document.bookmark_segments(doc, &1))
+      accepts_each!(opts, &Editor.bookmark_segments(editor, &1))
+      accepts_each!(opts, &Editor.split_by_bookmarks(editor, &1))
+      accepts!(:depth, fn -> Document.bookmark_segments(doc, depth: :all) end)
+    end
+
     test "render/3" do
       doc = doc()
 
@@ -457,6 +470,7 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Document.structured(doc, 0, opts) end,
         fn opts -> Document.tables(doc, 0, opts) end,
         fn opts -> Document.inks(doc, 0, opts) end,
+        fn opts -> Document.bookmark_segments(doc, opts) end,
         fn opts -> Document.render(doc, 0, opts) end,
         fn opts -> Document.separations(doc, 0, opts) end,
         fn opts -> Document.separation(doc, 0, "Cyan", opts) end,
@@ -481,7 +495,9 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Editor.embed_file(editor, "data.csv", "a,b", opts) end,
         fn opts -> Editor.crop_margins(editor, opts) end,
         fn opts -> Editor.apply_redactions(editor, opts) end,
-        fn opts -> Editor.sanitize(editor, opts) end
+        fn opts -> Editor.sanitize(editor, opts) end,
+        fn opts -> Editor.bookmark_segments(editor, opts) end,
+        fn opts -> Editor.split_by_bookmarks(editor, opts) end
       ]
 
       for call <- calls do

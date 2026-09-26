@@ -1382,6 +1382,7 @@ dependencies = [
  "rustler",
  "sha1",
  "sha2",
+ "unicode-normalization",
 ]
 
 [[package]]

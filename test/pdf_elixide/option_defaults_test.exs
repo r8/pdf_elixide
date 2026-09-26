@@ -54,6 +54,15 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.__option_defaults__(:inks) == %{deep: false}
     end
 
+    test "bookmark_segments/2 and the Editor's bookmark calls" do
+      assert Document.__option_defaults__(:bookmarks) == %{
+               depth: 1,
+               title_prefix: nil,
+               ignore_case: false,
+               include_front_matter: true
+             }
+    end
+
     test "render/3" do
       assert Document.__option_defaults__(:render) == %{
                dpi: 150,

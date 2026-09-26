@@ -8,6 +8,7 @@ defmodule PdfElixide.DocumentTest do
   alias PdfElixide.Color
   alias PdfElixide.Document
   alias PdfElixide.Document.Annotation
+  alias PdfElixide.Document.BookmarkSegment
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.EmbeddedFile
   alias PdfElixide.Document.Metadata
@@ -3480,6 +3481,81 @@ defmodule PdfElixide.DocumentTest do
     test "returns [] for a document with no outline" do
       doc = Document.open!(@valid_pdf)
       assert [] = Document.outline!(doc)
+    end
+  end
+
+  describe "bookmark_segments/1,2" do
+    defp segments(doc, opts) do
+      doc
+      |> Document.bookmark_segments!(opts)
+      |> Enum.map(&{&1.title, &1.pages})
+    end
+
+    test "splits at the top-level bookmarks by default" do
+      doc = Document.open!(@outline_pdf)
+
+      assert {:ok,
+              [
+                %BookmarkSegment{title: "Chapter 1", pages: 0..1//1, file_stem: "Chapter-1"},
+                %BookmarkSegment{title: "Chapter 2", pages: 2..2//1, file_stem: "Chapter-2"}
+              ]} = Document.bookmark_segments(doc)
+    end
+
+    test "splits at nested bookmarks down to :depth" do
+      doc = Document.open!(@outline_pdf)
+      every_bookmark = [{"Chapter 1", 0..0}, {"Section 1.1", 1..1}, {"Chapter 2", 2..2}]
+
+      assert segments(doc, depth: 2) == every_bookmark
+      assert segments(doc, depth: :all) == every_bookmark
+    end
+
+    test "returns the pages before the first matching bookmark as front matter" do
+      doc = Document.open!(@outline_pdf)
+
+      assert [
+               %BookmarkSegment{title: nil, pages: 0..1//1, file_stem: "front-matter"},
+               %BookmarkSegment{title: "Chapter 2", pages: 2..2//1}
+             ] = Document.bookmark_segments!(doc, title_prefix: "Chapter 2")
+
+      assert segments(doc, title_prefix: "Chapter 2", include_front_matter: false) ==
+               [{"Chapter 2", 2..2}]
+    end
+
+    test "matches :title_prefix case-sensitively unless :ignore_case is set" do
+      doc = Document.open!(@outline_pdf)
+
+      assert segments(doc, title_prefix: "chapter") == []
+
+      assert segments(doc, title_prefix: "chapter", ignore_case: true) ==
+               [{"Chapter 1", 0..1}, {"Chapter 2", 2..2}]
+    end
+
+    test "returns {:ok, []} for a document with no outline" do
+      doc = Document.open!(@valid_pdf)
+      assert {:ok, []} = Document.bookmark_segments(doc)
+    end
+
+    test "accepts a depth too wide for 32 bits as every level" do
+      doc = Document.open!(@outline_pdf)
+      every_level = Document.bookmark_segments!(doc, depth: :all)
+
+      for depth <- [4_294_967_296, Integer.pow(10, 30)] do
+        assert Document.bookmark_segments!(doc, depth: depth) == every_level
+      end
+    end
+
+    test "raises ArgumentError naming :depth for a depth that is not positive or :all" do
+      doc = Document.open!(@outline_pdf)
+
+      for depth <- [0, -1, nil] do
+        assert_raise ArgumentError, ~r/:depth/, fn ->
+          Document.bookmark_segments(doc, depth: depth)
+        end
+      end
+
+      assert_raise ArgumentError, ~r/:depth/, fn ->
+        Document.bookmark_segments(doc, depth: "2")
+      end
     end
   end
 
