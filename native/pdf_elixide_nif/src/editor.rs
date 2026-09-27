@@ -2531,6 +2531,24 @@ mod tests {
     }
 
     #[test]
+    fn upstream_still_places_an_image_in_its_local_frame() {
+        let mut editor =
+            DocumentEditor::open(fixture("image_placement.pdf")).expect("fixture opens");
+        editor
+            .set_image_bounds(0, "Im1", 100.0, 200.0, 50.0, 40.0)
+            .expect("bounds are queued");
+        let bytes = editor.save_to_bytes().expect("full rewrite");
+
+        let doc = PdfDocument::from_bytes(bytes).expect("output reopens");
+        let images = doc.extract_images(0).expect("images extract");
+        assert_eq!(images.len(), 1);
+
+        // The requested bounds replace the inner `cm` only, so the outer
+        // `2 0 0 2 10 10` still scales and shifts them.
+        assert_eq!(images[0].matrix(), [100.0, 0.0, 0.0, 80.0, 210.0, 410.0]);
+    }
+
+    #[test]
     fn upstream_still_exports_the_editors_source_values() {
         let mut editor = DocumentEditor::open(fixture("form.pdf")).expect("fixture opens");
         editor
