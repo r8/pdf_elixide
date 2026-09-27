@@ -102,7 +102,7 @@ Add `pdf_elixide` to `mix.exs`:
 ```elixir
 def deps do
   [
-    {:pdf_elixide, "~> 0.20.0"}
+    {:pdf_elixide, "~> 0.21.0"}
   ]
 end
 ```

@@ -5,6 +5,27 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.21.0](https://github.com/r8/pdf_elixide/compare/v0.20.0...v0.21.0) (2026-09-27)
+
+
+
+
+### Features:
+
+* create PDFs from Markdown, HTML or plain text by [@r8](https://github.com/r8)
+
+* find a document's running headers and footers by [@r8](https://github.com/r8)
+
+* convert edited documents to PDF/A by [@r8](https://github.com/r8)
+
+* validate documents against PDF/A, PDF/UA and PDF/X by [@r8](https://github.com/r8)
+
+* add splitting editor pages at bookmark boundaries by [@r8](https://github.com/r8)
+
+* add PDF page extraction, splitting, and merging by [@r8](https://github.com/r8)
+
+* add Office export and import by [@r8](https://github.com/r8)
+
 ## [v0.20.0](https://github.com/r8/pdf_elixide/compare/v0.19.0...v0.20.0) (2026-09-22)
 
 
