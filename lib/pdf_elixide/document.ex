@@ -175,8 +175,8 @@ defmodule PdfElixide.Document do
       `lines/1`, which are the same values narrowed — and `images/1` stay in
       raw, unrotated user space, whatever the rotation.
     * `words/1`, `text_lines/1`, every box `tables/1` reports — each table's own
-      and its cells' — and the boxes on a `search/2` match are mapped into the
-      **displayed** frame.
+      and its cells' — the boxes on a `search/2` match and the spans
+      `running_regions/2` returns are mapped into the **displayed** frame.
       The mapping is selective: a `180`-degree page maps everything, while a
       `90`- or `270`-degree page maps only text whose own text matrix is
       rotated, leaving a horizontal run raw.
@@ -2843,6 +2843,102 @@ defmodule PdfElixide.Document do
   end
 
   @typedoc """
+  Options accepted by the `running_regions` and `running_regions!` functions.
+
+    * `:area` — which running content to look for: `:header`, `:footer` or
+      `:both`. Defaults to `:both`.
+    * `:threshold` — the fraction of pages, from `0.0` to `1.0`, on which a
+      line must repeat for heuristic detection. It is ignored for an area
+      answered from tagged artifacts. Values outside the range raise
+      `ArgumentError`. Defaults to `0.8`.
+  """
+  @type running_regions_opts :: [area: :header | :footer | :both, threshold: float()]
+
+  @running_regions_opts_keys [:area, :threshold]
+
+  @doc """
+  Finds the running headers and footers of the whole document.
+
+  Returns a map from zero-based page index to the spans of that page's
+  running header and footer text. A page with none is absent from the map,
+  and a document with none returns `%{}`. Each page's spans are listed top to
+  bottom, then left to right.
+
+      regions = Document.running_regions!(doc)
+      #=> %{0 => [%Span{text: "Quarterly Report"}, ...], 1 => [...]}
+
+  The call records nothing on the document, so later extractions are not
+  filtered by it. To drop the text from an extraction, pass a page's boxes
+  back as `:exclude_regions`:
+
+      boxes = regions |> Map.get(3, []) |> Enum.map(& &1.bbox)
+      Document.text(doc, 3, exclude_regions: boxes)
+
+  Detection is chosen separately for each area. Tagged header or footer
+  artifacts are used when present. Otherwise, text must repeat at about the
+  same position in the top or bottom 15% of at least `:threshold` of the
+  document's pages. A one-page document therefore reports only tagged headers
+  and footers. Bare page numbers are excluded. A margin line whose number
+  changes, such as "Page 3 of 10", is usually reported on every page except
+  the first, whatever `:threshold` is; a later page's box also covers the
+  first page's copy.
+
+  The spans use the same coordinate-frame rules as the spans of a `search/2`
+  match. See "Rotated pages and extracted geometry" in
+  `PdfElixide.Document`.
+
+  Every page is read, so a page that cannot be read fails the call. Like any
+  span extraction, the call can change what a later extraction returns on a
+  document with competing `/ActualText` replacements; see "The `/ActualText`
+  hazard" in the [Concurrency](guides/concurrency.md) guide.
+
+  See `t:running_regions_opts/0` for the available options, and the "Running
+  headers and footers" section of the
+  [Text extraction](guides/text-extraction.md) guide for removing the text
+  from extraction or from a saved copy.
+  """
+  @spec running_regions(t(), running_regions_opts()) ::
+          {:ok, %{non_neg_integer() => [Span.t()]}} | {:error, Error.t()}
+  def running_regions(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
+    options = build_running_regions_options(opts)
+
+    with {:ok, regions} <- Wrap.call(fn -> Native.document_running_regions(ref, options) end) do
+      {:ok, Map.new(regions, fn {page, spans} -> {page, Enum.map(spans, &Span.from_nif/1)} end)}
+    end
+  end
+
+  @doc """
+  Finds the running headers and footers of the whole document, raising an
+  error if it fails.
+  """
+  @spec running_regions!(t(), running_regions_opts()) :: %{non_neg_integer() => [Span.t()]}
+  def running_regions!(%__MODULE__{} = doc, opts \\ []) when is_list(opts) do
+    running_regions(doc, opts) |> Wrap.unwrap!()
+  end
+
+  # Option contract: see `__option_defaults__/1`.
+  defp build_running_regions_options(opts) do
+    opts = Keyword.validate!(opts, @running_regions_opts_keys)
+
+    %{
+      area: Keyword.get(opts, :area, :both),
+      threshold: validate_threshold!(opts)
+    }
+  end
+
+  defp validate_threshold!(opts) do
+    case Keyword.get(opts, :threshold, 0.8) do
+      threshold when is_number(threshold) and (threshold < 0.0 or threshold > 1.0) ->
+        raise ArgumentError,
+              "invalid :threshold #{inspect(threshold)}: " <>
+                "the threshold must be between 0.0 and 1.0"
+
+      threshold ->
+        threshold
+    end
+  end
+
+  @typedoc """
   Options tuning the spatial table detector. Accepted directly by the `tables`
   functions, and as the `:table_detection` option of the `text` functions.
 
@@ -3070,6 +3166,7 @@ defmodule PdfElixide.Document do
   def __option_defaults__(:chars), do: build_chars_options([])
   def __option_defaults__(:spans), do: build_spans_options([])
   def __option_defaults__(:structured), do: build_structured_options([])
+  def __option_defaults__(:running_regions), do: build_running_regions_options([])
   def __option_defaults__(:tables), do: build_tables_options([])
   def __option_defaults__(:search), do: build_search_options([])
   def __option_defaults__(:table_detection), do: build_table_detection_option([])

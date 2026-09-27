@@ -24,6 +24,7 @@ defmodule PdfElixide.ConcurrencyTest do
   @attachments_pdf Path.join(@fixtures_dir, "attachments.pdf")
   @layers_pdf Path.join(@fixtures_dir, "layers_and_inks.pdf")
   @encrypted_pdf Path.join(@fixtures_dir, "encrypted.pdf")
+  @running_pdf Path.join(@fixtures_dir, "running_headers.pdf")
 
   @concurrency 16
 
@@ -81,6 +82,22 @@ defmodule PdfElixide.ConcurrencyTest do
       |> Enum.each(fn {:ok, {name, actual}} -> assert actual == expected[name] end)
     end
 
+    test "concurrent running_regions/1 calls on one handle match the serial result" do
+      doc = Document.open!(@running_pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      expected = Document.running_regions!(doc)
+      assert map_size(expected) == 4
+
+      1..@concurrency
+      |> Task.async_stream(fn _ -> Document.running_regions!(doc) end,
+        max_concurrency: @concurrency,
+        ordered: false,
+        timeout: @timeout
+      )
+      |> Enum.each(fn {:ok, actual} -> assert actual == expected end)
+    end
+
     test "concurrent mixed extractors on one handle match their serial results", %{doc: doc} do
       calls = [
         text: &Document.text!/1,
@@ -91,6 +108,7 @@ defmodule PdfElixide.ConcurrencyTest do
         page_label_ranges: &Document.page_label_ranges!/1,
         outline: &Document.outline!/1,
         to_markdown: &Document.to_markdown!/1,
+        running_regions: &Document.running_regions!/1,
         # Handle-carrying, so two extractions never compare equal with `:ref` on —
         # the same reasoning `per_page_equivalence_test.exs` gives.
         fonts: fn d -> d |> Document.fonts!() |> Enum.map(&Map.delete(&1, :ref)) end,

@@ -32,6 +32,7 @@ mod redaction;
 mod rendering;
 mod resource;
 mod ring;
+mod running_regions;
 mod search;
 mod signatures;
 mod span;

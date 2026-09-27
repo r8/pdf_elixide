@@ -75,6 +75,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     spans: [],
     tables: [],
     structured: [],
+    running_regions: [],
     paths: [],
     rects: [],
     lines: [],

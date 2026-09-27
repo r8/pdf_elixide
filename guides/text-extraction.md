@@ -207,6 +207,81 @@ When the separate cell rendering is emitted,
 `PdfElixide.Document.to_plain_text/2` keeps its column padding while
 `PdfElixide.Document.text/2` collapses the padding to single spaces.
 
+## Running headers and footers
+
+`PdfElixide.Document.running_regions/2` finds the spans of each page's
+running header and footer, keyed by page index. It changes nothing on the
+document, so later extraction still includes the text.
+
+```elixir
+regions = Document.running_regions!(doc)
+#=> %{0 => [%PdfElixide.Document.Span{text: "Quarterly Report"}, ...], 1 => [...]}
+```
+
+A document that tags its headers and footers as artifacts is answered from
+those tags. Otherwise a line counts when the same text sits at about the same
+place in the top or bottom margin on at least `:threshold` of the pages, 80% by
+default. Lower it for a document whose running header skips some pages, such
+as chapter openings:
+
+```elixir
+Document.running_regions!(doc, area: :header, threshold: 0.5)
+```
+
+Bare page numbers are excluded. A margin line whose number changes is usually
+missed on the first page; see `PdfElixide.Document.running_regions/2`.
+
+To read text without them, pass each page's boxes as `:exclude_regions`. The
+spans are in the frame that option filters in, rotated pages included:
+
+```elixir
+text =
+  Enum.map_join(doc, "\f", fn page ->
+    boxes = regions |> Map.get(page.index, []) |> Enum.map(& &1.bbox)
+    Page.text!(page, exclude_regions: boxes)
+  end)
+```
+
+The whole-document `text/2` applies one `:exclude_regions` list to every page,
+so it cannot take a per-page map. `PdfElixide.Document.words/2` and
+`PdfElixide.Document.text_lines/2` take no exclusion list; their
+`:include_artifacts` option drops text the document tags as artifacts instead.
+
+To hide them in a saved copy, paint over the same boxes with
+`PdfElixide.Editor.erase_regions/3`, which takes raw, unrotated user space.
+Spans on a rotated page may be in the displayed frame; see "Telling which frame
+a box is in" in `PdfElixide.Document`. Map those back with
+`PdfElixide.Geometry.Rect.to_user_space/3`:
+
+```elixir
+alias PdfElixide.Geometry.Rect
+
+editor = PdfElixide.Editor.open!("path/to/file.pdf")
+
+editor =
+  Enum.reduce(regions, editor, fn {index, spans}, editor ->
+    page = Document.page!(doc, index)
+    rotation = Page.rotation!(page)
+    media_box = Page.media_box!(page)
+
+    boxes =
+      for span <- spans do
+        if rotation == 180 or (rotation in [90, 270] and span.rotation != 0.0),
+          do: Rect.to_user_space(span.bbox, rotation, media_box),
+          else: span.bbox
+      end
+
+    PdfElixide.Editor.erase_regions!(editor, index, boxes)
+  end)
+```
+
+Do this before moving or deleting pages, while the editor's page indices still
+match the document the spans came from. The result is a white rectangle over
+text that is still there; see the "Erasing regions" section of the
+[Editing](editing.md) guide. Text that comes from an annotation, such as a
+comment or stamp repeated in the margin, is drawn above the page content, so
+the rectangle does not cover it.
+
 ## Beyond plain text
 
   * **Glyphs and geometry.** `PdfElixide.Document.chars/2`,

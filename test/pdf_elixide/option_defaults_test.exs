@@ -188,6 +188,10 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.__option_defaults__(:structured) == %{column_mode: :auto}
     end
 
+    test "running_regions/2" do
+      assert Document.__option_defaults__(:running_regions) == %{area: :both, threshold: 0.8}
+    end
+
     test "tables/2,3" do
       assert Document.__option_defaults__(:tables) == %{
                detection: @table_detection_defaults,
@@ -337,6 +341,7 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Document.spans!(doc, @columns, []) == Document.spans!(doc, @columns)
       assert Document.structured!(doc, @columns, []) == Document.structured!(doc, @columns)
       assert Document.structured!(doc, []) == Document.structured!(doc)
+      assert Document.running_regions!(doc, []) == Document.running_regions!(doc)
       assert Document.inks!(doc, @columns, []) == Document.inks!(doc, @columns)
 
       assert Document.search!(doc, "the", @columns, []) ==
