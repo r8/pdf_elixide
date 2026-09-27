@@ -12,7 +12,9 @@ defmodule PdfElixide.Editor do
       #=> :ok
 
   Nothing is written until `save/3` or `to_binary/2` runs, and neither consumes
-  the editor. Mutating calls return the editor so they compose in a pipeline.
+  the editor. Mutating calls return the editor so they compose in a pipeline,
+  except `apply_redactions/1,2`, `sanitize/1,2` and
+  `PdfElixide.Compliance.convert/3`, which return a report of what they did.
   `close/1` **discards unsaved edits**.
 
   **Incremental saves support only field values and document information.**
@@ -100,6 +102,13 @@ defmodule PdfElixide.Editor do
   accept the password of an already-encrypted source. See the
   [Encryption](guides/encryption.md) guide for the workflow, supported
   algorithms and operations refused on an encrypted source.
+
+  ## PDF/A
+
+  `PdfElixide.Compliance.convert/3` rewrites the editor's document in place and
+  restricts later writes, such as incremental saves and encryption. See the
+  [PDF/A conversion](guides/pdf-a-conversion.md) guide for which edits to make
+  first.
 
   ## Concurrency
 
@@ -460,7 +469,7 @@ defmodule PdfElixide.Editor do
 
   An editor holds the source document plus its pending edits in memory on the
   Rust side, normally freed only when the BEAM garbage-collects the handle.
-  `close/1` frees it now, which matters for long-lived processes that open many
+  `close/1` frees it early, which matters for long-lived processes that open many
   documents. Calling it is optional and idempotent. It waits for an in-flight
   call on the same editor — a save can hold the handle's lock for seconds — and
   releases the memory as soon as the handle is idle, not preemptively.
@@ -494,7 +503,8 @@ defmodule PdfElixide.Editor do
     * `:incremental` — write an incremental update instead of a full
       rewrite. Defaults to `false`. See `save/3` and `to_binary/2` for restrictions.
     * `:compress` — compress streams. Defaults to `true`. An editor converted
-      to PDF/A-1 refuses `true`; see the
+      to PDF/A-1 must be written with `compress: false`; the default returns
+      `{:error, %PdfElixide.Error{reason: :unsupported}}`. See the
       [PDF/A conversion](guides/pdf-a-conversion.md) guide.
     * `:garbage_collect` — drop unreferenced objects. Defaults to
       `true`. `false` is refused after `sanitize/1,2` with
@@ -804,7 +814,7 @@ defmodule PdfElixide.Editor do
   The result includes pending edits, like `to_binary/2` with its default
   options, and is never encrypted. Extraction is not a way to remove
   confidential content; see
-  [Splitting a document](guides/merging-and-splitting.md#splitting-a-document).
+  [Extraction is not redaction](guides/merging-and-splitting.md#extraction-is-not-redaction).
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if an index does
   not exist, or `:invalid_pdf` if a listed page cannot be read. Raises
@@ -1781,7 +1791,7 @@ defmodule PdfElixide.Editor do
   Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` for a document that
   already has a name tree, naming the entries that would be lost. A
   `sanitize/1,2` that emptied the tree lifts the refusal; one that left an entry
-  in it does not. See the "Attachments" section of this module for this
+  in it does not. See [Attachments](guides/editing.md#attachments) for this
   restriction and the media-type limitation, and
   [Saving edits](guides/editing.md#saving-edits) for the incremental-save
   refusal.
@@ -2501,6 +2511,8 @@ defmodule PdfElixide.Editor do
 
   defp validate_fill!(other, _label), do: other
 
+  # Every key is emitted for the reason given on
+  # `PdfElixide.Document.__option_defaults__/1`.
   @doc false
   @spec __option_defaults__(
           :open

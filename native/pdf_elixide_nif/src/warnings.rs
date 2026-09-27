@@ -230,8 +230,7 @@ mod tests {
     }
 
     // The right column is what `NifUnitEnum` derives from our own variant
-    // names, so one table pins both spellings. A failure is a decision, not a
-    // deletion: following upstream renames a documented atom.
+    // names, so one table pins both spellings.
     #[test]
     fn upstream_still_spells_every_category_the_way_our_atoms_do() {
         for (category, atom) in [

@@ -2,8 +2,8 @@ defmodule PdfElixide.Document.BookmarkSegment do
   @moduledoc """
   One part of a document split at its bookmarks.
 
-  Returned by `PdfElixide.Document.bookmark_segments/2`,
-  `PdfElixide.Editor.bookmark_segments/2` and
+  Returned by `PdfElixide.Document.bookmark_segments/2` and
+  `PdfElixide.Editor.bookmark_segments/2`, and paired with each part's bytes by
   `PdfElixide.Editor.split_by_bookmarks/2`:
 
     * `:title` — the title of the bookmark that starts the segment, or `nil`

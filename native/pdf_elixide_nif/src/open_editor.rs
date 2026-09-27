@@ -206,7 +206,7 @@ impl OpenEditor {
     }
 
     // Normalize imported pages through a snapshot so later page operations treat
-    // them as ordinary pages. Build and validate the replacement before swapping it in.
+    // them as ordinary pages.
     pub(crate) fn merge(&mut self, incoming: &Incoming) -> Result<usize, MergeError> {
         if incoming.pages.is_empty() {
             return Ok(0);
@@ -327,7 +327,8 @@ impl OpenEditor {
         Ok((snapshot, info))
     }
 
-    // Discard warnings appended by a snapshot that fails to land.
+    // Every failure after the snapshot returns through here, so `merge` discards
+    // its warnings in one place.
     fn merge_snapshot(
         &mut self,
         incoming: &Incoming,
@@ -351,7 +352,8 @@ impl OpenEditor {
             return Err(MergeError::Miscount { expected, got });
         }
 
-        // A backstop, should the written root ever gain resources the source's lacked.
+        // Checked again on the written root: it, not the source's, is what a merged
+        // page inherits from.
         if let Some(page) = takes_resources {
             if root_declares_resources(fresh.source()) {
                 return Err(MergeError::TakesDestinationResources { page });
@@ -678,9 +680,8 @@ impl OpenEditor {
     }
 
     // Visible pages carrying a queued region or a redaction mark no pass has
-    // applied, as `(output, source, queued)`. The mark predicate scans
-    // `page_order` per page, so that sweep is gated on the category ever having
-    // been marked.
+    // applied, as `(output, source, queued)`. The mark sweep is gated by
+    // `redactions_marked`.
     pub(crate) fn pages_pending_redaction(&self) -> Vec<(usize, usize, bool)> {
         self.pages
             .iter()
@@ -840,7 +841,8 @@ impl OpenEditor {
         self.info.as_ref()
     }
 
-    // Never `get_info`: `editor.rs`'s `upstream_still_*_info_*` canaries say why.
+    // Never `get_info`: `upstream_still_ignores_a_direct_info_dictionary` and the
+    // two canaries after it in `editor.rs` say why.
     pub(crate) fn seeded_info(&self) -> MetadataNif {
         self.info
             .clone()
@@ -889,9 +891,7 @@ impl OpenEditor {
             dropped.push("queued redaction regions");
         }
 
-        // Predicates take output indices and scan page_order to map them to
-        // source. Gate each quadratic sweep on whether that category was ever
-        // marked.
+        // Each sweep is gated by its `*_marked` flag.
         let any_page = |gate: bool, ask: fn(&DocumentEditor, usize) -> bool| {
             gate && (0..sources.len()).any(|page| ask(&self.editor, page))
         };
@@ -928,8 +928,7 @@ impl OpenEditor {
     }
 }
 
-// Materialize inherited attributes that the destination would change. Use the
-// media box to cancel a crop box newly inherited from the destination.
+// Materialize inherited attributes that the destination would change.
 struct PageFix {
     rotation: Option<i32>,
     media_box: Option<[f32; 4]>,
@@ -952,6 +951,7 @@ fn scratch_editor(
     Ok(scratch)
 }
 
+// Use the media box to cancel a crop box newly inherited from the destination.
 fn inheritance_fixes(
     merged: &PdfDocument,
     first: usize,
@@ -983,7 +983,6 @@ fn inheritance_fixes(
     fixes
 }
 
-// Avoid scanning pages when no regions were queued.
 fn pending_on_a_visible_page(sources: &[usize], pending: &HashSet<usize>) -> bool {
     !pending.is_empty() && sources.iter().any(|source| pending.contains(source))
 }
@@ -1059,8 +1058,7 @@ mod tests {
         assert_eq!(editor.dropped_by_an_incremental_save(), ["page deletions"]);
     }
 
-    // The region mirror is keyed by source page, so a region on a page that is
-    // no longer visible must not be reported.
+    // The region mirror is keyed by source page.
     #[test]
     fn a_queued_region_on_a_deleted_page_is_not_reported() {
         let mut editor = open("sample.pdf");

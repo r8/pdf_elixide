@@ -223,7 +223,7 @@ fn editor_page_count(resource: ResourceArc<EditorResource>) -> NifResult<usize> 
         .with_read(|editor| Ok(editor.current_page_count()))
 }
 
-// Shared for the same reason as `editor_page_count`: upstream's `is_modified`
+// Shared for the same reason as `editor_page_count`: `OpenEditor::modified`
 // takes `&self`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_is_modified(resource: ResourceArc<EditorResource>) -> NifResult<bool> {
@@ -338,7 +338,8 @@ fn editor_to_bytes(
     options: SaveOptionsNif,
 ) -> NifResult<OwnedBinary> {
     resource.editor.with_lock(|editor| {
-        // Incremental output upstream refuses on its own; this one it does not.
+        // Upstream refuses incremental output here on its own, so only the guards
+        // that also apply to a full rewrite remain.
         ensure_scrub_survives_save(editor, &options)?;
         ensure_metadata_survives_save(editor, &options)?;
         ensure_write_keeps_conversion(editor, &options)?;
@@ -483,12 +484,10 @@ fn ensure_incremental_is_not_encrypted(
     Ok(())
 }
 
-// The encryption guard above removes the other case with an empty source path:
-// `editor_open`'s `EncryptedPdf` route builds through `from_document`, which
-// clears it, while Elixir keeps the path it was given. So this message and
-// `Editor.source_path/1` would contradict each other on that handle, and only
-// the encryption guard running first keeps it unreachable. Narrow that guard and
-// this one needs the path recorded on the Elixir side instead.
+// Unreachable for an encrypted source only because the encryption guard runs
+// first: `editor_open`'s `EncryptedPdf` route builds through `from_document`,
+// which clears the source path while Elixir keeps it, so this message would
+// contradict `Editor.source_path/1` on that handle.
 fn ensure_incremental_has_a_source(
     editor: &DocumentEditor,
     options: &SaveOptionsNif,
@@ -1174,7 +1173,7 @@ fn editor_merge_bytes(resource: ResourceArc<EditorResource>, bytes: Binary) -> N
     merge_incoming(&resource, || Ok(bytes.as_slice().to_vec()))
 }
 
-// The incoming document is parsed and rewritten before the lock, like an open.
+// The incoming document is parsed and checked before the lock, like an open.
 // A closed editor answers `:closed` before its input is read; the exclusive lock
 // still catches a close landing during the parse.
 fn merge_incoming(
@@ -1713,8 +1712,7 @@ fn editor_flatten_page_annotations(
     })
 }
 
-// Shared because upstream's accessor takes `&self`; the slice must be cloned
-// since the guard drops at the closure boundary.
+// Shared: `all_flatten_warnings` takes `&self` and returns an owned list.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<Vec<String>> {
     resource
@@ -1781,9 +1779,7 @@ mod tests {
         assert_eq!(bytes, "Título".as_bytes());
     }
 
-    // The three below justify `read_metadata` over `get_info`. Unusually, no
-    // single red deletes it: `editor_info` is a shared read and `get_info`
-    // takes `&mut self`.
+    // This canary and the two after it justify `read_metadata` over `get_info`.
     #[test]
     fn upstream_still_ignores_a_direct_info_dictionary() {
         let mut editor = DocumentEditor::open(fixture("direct_info.pdf")).expect("fixture opens");
@@ -2229,7 +2225,7 @@ mod tests {
         assert_eq!(definitions, 2, "a merged page is now written once");
     }
 
-    // Not inverted: the binding's normalization relies on it.
+    // Not a canary: `OpenEditor::merge`'s snapshot relies on this.
     #[test]
     fn a_save_and_reopen_still_makes_merged_pages_ordinary() {
         let mut editor = with_merged_pages();

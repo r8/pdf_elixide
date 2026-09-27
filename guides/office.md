@@ -195,6 +195,6 @@ once.
 
 Exports read the document the way the other extractors do, so many processes
 can export from one open document concurrently. They extract the document's
-text, so the advice about tagged PDFs in [Concurrency](concurrency.md) applies
+text, so [The /ActualText hazard](concurrency.md#the-actualtext-hazard) applies
 to them too. Imports take no document handle, so they run independently of
 each other.

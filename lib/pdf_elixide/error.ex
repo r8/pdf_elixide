@@ -23,7 +23,10 @@ defmodule PdfElixide.Error do
     * `:invalid_pdf` — malformed or unparseable PDF data.
     * `:invalid_pattern` — the search pattern could not be parsed. Comes only
       from `PdfElixide.Document.search/2` and friends under `literal: false`.
-    * `:unsupported` — an unsupported PDF version, feature, or filter.
+    * `:unsupported` — an input or operation this library does not support:
+      a PDF version, feature or filter, bytes of an unsupported format, or a
+      call refused in the handle's current state, such as an incremental save
+      after a merge. `message` says which, and what to do instead.
     * `:not_found` — a referenced object was not found; no form field carries
       the name given to `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2`,
       `PdfElixide.Form.put_value/3`, `PdfElixide.Form.put_values/2` or

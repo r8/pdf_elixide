@@ -94,7 +94,7 @@ defmodule PdfElixide.ComplianceTest do
       refute "XMETA-001" in codes(Compliance.validate!(open(@output_intent_pdf), :pdf_x_4).errors)
     end
 
-    # Documented limitation: `sample.pdf` inherits its `/MediaBox` from `/Pages`.
+    # `sample.pdf` inherits its `/MediaBox` from `/Pages`.
     test "PDF/X reports an inherited MediaBox as missing" do
       report = Compliance.validate!(open(@sample_pdf), :pdf_x_4)
 

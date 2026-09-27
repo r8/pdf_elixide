@@ -210,9 +210,8 @@ impl From<PlainTextOptionsNif> for ConversionOptions {
     }
 }
 
-// Returns an `:out_of_range` error if `page_index` is not a valid page of
-// `doc`. Upstream reports a bad index as a generic `InvalidPdf`, so we check
-// bounds here to give callers a distinct, matchable reason.
+// Upstream reports a bad index as a generic `InvalidPdf`; this gives
+// `:out_of_range`.
 pub fn ensure_page_in_range(doc: &PdfDocument, page_index: usize) -> NifResult<()> {
     let count = doc.page_count().map_err(to_nif_err)?;
     if page_index >= count {
@@ -1449,8 +1448,8 @@ mod tests {
         )
     }
 
-    // The non-finite-float family: each pins one upstream mechanism that
-    // overflows an f32. The boundary clamp stays when they fail; the canary goes.
+    // The non-finite-float family: each is an upstream path that overflows an
+    // f32 into the boundary clamp.
     #[test]
     fn upstream_still_emits_an_infinite_span_size_for_a_huge_text_matrix() {
         let doc = PdfDocument::open(fixture("unbounded_text_matrix.pdf")).expect("fixture opens");
@@ -1515,9 +1514,8 @@ mod tests {
         }
     }
 
-    // When the first assertion fails, upstream has added the group: delete the
-    // grouping branch of `SearchOptionsNif::into_request` and the raw-pattern
-    // probe in `run_search`, not this assertion.
+    // Justifies the grouping in `SearchOptionsNif::into_request` and the
+    // raw-pattern probe in `run_search`.
     #[test]
     fn upstream_still_wraps_whole_word_without_grouping() {
         let doc = PdfDocument::open(fixture("search.pdf")).expect("fixture opens");
@@ -1602,10 +1600,8 @@ mod tests {
         );
     }
 
-    // Both `to_plain_text` canaries below carry the same two guards: a vacuity
-    // assert, because the tagged branch is the one that reads the option and the
-    // fixture has to take the untagged one, and a control showing that same
-    // option live on the text path.
+    // Both `to_plain_text` canaries below need the untagged branch, since the
+    // tagged one reads the option, and a control showing it live on the text path.
     #[test]
     fn upstream_still_ignores_region_filters_in_to_plain_text() {
         let doc = PdfDocument::open(fixture("extraction.pdf")).expect("fixture opens");

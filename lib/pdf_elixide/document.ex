@@ -33,8 +33,8 @@ defmodule PdfElixide.Document do
   `to_xlsx/2`, are whole-document calls of the same kind, returning the file
   as one binary.
 
-  Three of them hold native memory *after* the call as well, since each returned
-  struct carries a handle that BEAM memory accounting cannot see:
+  These hold native memory *after* the call as well, since each returned struct
+  carries a handle that BEAM memory accounting cannot see:
 
     * `images/1` — every image's decoded pixels, or its original JPEG bytes.
     * `fonts/1` — one handle per page per font, with no sharing across pages.
@@ -64,7 +64,7 @@ defmodule PdfElixide.Document do
 
   Concatenating per-page results reproduces the whole-document arity exactly for
   the list-returning extractors, and `Enum.map(doc, &Page.structured!/1)`
-  reproduces `structured/1`. The four that return one value do **not**,
+  reproduces `structured/1`. The ones that return a single string do **not**,
   since each joins pages itself: `text/1` separates them with a form feed and
   applies `:on_page_error` (see `t:text_opts/0`), `to_markdown/1` and
   `to_plain_text/1` each join with a `---` break, and `to_html/1` wraps each
@@ -404,7 +404,7 @@ defmodule PdfElixide.Document do
   Releases the document's native memory without waiting for garbage collection.
 
   A document holds its PDF data in memory on the Rust side, normally freed only
-  when the BEAM garbage-collects the handle. `close/1` frees it now, which
+  when the BEAM garbage-collects the handle. `close/1` frees it early, which
   matters for long-lived processes that open many documents. Calling it is
   optional and idempotent.
 
@@ -470,8 +470,8 @@ defmodule PdfElixide.Document do
   Answers `false` for a document whose structure tree cannot be *read* as well
   as for one that has none: a corrupt `/StructTreeRoot` is reported the same way
   an untagged document is. Use `has_structure_tree/1` to tell the two apart. A
-  handle that cannot be used at all — a closed document, a native panic — still
-  raises.
+  handle that cannot be used at all — a closed document, or a `:panic` error —
+  still raises.
   """
   @spec has_structure_tree?(t()) :: boolean()
   def has_structure_tree?(%__MODULE__{ref: ref}) do
@@ -497,7 +497,7 @@ defmodule PdfElixide.Document do
 
   Answers `false` for a document whose catalog or `/AcroForm` entry cannot be
   read as well as for one that carries no XFA. Use `has_xfa/1` to tell the two
-  apart; a closed document or a native panic still raises.
+  apart; a closed document or a `:panic` error still raises.
   """
   @spec has_xfa?(t()) :: boolean()
   def has_xfa?(%__MODULE__{ref: ref}) do
@@ -521,7 +521,7 @@ defmodule PdfElixide.Document do
   @doc """
   Returns whether the PDF document is encrypted.
 
-  A closed document or a native panic raises — see the "Errors versus
+  A closed document or a `:panic` error raises — see the "Errors versus
   exceptions" section of `PdfElixide.Error`. Nothing else can fail here.
   """
   @spec encrypted?(t()) :: boolean()
@@ -1642,7 +1642,7 @@ defmodule PdfElixide.Document do
 
   # Conversion is CPU-bound except when it writes images to disk, so it has a
   # dirty-CPU and a dirty-IO NIF and picks between them here — the same split as
-  # `Document.Image.to_binary/2` and `save/3`.
+  # `Document.Image.to_binary/2` and `Document.Image.save/3`.
   defp call_markdown_all(ref, options) do
     if writes_images?(options),
       do: Native.document_to_markdown_all_to_dir(ref, options),
@@ -1892,9 +1892,10 @@ defmodule PdfElixide.Document do
   See `t:office_opts/0` for options.
 
   An encrypted document must be authenticated first; until then this returns
-  `{:error, %PdfElixide.Error{reason: :encrypted}}`. See "Whole-document
-  extraction and memory" above for its memory use, and the [Office
-  conversion](guides/office.md) guide for fidelity and conversion back to PDF.
+  `{:error, %PdfElixide.Error{reason: :encrypted}}`. See the "Whole-document
+  extraction and memory" section of `PdfElixide.Document` for its memory use,
+  and the [Office conversion](guides/office.md) guide for fidelity and
+  conversion back to PDF.
   """
   @spec to_docx(t(), office_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_docx(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
@@ -3149,6 +3150,9 @@ defmodule PdfElixide.Document do
     }
   end
 
+  # A `NifMap` decode is total, so every builder emits every key. This is the one
+  # route to each builder's defaults, which `option_defaults_test.exs` compares
+  # against hand-written maps: a changed default is otherwise observable nowhere.
   @doc false
   @spec __option_defaults__(atom()) :: map()
   def __option_defaults__(:open), do: build_open_options([])

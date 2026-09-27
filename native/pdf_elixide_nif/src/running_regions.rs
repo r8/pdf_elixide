@@ -42,8 +42,7 @@ pub struct RunningRegionsOptionsNif {
 }
 
 impl RunningRegionsOptionsNif {
-    // Defence in depth for callers bypassing Elixir's identical check; the
-    // inclusive range also rejects NaN and infinities.
+    // As for `validate_mode` in `extract_options.rs`.
     fn validate(&self) -> NifResult<()> {
         if !(0.0..=1.0).contains(&self.threshold) {
             return Err(tagged_err(

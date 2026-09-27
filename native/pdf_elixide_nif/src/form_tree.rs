@@ -1271,7 +1271,6 @@ mod tests {
 
         #[test]
         fn accepts_a_tree_exactly_at_the_depth_cap() {
-            // The cap is inclusive.
             assert_eq!(
                 walk_detached(&chain(MAX_FIELD_DEPTH), MAX_FIELD_NODES),
                 Ok(())

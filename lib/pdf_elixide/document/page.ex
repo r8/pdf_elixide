@@ -15,7 +15,8 @@ defmodule PdfElixide.Document.Page do
       for page <- doc, do: PdfElixide.Document.Page.text!(page)
 
   Every extractor `PdfElixide.Document` offers is available here for a single
-  page, taking the same options. The comprehension above collects every page's
+  page, taking the same options, except `PdfElixide.Document.running_regions/2`,
+  which compares pages and so needs the whole document. The comprehension above collects every page's
   result. To bound memory used by results, consume pages without accumulating
   their results — see the streaming example and handle-release guidance in the
   "Whole-document extraction and memory" section of `PdfElixide.Document`.
@@ -636,8 +637,8 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Renders a single named ink's plate for the page.
 
-  See `PdfElixide.Document.separation/4`, including why an ink the page never
-  paints still yields a plate.
+  See `PdfElixide.Document.separation/4`. An ink the page never paints yields
+  an all-zero plate.
   """
   @spec separation(t(), String.t(), Document.dpi_opts()) ::
           {:ok, SeparationPlate.t()} | {:error, Error.t()}

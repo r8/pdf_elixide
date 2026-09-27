@@ -8,6 +8,7 @@ it to a file, or return it as a binary:
 "# Report\n\nAll **good**."
 |> PdfElixide.Editor.from_markdown!(title: "Report")
 |> PdfElixide.Editor.save!("report.pdf")
+|> PdfElixide.Editor.close()
 ```
 
 These functions are simple typesetters, not the reverse of the document
@@ -23,9 +24,9 @@ bullets, `>` quotes, fenced code blocks, pipe tables, and `**bold**`,
 of an unindented line. Numbered lists, links, deeper headings and indented
 bullets appear as source text.
 
-Long runs of blank lines can make the next line overlap the first line of a
-new page, especially on a short custom page. Collapse repeated blank lines in
-Markdown and HTML input.
+Long runs of blank lines can make a later line print over the first line of
+the page instead of starting a new page, especially on a short custom page.
+Collapse repeated blank lines in Markdown and HTML input.
 
 ## HTML
 
@@ -40,9 +41,11 @@ may appear as literal Markdown markers instead of receiving their intended
 formatting. Tags with attributes or upper-case names are not recognised.
 
 Other tags are removed but their contents remain. This includes `title`,
-`style` and `script` content, so do not pass a complete HTML document. Entities
-are not decoded. A literal `<` starts a tag-like region and can discard text up
-to the next `>` or the end of the input; avoid angle brackets in running text.
+`style` and `script` content, so do not pass a complete HTML document. `<h5>`
+and `<h6>` print with literal `#####` and `######` markers. Entities are not
+decoded. A literal `<` starts a tag-like region and can discard text up to the
+next `>` or the end of the input, and a lone `>` is removed; avoid angle
+brackets in running text.
 The remaining text is laid out as Markdown, so Markdown-looking source may be
 formatted.
 

@@ -230,8 +230,8 @@ alias PdfElixide.Form
 |> Editor.close()
 ```
 
-Editing functions return the same mutable editor handle, so rebinding does not
-fork its state. `Editor.to_binary/2` returns a PDF binary instead of writing a
+Most editing functions return the same mutable editor handle, so rebinding does
+not fork its state. `Editor.to_binary/2` returns a PDF binary instead of writing a
 file. See the [Forms](guides/forms.md) guide for field kinds and flags, bulk
 updates, save behavior, and button-field limitations.
 

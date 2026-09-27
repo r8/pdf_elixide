@@ -613,7 +613,7 @@ mod tests {
         )
     }
 
-    // The `form_metadata.pdf` field carrying every new entry at once.
+    // The `form_metadata.pdf` field carrying every `FieldMeta` entry at once.
     fn metadata_field(name: &str) -> FormFieldWrapper {
         let mut editor = DocumentEditor::open(fixture("form_metadata.pdf")).expect("fixture opens");
 

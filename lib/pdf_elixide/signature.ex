@@ -57,7 +57,7 @@ defmodule PdfElixide.Signature do
   says what each one does and does not establish.
 
   `:unknown` is always "the check could not run" rather than a doubt about the
-  document, but what stopped it differs by call: `verify/2` has four causes,
+  document, but what stopped it differs by call: `verify/2` has several causes,
   listed under "Verifying one" in the [Signatures](guides/signatures.md) guide;
   `verify_signer/1` a signature algorithm or digest this library cannot handle;
   and `verify_timestamp/2` a timestamp naming a digest algorithm it cannot

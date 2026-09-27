@@ -544,7 +544,6 @@ fn editor_convert_to_pdf_a_embedding(
     convert_to_pdf_a(&resource, standard, options)
 }
 
-// Convert a full-write snapshot, then atomically replace the live editor.
 fn convert_to_pdf_a(
     resource: &EditorResource,
     standard: StandardNif,

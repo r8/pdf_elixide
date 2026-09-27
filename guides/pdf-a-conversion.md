@@ -56,6 +56,8 @@ Convert after merging, extracting pages and making other edits:
   * Encryption is refused while the document declares PDF/A.
   * A PDF/A-1 editor must be written with `compress: false`.
   * Merging into a PDF/A-1 editor is refused. Merge first, then convert.
+    Merging into a PDF/A-2 or PDF/A-3 editor keeps the declaration and its
+    restrictions.
   * Extracted pages keep the PDF/A declaration, but PDF/A-1 extraction
     compresses their XMP metadata. Extract first and convert each output.
 
@@ -63,12 +65,12 @@ If edits after conversion are unavoidable, validate the bytes you write rather
 than relying on the conversion report.
 
 Sanitizing with `scrub_metadata: true` removes the PDF/A declaration and lifts
-the associated write restrictions. A later merge keeps the declaration and its
-restrictions.
+the associated write restrictions.
 
 An editor opened with a password converts to an unencrypted document. Conversion
-is refused, without changing the editor, when rebuilding would lose a pending
-redaction or when an encrypted source carries unencrypted XMP metadata.
+is refused, without changing the editor, when the editor has no pages, when
+rebuilding would lose a pending redaction, or when an encrypted source carries
+unencrypted XMP metadata.
 
 ## Existing XMP and metadata
 

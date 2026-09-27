@@ -1691,8 +1691,7 @@ defmodule PdfElixide.EditorTest do
       refute Editor.modified?(editor)
     end
 
-    # Deeper than a dirty scheduler's stack holds, so this is a live-VM check of
-    # the thread the import runs on.
+    # Nested deeper than a dirty scheduler's stack can recurse through.
     test "merges a page whose objects nest deeply" do
       editor = Editor.open!(@fonts_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -1871,7 +1870,7 @@ defmodule PdfElixide.EditorTest do
     end
 
     # `degenerate_box.pdf`'s pages declare no resources; `sample.pdf`'s root
-    # declares a font, `structured.pdf`'s root nothing.
+    # declares a font.
     test "refuses a page that would take this document's resources" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -1962,7 +1961,7 @@ defmodule PdfElixide.EditorTest do
       assert page_text(editor, 1) == ""
     end
 
-    # Page 0 carries `/Redact` annotations, which a mark alone only covers.
+    # Page 0 carries `/Redact` annotations, so the mark is a pending redaction.
     test "refuses an editor with a page marked for redaction" do
       editor = Editor.open!(@redact_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -2113,7 +2112,7 @@ defmodule PdfElixide.EditorTest do
                Editor.merge_binary(editor, File.read!(@invalid_pdf))
     end
 
-    test "rejects a path or binary that is not a binary" do
+    test "rejects a merge_binary/2 argument that is not a binary" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 

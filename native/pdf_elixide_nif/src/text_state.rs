@@ -343,7 +343,7 @@ mod tests {
     fn a_line_moved_by_a_stale_leading_stays_moved() {
         // The `TL` after the `T*` puts the parameters back in agreement, which
         // cannot undo where the line already went. Comparing parameters alone
-        // accepted this page.
+        // would accept this page.
         assert!(measures_restored_text_state(
             b"14 TL q 100 TL Q BT 100 780 Td T* 14 TL (S) Tj ET"
         ));

@@ -237,11 +237,11 @@ bytes = Editor.to_binary!(editor)
 Editor.close(editor)
 
 written = Document.from_binary!(bytes)
-[photo | _] = Document.images!(written, 0)
+[%{bbox: %PdfElixide.Geometry.Rect{} = box} | _] = Document.images!(written, 0)
 Document.close(written)
 
 covered = Editor.from_binary!(bytes)
-Editor.erase_region!(covered, 0, photo.bbox)
+Editor.erase_region!(covered, 0, box)
 Editor.save!(covered, "clean.pdf")
 Editor.close(covered)
 ```

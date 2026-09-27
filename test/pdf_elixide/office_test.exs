@@ -95,8 +95,8 @@ defmodule PdfElixide.OfficeTest do
       end
     end
 
-    # Both fixtures: a plain-xref file reads its page count unauthenticated and
-    # an object-stream one does not, so they reach export by different routes.
+    # `encrypted.pdf` reports its page count before authentication;
+    # `encrypted_objstm.pdf` does not.
     test "refuses an encrypted document until it is authenticated" do
       for path <- [@encrypted_pdf, @encrypted_objstm_pdf] do
         doc = open(path)

@@ -242,7 +242,7 @@ defmodule PdfElixide.Document.Table do
   Releases the detected table held behind `:ref`.
 
   The table is normally freed when the BEAM garbage-collects the handle;
-  `close/1` frees it now, which is worth doing when walking many tables and
+  `close/1` frees it early, which is worth doing when walking many tables and
   keeping only their text — it frees the native copy, glyph metrics and all, the
   larger of the two representations a `%Table{}` holds. The struct's own
   fields — rows, cells, spans — are plain data and stay readable afterwards;

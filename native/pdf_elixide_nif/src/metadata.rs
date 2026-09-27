@@ -74,7 +74,7 @@ pub(crate) fn normalize_text(value: Option<String>) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-// The eight fields upstream's struct has; `/Trapped` has no slot and is dropped
+// The fields upstream's struct has; `/Trapped` has no slot and is dropped
 // by any write that emits `/Info`. Dates are ASCII-checked before they get
 // here, so the encoder's BOM branch never touches one.
 pub(crate) fn to_document_info(info: &MetadataNif) -> DocumentInfo {

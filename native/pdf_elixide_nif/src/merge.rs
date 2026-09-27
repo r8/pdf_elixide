@@ -35,7 +35,8 @@ pub(crate) struct PageAttrs {
 pub(crate) enum MergeError {
     Encrypted,
     // A page entry that reaches the page tree, which the merge would copy
-    // along with the whole tree; or annotations, refused whatever they name.
+    // along with the whole tree, or names a destination or thread; or
+    // annotations, refused whatever they name.
     NamesAnotherPage { page: usize, entry: String },
     // Nothing can write a page's `/Resources`, so an inherited one is lost.
     InheritsResources { page: usize },
@@ -52,8 +53,9 @@ pub(crate) enum MergeError {
     // `/ParentTree`; merged into a tagged document, it would index the
     // destination's instead.
     CollidesWithStructure { page: usize },
-    // Upstream's import recurses without a limit, so a page nested past this
-    // would overflow even the import thread's stack and abort the process.
+    // Upstream's import recurses without a limit, so a page nested past
+    // `MAX_IMPORT_DEPTH` would overflow even the import thread's stack and abort
+    // the process.
     TooDeep { page: usize },
     NoPages,
     Miscount { expected: usize, got: usize },
@@ -713,8 +715,6 @@ mod tests {
         assert_eq!(depth(&objects, &mut HashMap::new()).0, 2 + 5 + 2);
     }
 
-    // Upstream stops only at an object already on its path, so it may walk a
-    // cycle through every member before leaving it.
     #[test]
     fn a_cycle_counts_every_member() {
         let objects = HashMap::from([
@@ -917,7 +917,7 @@ mod tests {
         assert!(!declares("degenerate_box.pdf"));
     }
 
-    // It opens without a password, which is what a check on authentication missed.
+    // It opens without a password, so authentication alone would not refuse it.
     #[test]
     fn an_encrypted_document_is_refused_even_when_it_opens() {
         assert!(matches!(

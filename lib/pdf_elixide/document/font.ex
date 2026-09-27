@@ -116,7 +116,7 @@ defmodule PdfElixide.Document.Font do
   collection.
 
   The embedded font program behind `:ref` is normally released when the BEAM
-  garbage-collects the handle; `close/1` releases this handle now. Calling it is
+  garbage-collects the handle; `close/1` releases this handle early. Calling it is
   optional and idempotent, and other extracted font handles remain valid. It
   takes the handle's lock exclusively, so it waits for an in-flight `data/1`
   and releases the reference as soon as the handle is idle, not preemptively.

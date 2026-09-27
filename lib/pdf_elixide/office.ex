@@ -16,7 +16,7 @@ defmodule PdfElixide.Office do
   To convert the other way, see `PdfElixide.Document.to_docx/2`,
   `PdfElixide.Document.to_pptx/2` and `PdfElixide.Document.to_xlsx/2`. The
   [Office conversion](guides/office.md) guide covers both directions, including
-  how an import depends on fonts installed on the host.
+  the fallback font files an import looks for at fixed paths.
   """
 
   alias PdfElixide.Error
@@ -33,8 +33,13 @@ defmodule PdfElixide.Office do
   recognised but cannot be converted returns `{:error, %PdfElixide.Error{}}`
   with reason `:other`.
 
-  A DOCX exported with `mode: :layout` does not keep its pages when converted
-  back; see [Round trips](guides/office.md#round-trips).
+  A DOCX exported with `mode: :layout`, or with the default `:auto` on a short
+  document, does not keep its pages when converted back; see
+  [Round trips](guides/office.md#round-trips).
+
+  Memory follows the size of the package once unzipped, not the size of the
+  upload; see [Memory and concurrency](guides/office.md#memory-and-concurrency)
+  before converting untrusted files.
   """
   @spec to_pdf(binary()) :: {:ok, binary()} | {:error, Error.t()}
   def to_pdf(bytes) when is_binary(bytes) do

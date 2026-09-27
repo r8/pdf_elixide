@@ -34,7 +34,7 @@ with no recognized type, which includes the grouping parents a nested form
 reports. `PdfElixide.Form.Field` is the umbrella defining the union. Which
 widget a button or choice field is, the struct's `:kind` says — see below.
 
-Every struct carries the same six keys. `:name` is the field's fully qualified
+Every struct carries the same keys. `:name` is the field's fully qualified
 name, dotted for a field nested under a parent — `"person.first"`, not `"first"`
 — and is what every other function here addresses it by. `:value` is a plain
 term: a string, `true`/`false`, a list of strings, or `nil` for a field carrying
@@ -158,7 +158,7 @@ A field inherits its type. A leaf under a text-field parent is therefore a
 `PdfElixide.Form.Field.Text`, not an `Unknown`, even when it declares no type of
 its own. A field's own type takes precedence.
 
-Four more keys are resolved the same way, so a field nested under a parent
+These keys are resolved the same way, so a field nested under a parent
 reports the parent's value where it declares none of its own:
 
   * `:flags`
@@ -333,7 +333,7 @@ unknown names, duplicates, names that are not strings and values outside
 {:ok, editor} = Form.put_values(editor, %{"full_name" => "Jane Doe", "subscribe" => true})
 
 # A list when the order matters — a map is applied in `Enum` order, which is unspecified.
-{:ok, editor} = Form.put_values(editor, [{"full_name", "Jane Doe"}, {"country", ["Canada"]}])
+{:ok, editor} = Form.put_values(editor, [{"full_name", "Jane Doe"}, {"country", ["FR"]}])
 ```
 
 The editor is held exclusively while the batch is applied, so concurrent calls
@@ -349,7 +349,7 @@ current value and writing back whatever it returns:
 
 # A field carrying no value hands `fun` a nil.
 {:ok, editor} = Form.update_value(editor, "country", fn
-  nil -> ["Canada"]
+  nil -> ["FR"]
   other -> other
 end)
 ```
@@ -369,13 +369,10 @@ write before you close.
 {:ok, bytes} = Editor.to_binary(editor)
 ```
 
-Both accept `t:PdfElixide.Editor.save_opts/0`: `:incremental`, `:compress`,
-`:garbage_collect` and `:encryption`, which writes the filled form
-password-protected; see [Encryption](encryption.md). `:encryption` cannot be
-combined with `incremental: true`, which raises `ArgumentError`. The exception
-is `to_binary/2` with `incremental: true`, which returns
-`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`: an incremental update must
-be appended to the original file, so use `save/3` for one.
+Both accept `t:PdfElixide.Editor.save_opts/0`. `:encryption` writes the filled
+form password-protected; see [Encryption](encryption.md). An incremental update
+is appended to the original file, so only `save/3` writes one; see
+[Saving edits](editing.md#saving-edits) for the combinations that are refused.
 
 For form filling against an existing PDF, an incremental save appends only the
 field-value updates and leaves the original AcroForm structure as it was:
@@ -393,10 +390,8 @@ naming it, rather than writing a file without it. See
 `to_binary/2` clears `PdfElixide.Editor.modified?/1` even though it writes no
 file; an incremental `save/3` leaves it set.
 
-`to_binary/2` builds the whole output in native memory before copying it into an
-Elixir binary, so peak usage includes both copies on top of the editor. For a
-very large document, prefer `save/3`, which writes to the file without that
-second full-size buffer.
+For a very large document, prefer `save/3`; see `PdfElixide.Editor.to_binary/2`
+for what `to_binary/2` holds in memory.
 
 ## Exporting field data
 
@@ -532,13 +527,9 @@ flatten; the drawing happens inside `PdfElixide.Editor.save/3` or
 reports every field, because the editor is unchanged — what changes is the file
 you write. `PdfElixide.Editor.modified?/1` does go true at mark time.
 
-**An incremental save is refused once a page is marked.**
-`save(editor, path, incremental: true)` returns
-`{:error, %PdfElixide.Error{reason: :unsupported}}` and writes nothing: an
-incremental update appends to the original, whose fields are still there, so it
-could only produce an unflattened file. Write with `save/3` without
-`:incremental`, or with `to_binary/2`. Because a mark cannot be removed, filling
-and flattening in one session means writing a full rewrite.
+**An incremental save is refused once a page is marked**, so filling and
+flattening in one session means writing a full rewrite; see
+[Saving edits](editing.md#saving-edits).
 
 **A mark cannot be removed, and it applies to every later write.** There is no
 unflatten; reopen the source if you need an unflattened document. Writing twice
@@ -602,9 +593,8 @@ Reported cases include:
     and flattening text outside Latin-1. Existing appearance streams are copied
     unchanged and are unaffected.
 
-    Such a warning may mention a build-time option for wider font support. This
-    package ships precompiled, so that option is not available here. Take the
-    warning to mean the field did not flatten legibly, and handle it in your own
+    Such a warning may suggest enabling wider font support; this package has
+    no such option. Take the warning to mean the field did not flatten legibly, and handle it in your own
     code — leave the form unflattened, substitute a value the field's font can
     render, or draw the text yourself before flattening.
   * **A field with no appearance stream that could not be given one.** The

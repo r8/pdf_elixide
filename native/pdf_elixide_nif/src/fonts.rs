@@ -68,10 +68,8 @@ fn split_subset_prefix(base_font: &str) -> (bool, String) {
     }
 }
 
-// Converts a `FontInfo` (and its per-page resource name) into its NIF
-// representation: eager metadata plus a resource handle to the font itself, so
-// the embedded font-program bytes are pulled lazily (on `font_data`) rather
-// than copied at extraction time.
+// Metadata is eager; the font-program bytes stay behind the resource handle
+// until `font_data`, rather than being copied at extraction time.
 pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> FontNif {
     let (subset, base_font) = split_subset_prefix(&font.base_font);
 

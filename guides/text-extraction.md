@@ -244,8 +244,8 @@ text =
 
 The whole-document `text/2` applies one `:exclude_regions` list to every page,
 so it cannot take a per-page map. `PdfElixide.Document.words/2` and
-`PdfElixide.Document.text_lines/2` take no exclusion list; their
-`:include_artifacts` option drops text the document tags as artifacts instead.
+`PdfElixide.Document.text_lines/2` take no exclusion list; passing them
+`include_artifacts: false` drops text the document tags as artifacts instead.
 
 To hide them in a saved copy, paint over the same boxes with
 `PdfElixide.Editor.erase_regions/3`, which takes raw, unrotated user space.
@@ -273,6 +273,10 @@ editor =
 
     PdfElixide.Editor.erase_regions!(editor, index, boxes)
   end)
+
+editor
+|> PdfElixide.Editor.save!("path/to/without-running-text.pdf")
+|> PdfElixide.Editor.close()
 ```
 
 Do this before moving or deleting pages, while the editor's page indices still

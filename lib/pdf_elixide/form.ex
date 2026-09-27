@@ -16,8 +16,8 @@ defmodule PdfElixide.Form do
       |> PdfElixide.Editor.close()
 
   `flatten/1,2` is how a filled form stops being fillable: it draws the field
-  values into the page and takes the interactive fields away. Like every other
-  edit it takes effect when the editor is written.
+  values into the page and takes the interactive fields away. It is deferred:
+  it takes effect when the editor is written.
 
   `export/3` hands the same fields back as FDF or XFDF bytes, so a filled form's
   data can leave without the PDF around it.

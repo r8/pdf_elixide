@@ -286,7 +286,7 @@ defmodule PdfElixide.Document.Image do
   Releases the image's pixel data without waiting for garbage collection.
 
   The bytes behind `:ref` are normally freed when the BEAM garbage-collects the
-  handle; `close/1` frees them now, which is worth doing when walking many large
+  handle; `close/1` frees them early, which is worth doing when walking many large
   images. Calling it is optional and idempotent. It takes the handle's lock
   exclusively, so it waits for an in-flight `data/1`, `to_binary/2` or `save/3`
   on the same image and releases the data as soon as the handle is idle, not

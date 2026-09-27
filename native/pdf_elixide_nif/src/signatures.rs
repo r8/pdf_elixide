@@ -1444,8 +1444,7 @@ mod tests {
         assert!(!well_formed_pdf_date("D:19000229000000Z"));
     }
 
-    // The complement: with one certificate the first *is* the signer, so the
-    // change must be a no-op for every fixture that predates it.
+    // The complement: with one certificate the first *is* the signer.
     #[test]
     fn signer_certificate_matches_upstream_on_a_single_certificate_blob() {
         for name in ["form_signature_cms.pdf", "form_signature_pades.pdf"] {

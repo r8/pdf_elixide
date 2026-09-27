@@ -119,7 +119,7 @@ do not wait on each other, but any of them will queue behind an in-flight
 exclusive operation such as a save on the same handle. For `flatten_warnings/1`,
 this ensures an in-flight save finishes before the warnings are read.
 
-Four `PdfElixide.Editor` calls read without sharing:
+These `PdfElixide.Editor` calls read without sharing:
 `PdfElixide.Editor.redaction_count/2`, `PdfElixide.Editor.extract_pages/2`,
 `PdfElixide.Editor.extract_page_ranges/2` and
 `PdfElixide.Editor.split_by_bookmarks/2`. Each takes the handle exclusively and

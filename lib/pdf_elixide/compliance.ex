@@ -190,9 +190,10 @@ defmodule PdfElixide.Compliance do
   `PdfElixide.Compliance.Conversion` and
   the [PDF/A conversion](guides/pdf-a-conversion.md) guide. The editor is
   changed in place, and a full write produces the converted document. A
-  different declared PDF/A level, or existing XMP metadata for a PDF/A-1
-  target, is refused with `:unsupported`. A standard that is not a
-  `t:pdf_a/0` raises `ArgumentError`.
+  document declaring a different PDF/A level, or existing XMP metadata for a
+  PDF/A-1 target, is among the refusals the guide lists; each returns
+  `{:error, %PdfElixide.Error{reason: :unsupported}}` and leaves the editor
+  unchanged. A standard that is not a `t:pdf_a/0` raises `ArgumentError`.
 
   ## Options
 
@@ -205,10 +206,11 @@ defmodule PdfElixide.Compliance do
       PDF/A-2 report lists as a violation. They are kept for a PDF/A-3 target
       whatever this says. Defaults to `true`.
     * `:icc_profile` — the ICC profile to embed in the output intent, as the
-      profile's bytes. Defaults to `nil`, which embeds an sRGB profile. A
-      document with an output intent refuses a supplied profile. Profiles are
-      embedded without validation and identified as sRGB, so supply an RGB
-      profile.
+      profile's bytes. Defaults to `nil`, which embeds an sRGB profile.
+      Supplying one for a document that already has an output intent returns
+      `{:error, %PdfElixide.Error{reason: :unsupported}}` and converts nothing.
+      Profiles are embedded without validation and identified as sRGB, so
+      supply an RGB profile.
   """
   @spec convert(Editor.t(), pdf_a(), convert_opts()) ::
           {:ok, Conversion.t()} | {:error, Error.t()}
@@ -265,6 +267,8 @@ defmodule PdfElixide.Compliance do
     }
   end
 
+  # Every key is emitted for the reason given on
+  # `PdfElixide.Document.__option_defaults__/1`.
   @doc false
   @spec __option_defaults__(:convert) :: map()
   def __option_defaults__(:convert), do: build_convert_options([])

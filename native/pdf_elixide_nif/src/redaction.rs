@@ -104,7 +104,7 @@ pub struct RedactionReportNif {
     bytes_removed: u64,
 }
 
-// Only the three fields `apply_redactions_destructive` actually sums; see
+// Only the fields `apply_redactions_destructive` actually sums; see
 // `upstream_still_drops_six_report_fields_when_aggregating`.
 fn redaction_report_to_nif(report: RedactionReport) -> RedactionReportNif {
     RedactionReportNif {

@@ -18,6 +18,8 @@ defmodule PdfElixide do
       offered.
     * `PdfElixide.Office` — converts DOCX, PPTX and XLSX files to PDF; the
       exports to those formats are `PdfElixide.Document` functions.
+    * `PdfElixide.Compliance` — checks a document against PDF/A, PDF/UA and
+      PDF/X, and converts an editor's document to PDF/A.
 
   `PdfElixide.Error` is what every one of them reports a failure as,
   `PdfElixide.Warning` what they record for a condition they read past, and
@@ -30,8 +32,8 @@ defmodule PdfElixide do
       markdown = PdfElixide.Document.to_markdown!(doc)
       :ok = PdfElixide.Document.close(doc)
 
-  Editing one is open, mutate, write — and every mutating call returns the
-  editor, so it composes as a single pipeline:
+  Editing one is open, mutate, write — and mutating calls return the editor,
+  so they compose as a single pipeline:
 
       "form.pdf"
       |> PdfElixide.Editor.open!()

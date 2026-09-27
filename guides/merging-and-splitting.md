@@ -72,9 +72,8 @@ its pages share, such as an embedded font, is written once for each page that
 uses it, so the result can be larger than the two documents together.
 
 The combined document keeps this editor's declared PDF version, even when the
-merged document declares a later one. This library cannot change the declared
-version. If a downstream tool requires it to match, merge into a document of the
-required version or adjust the version with another tool.
+merged document declares a later one; see
+[The declared version is not raised to match](encryption.md#the-declared-version-is-not-raised-to-match).
 
 ### When a merge is refused
 
