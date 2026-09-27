@@ -23,6 +23,15 @@ defmodule PdfElixide.Editor do
   see later edits too. The [Forms](guides/forms.md) guide covers both bang
   pipelines and tuple-returning calls, plus filling and deferred flattening.
 
+  ## Creating documents
+
+  `from_markdown/2`, `from_html/2` and `from_plain_text/2` lay text out on new
+  pages and return an editor holding them. They are simple typesetters rather
+  than round-trip conversions: lines are not wrapped, and only a limited
+  Markdown or HTML vocabulary is recognised. See the
+  [Creating documents](guides/creating-documents.md) guide for examples,
+  supported input and character limitations.
+
   ## Page structure
 
   `delete_page/2`, `move_page/3` and `keep_pages/2` use zero-based indices in
@@ -124,7 +133,8 @@ defmodule PdfElixide.Editor do
   editor, and is served from the struct thereafter: it is the version of the
   document the editor was opened from, and no editing operation changes it.
 
-  `:source_path` is `nil` for an editor built with `from_binary/2`.
+  `:source_path` is `nil` for an editor with no source file: one built with
+  `from_binary/2`, `from_markdown/2`, `from_html/2` or `from_plain_text/2`.
   """
   @type t :: %__MODULE__{
           ref: reference(),
@@ -221,9 +231,174 @@ defmodule PdfElixide.Editor do
     from_binary(bytes, opts) |> Wrap.unwrap!()
   end
 
+  @typedoc """
+  A page size for `from_markdown/2`, `from_html/2` and `from_plain_text/2`.
+
+  `:letter` is 612 × 792 points, `:a4` 595 × 842, `:legal` 612 × 1008 and `:a3`
+  842 × 1190. `{width, height}` gives any other size in points (1/72 inch).
+  """
+  @type page_size :: :letter | :a4 | :legal | :a3 | {number(), number()}
+
+  @typedoc """
+  Options accepted by `from_markdown/2`, `from_html/2` and their bang variants.
+
+    * `:title`, `:author`, `:subject` — written to the document information
+      dictionary. Each defaults to `nil`, which leaves the entry out.
+    * `:page_size` — a `t:page_size/0`. Defaults to `:letter`.
+    * `:margin_top`, `:margin_bottom`, `:margin_left` — margins in points.
+      Each defaults to `72`. There is no right margin, since lines are not
+      wrapped; see [Creating documents](guides/creating-documents.md).
+    * `:font_size` — body text size in points. Defaults to `12`. Headings
+      are set larger in proportion to it.
+    * `:line_height` — line spacing as a multiple of the text size. Defaults
+      to `1.5`.
+
+  An unknown key, or a value of the wrong type, raises `ArgumentError` naming
+  the key. So does a non-positive page dimension, font size or line height, a
+  negative margin, a left margin as wide as the page, a page too short for
+  two of the largest supported lines, or line spacing too small for the page.
+  """
+  @type create_opts :: [
+          title: String.t() | nil,
+          author: String.t() | nil,
+          subject: String.t() | nil,
+          page_size: page_size(),
+          margin_top: number(),
+          margin_bottom: number(),
+          margin_left: number(),
+          font_size: number(),
+          line_height: number()
+        ]
+
+  @create_opts_keys [
+    :title,
+    :author,
+    :subject,
+    :page_size,
+    :margin_top,
+    :margin_bottom,
+    :margin_left,
+    :font_size,
+    :line_height
+  ]
+
+  @typedoc """
+  Options accepted by `from_plain_text/2` and `from_plain_text!/2`.
+
+  The keys of `t:create_opts/0` without `:subject` and `:font_size`: plain text
+  is always set at 12 points, and its output carries no subject.
+  """
+  @type plain_text_create_opts :: [
+          title: String.t() | nil,
+          author: String.t() | nil,
+          page_size: page_size(),
+          margin_top: number(),
+          margin_bottom: number(),
+          margin_left: number(),
+          line_height: number()
+        ]
+
+  @plain_text_create_opts_keys @create_opts_keys -- [:subject, :font_size]
+
   @doc """
-  Returns the file path from which the editor was loaded, or `nil` if it
-  was loaded from binary data.
+  Creates a new document from Markdown and opens it for editing.
+
+  Headings, emphasis, lists, quotes, code and tables are laid out on as many
+  pages as the text needs. The result is an editor like one from
+  `from_binary/2`: write it with `save/3` or `to_binary/2`, or edit it first.
+
+      "# Report\\n\\nAll **good**."
+      |> PdfElixide.Editor.from_markdown!(title: "Report")
+      |> PdfElixide.Editor.save!("report.pdf")
+
+  Only part of Markdown is recognised, and lines are not wrapped; see
+  [Creating documents](guides/creating-documents.md).
+  """
+  @spec from_markdown(String.t(), create_opts()) :: {:ok, t()} | {:error, Error.t()}
+  def from_markdown(content, opts \\ []) when is_binary(content) and is_list(opts) do
+    options = build_create_options(opts)
+
+    with {:ok, {ref, version}} <-
+           Wrap.call(fn -> Native.editor_from_markdown(content, options) end) do
+      {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
+    end
+  end
+
+  @doc """
+  Creates a new document from Markdown and opens it for editing, raising an
+  error if it fails.
+  """
+  @spec from_markdown!(String.t(), create_opts()) :: t()
+  def from_markdown!(content, opts \\ []) when is_binary(content) and is_list(opts) do
+    from_markdown(content, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Creates a new document from HTML and opens it for editing.
+
+  Only a small set of bare tags is recognised, and it is not a browser: see
+  [Creating documents](guides/creating-documents.md) for what is kept and what
+  appears as it was written.
+
+      "<h1>Report</h1><p>All <b>good</b>.</p>"
+      |> PdfElixide.Editor.from_html!()
+      |> PdfElixide.Editor.to_binary!()
+  """
+  @spec from_html(String.t(), create_opts()) :: {:ok, t()} | {:error, Error.t()}
+  def from_html(content, opts \\ []) when is_binary(content) and is_list(opts) do
+    options = build_create_options(opts)
+
+    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_from_html(content, options) end) do
+      {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
+    end
+  end
+
+  @doc """
+  Creates a new document from HTML and opens it for editing, raising an error if
+  it fails.
+  """
+  @spec from_html!(String.t(), create_opts()) :: t()
+  def from_html!(content, opts \\ []) when is_binary(content) and is_list(opts) do
+    from_html(content, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Creates a new document from plain text and opens it for editing.
+
+  Each line of `content` becomes a line on the page, in 12-point Helvetica, with
+  no markup interpreted.
+
+  Only Windows-1252 characters can be set this way. Text containing any other
+  character, such as Cyrillic or Greek, returns
+  `{:error, %PdfElixide.Error{reason: :unsupported}}` naming the first one. A
+  leading byte order mark counts, so strip it from text read from a file.
+  `from_markdown/2` renders many of those characters; see
+  [Creating documents](guides/creating-documents.md) for which.
+  """
+  @spec from_plain_text(String.t(), plain_text_create_opts()) ::
+          {:ok, t()} | {:error, Error.t()}
+  def from_plain_text(content, opts \\ []) when is_binary(content) and is_list(opts) do
+    options = build_plain_text_create_options(opts)
+
+    with {:ok, {ref, version}} <-
+           Wrap.call(fn -> Native.editor_from_plain_text(content, options) end) do
+      {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
+    end
+  end
+
+  @doc """
+  Creates a new document from plain text and opens it for editing, raising an
+  error if it fails.
+  """
+  @spec from_plain_text!(String.t(), plain_text_create_opts()) :: t()
+  def from_plain_text!(content, opts \\ []) when is_binary(content) and is_list(opts) do
+    from_plain_text(content, opts) |> Wrap.unwrap!()
+  end
+
+  @doc """
+  Returns the file path the editor was opened from, or `nil` if it has no
+  source file: one built with `from_binary/2`, `from_markdown/2`,
+  `from_html/2` or `from_plain_text/2`.
   """
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
@@ -444,7 +619,8 @@ defmodule PdfElixide.Editor do
 
   A full rewrite is the default. `incremental: true` returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` without writing if the editor
-  came from `from_binary/2` or holds unsupported changes. See
+  has no source file — it came from `from_binary/2`, `from_markdown/2`,
+  `from_html/2` or `from_plain_text/2` — or holds unsupported changes. See
   [Saving edits](guides/editing.md#saving-edits) for supported changes and recovery.
 
   Writing does not consume the editor: you can keep editing and write again.
@@ -2057,6 +2233,137 @@ defmodule PdfElixide.Editor do
 
   defp validate_margin!(_key, value), do: value
 
+  # See `__option_defaults__/1` for why every key is emitted.
+  defp build_create_options(opts) do
+    opts = Keyword.validate!(opts, @create_opts_keys)
+    font_size = validate_positive!(:font_size, Keyword.get(opts, :font_size, 12))
+
+    # A `#` heading, the tallest line Markdown sets, is twice the body size, and
+    # code and table lines, the shortest, are nine tenths of it.
+    opts
+    |> create_layout(font_size, {0.9, 2})
+    |> Map.merge(%{subject: Keyword.get(opts, :subject), font_size: font_size})
+  end
+
+  defp build_plain_text_create_options(opts) do
+    opts = Keyword.validate!(opts, @plain_text_create_opts_keys)
+
+    create_layout(opts, 12, {1, 1})
+  end
+
+  defp create_layout(opts, font_size, scales) do
+    page_size = validate_page_size!(Keyword.get(opts, :page_size, :letter))
+    line_height = validate_positive!(:line_height, Keyword.get(opts, :line_height, 1.5))
+
+    margins =
+      Map.new([:margin_top, :margin_bottom, :margin_left], fn key ->
+        {key, validate_margin!(key, Keyword.get(opts, key, 72))}
+      end)
+
+    validate_layout_fits!(page_size, margins, {font_size, scales, line_height})
+
+    Map.merge(margins, %{
+      title: Keyword.get(opts, :title),
+      author: Keyword.get(opts, :author),
+      page_size: page_size,
+      line_height: line_height
+    })
+  end
+
+  @paper_sizes %{letter: {612, 792}, a4: {595, 842}, legal: {612, 1008}, a3: {842, 1190}}
+
+  # Range only, as `validate_margin!/2`: anything not recognised here is left to
+  # the NIF's field decoder, which names `:page_size`.
+  defp validate_page_size!({width, height} = size) when is_number(width) and is_number(height) do
+    validate_positive!(:page_size, width)
+    validate_positive!(:page_size, height)
+
+    size
+  end
+
+  defp validate_page_size!(size), do: size
+
+  @min_normal_f32 1.175_494_35e-38
+
+  # Below the smallest normal f32 a positive value reaches the layout as zero.
+  defp validate_positive!(key, value)
+       when is_number(value) and (value < @min_normal_f32 or value > @max_f32) do
+    raise ArgumentError,
+          "invalid #{inspect(key)}, expected a positive number that fits a " <>
+            "32-bit float: #{inspect(value)}"
+  end
+
+  defp validate_positive!(_key, value), do: value
+
+  # Refuse layouts that would stack lines instead of starting a new page.
+  defp validate_layout_fits!(page_size, margins, line) do
+    case Map.get(@paper_sizes, page_size, page_size) do
+      {width, height} when is_number(width) and is_number(height) ->
+        validate_width_fits!(width, margins)
+        validate_height_fits!(width, height, margins, line)
+
+      _other ->
+        :ok
+    end
+  end
+
+  defp validate_width_fits!(width, %{margin_left: left}) when is_number(left) do
+    if f32(left) >= f32(width) do
+      raise ArgumentError,
+            "invalid :margin_left, it leaves no room on a #{inspect(width)}-point-wide " <>
+              "page: #{inspect(left)}"
+    end
+  end
+
+  defp validate_width_fits!(_width, _margins), do: :ok
+
+  defp validate_height_fits!(
+         width,
+         height,
+         %{margin_top: top, margin_bottom: bottom},
+         {font_size, {shortest_scale, tallest_scale}, line_height}
+       )
+       when is_number(top) and is_number(bottom) and is_number(font_size) and
+              is_number(line_height) do
+    tallest = font_size * tallest_scale * line_height
+    shortest = font_size * shortest_scale * line_height
+    step = f32(font_size) * f32(line_height)
+    page = f32(height)
+
+    # The layout steps down from `height - top` in f32, and each of its three
+    # roundings before the second line meets the bottom margin can move that
+    # line by half an ulp of the height, up to `height * 2 ** -24`.
+    if page - f32(top) - f32(bottom) <
+         2 * step * tallest_scale * (1 + 1.0e-6) + page * 2 ** -22 do
+      raise ArgumentError,
+            "invalid layout, a #{inspect(width)} × #{inspect(height)} page with top " <>
+              "margin #{inspect(top)} and bottom margin #{inspect(bottom)} leaves room " <>
+              "for fewer than two lines of up to #{inspect(tallest)} points each; " <>
+              "reduce the margins, the text size or :line_height"
+    end
+
+    # A step below half a 32-bit float's spacing at the top of the page leaves
+    # the line where it was, so every line would stack there. At 2^-17 of the
+    # height, rounding moves a line by under 1/128 of its step.
+    if step * shortest_scale * 2 ** 17 < page do
+      raise ArgumentError,
+            "invalid layout, lines #{inspect(shortest)} points apart cannot be placed " <>
+              "on a #{inspect(height)}-point-tall page; increase the text size or " <>
+              ":line_height, or use a shorter page"
+    end
+
+    :ok
+  end
+
+  defp validate_height_fits!(_width, _height, _margins, _line), do: :ok
+
+  # Every layout number reaches the NIF as a 32-bit float, so distinct numbers
+  # here can arrive equal; the range guards have already run, so none overflows.
+  defp f32(value) do
+    <<rounded::float-32>> = <<value::float-32>>
+    rounded
+  end
+
   defp build_save_options(opts) do
     opts = Keyword.validate!(opts, @save_opts_keys)
 
@@ -2204,6 +2511,8 @@ defmodule PdfElixide.Editor do
           | :crop_margins
           | :redaction
           | :sanitize
+          | :create
+          | :plain_text_create
         ) :: map()
   def __option_defaults__(:open), do: build_open_options([])
   def __option_defaults__(:save), do: build_save_options([])
@@ -2213,6 +2522,8 @@ defmodule PdfElixide.Editor do
   def __option_defaults__(:permissions), do: build_permission_option([])
   def __option_defaults__(:redaction), do: build_redaction_options([])
   def __option_defaults__(:sanitize), do: build_sanitize_options([])
+  def __option_defaults__(:create), do: build_create_options([])
+  def __option_defaults__(:plain_text_create), do: build_plain_text_create_options([])
 
   defimpl Inspect do
     import Inspect.Algebra

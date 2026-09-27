@@ -22,6 +22,18 @@ defmodule PdfElixide.OptionKeysTest do
     draw_default_overlay: false
   ]
 
+  @plain_text_create_opts [
+    title: "Title",
+    author: "Author",
+    page_size: {300.0, 400.0},
+    margin_top: 10,
+    margin_bottom: 10.0,
+    margin_left: 10,
+    line_height: 1.2
+  ]
+
+  @create_opts @plain_text_create_opts ++ [subject: "Subject", font_size: 10.0]
+
   @non_redaction_opts [
     scrub_metadata: false,
     remove_javascript: false,
@@ -361,6 +373,12 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!([password: "secret"], &Editor.open(@valid_pdf, &1))
     end
 
+    test "Editor.from_markdown/2, from_html/2 and from_plain_text/2" do
+      accepts_each!(@create_opts, &Editor.from_markdown("Text", &1))
+      accepts_each!(@create_opts, &Editor.from_html("Text", &1))
+      accepts_each!(@plain_text_create_opts, &Editor.from_plain_text("Text", &1))
+    end
+
     test "Editor.save/3 and to_binary/2" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -521,7 +539,10 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Editor.sanitize(editor, opts) end,
         fn opts -> Compliance.convert(editor, :pdf_a_2b, opts) end,
         fn opts -> Editor.bookmark_segments(editor, opts) end,
-        fn opts -> Editor.split_by_bookmarks(editor, opts) end
+        fn opts -> Editor.split_by_bookmarks(editor, opts) end,
+        fn opts -> Editor.from_markdown("Text", opts) end,
+        fn opts -> Editor.from_html("Text", opts) end,
+        fn opts -> Editor.from_plain_text("Text", opts) end
       ]
 
       for call <- calls do
@@ -551,6 +572,14 @@ defmodule PdfElixide.OptionKeysTest do
       for {key, value} <- @redaction_opts do
         assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
           Editor.sanitize(editor, [{key, value}])
+        end
+      end
+    end
+
+    test "Editor.from_plain_text/2 takes no :subject or :font_size" do
+      for {key, value} <- @create_opts -- @plain_text_create_opts do
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
+          Editor.from_plain_text("Text", [{key, value}])
         end
       end
     end

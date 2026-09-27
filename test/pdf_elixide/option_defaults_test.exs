@@ -309,6 +309,32 @@ defmodule PdfElixide.OptionDefaultsTest do
                Editor.__option_defaults__(:redaction)
     end
 
+    test "Editor.from_markdown/2 and from_html/2" do
+      assert Editor.__option_defaults__(:create) == %{
+               title: nil,
+               author: nil,
+               subject: nil,
+               page_size: :letter,
+               margin_top: 72,
+               margin_bottom: 72,
+               margin_left: 72,
+               font_size: 12,
+               line_height: 1.5
+             }
+    end
+
+    test "Editor.from_plain_text/2" do
+      assert Editor.__option_defaults__(:plain_text_create) == %{
+               title: nil,
+               author: nil,
+               page_size: :letter,
+               margin_top: 72,
+               margin_bottom: 72,
+               margin_left: 72,
+               line_height: 1.5
+             }
+    end
+
     test "Compliance.convert/3" do
       assert Compliance.__option_defaults__(:convert) == %{
                embed_fonts: false,

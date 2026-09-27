@@ -2027,4 +2027,149 @@ defmodule PdfElixide.UpstreamDriftTest do
                "Test Title"
     end
   end
+
+  describe "what the creation layouts leave as written" do
+    defp created(editor) do
+      doc = editor |> Editor.to_binary!() |> Document.from_binary!()
+      on_exit(fn -> Document.close(doc) end)
+      doc
+    end
+
+    defp created_text(editor), do: editor |> created() |> Document.text!()
+
+    test "HTML keeps entities, h5 and h6 markers, and drops an attributed tag's formatting" do
+      doc =
+        ~s(<h1 class="x">Big</h1><p>a &amp; b</p><h6>six</h6>) |> Editor.from_html!() |> created()
+
+      text = Document.text!(doc)
+      assert text =~ "a &amp; b"
+      assert text =~ "###### six"
+
+      assert doc |> Document.chars!(0) |> Enum.find(&(&1.text == "B")) |> Map.fetch!(:font_size) ==
+               12.0
+    end
+
+    test "HTML drops everything between a bare < and the next >" do
+      text = "<p>1 < 2 and 3 > 2</p><p>kept</p>" |> Editor.from_html!() |> created_text()
+
+      assert text =~ ~r/1\s+2/
+      refute text =~ "and 3"
+      assert text =~ "kept"
+
+      refute "<p>before</p><p>a < b</p><p>after</p>" |> Editor.from_html!() |> created_text() =~
+               "after"
+    end
+
+    test "HTML keeps the text of title, style and script elements" do
+      html =
+        "<html><head><title>T1</title><style>p { color: red }</style></head>" <>
+          "<body><script>run()</script><p>body</p></body></html>"
+
+      text = html |> Editor.from_html!() |> created_text()
+
+      assert text =~ "T1"
+      assert text =~ "p { color: red }"
+      assert text =~ "run()"
+    end
+
+    test "HTML text is laid out as Markdown" do
+      text = "<p>- item</p><p>2 * 3 * 4</p>" |> Editor.from_html!() |> created_text()
+
+      assert text =~ "• item"
+      refute text =~ "*"
+    end
+
+    test "HTML sets ordered list items as bullets" do
+      assert "<ol><li>one</li></ol>" |> Editor.from_html!() |> created_text() =~ "• one"
+    end
+
+    test "HTML recognises a block tag only at the start of an unindented line" do
+      text =
+        "<ul>\n  <li>item</li>\n</ul>\n<p>lead<h2>Title</h2></p>"
+        |> Editor.from_html!()
+        |> created_text()
+
+      assert text =~ "- item"
+      refute text =~ "•"
+      assert text =~ "lead## Title"
+    end
+
+    test "HTML keeps the source's line breaks inside a paragraph" do
+      doc = "<p>one\ntwo</p>" |> Editor.from_html!() |> created()
+
+      assert doc |> Document.text_lines!(0) |> texts() == ["one", "two"]
+    end
+
+    test "Markdown leaves numbered lists, links, deeper headings and indented bullets as source text" do
+      text =
+        "1. first\n\n[link](https://example.com)\n\n##### five\n\n- outer\n  - inner"
+        |> Editor.from_markdown!()
+        |> created_text()
+
+      assert text =~ "1. first"
+      assert text =~ "[link](https://example.com)"
+      assert text =~ "##### five"
+      assert text =~ "• outer"
+      assert text =~ "- inner"
+    end
+
+    test "Markdown sets italic upright once the text needs a Unicode font" do
+      italic? = fn markdown ->
+        markdown
+        |> Editor.from_markdown!()
+        |> created()
+        |> Document.chars!(0)
+        |> Enum.find(&(&1.text == "i"))
+        |> Map.fetch!(:italic?)
+      end
+
+      assert italic?.("*it*")
+      refute italic?.("*it* Ж")
+    end
+
+    test "Markdown does not wrap a line wider than the page" do
+      doc = String.duplicate("word ", 60) |> Editor.from_markdown!() |> created()
+
+      assert doc |> Document.text_lines!(0) |> length() == 1
+      assert doc |> Document.chars!(0) |> Enum.map(&elem(&1.origin, 0)) |> Enum.max() > 612.0
+    end
+
+    test "HTML drops every >, so a blockquote is not indented as a quote" do
+      q_x = fn editor ->
+        editor
+        |> created()
+        |> Document.chars!(0)
+        |> Enum.find(&(&1.text == "q"))
+        |> Map.fetch!(:origin)
+        |> elem(0)
+      end
+
+      assert q_x.(Editor.from_markdown!("> q")) >= 84.0
+      assert q_x.(Editor.from_html!("<blockquote>q</blockquote>")) < 84.0
+
+      text = "<p>3 > 2</p>" |> Editor.from_html!() |> created_text()
+      assert text =~ ~r/3\s+2/
+      refute text =~ ">"
+    end
+
+    test "Markdown prints over a page's first line after a run of blank lines" do
+      doc = "a\n\n\n\nb" |> Editor.from_markdown!(page_size: {300, 217}) |> created()
+
+      assert Document.page_count!(doc) == 1
+      assert [{_, y}, {_, y}] = doc |> Document.chars!(0) |> Enum.map(& &1.origin)
+    end
+
+    test "Markdown writes a character its Unicode font lacks as a glyph text cannot recover" do
+      doc = "a 你 b" |> Editor.from_markdown!() |> created()
+
+      refute Document.text!(doc) =~ "你"
+      assert doc |> Document.chars!(0) |> Enum.map(& &1.text) == ["a", " ", "�", " ", "b"]
+    end
+
+    test "HTML prints the backticks of a code tag inside pre" do
+      doc = "<pre><code>x = 1</code></pre>" |> Editor.from_html!() |> created()
+
+      assert doc |> Document.chars!(0) |> Enum.map_join(& &1.text) == "`x = 1`"
+    end
+  end
 end

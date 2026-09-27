@@ -73,6 +73,7 @@ defmodule PdfElixide.MixProject do
         "guides/text-search.md": [],
         "guides/rendering.md": [],
         "guides/office.md": [],
+        "guides/creating-documents.md": [],
         "guides/forms.md": [],
         "guides/editing.md": [],
         "guides/merging-and-splitting.md": [],

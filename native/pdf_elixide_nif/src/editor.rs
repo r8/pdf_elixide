@@ -127,11 +127,20 @@ impl From<SaveOptionsNif> for SaveOptions {
 }
 
 // Return the handle and its cached version atomically.
-type OpenedEditor = (ResourceArc<EditorResource>, (u8, u8));
+pub(crate) type OpenedEditor = (ResourceArc<EditorResource>, (u8, u8));
 
 // Read after constructing `Closable` so the cached value is panic-contained.
 fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
+}
+
+pub(crate) fn opened(editor: DocumentEditor) -> NifResult<OpenedEditor> {
+    let resource = ResourceArc::new(EditorResource {
+        editor: Closable::new("Editor", OpenEditor::new(editor)),
+    });
+    let version = cached_version(&resource)?;
+
+    Ok((resource, version))
 }
 
 fn needs_password_err() -> rustler::Error {
@@ -177,12 +186,7 @@ fn editor_open(path: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedEdi
         Err(e) => Err(to_nif_err(e)),
     })?;
 
-    let resource = ResourceArc::new(EditorResource {
-        editor: Closable::new("Editor", OpenEditor::new(editor)),
-    });
-    let version = cached_version(&resource)?;
-
-    Ok((resource, version))
+    opened(editor)
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -208,12 +212,7 @@ fn editor_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<Op
             },
         )?;
 
-    let resource = ResourceArc::new(EditorResource {
-        editor: Closable::new("Editor", OpenEditor::new(editor)),
-    });
-    let version = cached_version(&resource)?;
-
-    Ok((resource, version))
+    opened(editor)
 }
 
 // Shared and live because the native call takes `&self` and may change over time.
