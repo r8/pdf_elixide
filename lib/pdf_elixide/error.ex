@@ -17,9 +17,10 @@ defmodule PdfElixide.Error do
     * `:encrypted` — the PDF needs authentication. Supply `:password` when
       opening a document or editor, or call `PdfElixide.Document.authenticate/2`
       on an open document.
-    * `:wrong_password` — an open function's `:password` was rejected.
-      `PdfElixide.Document.authenticate/2` reports this as `{:ok, false}`
-      instead.
+    * `:wrong_password` — an open function's `:password` was rejected, or
+      the password given to `PdfElixide.Signature.Certificate.parse_pkcs12/2`
+      does not open the file. `PdfElixide.Document.authenticate/2` reports a
+      rejected password as `{:ok, false}` instead.
     * `:invalid_pdf` — malformed or unparseable PDF data.
     * `:invalid_pattern` — the search pattern could not be parsed. Comes only
       from `PdfElixide.Document.search/2` and friends under `literal: false`.
@@ -32,7 +33,9 @@ defmodule PdfElixide.Error do
       `PdfElixide.Form.put_value/3`, `PdfElixide.Form.put_values/2` or
       `PdfElixide.Form.update_value/3`; or what a call asks for is absent, as a
       signature carrying no timestamp is to
-      `PdfElixide.Signature.verify_timestamp/2`.
+      `PdfElixide.Signature.verify_timestamp/2`, or a file holding no
+      certificate is to `PdfElixide.Signature.Certificate.parse_pem/1` and
+      `PdfElixide.Signature.Certificate.parse_pkcs12/2`.
     * `:out_of_range` — the page index is outside the document or editor.
     * `:io` — an underlying IO error.
     * `:panic` — the native layer stopped on this input without reporting a

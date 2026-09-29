@@ -3,8 +3,9 @@ defmodule PdfElixide.Signature.Certificate do
   An X.509 certificate: who a signature names as its signer, and the window the
   issuer vouched for that name.
 
-  `PdfElixide.Signature.certificate/1` reads the one a signature carries;
-  `parse/1` reads DER from another source:
+  `PdfElixide.Signature.certificate/1` reads the one a signature carries.
+  `parse/1`, `parse_pem/1` and `parse_pkcs12/2` read certificates you hold
+  yourself, from DER, PEM or a `.p12` / `.pfx` file:
 
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
       {:ok, certificate} = PdfElixide.Signature.certificate(signature)
@@ -110,6 +111,69 @@ defmodule PdfElixide.Signature.Certificate do
   """
   @spec parse!(binary()) :: t()
   def parse!(der), do: der |> parse() |> Wrap.unwrap!()
+
+  @doc """
+  Parses every certificate in PEM text, in file order.
+
+  Reads `CERTIFICATE` blocks, including the legacy `X509 CERTIFICATE` label.
+  Surrounding text and other blocks, including private keys, are ignored rather
+  than decoded.
+
+      {:ok, certificates} =
+        "fullchain.pem" |> File.read!() |> PdfElixide.Signature.Certificate.parse_pem()
+
+  Reports `%PdfElixide.Error{reason: :not_found}` when the input holds no
+  certificate block, and `:invalid_pdf` when a block is malformed or does not
+  hold exactly one X.509 certificate. One bad block fails the whole call.
+  """
+  @spec parse_pem(binary()) :: {:ok, [t(), ...]} | {:error, Error.t()}
+  def parse_pem(pem) when is_binary(pem) do
+    with {:ok, certificates} <- Wrap.call(fn -> Native.certificate_parse_pem(pem) end) do
+      {:ok, Enum.map(certificates, &from_nif/1)}
+    end
+  end
+
+  @doc """
+  Same as `parse_pem/1`, but raises `PdfElixide.Error` on failure.
+  """
+  @spec parse_pem!(binary()) :: [t(), ...]
+  def parse_pem!(pem), do: pem |> parse_pem() |> Wrap.unwrap!()
+
+  @doc """
+  Reads the certificates out of a PKCS#12 (`.p12` / `.pfx`) file.
+
+  Returns every certificate in the file. When the file records which one
+  belongs to its private key, that certificate and its available issuer chain
+  come first; the rest keep their stored order. This ordering verifies nothing.
+  The private key is neither decrypted nor returned.
+
+      {:ok, mine} =
+        "signer.p12"
+        |> File.read!()
+        |> PdfElixide.Signature.Certificate.parse_pkcs12("passphrase")
+
+  `password` is text, as PKCS#12 defines it, so it must be valid UTF-8. Pass
+  `""` for a file protected by an empty password.
+
+  Reports `%PdfElixide.Error{reason: :wrong_password}` when an integrity check
+  rejects the password. A file without one cannot reject a password; unreadable
+  encrypted certificate data instead reports `:invalid_pdf`. Malformed input
+  also reports `:invalid_pdf`, a file without certificates reports `:not_found`,
+  and an unsupported protection scheme reports `:unsupported`.
+  """
+  @spec parse_pkcs12(binary(), String.t()) :: {:ok, [t(), ...]} | {:error, Error.t()}
+  def parse_pkcs12(data, password) when is_binary(data) and is_binary(password) do
+    with {:ok, certificates} <-
+           Wrap.call(fn -> Native.certificate_parse_pkcs12(data, password) end) do
+      {:ok, Enum.map(certificates, &from_nif/1)}
+    end
+  end
+
+  @doc """
+  Same as `parse_pkcs12/2`, but raises `PdfElixide.Error` on failure.
+  """
+  @spec parse_pkcs12!(binary(), String.t()) :: [t(), ...]
+  def parse_pkcs12!(data, password), do: data |> parse_pkcs12(password) |> Wrap.unwrap!()
 
   @doc """
   Whether the certificate's validity window covers `instant`.

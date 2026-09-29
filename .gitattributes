@@ -12,3 +12,5 @@
 *.docx binary
 *.pptx binary
 *.xlsx binary
+*.p12 binary
+*.pem binary

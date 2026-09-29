@@ -47,6 +47,14 @@ defmodule PdfElixide.SignatureTest do
   @pades_pdf Path.join(@fixtures, "form_signature_pades.pdf")
   @pades_t_pdf Path.join(@fixtures, "form_signature_pades_t.pdf")
   @pades_lt_pdf Path.join(@fixtures, "form_signature_pades_lt.pdf")
+  @chain_pem Path.join(@fixtures, "certificate_chain.pem")
+  @chain_p12 Path.join(@fixtures, "certificate_chain.p12")
+  @chain_legacy_p12 Path.join(@fixtures, "certificate_chain_legacy.p12")
+  @same_subject_p12 Path.join(@fixtures, "certificate_same_subject.p12")
+  @issuer_cycle_p12 Path.join(@fixtures, "certificate_issuer_cycle.p12")
+  @renewed_issuer_p12 Path.join(@fixtures, "certificate_renewed_issuer.p12")
+  @aes_ofb_p12 Path.join(@fixtures, "certificate_aes_ofb.p12")
+  @rollover_p12 Path.join(@fixtures, "certificate_rollover.p12")
   @pades_t_mismatched_pdf Path.join(@fixtures, "form_signature_pades_t_mismatched.pdf")
   @pades_lta_pdf Path.join(@fixtures, "form_signature_pades_lta.pdf")
   @chain_pdf Path.join(@fixtures, "form_signature_chain.pdf")
@@ -187,6 +195,17 @@ defmodule PdfElixide.SignatureTest do
     otp_tbs_certificate(subjectPublicKeyInfo: {:OTPSubjectPublicKeyInfo, _algorithm, key}) = tbs
 
     key
+  end
+
+  defp signed_by?(certificate, issuer) do
+    otp_certificate(tbsCertificate: tbs) = :public_key.pkix_decode_cert(issuer.der, :otp)
+
+    otp_tbs_certificate(
+      subjectPublicKeyInfo:
+        {:OTPSubjectPublicKeyInfo, {:PublicKeyAlgorithm, _oid, parameters}, point}
+    ) = tbs
+
+    :public_key.pkix_verify(certificate.der, {point, parameters})
   end
 
   describe "list/1" do
@@ -952,6 +971,148 @@ defmodule PdfElixide.SignatureTest do
       assert Certificate.parse!(certificate.der) == certificate
 
       assert_raise Error, fn -> Certificate.parse!(<<0, 1, 2>>) end
+    end
+  end
+
+  describe "Certificate.parse_pem/1" do
+    test "reads every certificate block in file order, skipping the key block" do
+      assert {:ok, [leaf, intermediate, root] = chain} =
+               Certificate.parse_pem(File.read!(@chain_pem))
+
+      assert Enum.map(chain, & &1.subject_common_name) == [
+               "pdf_elixide test signer",
+               "pdf_elixide test intermediate",
+               "pdf_elixide test root"
+             ]
+
+      assert leaf.issuer == intermediate.subject
+      assert intermediate.issuer == root.subject
+      assert root.issuer == root.subject
+    end
+
+    test "returns certificates parse/1 reads identically" do
+      for certificate <- Certificate.parse_pem!(File.read!(@chain_pem)) do
+        assert Certificate.parse(certificate.der) == {:ok, certificate}
+      end
+    end
+
+    test "reports input holding no certificate block as not found" do
+      key_only = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"
+
+      assert {:error, %Error{reason: :not_found}} = Certificate.parse_pem(key_only)
+      assert {:error, %Error{reason: :not_found}} = Certificate.parse_pem("")
+      assert {:error, %Error{reason: :not_found}} = Certificate.parse_pem(File.read!(@chain_p12))
+    end
+
+    test "ignores a malformed block that is not a certificate" do
+      unterminated_key = "-----BEGIN PRIVATE KEY-----\n!!!\n"
+
+      assert Certificate.parse_pem(unterminated_key <> File.read!(@chain_pem)) ==
+               Certificate.parse_pem(File.read!(@chain_pem))
+    end
+
+    test "refuses the whole input when one certificate block is malformed" do
+      broken =
+        File.read!(@chain_pem) <> "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Certificate.parse_pem(broken)
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Certificate.parse_pem("-----BEGIN CERTIFICATE-----\nAAAA\n")
+    end
+
+    test "parse_pem!/1 unwraps or raises" do
+      assert [%Certificate{} | _] = Certificate.parse_pem!(File.read!(@chain_pem))
+
+      assert_raise Error, fn -> Certificate.parse_pem!("") end
+    end
+
+    test "raises on a value that is not a binary" do
+      assert_raise FunctionClauseError, fn -> Certificate.parse_pem(untyped(42)) end
+    end
+  end
+
+  describe "Certificate.parse_pkcs12/2" do
+    setup do
+      %{chain: Certificate.parse_pem!(File.read!(@chain_pem))}
+    end
+
+    test "returns the key's certificate first, then its chain", %{chain: chain} do
+      assert Certificate.parse_pkcs12(File.read!(@chain_p12), "pdf_elixide") == {:ok, chain}
+    end
+
+    test "reads a file written with legacy encryption", %{chain: chain} do
+      assert Certificate.parse_pkcs12(File.read!(@chain_legacy_p12), "pdf_elixide") ==
+               {:ok, chain}
+    end
+
+    test "returns every certificate of a keyless file, including two sharing a subject" do
+      assert {:ok, [first, second]} =
+               Certificate.parse_pkcs12(File.read!(@same_subject_p12), "pdf_elixide")
+
+      assert first.subject == second.subject
+      assert first.der != second.der
+    end
+
+    test "returns each certificate once when two name each other as issuer" do
+      assert {:ok, [leaf, other]} =
+               Certificate.parse_pkcs12(File.read!(@issuer_cycle_p12), "pdf_elixide")
+
+      assert leaf.issuer == other.subject
+      assert other.issuer == leaf.subject
+      assert leaf.subject_common_name == "pdf_elixide cycle A"
+    end
+
+    test "follows the key identifier past a renewed CA sharing its issuer's name" do
+      assert {:ok, [leaf, issuer, renewed]} =
+               Certificate.parse_pkcs12(File.read!(@renewed_issuer_p12), "pdf_elixide")
+
+      assert issuer.subject == renewed.subject
+      assert signed_by?(leaf, issuer)
+      refute signed_by?(leaf, renewed)
+    end
+
+    test "follows a self-issued key-rollover link to the key that signed it" do
+      assert {:ok, [leaf, link, old_root, unrelated]} =
+               Certificate.parse_pkcs12(File.read!(@rollover_p12), "pdf_elixide")
+
+      assert link.subject == link.issuer
+      assert signed_by?(leaf, link)
+      assert signed_by?(link, old_root)
+      assert unrelated.subject_common_name == "pdf_elixide unrelated"
+    end
+
+    test "reports an encryption scheme it does not implement as unsupported" do
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Certificate.parse_pkcs12(File.read!(@aes_ofb_p12), "pdf_elixide")
+
+      assert message =~ "encryption scheme"
+    end
+
+    test "reports a password the file rejects" do
+      for path <- [@chain_p12, @chain_legacy_p12] do
+        assert {:error, %Error{reason: :wrong_password}} =
+                 Certificate.parse_pkcs12(File.read!(path), "not the password")
+      end
+    end
+
+    test "refuses bytes that are not a PKCS#12 file" do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Certificate.parse_pkcs12(File.read!(@chain_pem), "pdf_elixide")
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Certificate.parse_pkcs12(<<>>, "")
+    end
+
+    test "raises on a password that is not UTF-8" do
+      assert_raise ArgumentError, fn ->
+        Certificate.parse_pkcs12(File.read!(@chain_p12), <<0xFF>>)
+      end
+    end
+
+    test "parse_pkcs12!/2 unwraps or raises", %{chain: chain} do
+      assert Certificate.parse_pkcs12!(File.read!(@chain_p12), "pdf_elixide") == chain
+
+      assert_raise Error, fn -> Certificate.parse_pkcs12!(File.read!(@chain_p12), "wrong") end
     end
   end
 

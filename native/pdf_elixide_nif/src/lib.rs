@@ -6,6 +6,7 @@ use crate::{open_editor::OpenEditor, resource::Closable, warnings::OpenDocument}
 
 mod annotations;
 mod binary;
+mod certificate_files;
 mod char;
 mod color;
 mod compliance;

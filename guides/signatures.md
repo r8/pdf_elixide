@@ -165,6 +165,24 @@ makes a trust decision: the "Nothing here is a trust decision" section of
 `PdfElixide.Signature.Certificate` says what that means, and its "Names" section
 covers how `:subject` and `:issuer` are rendered.
 
+To check whether a document was signed with a certificate you hold, read yours
+with `parse_pem/1` or `parse_pkcs12/2` and compare the DER. Both return every
+certificate in the file, so look for the signer's among them rather than
+relying on its position:
+
+```elixir
+{:ok, mine} =
+  "signer.p12"
+  |> File.read!()
+  |> PdfElixide.Signature.Certificate.parse_pkcs12("passphrase")
+
+Enum.any?(mine, &(&1.der == certificate.der))
+#=> true
+```
+
+Matching DER shows only that the certificates are identical; use `verify/2` to
+check the signature over the document.
+
 `PdfElixide.Signature.Certificate.valid_at?/2` checks the certificate's validity
 window at a caller-supplied instant. The signer's
 `PdfElixide.Signature.signing_time_utc/1` is an unverified claim. A timestamp's

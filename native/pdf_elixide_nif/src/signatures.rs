@@ -36,6 +36,7 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 use crate::{
     atoms,
     binary::{binary_term, owned_binary},
+    certificate_files::{pem_certificates, pkcs12_certificates, CertificateRefusal},
     error::{tagged_err, to_nif_err},
     form_tree,
     metadata::decode_pdf_text_string,
@@ -542,6 +543,42 @@ fn certificate_parse<'a>(env: Env<'a>, der: Binary) -> NifResult<CertificateNif<
         .and_then(|der| Certificate::from_der(der).map_err(|_| unpadded()))?;
 
     certificate_to_nif(env, &certificate)
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn certificate_parse_pem<'a>(env: Env<'a>, pem: Binary) -> NifResult<Vec<CertificateNif<'a>>> {
+    certificates_to_nif(env, pem_certificates(&pem))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn certificate_parse_pkcs12<'a>(
+    env: Env<'a>,
+    data: Binary,
+    password: String,
+) -> NifResult<Vec<CertificateNif<'a>>> {
+    certificates_to_nif(env, pkcs12_certificates(&data, &password))
+}
+
+fn certificates_to_nif<'a>(
+    env: Env<'a>,
+    certificates: Result<Vec<Certificate>, CertificateRefusal>,
+) -> NifResult<Vec<CertificateNif<'a>>> {
+    let certificates = certificates.map_err(|refusal| match refusal {
+        CertificateRefusal::Malformed(reason) => tagged_err(atoms::invalid_pdf(), reason),
+        CertificateRefusal::WrongPassword => tagged_err(
+            atoms::wrong_password(),
+            "the PKCS#12 password is incorrect".to_string(),
+        ),
+        CertificateRefusal::NoCertificate(reason) => {
+            tagged_err(atoms::not_found(), reason.to_string())
+        }
+        CertificateRefusal::Unsupported(reason) => tagged_err(atoms::unsupported(), reason),
+    })?;
+
+    certificates
+        .iter()
+        .map(|certificate| certificate_to_nif(env, certificate))
+        .collect()
 }
 
 // A short, lock-free parse does not warrant dirty scheduling. Invalid and
