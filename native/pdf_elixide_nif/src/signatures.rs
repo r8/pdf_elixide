@@ -1318,6 +1318,27 @@ mod tests {
     }
 
     #[test]
+    fn upstream_still_records_only_legacy_key_derivation() {
+        use pdf_oxide::crypto::{inventory, AlgorithmId};
+
+        fn opened(name: &str, password: &[u8]) {
+            let doc = fixture(name);
+            assert!(doc.authenticate(password).expect("authenticates"));
+            doc.extract_text(0).expect("page 0 decrypts");
+        }
+
+        // Process-global, but no other test can record anything except md5.
+        opened("encrypted_latin1.pdf", b"caf\xE9");
+        assert!(inventory().contains(&AlgorithmId::HashMd5));
+
+        opened("encrypted.pdf", b"secret");
+        let blob = signature_blob("form_signature_rsa_pss_sha256.pdf");
+        assert_eq!(verify_signer(&blob).expect("verifies"), SignerVerify::Valid);
+
+        assert_eq!(inventory(), [AlgorithmId::HashMd5]);
+    }
+
+    #[test]
     fn reads_only_an_id_data_octet_string_of_the_right_width() {
         let blob = signature_blob("form_signature_pkcs7_sha1.pdf");
         let signed = signed_data_of(&blob).expect("CMS SignedData");
