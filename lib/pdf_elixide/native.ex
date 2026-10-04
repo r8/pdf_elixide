@@ -121,6 +121,7 @@ defmodule PdfElixide.Native do
   def editor_from_markdown(_content, _options), do: err()
   def editor_from_html(_content, _options), do: err()
   def editor_from_plain_text(_content, _options), do: err()
+  def editor_from_images(_images, _options), do: err()
   def editor_close(_editor), do: err()
   def editor_closed(_editor), do: err()
   def editor_page_count(_editor), do: err()

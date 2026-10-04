@@ -55,9 +55,9 @@ change would still be missing from it.
 
 **An editor built with `PdfElixide.Editor.from_binary/2` cannot save
 incrementally**, and neither can one created with
-`PdfElixide.Editor.from_markdown/2`, `PdfElixide.Editor.from_html/2` or
-`PdfElixide.Editor.from_plain_text/2`. None of them has a source file to copy,
-so `incremental: true` returns
+`PdfElixide.Editor.from_markdown/2`, `PdfElixide.Editor.from_html/2`,
+`PdfElixide.Editor.from_plain_text/2` or `PdfElixide.Editor.from_images/2`.
+None of them has a source file to copy, so `incremental: true` returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` even with no edits or only
 field values. Use `PdfElixide.Editor.open/2` for incremental saving, or write a
 full rewrite.

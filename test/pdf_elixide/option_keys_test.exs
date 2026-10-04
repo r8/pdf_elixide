@@ -34,6 +34,17 @@ defmodule PdfElixide.OptionKeysTest do
 
   @create_opts @plain_text_create_opts ++ [subject: "Subject", font_size: 10.0]
 
+  @image_create_opts [
+    title: "Title",
+    author: "Author",
+    subject: "Subject",
+    page_size: {300.0, 400.0},
+    margin_top: 10,
+    margin_bottom: 10.0,
+    margin_left: 10,
+    margin_right: 10.0
+  ]
+
   @non_redaction_opts [
     scrub_metadata: false,
     remove_javascript: false,
@@ -379,6 +390,13 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!(@plain_text_create_opts, &Editor.from_plain_text("Text", &1))
     end
 
+    test "Editor.from_images/2" do
+      accepts_each!(
+        @image_create_opts,
+        &Editor.from_images([PdfElixide.Png.solid(8, 8, :rgb)], &1)
+      )
+    end
+
     test "Editor.save/3 and to_binary/2" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -542,7 +560,8 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Editor.split_by_bookmarks(editor, opts) end,
         fn opts -> Editor.from_markdown("Text", opts) end,
         fn opts -> Editor.from_html("Text", opts) end,
-        fn opts -> Editor.from_plain_text("Text", opts) end
+        fn opts -> Editor.from_plain_text("Text", opts) end,
+        fn opts -> Editor.from_images([PdfElixide.Png.solid(8, 8, :rgb)], opts) end
       ]
 
       for call <- calls do
@@ -580,6 +599,14 @@ defmodule PdfElixide.OptionKeysTest do
       for {key, value} <- @create_opts -- @plain_text_create_opts do
         assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
           Editor.from_plain_text("Text", [{key, value}])
+        end
+      end
+    end
+
+    test "Editor.from_images/2 takes no :font_size or :line_height" do
+      for {key, value} <- Keyword.drop(@create_opts, Keyword.keys(@image_create_opts)) do
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
+          Editor.from_images([PdfElixide.Png.solid(8, 8, :rgb)], [{key, value}])
         end
       end
     end

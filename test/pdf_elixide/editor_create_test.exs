@@ -6,9 +6,13 @@ defmodule PdfElixide.EditorCreateTest do
   import PdfElixide.Untyped
 
   alias PdfElixide.Document
+  alias PdfElixide.Document.Image
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.Png
+
+  @fixtures Path.join([__DIR__, "..", "fixtures"])
 
   defp written(%Editor{} = editor) do
     doc = editor |> Editor.to_binary!() |> Document.from_binary!()
@@ -201,6 +205,173 @@ defmodule PdfElixide.EditorCreateTest do
     end
   end
 
+  describe "from_images/2" do
+    defp jpeg do
+      doc = Document.open!(Path.join(@fixtures, "image_jpeg.pdf"))
+      on_exit(fn -> Document.close(doc) end)
+      [image] = Document.images!(doc, 0)
+      Image.to_binary!(image, format: :jpeg)
+    end
+
+    # Only the frame header is read before the refusal, so no image data is needed.
+    defp jpeg_header(width, height, components) do
+      <<0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x14, 8, height::16, width::16, components, 0::160>>
+    end
+
+    test "returns an editor with no source path and one page per image, in order" do
+      editor = Editor.from_images!([Png.solid(8, 24, :rgb), jpeg(), Png.solid(16, 8, :gray)])
+
+      assert %Editor{source_path: nil, version: {1, _}} = editor
+      refute Editor.modified?(editor)
+
+      doc = written(editor)
+
+      assert for(
+               page <- 0..2,
+               [image] = Document.images!(doc, page),
+               do: {image.width, image.height}
+             ) ==
+               [{8, 24}, {24, 24}, {16, 8}]
+    end
+
+    test "writes :title, :author and :subject" do
+      editor = Editor.from_images!([jpeg()], title: "T", author: "A", subject: "S")
+
+      assert %{title: "T", author: "A", subject: "S"} =
+               editor |> written() |> Document.metadata!()
+    end
+
+    test "keeps a JPEG's bytes and a PNG's transparency through a full rewrite" do
+      source = jpeg()
+      editor = Editor.from_images!([source, Png.solid(8, 8, :rgba), Png.solid(8, 8, :rgb)])
+
+      for compress <- [true, false] do
+        bytes = Editor.to_binary!(editor, compress: compress)
+        doc = Document.from_binary!(bytes)
+        on_exit(fn -> Document.close(doc) end)
+
+        assert [image] = Document.images!(doc, 0)
+        assert Image.to_binary!(image, format: :jpeg) == source
+        assert [%Image{width: 8, height: 8}] = Document.images!(doc, 1)
+
+        unless compress do
+          assert bytes |> :binary.matches("/SMask") |> length() == 1
+        end
+      end
+    end
+
+    test "refuses an image that is neither JPEG nor PNG, naming its position" do
+      assert {:error, %Error{reason: :unsupported, message: "image 1 is neither JPEG nor PNG"}} =
+               Editor.from_images([jpeg(), "GIF89a"])
+    end
+
+    test "embeds a CMYK JPEG unchanged" do
+      doc = Document.open!(Path.join(@fixtures, "image_jpeg_cmyk.pdf"))
+      on_exit(fn -> Document.close(doc) end)
+      # `to_binary/2` would re-encode a CMYK JPEG to RGB; `data/1` is the blob.
+      {:jpeg, source} = doc |> Document.images!(0) |> hd() |> Image.data!()
+
+      assert [%Image{color_space: :device_cmyk} = image] =
+               [source] |> Editor.from_images!() |> written() |> Document.images!(0)
+
+      assert Image.data!(image) == {:jpeg, source}
+    end
+
+    test "reports an image that cannot be decoded, naming its position" do
+      png = Png.solid(8, 8, :rgb)
+
+      assert {:error, %Error{reason: :other, message: "image 1: " <> _}} =
+               Editor.from_images([png, binary_part(png, 0, 40)])
+    end
+
+    test "decodes a progressive JPEG to its last scan before embedding it" do
+      doc = Document.open!(Path.join(@fixtures, "image_jpeg_progressive.pdf"))
+      on_exit(fn -> Document.close(doc) end)
+      {:jpeg, source} = doc |> Document.images!(0) |> hd() |> Image.data!()
+
+      assert [image] = [source] |> Editor.from_images!() |> written() |> Document.images!(0)
+      assert Image.data!(image) == {:jpeg, source}
+
+      # Only the second scan's header is damaged: an unknown component selector.
+      [_, {second, _} | _] = :binary.matches(source, <<0xFF, 0xDA>>)
+      selector = second + 5
+      <<head::binary-size(^selector), _, rest::binary>> = source
+
+      assert {:error, %Error{reason: :other, message: "image 0: " <> _}} =
+               Editor.from_images([<<head::binary, 9, rest::binary>>])
+    end
+
+    test "reports an image with no area" do
+      assert {:error, %Error{reason: :other, message: message}} =
+               Editor.from_images([jpeg_header(1, 0, 3)])
+
+      assert message =~ "image 0: has no area"
+    end
+
+    test "refuses a PNG or JPEG over the pixel limit before decoding it" do
+      limit = if :erlang.system_info(:wordsize) == 8, do: 128_000_000, else: 32_000_000
+
+      assert {:error, %Error{reason: :other, message: "image 0: " <> _}} =
+               Editor.from_images([Png.header(limit, 1, :gray)])
+
+      for image <- [
+            Png.header(limit + 1, 1, :gray),
+            Png.header(20_000, 20_000, :rgba),
+            jpeg_header(65_535, 2_000, 3)
+          ] do
+        assert {:error, %Error{reason: :unsupported, message: message}} =
+                 Editor.from_images([image])
+
+        assert message =~ "image 0 is"
+        assert message =~ "pixel limit"
+      end
+    end
+
+    test "refuses a 16-bit colour PNG whose decoded pixels exceed the allocation limit" do
+      # Under the 64-bit pixel limit but over 512 MiB decoded; 32-bit refuses on pixels.
+      limit = if :erlang.system_info(:wordsize) == 8, do: "byte limit", else: "pixel limit"
+
+      for image <- [Png.header(10_000, 10_000, :rgb, 16), Png.header(9_000, 9_000, :rgba, 16)] do
+        assert {:error, %Error{reason: :unsupported, message: message}} =
+                 Editor.from_images([image])
+
+        assert message =~ "image 0 is"
+        assert message =~ limit
+      end
+    end
+
+    test "reports a PNG whose header is malformed as undecodable, whatever size it claims" do
+      limit = if :erlang.system_info(:wordsize) == 8, do: 128_000_000, else: 32_000_000
+
+      <<signature::binary-8, 13::32, ihdr::binary-17, crc::32, rest::binary>> =
+        Png.header(limit + 1, 1, :gray)
+
+      for image <- [
+            <<signature::binary, 0::32, ihdr::binary, crc::32, rest::binary>>,
+            <<signature::binary, 13::32, ihdr::binary, Bitwise.bxor(crc, 1)::32, rest::binary>>
+          ] do
+        assert {:error, %Error{reason: :other, message: "image 0: " <> _}} =
+                 Editor.from_images([image])
+      end
+    end
+
+    test "refuses a 12-bit JPEG rather than describe it as 8-bit" do
+      source = jpeg()
+      {marker, _} = :binary.match(source, [<<0xFF, 0xC0>>, <<0xFF, 0xC2>>])
+      precision = marker + 4
+      <<head::binary-size(^precision), 8, rest::binary>> = source
+
+      assert {:error, %Error{reason: :other, message: "image 0: " <> message}} =
+               Editor.from_images([<<head::binary, 12, rest::binary>>])
+
+      assert message =~ "precision"
+    end
+
+    test "the bang variant raises the error" do
+      assert_raise Error, ~r/neither JPEG nor PNG/, fn -> Editor.from_images!(["x"]) end
+    end
+  end
+
   describe ":page_size" do
     test "sets each named size in points" do
       for {size, width, height} <- [
@@ -365,8 +536,51 @@ defmodule PdfElixide.EditorCreateTest do
       end
     end
 
+    test "an empty image list raises" do
+      assert_raise ArgumentError, "expected at least one image, got []", fn ->
+        Editor.from_images([])
+      end
+    end
+
+    test "an image that is not a binary raises naming its position" do
+      assert_raise ArgumentError, ~r/at index 1/, fn ->
+        Editor.from_images([Png.solid(8, 8, :rgb), untyped(:png)])
+      end
+
+      assert_raise FunctionClauseError, fn -> Editor.from_images(untyped("not a list")) end
+    end
+
+    test "image margins that leave no room on the page raise" do
+      for opts <- [
+            [margin_left: 306, margin_right: 306],
+            [margin_top: 400, margin_bottom: 392],
+            [page_size: {100, 100}, margin_right: 100],
+            [page_size: {612.00003, 792}, margin_left: 612.00002, margin_right: 0]
+          ] do
+        assert_raise ArgumentError, ~r/leave no room/, fn ->
+          Editor.from_images([Png.solid(8, 8, :rgb)], opts)
+        end
+      end
+    end
+
+    test "a negative image margin raises naming it" do
+      assert_raise ArgumentError, ~r/:margin_right/, fn ->
+        Editor.from_images([Png.solid(8, 8, :rgb)], margin_right: -1)
+      end
+    end
+
+    test "an option the image path does not read raises" do
+      assert_raise ArgumentError, ~r/:font_size/, fn ->
+        Editor.from_images([Png.solid(8, 8, :rgb)], font_size: 12)
+      end
+    end
+
     test "a value of the wrong type raises naming the key" do
       assert_raise ArgumentError, ~r/:title/, fn -> Editor.from_markdown("x", title: 1) end
+
+      assert_raise ArgumentError, ~r/:subject/, fn ->
+        Editor.from_images([Png.solid(8, 8, :rgb)], subject: 1)
+      end
     end
   end
 end

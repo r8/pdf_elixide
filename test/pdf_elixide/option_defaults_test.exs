@@ -335,6 +335,19 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "Editor.from_images/2" do
+      assert Editor.__option_defaults__(:image_create) == %{
+               title: nil,
+               author: nil,
+               subject: nil,
+               page_size: :letter,
+               margin_top: 72,
+               margin_bottom: 72,
+               margin_left: 72,
+               margin_right: 72
+             }
+    end
+
     test "Compliance.convert/3" do
       assert Compliance.__option_defaults__(:convert) == %{
                embed_fonts: false,

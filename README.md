@@ -50,7 +50,8 @@ high-performance PDF library written in Rust. Built with
 - Fill AcroForm fields, flatten forms and annotations, export field data as FDF
   or XFDF, and save edited PDFs to a file or binary
 - Delete, reorder, rotate and crop pages, and paint over regions, in a mutable editor
-- Create a new PDF from Markdown, HTML or plain text, ready to edit and save
+- Create a new PDF from Markdown, HTML, plain text, or JPEG and PNG images, ready
+  to edit and save
 - Merge documents, and split one into pages, ranges, chunks or bookmarked
   sections in memory
 - Redact pages destructively, removing the covered text from the page rather

@@ -15,6 +15,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   alias PdfElixide.Geometry.Rect
   alias PdfElixide.Logging
   alias PdfElixide.Office
+  alias PdfElixide.Png
   alias PdfElixide.Signature
   alias PdfElixide.Warning
 
@@ -2170,6 +2171,83 @@ defmodule PdfElixide.UpstreamDriftTest do
       doc = "<pre><code>x = 1</code></pre>" |> Editor.from_html!() |> created()
 
       assert doc |> Document.chars!(0) |> Enum.map_join(& &1.text) == "`x = 1`"
+    end
+  end
+
+  describe "what from_images/2 does with page size" do
+    defp image_boxes(doc) do
+      for page <- 0..(Document.page_count!(doc) - 1) do
+        {Page.media_box!(Document.page!(doc, page)),
+         Enum.map(Document.images!(doc, page), & &1.bbox)}
+      end
+    end
+
+    # Extraction skips images under 8 pixels a side.
+    @mixed [Png.solid(8, 24, :rgb), Png.solid(24, 8, :rgb), Png.solid(16, 16, :rgb)]
+
+    test "gives every page the configured size, whatever the image measures" do
+      letter = %Rect{x: 0.0, y: 0.0, width: 612.0, height: 792.0}
+
+      assert [
+               {^letter, [%Rect{x: 198.0, y: 72.0, width: 216.0, height: 648.0}]},
+               {^letter, [%Rect{x: 72.0, y: 318.0, width: 468.0, height: 156.0}]},
+               {^letter, [%Rect{x: 72.0, y: 162.0, width: 468.0, height: 468.0}]}
+             ] = @mixed |> Editor.from_images!() |> created() |> image_boxes()
+    end
+
+    test "fits each image inside all four margins and centres it there" do
+      page = %Rect{x: 0.0, y: 0.0, width: 300.0, height: 500.0}
+
+      doc =
+        Editor.from_images!(@mixed,
+          page_size: {300, 500},
+          margin_top: 20,
+          margin_bottom: 40,
+          margin_left: 10,
+          margin_right: 50
+        )
+        |> created()
+
+      # The area is 240 × 440 from (10, 40).
+      assert [
+               {^page, [portrait]},
+               {^page, [%Rect{x: 10.0, y: 220.0, width: 240.0, height: 80.0}]},
+               {^page, [%Rect{x: 10.0, y: 140.0, width: 240.0, height: 240.0}]}
+             ] = image_boxes(doc)
+
+      assert portrait.y == 40.0 and portrait.height == 440.0
+      assert_in_delta portrait.width, 440 / 3, 0.001
+      assert_in_delta portrait.x, 10 + (240 - 440 / 3) / 2, 0.001
+    end
+  end
+
+  describe "what from_images/2 does with an EXIF orientation" do
+    # An APP1 Exif segment holding one IFD entry: Orientation (0x0112), a SHORT, 6.
+    @exif_rotate_90 <<0xFF, 0xE1, 34::16, "Exif", 0, 0, "MM", 42::16, 8::32, 1::16, 0x0112::16,
+                      3::16, 1::32, 6::16, 0::16, 0::32>>
+
+    test "places a JPEG as stored, ignoring the tag" do
+      [stored] =
+        [Png.solid(40, 20, :rgb)] |> Editor.from_images!() |> created() |> Document.images!(0)
+
+      <<0xFF, 0xD8, rest::binary>> = Image.to_binary!(stored, format: :jpeg)
+      tagged = <<0xFF, 0xD8, @exif_rotate_90::binary, rest::binary>>
+
+      assert [%Image{bbox: bbox, matrix: matrix} = image] =
+               [tagged] |> Editor.from_images!() |> created() |> Document.images!(0)
+
+      assert bbox == %Rect{x: 72.0, y: 279.0, width: 468.0, height: 234.0}
+      assert matrix == {468.0, 0.0, 0.0, 234.0, 72.0, 279.0}
+      assert Image.data!(image) == {:jpeg, tagged}
+    end
+  end
+
+  describe "what from_images/2 does to a PNG's samples" do
+    test "reduces 16-bit channels to 8 bits" do
+      png = Png.encode(8, 8, :rgb, 16, :binary.copy(<<0x12, 0x34>>, 8 * 8 * 3))
+
+      assert [%Image{bits_per_component: 8}] =
+               [png] |> Editor.from_images!() |> created() |> Document.images!(0)
     end
   end
 end

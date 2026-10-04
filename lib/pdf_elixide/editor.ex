@@ -30,7 +30,8 @@ defmodule PdfElixide.Editor do
   `from_markdown/2`, `from_html/2` and `from_plain_text/2` lay text out on new
   pages and return an editor holding them. They are simple typesetters rather
   than round-trip conversions: lines are not wrapped, and only a limited
-  Markdown or HTML vocabulary is recognised. See the
+  Markdown or HTML vocabulary is recognised. `from_images/2` places one JPEG or
+  PNG image on each new page. See the
   [Creating documents](guides/creating-documents.md) guide for examples,
   supported input and character limitations.
 
@@ -143,7 +144,8 @@ defmodule PdfElixide.Editor do
   document the editor was opened from, and no editing operation changes it.
 
   `:source_path` is `nil` for an editor with no source file: one built with
-  `from_binary/2`, `from_markdown/2`, `from_html/2` or `from_plain_text/2`.
+  `from_binary/2`, `from_markdown/2`, `from_html/2`, `from_plain_text/2` or
+  `from_images/2`.
   """
   @type t :: %__MODULE__{
           ref: reference(),
@@ -241,7 +243,8 @@ defmodule PdfElixide.Editor do
   end
 
   @typedoc """
-  A page size for `from_markdown/2`, `from_html/2` and `from_plain_text/2`.
+  A page size for `from_markdown/2`, `from_html/2`, `from_plain_text/2` and
+  `from_images/2`.
 
   `:letter` is 612 × 792 points, `:a4` 595 × 842, `:legal` 612 × 1008 and `:a3`
   842 × 1190. `{width, height}` gives any other size in points (1/72 inch).
@@ -404,10 +407,103 @@ defmodule PdfElixide.Editor do
     from_plain_text(content, opts) |> Wrap.unwrap!()
   end
 
+  @typedoc """
+  Options accepted by `from_images/2` and `from_images!/2`.
+
+    * `:title`, `:author`, `:subject` — written to the document information
+      dictionary. Each defaults to `nil`, which leaves the entry out.
+    * `:page_size` — a `t:page_size/0`, used for every page. Defaults to
+      `:letter`.
+    * `:margin_top`, `:margin_bottom`, `:margin_left`, `:margin_right` —
+      margins in points. Each defaults to `72`. Each image is fitted inside the
+      area they leave.
+
+  An unknown key, or a value of the wrong type, raises `ArgumentError` naming
+  the key. So does a non-positive page dimension, a negative margin, or
+  margins that leave no room on the page.
+  """
+  @type image_create_opts :: [
+          title: String.t() | nil,
+          author: String.t() | nil,
+          subject: String.t() | nil,
+          page_size: page_size(),
+          margin_top: number(),
+          margin_bottom: number(),
+          margin_left: number(),
+          margin_right: number()
+        ]
+
+  @image_create_opts_keys [
+    :title,
+    :author,
+    :subject,
+    :page_size,
+    :margin_top,
+    :margin_bottom,
+    :margin_left,
+    :margin_right
+  ]
+
+  @doc """
+  Creates a new document from JPEG and PNG images and opens it for editing.
+
+  Each binary in `images` becomes one page, in list order. Every page has the
+  same size, and each image is scaled, keeping its proportions, to fill the
+  area inside the margins and is centred there. Pages are not sized to their
+  images.
+
+  A JPEG is embedded without re-encoding. A PNG's pixels are stored losslessly,
+  with transparency kept and 16-bit channels reduced to 8 bits. An EXIF
+  orientation tag is not applied, and most CMYK JPEGs come out with inverted
+  colours. See [Images](guides/creating-documents.md#images) for these, and
+  for making a page that matches one image.
+
+      jpeg = File.read!("scan.jpg")
+
+      [jpeg]
+      |> PdfElixide.Editor.from_images!(margin_top: 36, margin_bottom: 36)
+      |> PdfElixide.Editor.save!("scan.pdf")
+      |> PdfElixide.Editor.close()
+
+  These return `{:error, %PdfElixide.Error{reason: :unsupported}}`:
+
+    * an image that is neither JPEG nor PNG;
+    * an image over 128 million pixels, or 32 million on a 32-bit system, or a
+      16-bit colour PNG over about 89 million (67 million with transparency).
+      Scale it down first.
+
+  An image that cannot be decoded, including a 12-bit, arithmetic-coded or
+  lossless JPEG, returns `{:error, %PdfElixide.Error{reason: :other}}`. Each
+  error message gives the image's zero-based position in the list. An empty
+  list, or an element that is not a binary, raises `ArgumentError`.
+
+  The images are held in memory several times over while the document is
+  built, and the editor keeps the whole document until `close/1`. Close it once
+  it has been written.
+  """
+  @spec from_images([binary()], image_create_opts()) :: {:ok, t()} | {:error, Error.t()}
+  def from_images(images, opts \\ []) when is_list(images) and is_list(opts) do
+    validate_images!(images)
+    options = build_image_create_options(opts)
+
+    with {:ok, {ref, version}} <- Wrap.call(fn -> Native.editor_from_images(images, options) end) do
+      {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
+    end
+  end
+
+  @doc """
+  Creates a new document from JPEG and PNG images and opens it for editing,
+  raising an error if it fails.
+  """
+  @spec from_images!([binary()], image_create_opts()) :: t()
+  def from_images!(images, opts \\ []) when is_list(images) and is_list(opts) do
+    from_images(images, opts) |> Wrap.unwrap!()
+  end
+
   @doc """
   Returns the file path the editor was opened from, or `nil` if it has no
   source file: one built with `from_binary/2`, `from_markdown/2`,
-  `from_html/2` or `from_plain_text/2`.
+  `from_html/2`, `from_plain_text/2` or `from_images/2`.
   """
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
@@ -630,8 +726,9 @@ defmodule PdfElixide.Editor do
   A full rewrite is the default. `incremental: true` returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` without writing if the editor
   has no source file — it came from `from_binary/2`, `from_markdown/2`,
-  `from_html/2` or `from_plain_text/2` — or holds unsupported changes. See
-  [Saving edits](guides/editing.md#saving-edits) for supported changes and recovery.
+  `from_html/2`, `from_plain_text/2` or `from_images/2` — or holds unsupported
+  changes. See [Saving edits](guides/editing.md#saving-edits) for supported
+  changes and recovery.
 
   Writing does not consume the editor: you can keep editing and write again.
 
@@ -2243,6 +2340,8 @@ defmodule PdfElixide.Editor do
 
   defp validate_margin!(_key, value), do: value
 
+  @paper_sizes %{letter: {612, 792}, a4: {595, 842}, legal: {612, 1008}, a3: {842, 1190}}
+
   # See `__option_defaults__/1` for why every key is emitted.
   defp build_create_options(opts) do
     opts = Keyword.validate!(opts, @create_opts_keys)
@@ -2259,6 +2358,60 @@ defmodule PdfElixide.Editor do
     opts = Keyword.validate!(opts, @plain_text_create_opts_keys)
 
     create_layout(opts, 12, {1, 1})
+  end
+
+  defp build_image_create_options(opts) do
+    opts = Keyword.validate!(opts, @image_create_opts_keys)
+    page_size = validate_page_size!(Keyword.get(opts, :page_size, :letter))
+
+    margins =
+      Map.new([:margin_top, :margin_bottom, :margin_left, :margin_right], fn key ->
+        {key, validate_margin!(key, Keyword.get(opts, key, 72))}
+      end)
+
+    validate_image_area_fits!(Map.get(@paper_sizes, page_size, page_size), margins)
+
+    Map.merge(margins, %{
+      title: Keyword.get(opts, :title),
+      author: Keyword.get(opts, :author),
+      subject: Keyword.get(opts, :subject),
+      page_size: page_size
+    })
+  end
+
+  # A page with no room inside its margins gives the image a zero or negative
+  # size. The subtraction is rounded as the layout rounds it, in 32-bit floats.
+  defp validate_image_area_fits!({width, height}, margins)
+       when is_number(width) and is_number(height) do
+    %{margin_top: top, margin_bottom: bottom, margin_left: left, margin_right: right} = margins
+
+    if Enum.all?([top, bottom, left, right], &is_number/1) and
+         (f32(f32(width) - f32(left)) - f32(right) <= 0 or
+            f32(f32(height) - f32(top)) - f32(bottom) <= 0) do
+      raise ArgumentError,
+            "invalid layout, margins top #{inspect(top)}, bottom #{inspect(bottom)}, " <>
+              "left #{inspect(left)} and right #{inspect(right)} leave no room on a " <>
+              "#{inspect(width)} × #{inspect(height)} page"
+    end
+
+    :ok
+  end
+
+  defp validate_image_area_fits!(_page_size, _margins), do: :ok
+
+  defp validate_images!([]), do: raise(ArgumentError, "expected at least one image, got []")
+
+  defp validate_images!(images) do
+    images
+    |> Enum.with_index()
+    |> Enum.each(fn
+      {image, _index} when is_binary(image) ->
+        :ok
+
+      {image, index} ->
+        raise ArgumentError,
+              "expected every image to be a binary, got #{inspect(image)} at index #{index}"
+    end)
   end
 
   defp create_layout(opts, font_size, scales) do
@@ -2279,8 +2432,6 @@ defmodule PdfElixide.Editor do
       line_height: line_height
     })
   end
-
-  @paper_sizes %{letter: {612, 792}, a4: {595, 842}, legal: {612, 1008}, a3: {842, 1190}}
 
   # Range only, as `validate_margin!/2`: anything not recognised here is left to
   # the NIF's field decoder, which names `:page_size`.
@@ -2525,6 +2676,7 @@ defmodule PdfElixide.Editor do
           | :sanitize
           | :create
           | :plain_text_create
+          | :image_create
         ) :: map()
   def __option_defaults__(:open), do: build_open_options([])
   def __option_defaults__(:save), do: build_save_options([])
@@ -2536,6 +2688,7 @@ defmodule PdfElixide.Editor do
   def __option_defaults__(:sanitize), do: build_sanitize_options([])
   def __option_defaults__(:create), do: build_create_options([])
   def __option_defaults__(:plain_text_create), do: build_plain_text_create_options([])
+  def __option_defaults__(:image_create), do: build_image_create_options([])
 
   defimpl Inspect do
     import Inspect.Algebra
