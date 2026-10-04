@@ -53,6 +53,12 @@ defmodule PdfElixide.Document.Image do
   indistinguishable from a page with none — nothing is raised and nothing is
   logged.
 
+  **A CCITT fax image is decoded when it is read, not when it is listed.** One
+  whose stream cannot be decoded is therefore listed like any other, and
+  `data/1`, `to_binary/2` and `save/3` return
+  `{:error, %PdfElixide.Error{reason: :invalid_pdf}}` for it. A stream that
+  ends early decodes, with the rows it lost left white.
+
   **A JPEG 2000 image comes back opaque.** Channels the declared colour space
   does not account for are dropped, so a four-component codestream carrying
   RGB plus alpha is reported as `:device_rgb` with its opacity channel
@@ -198,6 +204,13 @@ defmodule PdfElixide.Document.Image do
   `pixel_format` is `:rgb`, `:grayscale`, or `:cmyk`. The `:raw` bytes are bare
   pixels, not a standalone image file — use `to_binary/2` when you need an encoded
   PNG or JPEG.
+
+  Each component takes one byte, except when `:bits_per_component` is below 8:
+  then the components stay packed at that many bits each, most significant bit
+  first, with every row padded to a whole byte. `to_binary/2` and `save/3`
+  cannot encode such an image and return `{:error, t:PdfElixide.Error.t/0}`.
+  A CCITT fax image is the exception: it is returned decoded, as one
+  `:grayscale` byte per pixel, although its `:bits_per_component` is 1.
   """
   @spec data(t()) :: {:ok, raw_data()} | {:error, Error.t()}
   def data(%__MODULE__{ref: ref}) do

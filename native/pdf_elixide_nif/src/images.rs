@@ -1,6 +1,12 @@
 use std::{borrow::Cow, io::Cursor};
 
-use pdf_oxide::extractors::{ColorSpace, ImageData, PdfImage, PixelFormat};
+use pdf_oxide::{
+    extractors::{
+        ccitt_bilevel::{bilevel_to_grayscale, decompress_ccitt_reporting},
+        ColorSpace, ImageData, PdfImage, PixelFormat,
+    },
+    Error as PdfError,
+};
 use rustler::{
     Binary, Encoder, Env, NifMap, NifResult, NifTuple, NifUnitEnum, OwnedBinary, ResourceArc, Term,
 };
@@ -150,6 +156,10 @@ fn image_to_binary(
     format: OutputFormatNif,
 ) -> NifResult<OwnedBinary> {
     resource.image.with_read(|image| {
+        if let Some(pixels) = ccitt_pixels(image) {
+            return owned_binary(&encode_gray(image, pixels?, &format)?, "image");
+        }
+
         let bytes: Cow<[u8]> = match format {
             OutputFormatNif::Png => Cow::Owned(image.to_png_bytes().map_err(to_nif_err)?),
             OutputFormatNif::Jpeg => match image.data() {
@@ -177,6 +187,13 @@ fn image_save(
     let path = path_arg(path)?;
 
     resource.image.with_read(|image| {
+        if let Some(pixels) = ccitt_pixels(image) {
+            let bytes = encode_gray(image, pixels?, &format)?;
+            std::fs::write(&path, bytes).map_err(|e| to_nif_err(PdfError::Io(e)))?;
+
+            return Ok(atoms::ok());
+        }
+
         match format {
             OutputFormatNif::Png => image.save_as_png(&path).map_err(to_nif_err)?,
             OutputFormatNif::Jpeg => image.save_as_jpeg(&path).map_err(to_nif_err)?,
@@ -191,6 +208,15 @@ fn image_save(
 #[rustler::nif(schedule = "DirtyCpu")]
 fn image_data<'a>(env: Env<'a>, resource: ResourceArc<ImageResource>) -> NifResult<Term<'a>> {
     resource.image.with_read(|image| {
+        if let Some(pixels) = ccitt_pixels(image) {
+            return Ok((
+                atoms::raw(),
+                binary_term(env, &pixels?, "image")?,
+                PixelFormatNif::Grayscale,
+            )
+                .encode(env));
+        }
+
         Ok(match image.data() {
             ImageData::Jpeg(bytes) => {
                 (atoms::jpeg(), binary_term(env, bytes, "image")?).encode(env)
@@ -224,4 +250,95 @@ fn encode_jpeg(image: &PdfImage) -> NifResult<Vec<u8>> {
         .write_to(&mut buffer, image::ImageFormat::Jpeg)
         .map_err(|e| tagged_err(atoms::other(), format!("failed to encode JPEG: {e}")))?;
     Ok(buffer.into_inner())
+}
+
+// Keep this guard aligned with `to_dynamic_image` so no other image takes this path.
+fn ccitt_pixels(image: &PdfImage) -> Option<NifResult<Vec<u8>>> {
+    let decoded = decode_ccitt(image)?;
+
+    Some(decoded.map_err(|failure| match failure {
+        CcittFailure::Upstream(e) => to_nif_err(e),
+        CcittFailure::NoRows => tagged_err(
+            atoms::invalid_pdf(),
+            "CCITT image data could not be decoded",
+        ),
+    }))
+}
+
+enum CcittFailure {
+    Upstream(PdfError),
+    NoRows,
+}
+
+fn decode_ccitt(image: &PdfImage) -> Option<Result<Vec<u8>, CcittFailure>> {
+    let ImageData::Raw { pixels, .. } = image.data() else {
+        return None;
+    };
+    let params = image.ccitt_params()?;
+
+    if image.bits_per_component() != 1 || !matches!(image.color_space(), ColorSpace::DeviceGray) {
+        return None;
+    }
+
+    Some(match decompress_ccitt_reporting(pixels, params) {
+        Ok((_, 0)) => Err(CcittFailure::NoRows),
+        Ok((bilevel, rows_valid)) => {
+            let mut gray = bilevel_to_grayscale(&bilevel, image.width(), image.height());
+            // Padding for lost rows is written before the `/BlackIs1`
+            // inversion, so it can come out black; repaint it white.
+            let read = rows_valid.saturating_mul(image.width() as usize);
+            if let Some(lost) = gray.get_mut(read..) {
+                lost.fill(u8::MAX);
+            }
+            Ok(gray)
+        }
+        Err(e) => Err(CcittFailure::Upstream(e)),
+    })
+}
+
+fn encode_gray(image: &PdfImage, pixels: Vec<u8>, format: &OutputFormatNif) -> NifResult<Vec<u8>> {
+    let gray = image::GrayImage::from_raw(image.width(), image.height(), pixels)
+        .ok_or_else(|| tagged_err(atoms::other(), "invalid CCITT image dimensions"))?;
+    let encoding = match format {
+        OutputFormatNif::Png => image::ImageFormat::Png,
+        OutputFormatNif::Jpeg => image::ImageFormat::Jpeg,
+    };
+    let mut buffer = Cursor::new(Vec::new());
+    gray.write_to(&mut buffer, encoding)
+        .map_err(|e| tagged_err(atoms::other(), format!("failed to encode image: {e}")))?;
+
+    Ok(buffer.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use pdf_oxide::PdfDocument;
+
+    use super::*;
+
+    fn only_image(name: &str) -> PdfImage {
+        let path = format!(
+            "{}/../../test/fixtures/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        );
+        let doc = PdfDocument::open(path).expect("fixture opens");
+
+        doc.extract_images(0)
+            .expect("images extract")
+            .into_iter()
+            .next()
+            .expect("one image")
+    }
+
+    #[test]
+    fn ccitt_pixels_match_upstream() {
+        let image = only_image("image_ccitt.pdf");
+        let Some(Ok(ours)) = decode_ccitt(&image) else {
+            panic!("the fixture decodes");
+        };
+
+        let theirs = image.to_dynamic_image().expect("upstream decodes");
+        assert_eq!(ours, theirs.to_luma8().into_raw());
+    }
 }

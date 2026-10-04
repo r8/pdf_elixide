@@ -40,6 +40,10 @@ defmodule PdfElixide.DocumentTest do
   @image_jpeg_pdf Path.join(@fixtures, "image_jpeg.pdf")
   @image_placement_pdf Path.join(@fixtures, "image_placement.pdf")
   @image_jpx_pdf Path.join(@fixtures, "image_jpx.pdf")
+  @image_packed_pdf Path.join(@fixtures, "image_packed.pdf")
+  @image_ccitt_pdf Path.join(@fixtures, "image_ccitt.pdf")
+  @image_ccitt_truncated_pdf Path.join(@fixtures, "image_ccitt_truncated.pdf")
+  @image_ccitt_undecodable_pdf Path.join(@fixtures, "image_ccitt_undecodable.pdf")
   @markdown_pdf Path.join(@fixtures, "markdown.pdf")
   @outline_pdf Path.join(@fixtures, "outline.pdf")
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
@@ -2471,6 +2475,17 @@ defmodule PdfElixide.DocumentTest do
                Document.Image.to_binary(image)
     end
 
+    # An 8x8 /Lab image at 4 bits per component, whose 12-byte row
+    # 0x11..0x1C repeats on every row.
+    test "keeps samples below 8 bits per component packed" do
+      [image] = Document.open!(@image_packed_pdf) |> Document.images!(0)
+      assert image.bits_per_component == 4
+
+      assert {:ok, {:raw, pixels, :rgb}} = Document.Image.data(image)
+      assert pixels == :binary.copy(Enum.into(0x11..0x1C, <<>>, &<<&1>>), 8)
+      assert {:error, %Error{}} = Document.Image.to_binary(image)
+    end
+
     test "data!/1 returns the raw data directly" do
       [image | _] = Document.open!(@image_jpeg_pdf) |> Document.images!(0)
       assert {:jpeg, <<255, 216, 255, _::binary>>} = Document.Image.data!(image)
@@ -2512,6 +2527,59 @@ defmodule PdfElixide.DocumentTest do
       path = Path.join(tmp_dir, "bang.png")
       assert :ok = Document.Image.save!(image, path)
       assert File.exists?(path)
+    end
+  end
+
+  describe "CCITT fax images" do
+    @describetag :tmp_dir
+
+    # The fixture is a 32x24 bilevel image: a black bar over columns 0-7 and a
+    # black band over rows 16-23 on white.
+    test "data/1 returns decoded grayscale pixels" do
+      [image] = Document.open!(@image_ccitt_pdf) |> Document.images!(0)
+      assert {image.width, image.height, image.bits_per_component} == {32, 24, 1}
+
+      assert {:ok, {:raw, pixels, :grayscale}} = Document.Image.data(image)
+      assert byte_size(pixels) == 32 * 24
+      assert :binary.at(pixels, 2 * 32 + 2) == 0
+      assert :binary.at(pixels, 2 * 32 + 20) == 255
+      assert :binary.at(pixels, 20 * 32 + 20) == 0
+    end
+
+    test "encodes and saves in both formats", %{tmp_dir: tmp_dir} do
+      [image] = Document.open!(@image_ccitt_pdf) |> Document.images!(0)
+
+      assert {:ok, <<137, 80, 78, 71, _::binary>>} = Document.Image.to_binary(image)
+      assert {:ok, <<255, 216, 255, _::binary>>} = Document.Image.to_binary(image, format: :jpeg)
+
+      png = Path.join(tmp_dir, "fax.png")
+      jpg = Path.join(tmp_dir, "fax.jpg")
+      assert :ok = Document.Image.save(image, png)
+      assert :ok = Document.Image.save(image, jpg)
+      assert File.read!(png) == Document.Image.to_binary!(image)
+      assert <<255, 216, 255, _::binary>> = File.read!(jpg)
+    end
+
+    test "pads the rows a truncated stream lost with white" do
+      [image] = Document.open!(@image_ccitt_truncated_pdf) |> Document.images!(0)
+
+      assert {:ok, {:raw, pixels, :grayscale}} = Document.Image.data(image)
+      assert binary_part(pixels, 23 * 32, 32) == :binary.copy(<<255>>, 32)
+    end
+
+    test "an undecodable stream is listed but refuses every read", %{tmp_dir: tmp_dir} do
+      assert [image] = Document.open!(@image_ccitt_undecodable_pdf) |> Document.images!(0)
+
+      for result <- [
+            Document.Image.data(image),
+            Document.Image.to_binary(image),
+            Document.Image.to_binary(image, format: :jpeg),
+            Document.Image.save(image, Path.join(tmp_dir, "fax.png"))
+          ] do
+        assert {:error, %Error{reason: :invalid_pdf}} = result
+      end
+
+      refute File.exists?(Path.join(tmp_dir, "fax.png"))
     end
   end
 
