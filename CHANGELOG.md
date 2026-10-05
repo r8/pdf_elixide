@@ -5,6 +5,21 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.22.0](https://github.com/r8/pdf_elixide/compare/v0.21.0...v0.22.0) (2026-10-05)
+
+
+
+
+### Features:
+
+* create a PDF from JPEG and PNG images by [@r8](https://github.com/r8)
+
+* read certificates from PEM and PKCS#12 files by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* decode CCITT images in raw data by [@r8](https://github.com/r8)
+
 ## [v0.21.0](https://github.com/r8/pdf_elixide/compare/v0.20.0...v0.21.0) (2026-09-27)
 
 
