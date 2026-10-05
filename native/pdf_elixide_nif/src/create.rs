@@ -378,7 +378,7 @@ fn editor_from_images(
 
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::{error::Result, PdfDocument};
+    use pdf_oxide::{error::Result, fonts::bundled::DEJAVU_SANS, PdfDocument};
 
     use super::*;
     use crate::metadata::read_metadata;
@@ -474,5 +474,22 @@ mod tests {
         let doc = reopened(PdfBuilder::new().from_text("Привет"));
 
         assert_eq!(doc.extract_text(0).expect("text extracts").trim(), "??????");
+    }
+
+    #[test]
+    fn upstream_still_draws_inline_runs_at_one_origin() {
+        let fonts = vec![(String::from("Body"), DEJAVU_SANS.to_vec())];
+        let doc = reopened(Pdf::from_html_css_with_fonts(
+            "<p>Hello <b>world</b></p>",
+            "",
+            fonts,
+        ));
+        let chars = doc.extract_chars(0).expect("chars extract");
+        let x_of = |ch| chars.iter().find(|c| c.char == ch).map(|c| c.bbox.x);
+
+        assert_eq!(
+            x_of('H').expect("Hello is drawn"),
+            x_of('w').expect("world is drawn")
+        );
     }
 }
