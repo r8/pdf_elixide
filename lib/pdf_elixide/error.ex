@@ -39,9 +39,9 @@ defmodule PdfElixide.Error do
     * `:out_of_range` — the page index is outside the document or editor.
     * `:io` — an underlying IO error.
     * `:panic` — the native layer stopped on this input without reporting a
-      condition of its own. The handle stays usable, but a panic partway
-      through an operation can leave it holding partially updated state, so
-      close and reopen it if the error recurs.
+      condition of its own. A handle the call used stays usable, but a panic
+      partway through an operation can leave it holding partially updated
+      state, so close and reopen it if the error recurs.
     * `:lock_poisoned` — the handle's internal lock could not be acquired. A
       panic arrives as `:panic` instead, so this is not the reason to expect.
     * `:closed` — the handle was released with `PdfElixide.Document.close/1`,

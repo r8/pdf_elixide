@@ -37,7 +37,7 @@ use crate::{
     atoms,
     binary::{binary_term, owned_binary},
     certificate_files::{pem_certificates, pkcs12_certificates, CertificateRefusal},
-    error::{tagged_err, to_nif_err},
+    error::{contain_panic, tagged_err, to_nif_err},
     form_tree,
     metadata::decode_pdf_text_string,
     warnings, DocumentResource, EditorResource,
@@ -469,19 +469,22 @@ fn encapsulated_sha1_digest(signed: &SignedData) -> Option<&[u8]> {
 }
 
 // Signature, certificate and timestamp parsing or verification below is
-// CPU-bound and takes no resource lock, so those NIFs use the dirty scheduler.
+// CPU-bound and takes no resource, so those NIFs use the dirty scheduler and,
+// with no `Closable` to do it, contain their own panics.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_verify_detached(
     contents: Option<Binary>,
     byte_range: Vec<i64>,
     pdf_data: Binary,
 ) -> NifResult<Atom> {
-    let blob = cms_blob(contents.as_deref())?;
-    let signed = signed_bytes(&pdf_data, &byte_range)?;
+    contain_panic(|| {
+        let blob = cms_blob(contents.as_deref())?;
+        let signed = signed_bytes(&pdf_data, &byte_range)?;
 
-    verify_signer_detached(blob, &signed)
-        .map(verdict_atom)
-        .map_err(to_nif_err)
+        verify_signer_detached(blob, &signed)
+            .map(verdict_atom)
+            .map_err(to_nif_err)
+    })
 }
 
 // Verify the signer against the encapsulated digest, then compare that digest
@@ -493,29 +496,33 @@ fn signature_verify_pkcs7_sha1(
     byte_range: Vec<i64>,
     pdf_data: Binary,
 ) -> NifResult<Atom> {
-    let blob = cms_blob(contents.as_deref())?;
-    let covered = signed_bytes(&pdf_data, &byte_range)?;
-    let signed = signed_data_of(blob)
-        .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
+    contain_panic(|| {
+        let blob = cms_blob(contents.as_deref())?;
+        let covered = signed_bytes(&pdf_data, &byte_range)?;
+        let signed = signed_data_of(blob)
+            .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
 
-    let Some(digest) = encapsulated_sha1_digest(&signed) else {
-        return Ok(atoms::unknown());
-    };
+        let Some(digest) = encapsulated_sha1_digest(&signed) else {
+            return Ok(atoms::unknown());
+        };
 
-    match verify_signer_detached(blob, digest).map_err(to_nif_err)? {
-        SignerVerify::Valid if digest_matches(HashAlgorithm::Sha1, &covered, digest) => {
-            Ok(atoms::valid())
+        match verify_signer_detached(blob, digest).map_err(to_nif_err)? {
+            SignerVerify::Valid if digest_matches(HashAlgorithm::Sha1, &covered, digest) => {
+                Ok(atoms::valid())
+            }
+            SignerVerify::Valid => Ok(atoms::invalid()),
+            other => Ok(verdict_atom(other)),
         }
-        SignerVerify::Valid => Ok(atoms::invalid()),
-        other => Ok(verdict_atom(other)),
-    }
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_verify_signer(contents: Option<Binary>) -> NifResult<Atom> {
-    let blob = cms_blob(contents.as_deref())?;
+    contain_panic(|| {
+        let blob = cms_blob(contents.as_deref())?;
 
-    verify_signer(blob).map(verdict_atom).map_err(to_nif_err)
+        verify_signer(blob).map(verdict_atom).map_err(to_nif_err)
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -523,31 +530,35 @@ fn signature_certificate<'a>(
     env: Env<'a>,
     contents: Option<Binary>,
 ) -> NifResult<CertificateNif<'a>> {
-    let blob = cms_blob(contents.as_deref())?;
-    let certificate = signer_certificate(blob)
-        .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
+    contain_panic(|| {
+        let blob = cms_blob(contents.as_deref())?;
+        let certificate = signer_certificate(blob)
+            .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
 
-    certificate_to_nif(env, &certificate)
+        certificate_to_nif(env, &certificate)
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn certificate_parse<'a>(env: Env<'a>, der: Binary) -> NifResult<CertificateNif<'a>> {
-    let unpadded = || {
-        tagged_err(
-            atoms::invalid_pdf(),
-            "not a DER-encoded X.509 certificate".to_string(),
-        )
-    };
-    let certificate = der_value_only(&der)
-        .ok_or_else(unpadded)
-        .and_then(|der| Certificate::from_der(der).map_err(|_| unpadded()))?;
+    contain_panic(|| {
+        let unpadded = || {
+            tagged_err(
+                atoms::invalid_pdf(),
+                "not a DER-encoded X.509 certificate".to_string(),
+            )
+        };
+        let certificate = der_value_only(&der)
+            .ok_or_else(unpadded)
+            .and_then(|der| Certificate::from_der(der).map_err(|_| unpadded()))?;
 
-    certificate_to_nif(env, &certificate)
+        certificate_to_nif(env, &certificate)
+    })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn certificate_parse_pem<'a>(env: Env<'a>, pem: Binary) -> NifResult<Vec<CertificateNif<'a>>> {
-    certificates_to_nif(env, pem_certificates(&pem))
+    contain_panic(|| certificates_to_nif(env, pem_certificates(&pem)))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -556,7 +567,7 @@ fn certificate_parse_pkcs12<'a>(
     data: Binary,
     password: String,
 ) -> NifResult<Vec<CertificateNif<'a>>> {
-    certificates_to_nif(env, pkcs12_certificates(&data, &password))
+    contain_panic(|| certificates_to_nif(env, pkcs12_certificates(&data, &password)))
 }
 
 fn certificates_to_nif<'a>(
@@ -834,27 +845,29 @@ fn hex_upper(bytes: &[u8]) -> String {
 // the digest of the *padded* bytes, so trimming would break the B-LT lookup.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_pades_level(contents: Option<Binary>, dss: Option<DssNif>) -> NifResult<Atom> {
-    // Only `contents` is read, and `Default` keeps an added upstream field from
-    // breaking the build.
-    let info = SignatureInfo {
-        contents: Some(contents_of(contents.as_deref())?.to_vec()),
-        ..Default::default()
-    };
-    let store = dss.map(dss_from_nif);
+    contain_panic(|| {
+        // Only `contents` is read, and `Default` keeps an added upstream field from
+        // breaking the build.
+        let info = SignatureInfo {
+            contents: Some(contents_of(contents.as_deref())?.to_vec()),
+            ..Default::default()
+        };
+        let store = dss.map(dss_from_nif);
 
-    match classify_pades_level(&info, store.as_ref()) {
-        PadesLevel::BB => Ok(atoms::b_b()),
-        PadesLevel::BT => Ok(atoms::b_t()),
-        PadesLevel::BLt => Ok(atoms::b_lt()),
-        // `PadesLevel` is `#[non_exhaustive]`, and upstream documents that this
-        // classifier never returns `BLta`. This arm is what reports either of
-        // those changing rather than mapping it to a level the caller was not
-        // told about.
-        other => Err(tagged_err(
-            atoms::unsupported(),
-            format!("unsupported PAdES baseline level: {other:?}"),
-        )),
-    }
+        match classify_pades_level(&info, store.as_ref()) {
+            PadesLevel::BB => Ok(atoms::b_b()),
+            PadesLevel::BT => Ok(atoms::b_t()),
+            PadesLevel::BLt => Ok(atoms::b_lt()),
+            // `PadesLevel` is `#[non_exhaustive]`, and upstream documents that this
+            // classifier never returns `BLta`. This arm is what reports either of
+            // those changing rather than mapping it to a level the caller was not
+            // told about.
+            other => Err(tagged_err(
+                atoms::unsupported(),
+                format!("unsupported PAdES baseline level: {other:?}"),
+            )),
+        }
+    })
 }
 
 // The `/Type` and `/SubFilter` an archival timestamp carries (ETSI EN 319 142-1
@@ -1004,10 +1017,12 @@ fn signature_document_timestamp<'a>(
     env: Env<'a>,
     pdf_data: Binary,
 ) -> NifResult<Option<TimestampNif<'a>>> {
-    document_timestamp(&pdf_data)?
-        .as_ref()
-        .map(|timestamp| timestamp_to_nif(env, timestamp))
-        .transpose()
+    contain_panic(|| {
+        document_timestamp(&pdf_data)?
+            .as_ref()
+            .map(|timestamp| timestamp_to_nif(env, timestamp))
+            .transpose()
+    })
 }
 
 // `id-aa-signatureTimeStampToken` — the RFC 3161 token a PAdES B-T signature
@@ -1104,15 +1119,17 @@ fn no_timestamp() -> rustler::Error {
 // attachment, not token authenticity.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_verify_timestamp(contents: Option<Binary>) -> NifResult<Atom> {
-    let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
+    contain_panic(|| {
+        let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
 
-    let signed = signed_data_of(cms_blob(contents.as_deref())?).map_err(malformed)?;
-    let token = signature_timestamp_token(&signed)
-        .map_err(malformed)?
-        .ok_or_else(no_timestamp)?;
-    let value = signer_signature_value(&signed).ok_or_else(no_timestamp)?;
+        let signed = signed_data_of(cms_blob(contents.as_deref())?).map_err(malformed)?;
+        let token = signature_timestamp_token(&signed)
+            .map_err(malformed)?
+            .ok_or_else(no_timestamp)?;
+        let value = signer_signature_value(&signed).ok_or_else(no_timestamp)?;
 
-    Ok(attachment_verdict(&parse_timestamp(&token)?, value))
+        Ok(attachment_verdict(&parse_timestamp(&token)?, value))
+    })
 }
 
 // A document timestamp's `/Contents` is the token itself, and the value it is
@@ -1125,10 +1142,12 @@ fn signature_verify_document_timestamp(
     byte_range: Vec<i64>,
     pdf_data: Binary,
 ) -> NifResult<Atom> {
-    let timestamp = parse_timestamp(contents_of(contents.as_deref())?)?;
-    let covered = signed_bytes(&pdf_data, &byte_range)?;
+    contain_panic(|| {
+        let timestamp = parse_timestamp(contents_of(contents.as_deref())?)?;
+        let covered = signed_bytes(&pdf_data, &byte_range)?;
 
-    Ok(attachment_verdict(&timestamp, &covered))
+        Ok(attachment_verdict(&timestamp, &covered))
+    })
 }
 
 #[derive(NifMap)]
@@ -1201,7 +1220,7 @@ fn parse_timestamp(token: &[u8]) -> NifResult<Timestamp> {
 // `TrailingData`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn timestamp_parse<'a>(env: Env<'a>, token: Binary) -> NifResult<TimestampNif<'a>> {
-    timestamp_to_nif(env, &parse_timestamp(&token)?)
+    contain_panic(|| timestamp_to_nif(env, &parse_timestamp(&token)?))
 }
 
 // Two atoms rather than the three `verdict_atom` builds: upstream's `verify`
@@ -1209,12 +1228,14 @@ fn timestamp_parse<'a>(env: Env<'a>, token: Binary) -> NifResult<TimestampNif<'a
 // CMS-wrapped, both of which reach the caller as `:invalid_pdf`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn timestamp_verify(token: Binary) -> NifResult<Atom> {
-    let verified = parse_timestamp(&token)?.verify().map_err(to_nif_err)?;
+    contain_panic(|| {
+        let verified = parse_timestamp(&token)?.verify().map_err(to_nif_err)?;
 
-    Ok(if verified {
-        atoms::valid()
-    } else {
-        atoms::invalid()
+        Ok(if verified {
+            atoms::valid()
+        } else {
+            atoms::invalid()
+        })
     })
 }
 
@@ -1225,16 +1246,18 @@ fn signature_timestamp<'a>(
     env: Env<'a>,
     contents: Option<Binary>,
 ) -> NifResult<Option<TimestampNif<'a>>> {
-    let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
+    contain_panic(|| {
+        let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
 
-    let signed = signed_data_of(contents_of(contents.as_deref())?).map_err(malformed)?;
-    let found = signature_timestamp_token(&signed).map_err(malformed)?;
+        let signed = signed_data_of(contents_of(contents.as_deref())?).map_err(malformed)?;
+        let found = signature_timestamp_token(&signed).map_err(malformed)?;
 
-    let Some(token) = found else {
-        return Ok(None);
-    };
+        let Some(token) = found else {
+            return Ok(None);
+        };
 
-    timestamp_to_nif(env, &parse_timestamp(&token)?).map(Some)
+        timestamp_to_nif(env, &parse_timestamp(&token)?).map(Some)
+    })
 }
 
 #[cfg(test)]

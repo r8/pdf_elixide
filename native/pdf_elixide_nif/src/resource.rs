@@ -6,7 +6,7 @@ use std::{
 
 use rustler::NifResult;
 
-use crate::error::{closed_err, lock_err, panic_err};
+use crate::error::{closed_err, contain_panic, lock_err};
 
 // A BEAM resource with shared reads, exclusive mutation and explicit release.
 // Access goes through closures so no lock guard can escape panic containment.
@@ -34,9 +34,9 @@ impl<T> Closable<T> {
     // Pre-flight checks whose answer the work depends on belong inside the
     // closure: run outside, they can straddle a writer that invalidates them.
     pub fn with_lock<R>(&self, f: impl FnOnce(&mut T) -> NifResult<R>) -> NifResult<R> {
-        // The guard is bound here, in the caller's frame, rather than inside the
-        // closure — that is what keeps a panic from poisoning the lock (see
-        // `contain_panic`).
+        // The guard is bound here, in the caller's frame, and the panic caught
+        // inside its scope, so it drops without a panic in flight and the lock
+        // is never poisoned.
         let mut guard = self.lock()?;
         let result = contain_panic(|| f(&mut guard));
         self.run_hook(&guard);
@@ -93,12 +93,6 @@ impl<T> Closable<T> {
             .unwrap_or_else(|e| e.into_inner())
             .is_none()
     }
-}
-
-// Catch inside the guard's scope so it drops without a panic in flight and the
-// resource lock remains usable. `AssertUnwindSafe` deliberately keeps the value.
-fn contain_panic<R>(f: impl FnOnce() -> NifResult<R>) -> NifResult<R> {
-    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|payload| Err(panic_err(&*payload)))
 }
 
 pub struct ExclusiveGuard<'a, T>(RwLockWriteGuard<'a, Option<T>>);

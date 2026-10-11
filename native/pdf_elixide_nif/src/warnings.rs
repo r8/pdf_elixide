@@ -11,7 +11,7 @@ use pdf_oxide::{
 };
 use rustler::{NifMap, NifResult, NifUnitEnum};
 
-use crate::{ring::Ring, search::SearchRuns};
+use crate::{error::contain_panic, ring::Ring, search::SearchRuns};
 
 #[derive(NifUnitEnum, Debug)]
 enum WarningCategoryNif {
@@ -177,9 +177,10 @@ pub(crate) fn collect_global() {
     GLOBAL.absorb(drain_global_warnings);
 }
 
-// Drain on both success and error for calls without a `Closable`.
+// For calls without a `Closable`: contain a panic as `with_read` would, and
+// drain on success, error and panic alike.
 pub(crate) fn drained<R>(f: impl FnOnce() -> NifResult<R>) -> NifResult<R> {
-    let result = f();
+    let result = contain_panic(f);
     collect_global();
 
     result

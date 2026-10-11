@@ -641,7 +641,8 @@ defmodule PdfElixide.Signature do
   def document_timestamp?(pdf_bytes) when is_binary(pdf_bytes) do
     Predicate.tolerant!(
       fn -> Native.signature_document_timestamp(pdf_bytes) end,
-      &(&1 != nil)
+      &(&1 != nil),
+      []
     )
   end
 

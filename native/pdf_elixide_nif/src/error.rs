@@ -1,7 +1,10 @@
-use std::any::Any;
+use std::{
+    any::Any,
+    panic::{catch_unwind, AssertUnwindSafe},
+};
 
 use pdf_oxide::Error as PdfError;
-use rustler::{Atom, Error};
+use rustler::{Atom, Error, NifResult};
 
 use crate::atoms;
 
@@ -57,6 +60,13 @@ pub fn to_form_err(e: PdfError) -> Error {
 // guard, so this is only a defensive fallback.
 pub fn lock_err() -> Error {
     tagged_err(atoms::lock_poisoned(), "Lock is poisoned")
+}
+
+// Reports a caught panic as `:panic` rather than Rustler's opaque
+// `:nif_panicked`. `AssertUnwindSafe` deliberately keeps whatever the closure
+// touched alive.
+pub fn contain_panic<R>(f: impl FnOnce() -> NifResult<R>) -> NifResult<R> {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|payload| Err(panic_err(&*payload)))
 }
 
 pub fn panic_err(payload: &(dyn Any + Send)) -> Error {
