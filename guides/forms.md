@@ -627,7 +627,7 @@ have one: `PdfElixide.Form.fields/1` omits it, and `PdfElixide.Form.field/2`,
 `PdfElixide.Form.value/2` and `PdfElixide.Form.put_value/3` all answer
 `{:error, %PdfElixide.Error{reason: :not_found}}` for its name, the same result
 as an unknown field name. `PdfElixide.Form.put_values/2` reports it the same
-way, from the `fields/1` read it validates against.
+way, and writes none of the batch.
 
 A signature's `/V` is a signature dictionary rather than a form value. This API
 never writes over it; doing so — with `nil` included — would replace that

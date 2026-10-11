@@ -1020,21 +1020,15 @@ defmodule PdfElixide.FormTest do
         editor = Editor.open!(@form_pdf)
 
         assert {:ok, ^editor} = Form.put_values(editor, empty)
-
-        # Not merely "no field changed": the short-circuit makes no native call,
-        # which is the only way the flag can still be false here.
         refute Editor.modified?(editor)
       end
     end
 
-    test "an empty write against a closed editor still answers {:ok, editor}" do
+    test "an empty write against a closed editor reports :closed" do
       editor = Editor.open!(@form_pdf)
       :ok = Editor.close(editor)
 
-      # A consequence of making no native call, not a special case: the
-      # short-circuit runs ahead of the validating read that would report the
-      # handle.
-      assert {:ok, ^editor} = Form.put_values(editor, [])
+      assert {:error, %Error{reason: :closed}} = Form.put_values(editor, [])
     end
 
     test "reports an unknown name as :not_found and writes nothing" do
@@ -1069,8 +1063,6 @@ defmodule PdfElixide.FormTest do
     test "reports a signature field as :not_found and writes nothing" do
       editor = Editor.open!(@signature_pdf)
 
-      # `fields/1` omits it, so the pre-validation read is what refuses it —
-      # the same answer `put_value/3` reaches through its own guard.
       assert {:error, %Error{reason: :not_found}} =
                Form.put_values(editor, [{"signer_name", "Bob"}, {"signature", nil}])
 

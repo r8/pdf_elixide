@@ -256,22 +256,16 @@ defmodule PdfElixide.Form do
   applied.
 
   A list is applied in its own order; a map is applied in `Enum` order, which is
-  unspecified, so pass a list where the order matters. Empty input returns
-  `{:ok, editor}` without modifying it, even when the editor is closed.
+  unspecified, so pass a list where the order matters.
 
   See the [Concurrency](guides/concurrency.md) guide for what it locks.
   """
   @spec put_values(Editor.t(), Enumerable.t({String.t(), Field.value()})) ::
           {:ok, Editor.t()} | {:error, Error.t()}
   def put_values(%Editor{} = editor, values) do
-    case Enum.to_list(values) do
-      [] ->
-        {:ok, editor}
-
-      pairs ->
-        validate_pairs!(pairs)
-        write_values(editor, pairs)
-    end
+    pairs = Enum.to_list(values)
+    validate_pairs!(pairs)
+    write_values(editor, pairs)
   end
 
   @doc """

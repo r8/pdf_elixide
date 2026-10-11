@@ -756,6 +756,11 @@ fn editor_set_form_field_values(
     pairs: Vec<(String, Option<FieldValueNif>)>,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
+        // Inside the guard, so an empty batch still reports a closed handle.
+        if pairs.is_empty() {
+            return Ok(atoms::ok());
+        }
+
         // Preflight every name so an unknown field cannot partially apply the batch.
         let (resolved, upstream) = editor.resolved_fields()?;
         let fields = upstream.get_form_fields().map_err(to_nif_err)?;
