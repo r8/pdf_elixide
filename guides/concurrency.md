@@ -113,7 +113,7 @@ The editor's shared reads are `PdfElixide.Editor.page_count/1`,
 `PdfElixide.Editor.media_box/2`, `PdfElixide.Editor.crop_box/2`,
 `PdfElixide.Editor.metadata/1`, `PdfElixide.Editor.embedded_files/1`,
 `PdfElixide.Editor.flatten_warnings/1`,
-`PdfElixide.Editor.marked_for_redaction?/2`,
+`PdfElixide.Editor.marked_for_redaction/2` and its `?` form,
 `PdfElixide.Editor.bookmark_segments/2` and `PdfElixide.Editor.closed?/1`. They
 do not wait on each other, but any of them will queue behind an in-flight
 exclusive operation such as a save on the same handle. For `flatten_warnings/1`,

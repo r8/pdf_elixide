@@ -1465,14 +1465,25 @@ defmodule PdfElixide.Editor do
   `apply_redactions/1,2` for every page it actually redacted — that one answers
   `true` afterwards whether or not it was marked before the pass.
 
-  Raises `%PdfElixide.Error{reason: :out_of_range}` if the page does not exist,
-  and `%PdfElixide.Error{reason: :closed}` after `close/1`.
+  Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
+  not exist.
+  """
+  @spec marked_for_redaction(t(), non_neg_integer()) ::
+          {:ok, boolean()} | {:error, Error.t()}
+  def marked_for_redaction(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    Wrap.call(fn -> Native.editor_is_page_marked_for_redaction(ref, page_index) end)
+  end
+
+  @doc """
+  Same as `marked_for_redaction/2` but returns the bare boolean, raising on
+  failure — a page that does not exist included. See the "Errors versus
+  exceptions" section of `PdfElixide.Error`.
   """
   @spec marked_for_redaction?(t(), non_neg_integer()) :: boolean()
-  def marked_for_redaction?(%__MODULE__{ref: ref}, page_index)
+  def marked_for_redaction?(%__MODULE__{} = editor, page_index)
       when is_integer(page_index) and page_index >= 0 do
-    # `Wrap.call!/1` for the reason spelled out on `PdfElixide.Document.encrypted?/1`.
-    Wrap.call!(fn -> Native.editor_is_page_marked_for_redaction(ref, page_index) end)
+    editor |> marked_for_redaction(page_index) |> Wrap.unwrap!()
   end
 
   @doc """

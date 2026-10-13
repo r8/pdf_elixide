@@ -3243,6 +3243,24 @@ defmodule PdfElixide.EditorTest do
     end
   end
 
+  describe "marked_for_redaction/2" do
+    test "answers in a tuple before and after a mark" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert Editor.marked_for_redaction(editor, 0) == {:ok, false}
+      Editor.mark_redactions!(editor, 0)
+      assert Editor.marked_for_redaction(editor, 0) == {:ok, true}
+    end
+
+    test "returns :out_of_range for a page past the end" do
+      editor = Editor.open!(@redact_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{reason: :out_of_range}} = Editor.marked_for_redaction(editor, 2)
+    end
+  end
+
   describe "redaction_count/2" do
     test "counts one region per redaction annotation, quadrilaterals included" do
       editor = Editor.open!(@redact_pdf)

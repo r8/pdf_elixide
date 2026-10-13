@@ -73,21 +73,20 @@ defmodule PdfElixide.Error do
   the *caller* arrives as a `%PdfElixide.Error{}`; if you get one, the arguments
   were accepted and the document, the filesystem or the handle is what failed.
 
-  Predicates ending in `?` are the mirror image: they return a bare boolean, so
-  a failure has nowhere to be reported and this struct is raised instead, from a
-  function with no `!` in its name. `PdfElixide.Document.has_structure_tree?/1`
-  and `PdfElixide.Document.has_xfa?/1` answer `false` for a feature that cannot
-  be read, so only a failure of the *handle* raises — their strict counterparts
-  `PdfElixide.Document.has_structure_tree/1` and `PdfElixide.Document.has_xfa/1`
-  return the error instead. `PdfElixide.Signature.document_timestamp?/1`
-  degrades the same way and takes bytes rather than a handle, so nothing can
-  raise from it at all; its strict counterpart
-  `PdfElixide.Signature.document_timestamp/1` reports bytes that are not a PDF.
-  `PdfElixide.Document.Page.has_text_layer?/1` raises
-  for *everything*, since answering `false` would invert the meaning callers act
-  on. `PdfElixide.Document.encrypted?/1` asks something that cannot fail, so
-  only the handle can raise, and `PdfElixide.Document.closed?/1` never raises
-  at all.
+  Predicates ending in `?` are the mirror image. They return a bare boolean, so
+  a failure has nowhere to be reported, and this struct is raised instead, from
+  a function with no `!` in its name. As a rule, a `false` therefore means the
+  answer really is no: a predicate that cannot answer raises. Where a predicate
+  can fail for a reason other than its handle, a counterpart without the `?`
+  returns `{:ok, boolean}` or the error — `PdfElixide.Document.Page.has_text_layer/1`
+  and `PdfElixide.Editor.marked_for_redaction/2`, for example. Predicates that
+  cannot fail, such as `PdfElixide.Document.closed?/1`, never raise.
+
+  The exceptions are `PdfElixide.Document.has_structure_tree?/1`,
+  `PdfElixide.Document.has_xfa?/1` and
+  `PdfElixide.Signature.document_timestamp?/1`, which treat unreadable content
+  as `false`. Their counterparts without the `?` preserve the error. The first
+  two still raise when the handle itself cannot be used.
   """
 
   @type reason ::
