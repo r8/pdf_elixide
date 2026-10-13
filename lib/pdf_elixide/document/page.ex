@@ -297,9 +297,8 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Extracts the text content of the page.
 
-  A page that cannot be extracted is an error here, where
-  `PdfElixide.Document.text/1` skips it by default — `:on_page_error` is a
-  whole-document option, and passing it here raises `ArgumentError`.
+  `:on_page_error` is a whole-document option of `PdfElixide.Document.text/1`;
+  passing it here raises `ArgumentError`.
 
   See `t:PdfElixide.Document.page_text_opts/0` for the available options, and
   `to_plain_text/2` for the other way to read a page as text.

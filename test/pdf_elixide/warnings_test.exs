@@ -330,7 +330,7 @@ defmodule PdfElixide.WarningsTest do
     test "a page that resolves through neither lookup leaves both feeds empty" do
       doc = open(@broken_page)
 
-      assert {:ok, _} = Document.text(doc)
+      assert {:ok, _} = Document.text(doc, on_page_error: :skip)
       assert Document.structured_warnings!(doc) == []
       assert Logging.structured_warnings() == []
     end

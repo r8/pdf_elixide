@@ -73,9 +73,9 @@ defmodule PdfElixide.Document do
   ### When a page cannot be read
 
   A whole-document extractor or converter that reaches a page it cannot read
-  fails with `{:error, %PdfElixide.Error{}}`. The exceptions are `text/1`, which
-  skips the page by default and supports `:on_page_error`, and `fonts/1`, which
-  always skips it. A capped `search/2` may stop before reaching a later
+  fails with `{:error, %PdfElixide.Error{}}`. `fonts/1` is the exception and
+  always skips such a page; `text/1` skips one only when given
+  `on_page_error: :skip`. A capped `search/2` may stop before reaching a later
   unreadable page; if it reaches one, it fails. See `t:search_opts/0`.
 
   Most damaged pages extract as *empty* rather than failing; see the
@@ -1283,17 +1283,17 @@ defmodule PdfElixide.Document do
     * `:exclude_inks` — names of Separation/DeviceN inks to suppress, as
       listed by `inks/3`. Defaults to `[]`.
     * `:on_page_error` — what a page that fails to extract does to the
-      whole-document result: `:skip` it (the default) or `:halt`, failing the
-      call with the first page's error. See below.
+      whole-document result: `:halt`, failing the call with the first such
+      page's error (the default), or `:skip` it. See below.
 
   ## `:on_page_error` and partly extractable documents
 
   Accepted **only on the whole-document arity**; per-page calls raise
-  `ArgumentError`. Under the `:skip` default a failed page contributes an empty
-  string, its page separator is emitted either way, and the call still returns
-  `{:ok, text}` with content silently missing. `:halt` instead fails the call
-  with `{:error, %PdfElixide.Error{}}`, the failing page's zero-based index
-  prefixed to the message.
+  `ArgumentError`. Under the `:halt` default a failed page fails the call with
+  `{:error, %PdfElixide.Error{}}`, the failing page's zero-based index prefixed
+  to the message. `:skip` instead makes a failed page contribute an empty
+  string; its page separator is emitted either way, and the call returns
+  `{:ok, text}` with that page's content silently missing.
 
   `:halt` is not a general corruption detector, though: almost every damaged
   page degrades to empty text rather than an error — an undecodable content
@@ -1382,11 +1382,10 @@ defmodule PdfElixide.Document do
       Document.text(doc, 0)
       Document.text(doc, 0, region: word.bbox)
 
-  A page that fails to extract contributes an empty string to the
-  whole-document result rather than failing the call. Its separator is emitted
-  regardless, so a document with at least one page splits into exactly
-  `page_count/1` parts and a skipped page reads as a blank one. A document with
-  no pages returns `""`. Pass `on_page_error: :halt` to fail the call instead.
+  By default, a page that fails to extract fails the whole-document call. Pass
+  `on_page_error: :skip` to tolerate it; see the `:on_page_error` section of
+  `t:text_opts/0` for the complete behavior. A document with no pages returns
+  `""`.
 
   The whole-document form builds every page's text in memory at once — see the
   "Whole-document extraction and memory" section of `PdfElixide.Document`.
@@ -1464,7 +1463,7 @@ defmodule PdfElixide.Document do
       exclude_regions_mode: validate_region_mode!(opts, :exclude_regions_mode),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, []),
-      on_page_error: Keyword.get(opts, :on_page_error, :skip)
+      on_page_error: Keyword.get(opts, :on_page_error, :halt)
     }
 
     validate_route_exclusivity!(
@@ -3581,10 +3580,10 @@ defmodule PdfElixide.Document do
   per page.
 
   A page whose fonts cannot be read contributes nothing and does not fail the
-  call — see `fonts/2` for what that covers. Along with `text/1` this is the
-  only whole-document extractor that tolerates such a page, and the only one
-  that does so with no option to say otherwise; the "When a page cannot be
-  read" section of `PdfElixide.Document` has the rule for the rest.
+  call — see `fonts/2` for what that covers. This is the only whole-document
+  extractor that tolerates such a page by default, and it has no option to say
+  otherwise; the "When a page cannot be read" section of `PdfElixide.Document`
+  has the rule for the rest.
 
   Each returned font holds the embedded font program behind its handle until
   `PdfElixide.Document.Font.close/1` or GC, one handle per page per font — see

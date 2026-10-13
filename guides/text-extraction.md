@@ -135,10 +135,10 @@ Document.text!(doc)            # pages separated by a form feed, "\f"
 Document.to_plain_text!(doc)   # pages separated by "\n\n---\n\n"
 ```
 
-For a document with at least one page, splitting `PdfElixide.Document.text/1` on
-the form feed recovers exactly `PdfElixide.Document.page_count/1` parts, because
-a page that fails to extract still gets its separator. A zero-page document
-returns `""`, which `String.split/2` represents as one empty part rather than
+For a document with at least one page, a successful
+`PdfElixide.Document.text/1` splits on the form feed into exactly
+`PdfElixide.Document.page_count/1` parts; under `on_page_error: :skip` a page
+that failed to extract stays as an empty part. A zero-page document returns `""`, which `String.split/2` represents as one empty part rather than
 none. The `---` boundary is not as safe: `PdfElixide.Document.to_plain_text/2`
 separates paragraphs with a blank line, so a page whose own text has a `---`
 line between two paragraphs emits the same bytes and splits into an extra part,

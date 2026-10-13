@@ -70,6 +70,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @unreachable 2
 
   @whole_document_calls [
+    text: [],
     chars: [],
     words: [],
     text_lines: [],
@@ -408,7 +409,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       # Without this precondition, a repaired fixture makes the assertion vacuous.
       assert {:error, _} = Document.text(doc, @unreachable)
 
-      assert String.split(Document.text!(doc), "\f") == ["One", "Two", ""]
+      assert String.split(Document.text!(doc, on_page_error: :skip), "\f") == ["One", "Two", ""]
     end
 
     test "fonts tolerate the same page, alone among the other extractors" do
@@ -1801,7 +1802,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     test "a page that resolves through neither lookup records nothing on its document" do
       doc = open(@broken_page_pdf)
 
-      assert {:ok, _} = Document.text(doc)
+      assert {:ok, _} = Document.text(doc, on_page_error: :skip)
       assert Document.structured_warnings!(doc) == []
     end
   end

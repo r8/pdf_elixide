@@ -45,7 +45,7 @@ defmodule PdfElixide.LoggingTest do
 
   defp extract(path) do
     {:ok, doc} = Document.open(path)
-    result = Document.text(doc)
+    result = Document.text(doc, on_page_error: :skip)
     Document.close(doc)
     result
   end

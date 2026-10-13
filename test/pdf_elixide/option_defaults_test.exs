@@ -97,7 +97,7 @@ defmodule PdfElixide.OptionDefaultsTest do
                exclude_regions_mode: :intersects,
                exclude_layers: [],
                exclude_inks: [],
-               on_page_error: :skip
+               on_page_error: :halt
              }
     end
 
