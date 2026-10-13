@@ -190,14 +190,16 @@ defmodule PdfElixide.DocumentTest do
       end
     end
 
-    test "is inert on the per-page arities, which always propagate" do
+    test "the per-page arities always propagate, and refuse the option" do
       doc = Document.open!(@broken_page_pdf)
       page = Document.page!(doc, @unreachable_page)
 
-      for opts <- [[], [on_page_error: :skip], [on_page_error: :halt]] do
-        assert {:error, %Error{}} = Document.text(doc, @unreachable_page, opts)
-        assert {:error, %Error{}} = Page.text(page, opts)
-        assert {:ok, "One"} = Document.text(doc, 0, opts)
+      assert {:error, %Error{}} = Document.text(doc, @unreachable_page)
+      assert {:error, %Error{}} = Page.text(page)
+      assert {:ok, "One"} = Document.text(doc, 0)
+
+      assert_raise ArgumentError, ~r/:on_page_error/, fn ->
+        Document.text(doc, @unreachable_page, on_page_error: :skip)
       end
     end
 
@@ -448,7 +450,6 @@ defmodule PdfElixide.DocumentTest do
 
       opts = [
         strip_running_headers_footers: true,
-        expand_ligatures: true,
         bold_markers: :aggressive
       ]
 
@@ -821,12 +822,9 @@ defmodule PdfElixide.DocumentTest do
       end
     end
 
-    test "raises for a Markdown-only option rather than ignoring it" do
+    test "raises for an option the HTML path does not read rather than ignoring it" do
       doc = Document.open!(@valid_pdf)
 
-      # These keys are valid for `to_markdown/2` but upstream never consults
-      # them on the HTML path, so accepting them would silently promise an
-      # effect that cannot happen.
       for opt <- [[bold_markers: :aggressive], [expand_ligatures: true]] do
         assert_raise ArgumentError, fn -> Document.to_html(doc, opt) end
       end

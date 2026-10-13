@@ -113,7 +113,6 @@ pub struct MarkdownOptionsNif {
     pub image_output_dir: Option<String>,
     pub include_form_fields: bool,
     pub strip_running_headers_footers: bool,
-    pub expand_ligatures: bool,
     pub max_image_pixels: Option<u64>,
     pub reading_order: ReadingOrderNif,
     pub bold_markers: BoldMarkersNif,
@@ -139,7 +138,6 @@ impl From<MarkdownOptionsNif> for ConversionOptions {
             image_output_dir: o.image_output_dir,
             include_form_fields: o.include_form_fields,
             strip_running_headers_footers: o.strip_running_headers_footers,
-            expand_ligatures: o.expand_ligatures,
             max_image_pixels: o.max_image_pixels,
             reading_order_mode: o.reading_order.into(),
             bold_marker_behavior: o.bold_markers.into(),
@@ -1436,7 +1434,10 @@ fn document_export_form_data(
 
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::{geometry::Rect, layout::RectFilterMode, search::SearchOptions};
+    use pdf_oxide::{
+        geometry::Rect, layout::RectFilterMode, search::SearchOptions,
+        structure::spatial_table_detector::TableDetectionConfig,
+    };
 
     use super::*;
 
@@ -1658,6 +1659,63 @@ mod tests {
         assert_eq!(
             doc.to_plain_text(2, &expand).expect("plain text"),
             unexpanded
+        );
+    }
+
+    #[test]
+    fn upstream_still_ignores_expand_ligatures_in_to_markdown() {
+        let doc = PdfDocument::open(fixture("extraction.pdf")).expect("fixture opens");
+
+        let expand = ConversionOptions {
+            expand_ligatures: true,
+            ..Default::default()
+        };
+
+        assert!(doc
+            .extract_text_with_options(2, &expand)
+            .expect("text")
+            .contains("cofin"));
+
+        let unexpanded = doc
+            .to_markdown(2, &ConversionOptions::default())
+            .expect("markdown");
+        assert!(
+            unexpanded.contains("co\u{FB01}n"),
+            "the ligature reaches the Markdown output at all"
+        );
+        assert_eq!(doc.to_markdown(2, &expand).expect("markdown"), unexpanded);
+    }
+
+    // Explicit on both sides: upstream's default config already enables the fallback.
+    #[test]
+    fn upstream_still_forces_text_fallback_off_on_the_text_paths() {
+        let doc = PdfDocument::open(fixture("extraction.pdf")).expect("fixture opens");
+
+        let config = |text_fallback| TableDetectionConfig {
+            text_fallback,
+            ..Default::default()
+        };
+        let tables = |text_fallback| {
+            doc.extract_tables_with_config(3, config(text_fallback))
+                .expect("tables")
+                .len()
+        };
+        assert_eq!((tables(true), tables(false)), (1, 0));
+
+        let options = |text_fallback| ConversionOptions {
+            table_detection_config: Some(config(text_fallback)),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            doc.extract_text_with_options(3, &options(true))
+                .expect("text"),
+            doc.extract_text_with_options(3, &options(false))
+                .expect("text")
+        );
+        assert_eq!(
+            doc.to_plain_text(3, &options(true)).expect("plain text"),
+            doc.to_plain_text(3, &options(false)).expect("plain text")
         );
     }
 }

@@ -92,10 +92,12 @@ defmodule PdfElixide.OptionKeysTest do
     text_fallback: true
   ]
 
+  @text_table_detection_opts Keyword.delete(@table_detection_opts, :text_fallback)
+
   @text_opts [
     extract_tables: true,
     expand_ligatures: true,
-    table_detection: @table_detection_opts,
+    table_detection: @text_table_detection_opts,
     region: @rect,
     region_mode: :intersects,
     exclude_regions: [@rect],
@@ -105,6 +107,8 @@ defmodule PdfElixide.OptionKeysTest do
     on_page_error: :skip
   ]
 
+  @page_text_opts Keyword.delete(@text_opts, :on_page_error)
+
   @markdown_opts [
     detect_headings: true,
     extract_tables: true,
@@ -113,7 +117,6 @@ defmodule PdfElixide.OptionKeysTest do
     image_output_dir: nil,
     include_form_fields: true,
     strip_running_headers_footers: false,
-    expand_ligatures: false,
     max_image_pixels: 1_000_000,
     reading_order: :structure_tree,
     bold_markers: :aggressive
@@ -133,7 +136,7 @@ defmodule PdfElixide.OptionKeysTest do
 
   @plain_text_opts [
     extract_tables: false,
-    table_detection: @table_detection_opts,
+    table_detection: @text_table_detection_opts,
     reading_order: :top_to_bottom,
     include_form_fields: false
   ]
@@ -232,7 +235,7 @@ defmodule PdfElixide.OptionKeysTest do
     test "text/2,3" do
       doc = doc()
       accepts_each!(@text_opts, &Document.text(doc, &1))
-      accepts_each!(@text_opts, &Document.text(doc, 0, &1))
+      accepts_each!(@page_text_opts, &Document.text(doc, 0, &1))
 
       # The filters refuse the other non-default keys, so `@text_opts` leaves
       # them empty; test real values on their own.
@@ -377,7 +380,7 @@ defmodule PdfElixide.OptionKeysTest do
 
     test ":table_detection, which takes the detection keys but not :region" do
       doc = doc()
-      accepts_each!(@table_detection_opts, &Document.text(doc, 0, table_detection: &1))
+      accepts_each!(@text_table_detection_opts, &Document.text(doc, 0, table_detection: &1))
     end
 
     test "Editor.open/2 and from_binary/2" do
@@ -573,6 +576,47 @@ defmodule PdfElixide.OptionKeysTest do
   end
 
   describe "an option its call does not read is rejected" do
+    test "one page's text takes no :on_page_error" do
+      doc = doc()
+      page = Document.page!(doc, 0)
+
+      for call <- [
+            fn -> Document.text(doc, 0, on_page_error: :halt) end,
+            fn -> Document.text!(doc, 0, on_page_error: :skip) end,
+            fn -> Document.Page.text(page, on_page_error: :halt) end
+          ] do
+        assert_raise ArgumentError, ~r/:on_page_error/, call
+      end
+    end
+
+    test "to_markdown/2,3 takes no :expand_ligatures" do
+      doc = doc()
+
+      assert_raise ArgumentError, ~r/:expand_ligatures/, fn ->
+        Document.to_markdown(doc, expand_ligatures: true)
+      end
+
+      assert_raise ArgumentError, ~r/:expand_ligatures/, fn ->
+        Document.to_markdown(doc, 0, expand_ligatures: false)
+      end
+    end
+
+    test "the text paths' :table_detection takes no :text_fallback" do
+      doc = doc()
+
+      for call <- [
+            &Document.text(doc, &1),
+            &Document.text(doc, 0, &1),
+            &Document.to_plain_text(doc, &1),
+            &Document.to_plain_text(doc, 0, &1)
+          ],
+          value <- [true, false] do
+        assert_raise ArgumentError, ~r/:text_fallback/, fn ->
+          call.(table_detection: [text_fallback: value])
+        end
+      end
+    end
+
     test "Editor.apply_redactions/2 takes no sanitize, layer or artifact key" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)

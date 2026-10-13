@@ -105,12 +105,12 @@ rather than being accepted and ignored.
 | Option | `text/2` | `to_plain_text/2` |
 |---|---|---|
 | `:extract_tables` | yes | yes |
-| `:table_detection` | yes | yes |
+| `:table_detection` (without `:text_fallback`) | yes | yes |
 | `:region`, `:region_mode` | yes | — |
 | `:exclude_regions`, `:exclude_regions_mode` | yes | — |
 | `:exclude_layers`, `:exclude_inks` | yes | — |
 | `:expand_ligatures` | yes | — |
-| `:on_page_error` | whole document only | — |
+| `:on_page_error` | whole document only; per-page calls raise | — |
 | `:reading_order` | — | yes |
 | `:include_form_fields` | — | yes (always on for `text/2`) |
 

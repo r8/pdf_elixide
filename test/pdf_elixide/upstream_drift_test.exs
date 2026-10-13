@@ -302,9 +302,6 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert Document.text!(doc, @ruleless) =~ "Region Units Total"
       refute Document.text!(doc, @ruleless) =~ "RegionUnitsTotal"
-
-      assert Document.text!(doc, @ruleless, table_detection: [text_fallback: true]) ==
-               Document.text!(doc, @ruleless)
     end
 
     test "a region query still does not silently relax the config", %{doc: doc} do

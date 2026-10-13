@@ -299,12 +299,12 @@ defmodule PdfElixide.Document.Page do
 
   A page that cannot be extracted is an error here, where
   `PdfElixide.Document.text/1` skips it by default — `:on_page_error` is a
-  whole-document option and does nothing on this path.
+  whole-document option, and passing it here raises `ArgumentError`.
 
-  See `t:PdfElixide.Document.text_opts/0` for the available options, and
+  See `t:PdfElixide.Document.page_text_opts/0` for the available options, and
   `to_plain_text/2` for the other way to read a page as text.
   """
-  @spec text(t(), Document.text_opts()) :: {:ok, String.t()} | {:error, Error.t()}
+  @spec text(t(), Document.page_text_opts()) :: {:ok, String.t()} | {:error, Error.t()}
   def text(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
     Document.text(doc, index, opts)
   end
@@ -312,7 +312,7 @@ defmodule PdfElixide.Document.Page do
   @doc """
   Same as `text/2` but raises an error if it fails.
   """
-  @spec text!(t(), Document.text_opts()) :: String.t()
+  @spec text!(t(), Document.page_text_opts()) :: String.t()
   def text!(page, opts \\ []) when is_list(opts) do
     text(page, opts) |> Wrap.unwrap!()
   end

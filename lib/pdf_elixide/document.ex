@@ -1266,12 +1266,9 @@ defmodule PdfElixide.Document do
       the [Text extraction](guides/text-extraction.md) guide.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
-      Unlike in `t:markdown_opts/0`, it is live here.
     * `:table_detection` — a keyword list tuning the spatial table
-      detector; see `t:table_detection_opts/0`. Only consulted when
-      `:extract_tables` is `true`, and its `:text_fallback` key is ignored
-      here, so a page with no ruling lines yields no tables regardless.
-      Defaults to `nil`.
+      detector; see `t:text_table_detection_opts/0`. Only consulted when
+      `:extract_tables` is `true`. Defaults to `nil`.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the text inside
       it. An extracted `bbox` can be handed straight back in. Defaults to
       `nil`.
@@ -1291,10 +1288,9 @@ defmodule PdfElixide.Document do
 
   ## `:on_page_error` and partly extractable documents
 
-  Read **only on the whole-document arity**; `text/3` and
-  `PdfElixide.Document.Page.text/2` extract one page and always return its
-  error. Under the `:skip` default a failed page contributes an empty string,
-  its page separator is emitted either way, and the call still returns
+  Accepted **only on the whole-document arity**; per-page calls raise
+  `ArgumentError`. Under the `:skip` default a failed page contributes an empty
+  string, its page separator is emitted either way, and the call still returns
   `{:ok, text}` with content silently missing. `:halt` instead fails the call
   with `{:error, %PdfElixide.Error{}}`, the failing page's zero-based index
   prefixed to the message.
@@ -1333,7 +1329,7 @@ defmodule PdfElixide.Document do
   @type text_opts :: [
           extract_tables: boolean(),
           expand_ligatures: boolean(),
-          table_detection: table_detection_opts() | nil,
+          table_detection: text_table_detection_opts() | nil,
           region: Rect.t() | nil,
           region_mode: region_mode(),
           exclude_regions: [Rect.t()],
@@ -1343,7 +1339,23 @@ defmodule PdfElixide.Document do
           on_page_error: :skip | :halt
         ]
 
-  @text_opts_keys [
+  @typedoc """
+  Options for per-page text extraction: every `t:text_opts/0` key except
+  `:on_page_error`.
+  """
+  @type page_text_opts :: [
+          extract_tables: boolean(),
+          expand_ligatures: boolean(),
+          table_detection: text_table_detection_opts() | nil,
+          region: Rect.t() | nil,
+          region_mode: region_mode(),
+          exclude_regions: [Rect.t()],
+          exclude_regions_mode: region_mode(),
+          exclude_layers: [String.t()],
+          exclude_inks: [String.t()]
+        ]
+
+  @page_text_opts_keys [
     :extract_tables,
     :expand_ligatures,
     :table_detection,
@@ -1352,9 +1364,10 @@ defmodule PdfElixide.Document do
     :exclude_regions,
     :exclude_regions_mode,
     :exclude_layers,
-    :exclude_inks,
-    :on_page_error
+    :exclude_inks
   ]
+
+  @text_opts_keys @page_text_opts_keys ++ [:on_page_error]
 
   @doc """
   Extracts text content.
@@ -1411,12 +1424,13 @@ defmodule PdfElixide.Document do
   @doc """
   Extracts the text content of the page at the given zero-based index.
 
-  See `t:text_opts/0` for the available options.
+  See `t:page_text_opts/0` for the available options.
   """
-  @spec text(t(), non_neg_integer(), text_opts()) :: {:ok, String.t()} | {:error, Error.t()}
+  @spec text(t(), non_neg_integer(), page_text_opts()) ::
+          {:ok, String.t()} | {:error, Error.t()}
   def text(%__MODULE__{ref: ref}, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
-    options = build_text_options(opts)
+    options = build_page_text_options(opts)
     Wrap.call(fn -> Native.document_extract_text(ref, page_index, options) end)
   end
 
@@ -1424,10 +1438,17 @@ defmodule PdfElixide.Document do
   Extracts the text content of the page at the given zero-based index,
   raising an error if it fails.
   """
-  @spec text!(t(), non_neg_integer(), text_opts()) :: String.t()
+  @spec text!(t(), non_neg_integer(), page_text_opts()) :: String.t()
   def text!(doc, page_index, opts)
       when is_integer(page_index) and page_index >= 0 and is_list(opts) do
     text(doc, page_index, opts) |> Wrap.unwrap!()
+  end
+
+  # One page's error is always returned, so `:on_page_error` would be ignored.
+  defp build_page_text_options(opts) do
+    opts
+    |> Keyword.validate!(@page_text_opts_keys)
+    |> build_text_options()
   end
 
   defp build_text_options(opts) do
@@ -1436,7 +1457,7 @@ defmodule PdfElixide.Document do
     options = %{
       extract_tables: Keyword.get(opts, :extract_tables, true),
       expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
-      table_detection: build_table_detection_option(Keyword.get(opts, :table_detection)),
+      table_detection: build_text_table_detection_option(Keyword.get(opts, :table_detection)),
       region: Keyword.get(opts, :region),
       region_mode: validate_region_mode!(opts, :region_mode),
       exclude_regions: Keyword.get(opts, :exclude_regions, []),
@@ -1497,9 +1518,6 @@ defmodule PdfElixide.Document do
       positions on the page. Defaults to `true`.
     * `:strip_running_headers_footers` — drop text lines that repeat in
       the top/bottom band of a majority of pages. Defaults to `false`.
-    * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
-      component letters (`ﬁ` to `fi`, and so on). Has **no effect** on
-      Markdown output; it takes effect on `text/2`. Defaults to `false`.
     * `:max_image_pixels` — skip images whose width times height exceeds
       this count. `nil` means the built-in 16 MP limit, not "no
       limit" — pass a large integer to lift it, or `0` to skip every
@@ -1526,7 +1544,6 @@ defmodule PdfElixide.Document do
           image_output_dir: String.t() | nil,
           include_form_fields: boolean(),
           strip_running_headers_footers: boolean(),
-          expand_ligatures: boolean(),
           max_image_pixels: non_neg_integer() | nil,
           reading_order: :structure_tree | :column_aware | :top_to_bottom,
           bold_markers: :conservative | :aggressive
@@ -1540,7 +1557,6 @@ defmodule PdfElixide.Document do
     :image_output_dir,
     :include_form_fields,
     :strip_running_headers_footers,
-    :expand_ligatures,
     :max_image_pixels,
     :reading_order,
     :bold_markers
@@ -1633,7 +1649,6 @@ defmodule PdfElixide.Document do
       image_output_dir: Keyword.get(opts, :image_output_dir),
       include_form_fields: Keyword.get(opts, :include_form_fields, true),
       strip_running_headers_footers: Keyword.get(opts, :strip_running_headers_footers, false),
-      expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
       max_image_pixels: Keyword.get(opts, :max_image_pixels),
       reading_order: Keyword.get(opts, :reading_order, :structure_tree),
       bold_markers: Keyword.get(opts, :bold_markers, :conservative)
@@ -1664,11 +1679,11 @@ defmodule PdfElixide.Document do
   @typedoc """
   Options accepted by the `to_html` and `to_html!` functions.
 
-  Only options that affect HTML output are exposed. `:bold_markers`,
-  `:strip_running_headers_footers` and `:expand_ligatures` — all valid for
-  `to_markdown/2` — are therefore absent here, and passing one raises
-  `ArgumentError`, as does a declared key given a value of the wrong type. See
-  the "Errors versus exceptions" section of `PdfElixide.Error`.
+  Only options that affect HTML output are exposed. Any other key raises
+  `ArgumentError` — `to_markdown/2`'s `:bold_markers` or
+  `:strip_running_headers_footers`, say, or `text/2`'s `:expand_ligatures` — as
+  does a declared key given a value of the wrong type. See the "Errors versus
+  exceptions" section of `PdfElixide.Error`.
 
     * `:preserve_layout` — emit one absolutely positioned `<div>` per text
       span, carrying that span's coordinates and font size in inline CSS
@@ -1967,10 +1982,8 @@ defmodule PdfElixide.Document do
     * `:extract_tables` — detect tables and render them inline as
       space-padded, column-aligned rows. Defaults to `true`.
     * `:table_detection` — a keyword list tuning the spatial table
-      detector; see `t:table_detection_opts/0`. Only consulted when
-      `:extract_tables` is `true`, and its `:text_fallback` key is ignored
-      here just as it is for `text/2`, so a page with no ruling lines yields no
-      tables regardless. Defaults to `nil`.
+      detector; see `t:text_table_detection_opts/0`. Only consulted when
+      `:extract_tables` is `true`. Defaults to `nil`.
     * `:reading_order` — how text blocks are ordered: `:structure_tree`,
       `:column_aware` or `:top_to_bottom`. Defaults to `:structure_tree`.
       On an untagged document, `:structure_tree` and `:column_aware` produce
@@ -1992,7 +2005,7 @@ defmodule PdfElixide.Document do
   """
   @type plain_text_opts :: [
           extract_tables: boolean(),
-          table_detection: table_detection_opts() | nil,
+          table_detection: text_table_detection_opts() | nil,
           reading_order: :structure_tree | :column_aware | :top_to_bottom,
           include_form_fields: boolean()
         ]
@@ -2091,7 +2104,7 @@ defmodule PdfElixide.Document do
 
     %{
       extract_tables: Keyword.get(opts, :extract_tables, true),
-      table_detection: build_table_detection_option(Keyword.get(opts, :table_detection)),
+      table_detection: build_text_table_detection_option(Keyword.get(opts, :table_detection)),
       reading_order: Keyword.get(opts, :reading_order, :structure_tree),
       include_form_fields: Keyword.get(opts, :include_form_fields, true)
     }
@@ -2940,8 +2953,9 @@ defmodule PdfElixide.Document do
   end
 
   @typedoc """
-  Options tuning the spatial table detector. Accepted directly by the `tables`
-  functions, and as the `:table_detection` option of the `text` functions.
+  Options tuning the spatial table detector, accepted directly by the `tables`
+  functions. For the text-conversion variant, see
+  `t:text_table_detection_opts/0`.
 
     * `:preset` — the base configuration every other key overrides:
       `:default`, `:strict` (demands ruling lines and regular rows) or
@@ -2961,7 +2975,7 @@ defmodule PdfElixide.Document do
     * `:v_split_gap` — minimum gap between vertical-line groups that splits
       a cluster.
     * `:text_fallback` — allow text-only detection when a page has no
-      ruling lines. Ignored on the `text` path, which always disables it.
+      ruling lines.
     * `:enabled` — set to `false` to disable detection entirely.
 
   Every key except `:preset` defaults to `nil`, meaning "keep the preset's
@@ -2998,6 +3012,31 @@ defmodule PdfElixide.Document do
     :v_split_gap,
     :text_fallback
   ]
+
+  @typedoc """
+  The `:table_detection` option of the `text` and `to_plain_text` functions:
+  every `t:table_detection_opts/0` key except `:text_fallback`.
+
+  These functions never use the text-only fallback, so a page with no ruling
+  lines yields no inline table. Passing `:text_fallback` raises
+  `ArgumentError`; `tables/2,3` accepts it.
+  """
+  @type text_table_detection_opts :: [
+          preset: :default | :strict | :relaxed,
+          enabled: boolean() | nil,
+          horizontal_strategy: :lines | :text | :both | nil,
+          vertical_strategy: :lines | :text | :both | nil,
+          column_tolerance: float() | nil,
+          row_tolerance: float() | nil,
+          min_table_cells: non_neg_integer() | nil,
+          min_table_columns: non_neg_integer() | nil,
+          regular_row_ratio: float() | nil,
+          max_table_columns: non_neg_integer() | nil,
+          column_merge_threshold: float() | nil,
+          v_split_gap: float() | nil
+        ]
+
+  @text_table_detection_opts_keys @table_detection_opts_keys -- [:text_fallback]
 
   @typedoc """
   Options accepted by the `tables` and `tables!` functions: every
@@ -3121,17 +3160,15 @@ defmodule PdfElixide.Document do
     }
   end
 
-  defp build_table_detection_option(nil), do: nil
+  defp build_text_table_detection_option(nil), do: nil
 
-  defp build_table_detection_option(opts) when is_list(opts) do
-    build_table_detection(Keyword.validate!(opts, @table_detection_opts_keys))
+  defp build_text_table_detection_option(opts) when is_list(opts) do
+    build_table_detection(Keyword.validate!(opts, @text_table_detection_opts_keys))
   end
 
-  defp build_table_detection_option(other), do: other
+  defp build_text_table_detection_option(other), do: other
 
-  # Takes an already-validated keyword list: `tables/2,3` allows `:region`
-  # alongside the detection keys, while the `:table_detection` option of the
-  # `text` functions does not, so each caller checks its own key list.
+  # Callers validate their surface-specific keys before this shared mapper.
   defp build_table_detection(opts) do
     %{
       preset: Keyword.get(opts, :preset, :default),
@@ -3173,7 +3210,7 @@ defmodule PdfElixide.Document do
   def __option_defaults__(:running_regions), do: build_running_regions_options([])
   def __option_defaults__(:tables), do: build_tables_options([])
   def __option_defaults__(:search), do: build_search_options([])
-  def __option_defaults__(:table_detection), do: build_table_detection_option([])
+  def __option_defaults__(:table_detection), do: build_text_table_detection_option([])
   def __option_defaults__(:span_merging), do: build_span_merging_option([])
   def __option_defaults__(:adaptive_threshold), do: build_adaptive_threshold_option([])
 
