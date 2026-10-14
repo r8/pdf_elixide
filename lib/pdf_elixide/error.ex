@@ -46,7 +46,8 @@ defmodule PdfElixide.Error do
       panic arrives as `:panic` instead, so this is not the reason to expect.
     * `:closed` — the handle was released with `PdfElixide.Document.close/1`,
       or with the counterpart on whichever handle it is.
-    * `:other` — any error not covered above; `message` is preserved verbatim.
+    * `:other` — any other failure reported while handling the document;
+      `message` is preserved verbatim.
 
   `:message` is a human-readable description.
 
@@ -73,6 +74,10 @@ defmodule PdfElixide.Error do
   the *caller* arrives as a `%PdfElixide.Error{}`; if you get one, the arguments
   were accepted and the document, the filesystem or the handle is what failed.
 
+  A fault in the native library itself raises `ErlangError` from every
+  function, predicates included, rather than returning or raising this struct.
+  It is not a condition of the document; please report it.
+
   Predicates ending in `?` are the mirror image. They return a bare boolean, so
   a failure has nowhere to be reported, and this struct is raised instead, from
   a function with no `!` in its name. As a rule, a `false` therefore means the
@@ -89,19 +94,24 @@ defmodule PdfElixide.Error do
   two still raise when the handle itself cannot be used.
   """
 
-  @type reason ::
-          :encrypted
-          | :wrong_password
-          | :invalid_pdf
-          | :invalid_pattern
-          | :unsupported
-          | :not_found
-          | :out_of_range
-          | :io
-          | :panic
-          | :lock_poisoned
-          | :closed
-          | :other
+  # Spelled once so the typespec and the set `Wrap.call/1` accepts at runtime
+  # cannot disagree.
+  @reasons [
+    :encrypted,
+    :wrong_password,
+    :invalid_pdf,
+    :invalid_pattern,
+    :unsupported,
+    :not_found,
+    :out_of_range,
+    :io,
+    :panic,
+    :lock_poisoned,
+    :closed,
+    :other
+  ]
+
+  @type reason :: unquote(@reasons |> Enum.reverse() |> Enum.reduce(&{:|, [], [&1, &2]}))
 
   @type t :: %__MODULE__{
           reason: reason(),
@@ -109,6 +119,10 @@ defmodule PdfElixide.Error do
         }
 
   defexception reason: :other, message: "unknown error"
+
+  @doc false
+  @spec __reasons__() :: [reason()]
+  def __reasons__, do: @reasons
 
   @impl true
   def message(%__MODULE__{message: message}), do: message

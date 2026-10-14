@@ -19,6 +19,25 @@ defmodule PdfElixide.NifSource do
     |> Enum.flat_map(&parse_structs/1)
   end
 
+  # The group under the "Error reason tags" comment in `lib.rs`'s `atoms!`
+  # block, ending at the next comment or the block's close.
+  @doc false
+  def error_reasons do
+    [_, tail] =
+      @src
+      |> Path.join("lib.rs")
+      |> File.read!()
+      |> String.split("// Error reason tags", parts: 2)
+
+    tail
+    |> String.split("\n", parts: 2)
+    |> List.last()
+    |> String.split(["//", "}"], parts: 2)
+    |> hd()
+    |> String.split([",", " ", "\n"], trim: true)
+    |> Enum.map(&String.to_atom/1)
+  end
+
   @doc false
   def src_dir, do: @src
 

@@ -4,16 +4,30 @@ defmodule PdfElixide.Native.Wrap do
   alias PdfElixide.Error
   alias PdfElixide.Logging
 
+  @reasons Error.__reasons__()
+
+  defguardp is_tagged(reason, message) when reason in @reasons and is_binary(message)
+
   @doc false
   @spec call((-> term())) :: {:ok, term()} | {:error, Error.t()}
   def call(fun) do
-    case fun.() do
-      {:ok, _} = result -> result
-      {:error, reason} -> {:error, normalize_error(reason)}
-      other -> {:ok, other}
-    end
+    fun.()
   rescue
     exception -> handle_rescue(exception, __STACKTRACE__)
+  else
+    {:ok, _} = result ->
+      result
+
+    {:error, {reason, message}} when is_tagged(reason, message) ->
+      {:error, %Error{reason: reason, message: message}}
+
+    # Raised from `else`, not the body, so the `rescue` above cannot turn it
+    # back into an error value.
+    {:error, _} = malformed ->
+      :erlang.error(malformed)
+
+    other ->
+      {:ok, other}
   after
     # `after` rather than the success path so a raising call still forwards
     # what it captured before failing.
@@ -29,11 +43,6 @@ defmodule PdfElixide.Native.Wrap do
   @spec call!((-> term())) :: term()
   def call!(fun), do: fun |> call() |> unwrap!()
 
-  # Our NIFs report failures by raising a `{reason, message}` term, which Elixir
-  # normalizes to an `ErlangError`. Anything else is a caller bug — most often
-  # the `:badarg` a NIF raises when it cannot decode its arguments, which
-  # normalizes to `ArgumentError` — so it propagates untouched, the way the
-  # public functions' guard clauses do.
   defp handle_rescue(
          %ErlangError{original: "Could not decode field " <> _ = message},
          stacktrace
@@ -41,24 +50,11 @@ defmodule PdfElixide.Native.Wrap do
     reraise ArgumentError.exception(message), stacktrace
   end
 
-  defp handle_rescue(%ErlangError{original: original}, _stacktrace) do
-    {:error, normalize_error(original)}
+  defp handle_rescue(%ErlangError{original: {reason, message}}, _stacktrace)
+       when is_tagged(reason, message) do
+    {:error, %Error{reason: reason, message: message}}
   end
 
+  # Anything undeclared means the native boundary is broken, not the document.
   defp handle_rescue(exception, stacktrace), do: reraise(exception, stacktrace)
-
-  defp normalize_error(%Error{} = error), do: error
-
-  defp normalize_error({reason, message})
-       when is_atom(reason) and is_binary(message) do
-    %Error{reason: reason, message: message}
-  end
-
-  defp normalize_error(message) when is_binary(message) do
-    %Error{reason: :other, message: message}
-  end
-
-  defp normalize_error(other) do
-    %Error{reason: :other, message: inspect(other)}
-  end
 end

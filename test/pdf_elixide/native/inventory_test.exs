@@ -38,8 +38,8 @@ defmodule PdfElixide.Native.InventoryTest do
            """
            These functions in `PdfElixide.Native` have no `#[rustler::nif]` behind
            them, so they stay stubs after the library loads and report
-           `:nif_not_loaded` — which `Wrap.call/1` hands back as an ordinary
-           `%PdfElixide.Error{reason: :other}`. Remove each, or fix the name or
+           `:nif_not_loaded` — which `Wrap.call/1` re-raises as an `ErlangError`
+           from every call that reaches them. Remove each, or fix the name or
            arity it was meant to match:
 
            #{format(stray)}

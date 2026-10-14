@@ -28,26 +28,78 @@ defmodule PdfElixide.Native.WrapTest do
                Wrap.call(fn -> :erlang.error({:closed, "Document is closed"}) end)
     end
 
-    test "normalizes a raised bare string to :other" do
-      assert {:error, %Error{reason: :other, message: "something went wrong"}} =
-               Wrap.call(fn -> :erlang.error("something went wrong") end)
-    end
-
     test "a Rustler field-decode message raises ArgumentError instead" do
       # Preserve the field name while classifying the bad option as a caller error.
       assert_raise ArgumentError, "Could not decode field :detect_headings on %{}", fn ->
         Wrap.call(fn -> :erlang.error("Could not decode field :detect_headings on %{}") end)
       end
     end
+  end
 
-    test "any other bare string still becomes an :other error" do
-      assert {:error, %Error{reason: :other, message: "Could not decide anything"}} =
-               Wrap.call(fn -> :erlang.error("Could not decide anything") end)
+  describe "call/1 with a broken native boundary" do
+    test "re-raises an unloaded NIF" do
+      error =
+        assert_raise ErlangError, fn ->
+          Wrap.call(fn -> :erlang.nif_error(:nif_not_loaded) end)
+        end
+
+      assert error.original == :nif_not_loaded
     end
 
-    test "normalizes an unloaded NIF to :other" do
-      assert {:error, %Error{reason: :other, message: ":nif_not_loaded"}} =
-               Wrap.call(fn -> :erlang.nif_error(:nif_not_loaded) end)
+    test "re-raises a panic the NIF did not contain" do
+      error =
+        assert_raise ErlangError, fn -> Wrap.call(fn -> :erlang.error(:nif_panicked) end) end
+
+      assert error.original == :nif_panicked
+    end
+
+    test "re-raises a tagged error whose reason is not a documented one" do
+      error =
+        assert_raise ErlangError, fn ->
+          Wrap.call(fn -> :erlang.error({:not_a_reason, "message"}) end)
+        end
+
+      assert error.original == {:not_a_reason, "message"}
+    end
+
+    test "re-raises a tagged error whose message is not a binary" do
+      error =
+        assert_raise ErlangError, fn -> Wrap.call(fn -> :erlang.error({:closed, :closed}) end) end
+
+      assert error.original == {:closed, :closed}
+    end
+
+    test "re-raises a bare string that is not a field-decode message" do
+      error =
+        assert_raise ErlangError, fn ->
+          Wrap.call(fn -> :erlang.error("something went wrong") end)
+        end
+
+      assert error.original == "something went wrong"
+    end
+
+    test "raises on a returned error it cannot normalize" do
+      error =
+        assert_raise ErlangError, fn ->
+          Wrap.call(fn -> {:error, {:not_a_reason, "message"}} end)
+        end
+
+      assert error.original == {:error, {:not_a_reason, "message"}}
+    end
+
+    test "keeps the stacktrace of the frame that raised" do
+      stacktrace =
+        try do
+          Wrap.call(&unloaded_stub/0)
+        rescue
+          ErlangError -> __STACKTRACE__
+        end
+
+      assert [{:erlang, :nif_error, _, _}, {__MODULE__, :unloaded_stub, 0, _} | _] = stacktrace
+    end
+
+    test "call!/1 raises it rather than an Error" do
+      assert_raise ErlangError, fn -> Wrap.call!(fn -> :erlang.nif_error(:nif_not_loaded) end) end
     end
   end
 
@@ -119,4 +171,6 @@ defmodule PdfElixide.Native.WrapTest do
              end)
     end
   end
+
+  defp unloaded_stub, do: :erlang.nif_error(:nif_not_loaded)
 end
