@@ -217,8 +217,8 @@ defmodule PdfElixide.Form do
       {:ok, editor} = PdfElixide.Form.put_value(editor, "subscribe", true)
 
   Button fields are limited to `/Yes` and `/Off`; check for `"Yes"` in the
-  field's `:on_states` before writing `true`. A signature field cannot be
-  written and answers `:not_found`. The [Forms](guides/forms.md) guide has both.
+  field's `:on_states` before writing `true`. An unknown name, or a signature
+  field, answers `:not_found`. The [Forms](guides/forms.md) guide has both.
 
   """
   @spec put_value(Editor.t(), String.t(), Field.value()) ::

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use pdf_oxide::{
     annotation_types::AnnotationSubtype,
@@ -21,7 +21,7 @@ use crate::{
         embedded_file, ensure_no_name_tree, pending_to_nif, read_embedded_files, EmbeddedFileNif,
         RelationshipNif,
     },
-    error::{tagged_err, to_form_err, to_nif_err},
+    error::{tagged_err, to_nif_err},
     form::{
         editor_form_field_to_nif, export_bytes, export_form_field, fillable, is_exportable,
         set_value_from_nif, FieldNif, FieldValueNif, FormDataFormatNif,
@@ -719,10 +719,9 @@ fn field_not_found(name: &str) -> rustler::Error {
     tagged_err(atoms::not_found(), format!("Form field not found: {name}"))
 }
 
-// Guard the write itself: hiding signatures from reads does not stop a caller
-// naming one directly, and any value would replace its `/V` dictionary.
-fn ensure_not_signature(resolved: &Resolved, name: &str) -> NifResult<()> {
-    if resolved.is_signature(name) {
+// Reject missing and signature-field names before the write can replace `/V`.
+fn ensure_writable(resolved: &Resolved, name: &str) -> NifResult<()> {
+    if !resolved.is_writable(name) {
         return Err(field_not_found(name));
     }
 
@@ -740,11 +739,11 @@ fn editor_set_form_field_value(
     resource.editor.with_lock(|editor| {
         // Inside the guard, so check and write cannot straddle another writer.
         let (resolved, upstream) = editor.resolved_fields()?;
-        ensure_not_signature(resolved, &name)?;
+        ensure_writable(resolved, &name)?;
 
         upstream
             .set_form_field_value(&name, set_value_from_nif(value))
-            .map_err(to_form_err)?;
+            .map_err(to_nif_err)?;
 
         Ok(atoms::ok())
     })
@@ -763,23 +762,14 @@ fn editor_set_form_field_values(
 
         // Preflight every name so an unknown field cannot partially apply the batch.
         let (resolved, upstream) = editor.resolved_fields()?;
-        let fields = upstream.get_form_fields().map_err(to_nif_err)?;
-        let known: HashSet<&str> = fields
-            .iter()
-            .filter(|field| fillable(resolved, field))
-            .map(|field| field.name())
-            .collect();
-
         for (name, _value) in &pairs {
-            if !known.contains(name.as_str()) {
-                return Err(field_not_found(name));
-            }
+            ensure_writable(resolved, name)?;
         }
 
         for (name, value) in pairs {
             upstream
                 .set_form_field_value(&name, set_value_from_nif(value))
-                .map_err(to_form_err)?;
+                .map_err(to_nif_err)?;
         }
 
         Ok(atoms::ok())

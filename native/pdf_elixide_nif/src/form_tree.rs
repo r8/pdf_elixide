@@ -110,6 +110,8 @@ struct FieldAttrs {
 // `object_ref: None`.
 #[derive(Debug, Default)]
 pub struct Resolved {
+    // Every name the editor's write can match, signatures included.
+    names: HashSet<String>,
     signatures: HashSet<String>,
     attrs: HashMap<String, (ObjectRef, FieldAttrs)>,
     option_lists: Vec<Vec<ChoiceOptionNif>>,
@@ -122,6 +124,10 @@ pub struct Resolved {
 impl Resolved {
     pub fn is_signature(&self, name: &str) -> bool {
         self.signatures.contains(name)
+    }
+
+    pub fn is_writable(&self, name: &str) -> bool {
+        self.names.contains(name) && !self.is_signature(name)
     }
 
     // Every resolved attribute in one lookup, so the document and editor call
@@ -189,8 +195,6 @@ fn resolved_of(fields: &[FormField], walked: Walked) -> Resolved {
         on_states: walked.on_states,
         ..Resolved::default()
     };
-    let mut seen = HashSet::new();
-
     let mut inline_slots: HashMap<String, VecDeque<usize>> = HashMap::new();
 
     for (name, id) in walked.inline_order {
@@ -206,7 +210,7 @@ fn resolved_of(fields: &[FormField], walked: Walked) -> Resolved {
             Some(_) => None,
         };
 
-        if !seen.insert(&field.full_name) {
+        if !resolved.names.insert(field.full_name.clone()) {
             continue;
         }
 

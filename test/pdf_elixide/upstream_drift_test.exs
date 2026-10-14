@@ -1173,25 +1173,6 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  describe "how upstream reports an unknown form field" do
-    test "an unknown name is an InvalidPdf carrying a known prefix" do
-      editor = Editor.open!(@form_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-
-      assert {:error, %Error{reason: :not_found, message: message}} =
-               Form.put_value(editor, "no_such_field", "x")
-
-      assert message =~ "Form field not found: "
-    end
-
-    test "the read side reports the same reason" do
-      doc = Document.open!(@form_pdf)
-      on_exit(fn -> Document.close(doc) end)
-
-      assert {:error, %Error{reason: :not_found}} = Form.field(doc, "no_such_field")
-    end
-  end
-
   describe "what upstream does to a field's value on write" do
     test "a /Sig field is still classified as one, so it stays out of fields/1" do
       doc = Document.open!(@signature_pdf)
