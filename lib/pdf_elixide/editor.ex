@@ -146,6 +146,8 @@ defmodule PdfElixide.Editor do
   `:source_path` is `nil` for an editor with no source file: one built with
   `from_binary/2`, `from_markdown/2`, `from_html/2`, `from_plain_text/2` or
   `from_images/2`.
+
+  `:ref` is an internal handle; do not read it or construct the struct directly.
   """
   @type t :: %__MODULE__{
           ref: reference(),

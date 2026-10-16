@@ -282,6 +282,8 @@ defmodule PdfElixide.Document do
   `:page_count` is `nil` when the count could not be determined at open — for
   example, when an encrypted document's page tree needs a password — in which
   case `page_count/1` asks the document instead.
+
+  `:ref` is an internal handle; do not read it or construct the struct directly.
   """
   @type t :: %__MODULE__{
           ref: reference(),
