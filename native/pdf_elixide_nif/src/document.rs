@@ -286,7 +286,6 @@ fn document_closed(resource: ResourceArc<DocumentResource>) -> bool {
     resource.doc.is_closed()
 }
 
-// Dirty because this shared read can wait behind a long exclusive operation.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_count(resource: ResourceArc<DocumentResource>) -> NifResult<usize> {
     resource
@@ -351,7 +350,7 @@ fn document_authenticate(
 
         // Upstream's `authenticate` clears only its object cache, so the empty
         // results cached by every pre-auth read would be served for the life of
-        // the handle; two of those caches have no clear site at all. Rebuilding
+        // the handle; some of those caches have no clear site at all. Rebuilding
         // drops them. The fresh document is authenticated *before* the swap, so
         // a failure leaves the handle exactly as it was.
         let fresh = PdfDocument::from_bytes(doc.source_bytes.clone()).map_err(to_nif_err)?;

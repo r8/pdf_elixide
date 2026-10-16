@@ -22,8 +22,8 @@ defmodule PdfElixide.Error do
       does not open the file. `PdfElixide.Document.authenticate/2` reports a
       rejected password as `{:ok, false}` instead.
     * `:invalid_pdf` — malformed or unparseable PDF data.
-    * `:invalid_pattern` — the search pattern could not be parsed. Comes only
-      from `PdfElixide.Document.search/2` and friends under `literal: false`.
+    * `:invalid_pattern` — the search pattern could not be compiled. Comes from
+      `PdfElixide.Document.search/2` and friends.
     * `:unsupported` — an input or operation this library does not support:
       a PDF version, feature or filter, bytes of an unsupported format, or a
       call refused in the handle's current state, such as an incremental save
@@ -65,18 +65,18 @@ defmodule PdfElixide.Error do
       native layer cannot decode, a value out of range (`{:min_overlap, 2.0}`) —
       and undecodable values outside an options map, such as a form field value
       that is none of the shapes `PdfElixide.Form.put_value/3` accepts. A *path*
-      is opaque bytes and so has almost
-      nothing to reject — only Windows, which cannot name a file in arbitrary
-      bytes, raises here; see the "File paths" section of `PdfElixide`.
+      is opaque bytes and so has almost nothing to reject — only Windows, which
+      cannot name a file in arbitrary bytes, raises here; see the "File paths"
+      section of `PdfElixide`.
 
   Build option lists with `Keyword.merge/2` rather than `++`, since a duplicated
   key is rejected instead of resolved to the first occurrence. So nothing about
   the *caller* arrives as a `%PdfElixide.Error{}`; if you get one, the arguments
   were accepted and the document, the filesystem or the handle is what failed.
 
-  A fault in the native library itself raises `ErlangError` from every
-  function, predicates included, rather than returning or raising this struct.
-  It is not a condition of the document; please report it.
+  An `ErlangError` from any function, predicates included, means the call never
+  reached the document: the native library could not be loaded or called. It is
+  not a condition of the input; report it.
 
   Predicates ending in `?` are the mirror image. They return a bare boolean, so
   a failure has nowhere to be reported, and this struct is raised instead, from

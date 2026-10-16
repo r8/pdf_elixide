@@ -343,7 +343,6 @@ mod tests {
         let doc = PdfDocument::open(fixture("metadata_encodings.pdf")).expect("fixture opens");
         let metadata = read_metadata(&doc);
 
-        // Ours decodes both correctly.
         assert_eq!(metadata.creator.as_deref(), Some("Créateur"));
         assert_eq!(metadata.producer.as_deref(), Some("pdf_elixide ✓"));
 

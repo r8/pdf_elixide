@@ -1774,7 +1774,9 @@ mod tests {
         assert_eq!(bytes, "Título".as_bytes());
     }
 
-    // This canary and the two after it justify `read_metadata` over `get_info`.
+    // With `upstream_still_drops_an_indirect_info_field` and
+    // `upstream_still_reads_info_values_unnormalized`, the case for `read_metadata`
+    // over `get_info`.
     #[test]
     fn upstream_still_ignores_a_direct_info_dictionary() {
         let mut editor = DocumentEditor::open(fixture("direct_info.pdf")).expect("fixture opens");

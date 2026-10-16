@@ -349,10 +349,9 @@ field is spelled — that field is unsigned, so `list/1` skips it and
 value-level validation. A field pointing at something other than a signature
 dictionary is omitted; use `list/1` to validate the value.
 
-`PdfElixide.Form.fields/1`, `PdfElixide.Signature.list/1` and
-`PdfElixide.Signature.unsigned_fields/1` all reject a cyclic or excessively deep
-field hierarchy: cycles return `:invalid_pdf`, while depth or size limits return
-`:unsupported`.
+`PdfElixide.Signature.list/1` and `PdfElixide.Signature.unsigned_fields/1`
+reject a cyclic or excessively deep field hierarchy the way the form readers do;
+see [Field hierarchy errors](forms.md#field-hierarchy-errors).
 
 ## Signature fields are not form fields
 

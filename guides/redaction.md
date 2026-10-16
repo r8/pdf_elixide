@@ -46,10 +46,8 @@ Document.close(written)
 Editor.close(editor)
 ```
 
-Extracting the text rather than scanning the written bytes is deliberate: a
-content stream is usually compressed, so a `:binary.match/2` on the output can
-answer `:nomatch` for text that is still in the file. See
-[Verifying](#verifying).
+See [Verifying](#verifying) for the limits of text extraction, byte scans and
+visual checks.
 
 ## Marking, and what a mark is for
 
@@ -66,11 +64,9 @@ unmarked; see [Saving edits](editing.md#saving-edits).
 `PdfElixide.Editor.unmark_redactions/2` takes the mark back — and with it the
 refusal — and `PdfElixide.Editor.marked_for_redaction?/2` reports it.
 
-**A mark is not redaction.** The box is drawn over the existing page content,
-which stays exactly where it was: `PdfElixide.Document.text/1` on the written
-file still returns the covered words, and anything that reads the content stream
-still finds them. Use a mark to make a document *look* redacted — to reproduce
-what an authoring tool intended — and never to keep a secret.
+**A mark is cosmetic.** Covered content remains extractable. Use
+`PdfElixide.Editor.apply_redactions/1,2` for text removal, subject to the
+[content limitations](#it-removes-text-and-only-the-text-the-page-draws-itself).
 
 ## Removing content
 
@@ -168,15 +164,12 @@ Editor.save!(editor, "redacted.pdf")
 Editor.close(editor)
 ```
 
-**Rectangles are in the page's raw, unrotated user space.** That is what
-`PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
-`PdfElixide.Document.paths/1` report. On a rotated page it is *not* what
-`PdfElixide.Document.words/1`, `PdfElixide.Document.text_lines/1`,
-`PdfElixide.Document.tables/1` or `PdfElixide.Document.search/2` necessarily
-report. Follow "Rotated pages and extracted geometry" in `PdfElixide.Document`,
-and convert a search match span by span rather than using its `:bbox`. Nothing
-detects a frame mismatch: the region is applied wherever it lands and reported
-as a success, so it can quietly redact the wrong area.
+**Rectangles are in the page's raw, unrotated user space.** On a rotated page
+not every extractor reports in that frame; see [Rotated pages and extracted
+geometry](page-geometry.md#rotated-pages-and-extracted-geometry) for which boxes
+need converting and how. Nothing detects a frame mismatch: the region is applied
+wherever it lands and reported as a success, so it can quietly redact the wrong
+area.
 
 The queued rectangle reaches no writer but
 `PdfElixide.Editor.apply_redactions/1`, and **cannot be withdrawn** once added:
@@ -325,10 +318,6 @@ along with every other pending overlay: the annotations are still unlinked, but
 what they drew is gone rather than baked in. Flatten in one editor, write it,
 and redact the reopened result — see
 [It discards other pending overlays on the page](#it-discards-other-pending-overlays-on-the-page).
-
-`PdfElixide.Form.flatten/1` is the one whose appearances do survive a
-destructive pass — and they land on top of the redaction block, which is why it
-needs the write-and-reopen detour above whichever call draws the box.
 
 ## What is refused, and why
 

@@ -3,8 +3,9 @@ defmodule PdfElixide.Document.Table.Cell do
   A single cell of a detected table, with its text, geometry, spans, and
   grid placement.
 
-  Cell spans do not preserve word rotation. See "Rotated pages and extracted
-  geometry" in `PdfElixide.Document` before using their boxes on a rotated page.
+  Cell spans do not preserve word rotation. See [Rotated pages and extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry) before
+  using their boxes on a rotated page.
   """
   alias PdfElixide.Document.Span
   alias PdfElixide.Geometry.Rect

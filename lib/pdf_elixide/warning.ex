@@ -49,8 +49,8 @@ defmodule PdfElixide.Warning do
   @typedoc """
   The kind of condition a warning records.
 
-  See "Which feed a warning reaches" in `PdfElixide.Warning` for where each
-  one is listed; a category alone does not decide that.
+  See "Which feed a warning reaches" above for where each one is listed; a
+  category alone does not decide that.
 
   Always tied to the document being read:
 
@@ -84,8 +84,8 @@ defmodule PdfElixide.Warning do
       advancing the cursor, so the page renders with a gap that reads as
       whitespace. Raised only while rendering, so always process-wide.
 
-  Two categories are defined but not produced by any current condition:
-  `:xref_recovery` and `:font`.
+  Two categories are defined but produced by no condition: `:xref_recovery`
+  and `:font`.
 
   Finally, `:unknown` — the reader recorded a category this version of
   `PdfElixide` does not model. The `:message` still carries the condition.

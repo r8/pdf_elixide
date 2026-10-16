@@ -34,7 +34,7 @@ with no recognized type, which includes the grouping parents a nested form
 reports. `PdfElixide.Form.Field` is the umbrella defining the union. Which
 widget a button or choice field is, the struct's `:kind` says — see below.
 
-Every struct carries the same keys. `:name` is the field's fully qualified
+All field structs share the following fields. `:name` is the fully qualified
 name, dotted for a field nested under a parent — `"person.first"`, not `"first"`
 — and is what every other function here addresses it by. `:value` is a plain
 term: a string, `true`/`false`, a list of strings, or `nil` for a field carrying
@@ -68,6 +68,20 @@ Form.field(doc, "country")
 carries no value is `{:ok, nil}`; a name the form does not carry is
 `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and `value/2`
 as much as from `put_value/3`. The bang variants raise it instead.
+
+### Field hierarchy errors
+
+Functions that read fields reject a cycle with
+`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`; the depth and size caps
+return `{:error, %PdfElixide.Error{reason: :unsupported}}`. An unreadable field
+object is different: ordinary form reads step over it and return the fields they
+could reach, so a successful list can still be partial. Signature reads are
+stricter; see
+[Damaged documents are refused, not stepped over](signatures.md#damaged-documents-are-refused-not-stepped-over).
+
+`PdfElixide.Form.flatten/1,2` only records a mark and checks nothing, so on a
+form you do not trust, read its fields first and let a hierarchy problem surface
+there.
 
 ## Field kinds and flags
 
@@ -263,8 +277,8 @@ produced from it — written back, or exported.
 
 ## Filling a form
 
-Open the file as an editor, write values, then persist. Every call that changes
-an editor returns it, so the whole thing is one pipeline:
+Open the file as an editor, write values, then persist. Form-writing calls
+return the editor, so filling and saving compose as a pipeline:
 
 ```elixir
 editor = Editor.open!("path/to/form.pdf")
@@ -306,22 +320,6 @@ end
 #=> :ok
 ```
 
-`PdfElixide.Editor.to_binary/2` and `PdfElixide.Editor.close/1` are the two ways
-such a mutating pipeline ends: one hands back bytes, the other `:ok`. Every
-mutating step before them hands back the editor.
-
-**A cyclic or excessively large field hierarchy is refused rather than walked.**
-Functions that read fields reject a cycle with
-`{:error, %PdfElixide.Error{reason: :invalid_pdf}}`; the depth and size caps
-return `{:error, %PdfElixide.Error{reason: :unsupported}}`. An unreadable field
-object is different: ordinary form reads step over it and return the fields they
-could reach, so a successful list can still be partial. Signature reads are
-stricter; see
-[Damaged documents are refused, not stepped over](signatures.md#damaged-documents-are-refused-not-stepped-over).
-
-Deferred operations such as `flatten/1,2` only mark work to be done on the
-next write, so this refusal guarantee does not apply to them.
-
 ## Several fields at once
 
 `PdfElixide.Form.put_values/2` takes a map with string keys, or a list of
@@ -336,10 +334,9 @@ unknown names, duplicates, names that are not strings and values outside
 {:ok, editor} = Form.put_values(editor, [{"full_name", "Jane Doe"}, {"country", ["FR"]}])
 ```
 
-The editor is held exclusively while the batch is applied, so concurrent calls
-see the form before or after it, never partway through it. An unexpected runtime
-failure during application may leave earlier writes applied. The
-[Concurrency](concurrency.md) guide covers the locking model.
+An unexpected runtime failure during application may leave earlier writes
+applied. The batch holds the editor exclusively; see
+[Concurrency](concurrency.md) for visibility to other processes.
 
 `PdfElixide.Form.update_value/3` transforms a field in place, handing `fun` the
 current value and writing back whatever it returns:
@@ -369,23 +366,17 @@ write before you close.
 {:ok, bytes} = Editor.to_binary(editor)
 ```
 
-Both accept `t:PdfElixide.Editor.save_opts/0`. `:encryption` writes the filled
-form password-protected; see [Encryption](encryption.md). An incremental update
-is appended to the original file, so only `save/3` writes one; see
-[Saving edits](editing.md#saving-edits) for the combinations that are refused.
-
-For form filling against an existing PDF, an incremental save appends only the
-field-value updates and leaves the original AcroForm structure as it was:
+Both accept `t:PdfElixide.Editor.save_opts/0`, including `:encryption`; see
+[Encryption](encryption.md). For an editor opened from a file, an incremental
+save can append field values and document information while retaining the
+original AcroForm structure:
 
 ```elixir
 {:ok, editor} = Editor.save(editor, "path/to/filled.pdf", incremental: true)
 ```
 
-Field values and document information are the only changes an incremental update
-carries. If the editor holds any other pending change — a flatten mark included
-— the save is refused with `{:error, %PdfElixide.Error{reason: :unsupported}}`
-naming it, rather than writing a file without it. See
-[Saving edits](editing.md#saving-edits).
+Other pending changes, including flatten marks, require a full rewrite. See
+[Saving edits](editing.md#saving-edits) for all incremental-save restrictions.
 
 `to_binary/2` clears `PdfElixide.Editor.modified?/1` even though it writes no
 file; an incremental `save/3` leaves it set.
@@ -441,7 +432,8 @@ they can carry faithfully.
 **`:fdf` cannot represent a value outside ASCII.** It writes the value as UTF-8
 inside a PDF literal string, where a conforming reader decodes it as
 PDFDocEncoded — so even a Latin-1 name like `"Müller"` arrives as `MÃ¼ller`.
-`:xfdf` is UTF-8 XML with a declared encoding and carries any value correctly.
+`:xfdf` declares UTF-8 and preserves non-ASCII text, subject to the character
+and value-shape limitations below.
 
 **Prefer `:xfdf` unless every value is certainly ASCII**, or unless the tool
 receiving the data reads only FDF.
@@ -594,9 +586,10 @@ Reported cases include:
     unchanged and are unaffected.
 
     Such a warning may suggest enabling wider font support; this package has
-    no such option. Take the warning to mean the field did not flatten legibly, and handle it in your own
-    code — leave the form unflattened, substitute a value the field's font can
-    render, or draw the text yourself before flattening.
+    no such option. Take the warning to mean the field did not flatten legibly,
+    and handle it in your own code — leave the form unflattened, substitute a
+    value the field's font can render, or draw the text yourself before
+    flattening.
   * **A field with no appearance stream that could not be given one.** The
     warning names the field. If another appearance causes that page to be
     flattened, the field is removed without being drawn; if the page produces no

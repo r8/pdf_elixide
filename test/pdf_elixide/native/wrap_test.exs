@@ -23,7 +23,7 @@ defmodule PdfElixide.Native.WrapTest do
   end
 
   describe "call/1 with a raised NIF error" do
-    test "normalizes a raised tagged error — the live path for NIF failures" do
+    test "normalizes a raised tagged error" do
       assert {:error, %Error{reason: :closed, message: "Document is closed"}} =
                Wrap.call(fn -> :erlang.error({:closed, "Document is closed"}) end)
     end

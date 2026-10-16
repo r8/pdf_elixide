@@ -166,11 +166,8 @@ defmodule PdfElixide.ExtractionOptionsTest do
       [first | _] = Document.words!(doc, @ruleless)
       %Rect{} = bbox = first.bbox
 
-      # Same area, corners given the other way round. `Rect`'s fields are
-      # public and PdfElixide.Geometry.Rect documents width/height as
-      # non-negative, so building one by hand can easily produce this; it must
-      # go through upstream's normalizing constructor rather than reach the
-      # geometry helpers with a negative width and silently match nothing.
+      # Same area, corners the other way round. A reversed rect must normalize
+      # rather than reach the filter with a negative width and match nothing.
       reversed = %Rect{
         x: bbox.x + bbox.width,
         y: bbox.y + bbox.height,

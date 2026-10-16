@@ -18,11 +18,11 @@ defmodule PdfElixide.Document.StructuredPage.Region do
   by `column` when you need left-column-then-right reading order.
 
   `bbox` is the union of the spans' boxes in the page's raw, unrotated user
-  space, like `PdfElixide.Document.spans/2` — see the "Rotated pages and
-  extracted geometry" section of `PdfElixide.Document`. `section` is set only on
-  a tagged page, from the nearest `/Sect`, `/Art` or `/Part` structure element,
-  and is stable across pages so a chapter continuing onto the next page keeps
-  one value.
+  space, like `PdfElixide.Document.spans/2` — see [Rotated pages and extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
+  `section` is set only on a tagged page, from the nearest `/Sect`, `/Art` or
+  `/Part` structure element, and is stable across pages so a chapter continuing
+  onto the next page keeps one value.
   """
   alias PdfElixide.Document.Span
   alias PdfElixide.Geometry.Rect
@@ -41,8 +41,7 @@ defmodule PdfElixide.Document.StructuredPage.Region do
       `:artifact`. These roles come from that marking alone: a running header
       that merely sits at the top of the page is `:body`.
     * `{:heading, level}` — a tagged `/H1` to `/H6` heading, levels 1 to 6.
-      This library does not currently produce it: such a heading arrives as
-      `:body`.
+      This library does not produce it: such a heading arrives as `:body`.
   """
   @type kind ::
           :body

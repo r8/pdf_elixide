@@ -45,12 +45,11 @@ PCRE. The important differences are:
     `(?i)` `(?m)` `(?s)` `(?x)` and Unicode properties like `\p{Greek}` all work
     as usual.
 
-A pattern that does not parse comes back as
-`%PdfElixide.Error{reason: :invalid_pattern}` — and
-`PdfElixide.Document.search!/2` raises it, the same split `Regex.compile/1` and
-`Regex.compile!/1` make. It is only reachable under `literal: false`, since the
-default path escapes the pattern first. The error message quotes the pattern as
-you wrote it, whatever other options are set.
+A pattern that fails to compile returns
+`%PdfElixide.Error{reason: :invalid_pattern}`; the bang variants raise it. A
+literal pattern is escaped before compilation, so in practice only
+`literal: false` reaches it. The error message quotes the pattern as you wrote
+it, whatever other options are set.
 
 ### `:whole_word`
 
@@ -99,9 +98,9 @@ as `~S"\s+"` — belongs to no run and returns empty `:spans` and a zero-sized
 `:bbox`.
 
 On a rotated page, a match may contain spans from both coordinate frames, so
-convert each span separately and never transform the combined `:bbox`. The
-"Rotated pages and extracted geometry" section of `PdfElixide.Document` has the
-recipe.
+convert each span separately and never transform the combined `:bbox`;
+[Bringing boxes into one frame](page-geometry.md#bringing-boxes-into-one-frame)
+has the recipe.
 
 ## Searching one page
 

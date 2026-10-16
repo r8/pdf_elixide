@@ -732,7 +732,7 @@ mod tests {
         )
         .is_none());
 
-        // The three ways of arriving at `Unknown`, and what each says about
+        // The ways of arriving at `Unknown`, and what each says about
         // `raw_type`. The empty string and `None` are the same condition — a
         // field with no `/FT` — spelled differently by the two upstream paths.
         let empty = FieldType::Unknown(String::new());

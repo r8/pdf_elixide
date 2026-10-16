@@ -35,8 +35,8 @@ defmodule PdfElixide.Logging do
 
   ## Cost
 
-  Capture is process-global, not per-document or per-process: it affects every
-  document handle in the VM. Records are buffered as they are produced and
+  Capture is global to the VM, not per document or per process: it affects
+  every document handle in it. Records are buffered as they are produced and
   forwarded when the next call returns, so a level of `:debug` or `:trace` on a
   large document produces a great deal of output and measurably slows
   extraction. `:warning` is the level that reports dropped content.
@@ -133,8 +133,8 @@ defmodule PdfElixide.Logging do
   Lists the warnings recorded process-wide, oldest first, without emptying the
   list.
 
-  See "Structured warnings" in the module documentation for which conditions
-  are recorded here and how they are attributed.
+  See `PdfElixide.Warning` for which conditions are recorded and which feed
+  each one reaches.
   """
   @spec structured_warnings() :: [Warning.t()]
   def structured_warnings do

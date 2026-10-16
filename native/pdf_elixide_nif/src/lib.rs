@@ -48,16 +48,17 @@ mod word;
 
 pub(crate) mod atoms {
     rustler::atoms! {
-        ok, error,
+        ok,
         // Log levels (see logging.rs / PdfElixide.Logging)
-        off, warn, info, debug, trace,
+        off, error, warn, info, debug, trace,
         // Path operation tags (see paths.rs / PdfElixide.Document.Path)
         move_to, line_to, curve_to, rectangle, close_path,
         // Raw image data tags (see images.rs / PdfElixide.Document.Image.data/1)
         jpeg, raw,
         // Font encoding tags (see fonts.rs / PdfElixide.Document.Font)
         standard, custom, identity,
-        // Signature verdict tags (see signatures.rs / PdfElixide.Signature.verify/2)
+        // Verdict tags (see signatures.rs / PdfElixide.Signature.verify/2 and the
+        // timestamp checks)
         valid, invalid, unknown,
         // PAdES baseline levels (see signatures.rs / PdfElixide.Signature.pades_level/2)
         b_b, b_t, b_lt,

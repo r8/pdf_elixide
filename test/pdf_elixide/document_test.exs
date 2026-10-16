@@ -1847,8 +1847,8 @@ defmodule PdfElixide.DocumentTest do
       assert {:error, %Error{reason: :invalid_pattern}} =
                Document.search(doc, "(", literal: false)
 
-      # …and is unreachable on the default path, where the pattern is escaped
-      # and the same character is matched as itself.
+      # Escaping makes this character literal on the default path. Compilation
+      # size limits can still reject a sufficiently large literal pattern.
       assert Document.search!(doc, "(") |> Enum.map(& &1.text) == ["("]
     end
 
@@ -4273,11 +4273,8 @@ defmodule PdfElixide.DocumentTest do
       assert_raise Error, "Document is closed", fn -> Document.text!(doc, 0) end
     end
 
-    # `has_structure_tree?/1` and `has_xfa?/1` answer `false` for a document
-    # whose feature cannot be read, but `:closed` is a failure of the *handle*,
-    # not of the document, so it still raises — the line the tolerant predicates
-    # draw, and the reason their strict variants are the only way to see an
-    # upstream error.
+    # `:closed` is a failure of the handle, not of the document, so the tolerant
+    # predicates still raise.
     test "predicates raise on a closed document" do
       doc = Document.open!(@valid_pdf)
       :ok = Document.close(doc)

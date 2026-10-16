@@ -50,8 +50,8 @@ pub struct MatrixNif {
     f: f32,
 }
 
-// How the image was stored in the PDF: a compressed JPEG blob (`:jpeg`, so
-// re-encoding to JPEG is lossless pass-through) or decoded pixels (`:raw`).
+// Stored JPEG bytes pass through on JPEG output, except CMYK is re-encoded
+// to RGB. Raw pixels are encoded on demand.
 #[derive(NifUnitEnum, Debug)]
 pub enum SourceFormatNif {
     Jpeg,
@@ -163,12 +163,9 @@ fn image_to_binary(
         let bytes: Cow<[u8]> = match format {
             OutputFormatNif::Png => Cow::Owned(image.to_png_bytes().map_err(to_nif_err)?),
             OutputFormatNif::Jpeg => match image.data() {
-                // JPEG-stored, non-CMYK → hand back the original bytes (zero loss),
-                // matching `save_as_jpeg`'s pass-through.
                 ImageData::Jpeg(jpeg) if image.color_space().components() != 4 => {
                     Cow::Borrowed(jpeg.as_slice())
                 }
-                // CMYK JPEG or raw pixels → decode + encode.
                 _ => Cow::Owned(encode_jpeg(image)?),
             },
         };

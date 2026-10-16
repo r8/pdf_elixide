@@ -118,18 +118,18 @@ such a page it returns `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`
 instead.
 
 A page that declares no box or rotation of its own inherits from the nearest
-ancestor that declares one; see the "Page boxes and the coordinate origin"
-section of `PdfElixide.Document`.
+ancestor that declares one; see [Which ancestor an inherited box comes
+from](page-geometry.md#which-ancestor-an-inherited-box-comes-from).
 
 ## Cropping with `:region`
 
 `:region` takes a `PdfElixide.Geometry.Rect` in PDF points, with the origin at
 the bottom-left of the page, so a `bbox` from an extractor that reports in that
-space goes straight back in — render the table you just found, or the image,
+space goes straight back in — render the span you just found, or the image,
 without computing anything:
 
 ```elixir
-[%{bbox: %PdfElixide.Geometry.Rect{} = bbox} | _] = Document.tables!(doc, 0)
+[%{bbox: %PdfElixide.Geometry.Rect{} = bbox} | _] = Document.images!(doc, 0)
 Document.render!(doc, 0, region: bbox, dpi: 200)
 ```
 
@@ -148,10 +148,10 @@ region off the page.
 
 **On a rotated page, not every extractor reports in that space.** Some hand back
 displayed coordinates, and a box taken from one of them crops the wrong part of
-the page. The "Rotated pages and extracted geometry" section of
-`PdfElixide.Document` explains which boxes need
-`PdfElixide.Geometry.Rect.to_user_space/3`. Page boxes are never mapped, so the
-page boxes hold whatever the rotation.
+the page. See [Rotated pages and extracted
+geometry](page-geometry.md#rotated-pages-and-extracted-geometry) for which boxes
+need `PdfElixide.Geometry.Rect.to_user_space/3`. Page boxes stay in raw user
+space whatever the rotation.
 
 A rectangle that pokes over an edge is clipped to the page, so what comes back
 is the part of it that is actually there and is smaller than the rectangle —

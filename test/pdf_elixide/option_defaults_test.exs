@@ -17,7 +17,6 @@ defmodule PdfElixide.OptionDefaultsTest do
 
   # Every key except `:preset` is `nil`, meaning "keep the preset's value" —
   # the preset is resolved in Rust so its numbers cannot drift from upstream.
-  # Filling one in here would move that decision back into Elixir.
   @table_detection_defaults %{
     preset: :default,
     enabled: nil,

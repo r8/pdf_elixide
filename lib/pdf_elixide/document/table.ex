@@ -47,15 +47,15 @@ defmodule PdfElixide.Document.Table do
       Table.to_markdown(table)
       #=> {:ok, "| Age | 0.042 | 0.011 | 0.001 |\\n|---|---|---|---|\\n..."}
 
-  All three go through `:ref`, a handle to the detected table held on the Rust
-  side, so they work only on a table that came from extraction — not on a
+  All three go through `:ref`, a handle to the detected table held in native
+  memory, so they work only on a table that came from extraction — not on a
   hand-built struct — and stop working once `close/1` releases it. That handle
   carries more than the decoded `:rows` you read here, and it lives until
   `close/1` or garbage collection, so on a table-dense page — and
   more so with `PdfElixide.Document.tables/1` — close the tables you are done
   rendering.
 
-  The three renderers take the handle's lock shared and `close/1` takes it
+  The renderers take the handle's lock shared and `close/1` takes it
   exclusively; see the [Concurrency](guides/concurrency.md) guide.
   """
   alias PdfElixide.Document.Table.Cell

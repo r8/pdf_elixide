@@ -1118,15 +1118,13 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       assert %Document.Metadata{title: "Updated", author: "Jane Doe", trapped: nil} =
                Document.metadata!(doc),
-             "upstream's incremental writer no longer emits /Info; document the loss"
+             "the incremental writer no longer carries /Info"
     end
   end
 
   describe "whether a configured encryption actually reaches the file" do
     @tag :tmp_dir
-    test "a full rewrite encrypts, despite upstream calling it a placeholder", %{
-      tmp_dir: tmp_dir
-    } do
+    test "a full rewrite encrypts", %{tmp_dir: tmp_dir} do
       editor = Editor.open!(@sample_pdf)
       on_exit(fn -> Editor.close(editor) end)
       path = Path.join(tmp_dir, "encrypted_full_rewrite.pdf")
@@ -1137,7 +1135,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       on_exit(fn -> Document.close(doc) end)
 
       assert Document.encrypted?(doc),
-             "upstream now saves without encryption, as its own comment claims"
+             "the rewrite is not encrypted"
 
       assert {:ok, false} = Document.authenticate(doc, "wrong")
       assert {:ok, true} = Document.authenticate(doc, "secret")
@@ -1154,7 +1152,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       on_exit(fn -> Document.close(doc) end)
 
       assert Document.encrypted?(doc),
-             "upstream now saves without encryption, as its own comment claims"
+             "the rewrite is not encrypted"
     end
   end
 

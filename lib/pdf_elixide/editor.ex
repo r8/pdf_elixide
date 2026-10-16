@@ -139,9 +139,9 @@ defmodule PdfElixide.Editor do
   @typedoc """
   An open editor.
 
-  `:version` arrives with the handle, from the same native call that opens the
-  editor, and is served from the struct thereafter: it is the version of the
-  document the editor was opened from, and no editing operation changes it.
+  `:version` is cached when the editor is opened and served from the struct
+  thereafter: it is the version of the document the editor was opened from, and
+  no editing operation changes it.
 
   `:source_path` is `nil` for an editor with no source file: one built with
   `from_binary/2`, `from_markdown/2`, `from_html/2`, `from_plain_text/2` or
@@ -583,8 +583,8 @@ defmodule PdfElixide.Editor do
   @doc """
   Releases the editor's native memory without waiting for garbage collection.
 
-  An editor holds the source document plus its pending edits in memory on the
-  Rust side, normally freed only when the BEAM garbage-collects the handle.
+  An editor holds the source document plus its pending edits in native memory,
+  normally freed only when the BEAM garbage-collects the handle.
   `close/1` frees it early, which matters for long-lived processes that open many
   documents. Calling it is optional and idempotent. It waits for an in-flight
   call on the same editor — a save can hold the handle's lock for seconds — and
@@ -713,8 +713,8 @@ defmodule PdfElixide.Editor do
   @typedoc """
   The `:permissions` option of `t:encryption_opts/0`.
 
-  The eight keys are those of `PdfElixide.Document.Permissions`, which
-  describes what each one grants. Every key defaults to `true`.
+  The keys are those of `PdfElixide.Document.Permissions`, which describes
+  what each one grants. Every key defaults to `true`.
 
   See [Permissions](guides/encryption.md#permissions) for how they interact
   and what they do and do not promise.
@@ -1205,7 +1205,7 @@ defmodule PdfElixide.Editor do
   page relative to where it already is.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
-  not exist. See the "Page rotation" section of this module.
+  not exist. See [Page rotation](guides/editing.md#page-rotation).
   """
   @spec set_rotation(t(), non_neg_integer(), PdfElixide.Document.Page.rotation()) ::
           {:ok, t()} | {:error, Error.t()}
@@ -1239,7 +1239,7 @@ defmodule PdfElixide.Editor do
   past `360` wraps.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
-  not exist. See the "Page rotation" section of this module.
+  not exist. See [Page rotation](guides/editing.md#page-rotation).
   """
   @spec rotate_page_by(t(), non_neg_integer(), integer()) :: {:ok, t()} | {:error, Error.t()}
   def rotate_page_by(%__MODULE__{ref: ref} = editor, page_index, degrees)
@@ -1275,7 +1275,7 @@ defmodule PdfElixide.Editor do
 
   If any page's rotation cannot be read, the call fails without changing the editor.
 
-  See the "Page rotation" section of this module.
+  See [Page rotation](guides/editing.md#page-rotation).
   """
   @spec rotate_all_by(t(), integer()) :: {:ok, t()} | {:error, Error.t()}
   def rotate_all_by(%__MODULE__{ref: ref} = editor, degrees)
@@ -1593,9 +1593,10 @@ defmodule PdfElixide.Editor do
 
   `rect` is in raw, unrotated page space, as returned by
   `PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
-  `PdfElixide.Document.paths/1`. For other extractors, see "Rotated pages and
-  extracted geometry" in `PdfElixide.Document`; a rectangle in the wrong frame
-  is accepted without error.
+  `PdfElixide.Document.paths/1`. For other extractors, see [Rotated pages and
+  extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry); a
+  rectangle in the wrong frame is accepted without error.
 
   **Saving alone does not apply the queued rectangle.** Queuing also marks the
   page: if it has `/Redact` annotations, a full write paints their rectangles
@@ -1658,9 +1659,10 @@ defmodule PdfElixide.Editor do
 
   **Only glyphs drawn by the page itself are removed.** Covered images, vector
   graphics, form XObject text and `/ActualText` remain recoverable. Redact the
-  source document if those contain sensitive content. The overlay can also be
-  displaced or clipped; see [Removing content](guides/redaction.md#removing-content)
-  and [Verifying](guides/redaction.md#verifying).
+  source document if those contain sensitive content. An unfinished path can
+  extend the overlay beyond its rectangle; see
+  [Where the block lands](guides/redaction.md#where-the-block-lands) and
+  [Verifying](guides/redaction.md#verifying).
 
   A `/Redact` annotation alone does not schedule a page: use
   `mark_redactions/1,2` or `add_redaction/3,4` first. Deleting a page does not
@@ -2728,7 +2730,7 @@ defmodule PdfElixide.Editor do
     redaction_options(opts)
   end
 
-  # The other half of the split above; same comment applies.
+  # Option contract: see `__option_defaults__/1`.
   defp build_sanitize_options(opts) do
     opts = Keyword.validate!(opts, @sanitize_opts_keys)
 

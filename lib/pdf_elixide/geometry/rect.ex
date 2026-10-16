@@ -17,8 +17,9 @@ defmodule PdfElixide.Geometry.Rect do
   ## Rotated pages
 
   `to_display_frame/3` and `to_user_space/3` move rectangles between raw user
-  space and the displayed frame. See "Rotated pages and extracted geometry" in
-  `PdfElixide.Document` for which extractor boxes need conversion.
+  space and the displayed frame. See [Rotated pages and extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry) for
+  which extractor boxes need conversion.
   """
   @enforce_keys [:x, :y, :width, :height]
 
@@ -57,8 +58,9 @@ defmodule PdfElixide.Geometry.Rect do
   into raw, unrotated user space.
 
   This is the inverse of `to_display_frame/3` and takes the same raw media box.
-  Convert only boxes known to be in the displayed frame; "Telling which frame a
-  box is in" in `PdfElixide.Document` explains how to identify them.
+  Convert only boxes known to be in the displayed frame; [Telling which frame a
+  box is in](guides/page-geometry.md#telling-which-frame-a-box-is-in) explains
+  how to identify them.
   """
   @spec to_user_space(t(), PdfElixide.Document.Page.rotation(), t()) :: t()
   def to_user_space(%__MODULE__{} = rect, rotation, %__MODULE__{} = media_box)

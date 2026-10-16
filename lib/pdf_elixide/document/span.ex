@@ -9,10 +9,10 @@ defmodule PdfElixide.Document.Span do
 
   ## `:bbox` and `:page_bbox`
 
-  In raw user space, `:bbox` measures the run along its writing axis: `width`
-  is its advance and `height` its font size. A displayed frame may transpose
-  those dimensions; see "Rotated pages and extracted geometry" in
-  `PdfElixide.Document`.
+  In raw user space, `:bbox` measures the run along its writing axis: `width` is
+  its advance and `height` its font size. A displayed frame may transpose those
+  dimensions; see [Rotated pages and extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
 
   `:page_bbox` is the smallest axis-aligned rectangle covering the run, in the
   same frame as `:bbox`. It equals `:bbox` when `:rotation` is `0.0`. Use it for

@@ -47,9 +47,10 @@ Reach for it when:
     skipped rather than to fail the call (`:on_page_error`);
   * you want ligatures expanded (`:expand_ligatures`).
 
-Text lying entirely outside the page's crop box is not returned — see "What the
-crop box hides from extraction" in `PdfElixide.Document`, which also names the
-one extractor that reports it anyway.
+Text lying entirely outside the page's crop box is not returned — see [What the
+crop box hides from
+extraction](page-geometry.md#what-the-crop-box-hides-from-extraction), which
+also names the one extractor that reports it anyway.
 
 ## `to_plain_text/2` — the page as prose
 
@@ -118,10 +119,10 @@ rather than being accepted and ignored.
 `:region_mode`; any other key given a non-default value alongside them raises
 `ArgumentError`. See `t:PdfElixide.Document.text_opts/0`.
 
-On an untagged document, `:reading_order` has three values and two behaviors:
+On an untagged document, two of `:reading_order`'s values behave alike:
 `:structure_tree` and `:column_aware` both run the column-detecting pass, and
 `:top_to_bottom` sorts blocks by vertical position instead. On a single-column
-page all three agree.
+page they all agree.
 
 `t:PdfElixide.Document.text_opts/0` and
 `t:PdfElixide.Document.plain_text_opts/0` document each key in full.
@@ -135,15 +136,15 @@ Document.text!(doc)            # pages separated by a form feed, "\f"
 Document.to_plain_text!(doc)   # pages separated by "\n\n---\n\n"
 ```
 
-For a document with at least one page, a successful
-`PdfElixide.Document.text/1` splits on the form feed into exactly
-`PdfElixide.Document.page_count/1` parts; under `on_page_error: :skip` a page
-that failed to extract stays as an empty part. A zero-page document returns `""`, which `String.split/2` represents as one empty part rather than
-none. The `---` boundary is not as safe: `PdfElixide.Document.to_plain_text/2`
-separates paragraphs with a blank line, so a page whose own text has a `---`
-line between two paragraphs emits the same bytes and splits into an extra part,
-shifting every page after it. Enumerate pages when page boundaries must be
-unambiguous.
+For a document with at least one page, a successful `PdfElixide.Document.text/1`
+splits on the form feed into exactly `PdfElixide.Document.page_count/1` parts;
+under `on_page_error: :skip` a page that failed to extract stays as an empty
+part. A zero-page document returns `""`, which `String.split/2` represents as
+one empty part rather than none. The `---` boundary is not as safe:
+`PdfElixide.Document.to_plain_text/2` separates paragraphs with a blank line, so
+a page whose own text has a `---` line between two paragraphs emits the same
+bytes and splits into an extra part, shifting every page after it. Enumerate
+pages when page boundaries must be unambiguous.
 
 Neither bounds memory: each builds the whole result before returning. A document
 is enumerable over its pages, so process each page's result without accumulating
@@ -249,9 +250,9 @@ so it cannot take a per-page map. `PdfElixide.Document.words/2` and
 
 To hide them in a saved copy, paint over the same boxes with
 `PdfElixide.Editor.erase_regions/3`, which takes raw, unrotated user space.
-Spans on a rotated page may be in the displayed frame; see "Telling which frame
-a box is in" in `PdfElixide.Document`. Map those back with
-`PdfElixide.Geometry.Rect.to_user_space/3`:
+Spans on a rotated page may be in the displayed frame; map those back with
+`PdfElixide.Geometry.Rect.to_user_space/3` as [Bringing boxes into one
+frame](page-geometry.md#bringing-boxes-into-one-frame) describes:
 
 ```elixir
 alias PdfElixide.Geometry.Rect
@@ -266,7 +267,7 @@ editor =
 
     boxes =
       for span <- spans do
-        if rotation == 180 or (rotation in [90, 270] and span.rotation != 0.0),
+        if rotation == 180 or span.rotation != 0.0,
           do: Rect.to_user_space(span.bbox, rotation, media_box),
           else: span.bbox
       end
@@ -302,7 +303,7 @@ the rectangle does not cover it.
     headings, lists and tables; `PdfElixide.Document.to_html/2` returns an
     escaped fragment, optionally absolutely positioned. Both take markup options
     the plain-text surfaces have no use for, and `to_markdown/2` takes the
-    largest set of the four.
+    largest set.
   * **Finding a known string.** `PdfElixide.Document.search/2` indexes each page
     once and returns match geometry — see the [Text search](text-search.md)
     guide.

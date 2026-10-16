@@ -9,8 +9,9 @@ defmodule PdfElixide.Document.SearchMatch do
   the union of their boxes. Draw from the spans' boxes, one per run.
 
   On a rotated page, use each span's `:rotation` to identify its coordinate
-  frame; a match's spans may use different frames. See "Rotated pages and
-  extracted geometry" in `PdfElixide.Document`.
+  frame; a match's spans may use different frames. See [Rotated pages and
+  extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
 
   The [Text search](guides/text-search.md) guide has the rest, including how
   far `:bbox` over-covers, why a match can cross what looks like a line break,

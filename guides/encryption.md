@@ -161,7 +161,7 @@ Both default to `""`, and each empty value means something distinct:
 
 ## Permissions
 
-`:permissions` takes the eight flags of `PdfElixide.Document.Permissions`, each
+`:permissions` takes the flags of `PdfElixide.Document.Permissions`, each
 defaulting to `true`. They are written into the `/P` entry of the encryption
 dictionary.
 

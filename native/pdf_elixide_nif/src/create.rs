@@ -112,7 +112,7 @@ fn layout(
     line_height: f32,
 ) -> PdfBuilder {
     // No text layout reads the right margin; pass the default so `margins` can set
-    // the three that are read.
+    // the ones that are read.
     let margin_right = PdfConfig::default().margin_right;
     PdfBuilder::new()
         .page_size(page_size.into())
@@ -210,13 +210,11 @@ fn editor_from_markdown(content: &str, options: MarkupCreateOptionsNif) -> NifRe
     create(|| options.builder().from_markdown(content).map_err(to_nif_err))
 }
 
-// Dirty for the same reason as `editor_from_markdown`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_html(content: &str, options: MarkupCreateOptionsNif) -> NifResult<OpenedEditor> {
     create(|| options.builder().from_html(content).map_err(to_nif_err))
 }
 
-// Dirty for the same reason as `editor_from_markdown`.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_plain_text(
     content: &str,
@@ -355,8 +353,6 @@ fn decoded(index: usize, bytes: &[u8]) -> NifResult<ImageData> {
     Ok(image)
 }
 
-// Dirty for the same reason as `editor_from_markdown`, with PNG decoding and
-// compression on top.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_images(
     images: Vec<Binary>,

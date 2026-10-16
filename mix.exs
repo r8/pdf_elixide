@@ -71,6 +71,7 @@ defmodule PdfElixide.MixProject do
         "README.md": [title: "Overview"],
         "guides/text-extraction.md": [],
         "guides/text-search.md": [],
+        "guides/page-geometry.md": [],
         "guides/rendering.md": [],
         "guides/office.md": [],
         "guides/creating-documents.md": [],

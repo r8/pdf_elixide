@@ -46,9 +46,8 @@ Other tags are removed but their contents remain. This includes `title`,
 and `<h6>` print with literal `#####` and `######` markers. Entities are not
 decoded. A literal `<` starts a tag-like region and can discard text up to the
 next `>` or the end of the input, and a lone `>` is removed; avoid angle
-brackets in running text.
-The remaining text is laid out as Markdown, so Markdown-looking source may be
-formatted.
+brackets in running text. The remaining text is laid out as Markdown, so
+Markdown-looking source may be formatted.
 
 Use `<pre>x</pre>` rather than `<pre><code>x</code></pre>`: a `code` tag inside
 `pre` is printed as backticks.

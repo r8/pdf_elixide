@@ -16,8 +16,9 @@ defmodule PdfElixide.Document.Page do
 
   Every extractor `PdfElixide.Document` offers is available here for a single
   page, taking the same options, except `PdfElixide.Document.running_regions/2`,
-  which compares pages and so needs the whole document. The comprehension above collects every page's
-  result. To bound memory used by results, consume pages without accumulating
+  which compares pages and so needs the whole document. The comprehension above
+  collects every page's result. To bound memory used by results, consume pages
+  without accumulating
   their results — see the streaming example and handle-release guidance in the
   "Whole-document extraction and memory" section of `PdfElixide.Document`.
 
@@ -64,9 +65,10 @@ defmodule PdfElixide.Document.Page do
 
   The rect is normalized: `:x` and `:y` are the bottom-left corner and `:width`
   and `:height` are non-negative, even for a file that writes the two corners in
-  the reverse order. It is not turned to match `rotation/1`. See "Page boxes and
-  the coordinate origin" in `PdfElixide.Document` for inherited boxes,
-  non-zero origins and the coordinate frame.
+  the reverse order. It is not turned to match `rotation/1`. See [Page boxes and
+  the coordinate
+  origin](guides/page-geometry.md#page-boxes-and-the-coordinate-origin) for
+  inherited boxes, non-zero origins and the coordinate frame.
 
   A page with no `/MediaBox` anywhere above it, or whose entry is not an array,
   or is an array of fewer than four elements, is malformed and yields
@@ -101,9 +103,10 @@ defmodule PdfElixide.Document.Page do
   that is *not a number* is not reported and reads as `0.0`.
 
   The box is reported as declared, so it may extend past the sheet. Extraction
-  stops at the two intersected — `visible_box/1` — not at this box. See "Page
-  boxes and the coordinate origin" in `PdfElixide.Document`, whose "What the
-  crop box hides from extraction" subsection says what that frame omits.
+  stops at the two intersected — `visible_box/1` — not at this box. See [What
+  the crop box hides from
+  extraction](guides/page-geometry.md#what-the-crop-box-hides-from-extraction)
+  for what that frame omits.
   """
   @spec crop_box(t()) :: {:ok, Rect.t() | nil} | {:error, Error.t()}
   def crop_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -131,12 +134,12 @@ defmodule PdfElixide.Document.Page do
   once intersected. Only an unreadable `/MediaBox` fails, with
   `%PdfElixide.Error{reason: :invalid_pdf}`.
 
-  This is the frame text extraction stops at — see "What the crop box hides
-  from extraction" in `PdfElixide.Document` for which extractors it bounds. It
-  is not what `render/1,2` draws: on a page with a malformed `/CropBox` the two
-  part. Measure a raster from the `:width` and `:height` of the returned
-  `PdfElixide.Document.RenderedPage`, and see "What the raster covers" in the
-  [Rendering](guides/rendering.md) guide.
+  This is the frame text extraction stops at — see [What the crop box hides from
+  extraction](guides/page-geometry.md#what-the-crop-box-hides-from-extraction)
+  for which extractors it bounds. It is not what `render/1,2` draws: on a page
+  with a malformed `/CropBox` the two part. Measure a raster from the `:width`
+  and `:height` of the returned `PdfElixide.Document.RenderedPage`, and see
+  "What the raster covers" in the [Rendering](guides/rendering.md) guide.
   """
   @spec visible_box(t()) :: {:ok, Rect.t()} | {:error, Error.t()}
   def visible_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -162,10 +165,8 @@ defmodule PdfElixide.Document.Page do
   """
   @spec width(t()) :: {:ok, float()} | {:error, Error.t()}
   def width(%__MODULE__{} = page) do
-    # Matching `%Rect{}` rather than reading `box.width` keeps the boundary
-    # loud: if the Rust `#[module = ...]` attribute and this struct ever stop
-    # naming the same module, that is a `CaseClauseError` here instead of a
-    # silently wrong return value.
+    # Match `%Rect{}` rather than read `box.width`, so a struct mismatch at the
+    # native boundary fails here instead of returning a wrong value.
     case media_box(page) do
       {:ok, %Rect{width: width}} -> {:ok, width}
       {:error, error} -> {:error, error}
@@ -211,8 +212,9 @@ defmodule PdfElixide.Document.Page do
   displaying it — as `0`, `90`, `180` or `270`.
 
   A page without `/Rotate` inherits it from the nearest ancestor that declares
-  one and otherwise reads as `0`. See "Page boxes and the coordinate origin" in
-  `PdfElixide.Document` for the full inheritance behavior.
+  one and otherwise reads as `0`. See [Which ancestor an inherited box comes
+  from](guides/page-geometry.md#which-ancestor-an-inherited-box-comes-from) for
+  the full inheritance behavior.
 
   Two normalizations are worth knowing:
 
@@ -220,9 +222,10 @@ defmodule PdfElixide.Document.Page do
     * a value that is **not a multiple of 90** is invalid per §7.7.3.3 and reads
       as `0` — it is *not* rounded down, so `45` is `0`, not `90`.
 
-  `media_box/1`, `width/1` and `height/1` are not swapped to match. Rotation also
-  affects the frame of some extracted bounding boxes; see "Rotated pages and
-  extracted geometry" in `PdfElixide.Document`.
+  `media_box/1`, `width/1` and `height/1` are not swapped to match. Rotation
+  also affects the frame of some extracted bounding boxes; see [Rotated pages
+  and extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
   """
   @spec rotation(t()) :: {:ok, rotation()} | {:error, Error.t()}
   def rotation(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -663,7 +666,8 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Rendering"
   @doc """
-  Renders one grayscale plate per ink used by the page.
+  Renders one grayscale plate per ink on the page: the process inks and the
+  page's spot inks, painted or not.
 
   See `PdfElixide.Document.separations/3` for which inks a page yields and
   `PdfElixide.Document.SeparationPlate` for how to read a plate.

@@ -1223,7 +1223,7 @@ fn timestamp_parse<'a>(env: Env<'a>, token: Binary) -> NifResult<TimestampNif<'a
     contain_panic(|| timestamp_to_nif(env, &parse_timestamp(&token)?))
 }
 
-// Two atoms rather than the three `verdict_atom` builds: upstream's `verify`
+// Fewer atoms than `verdict_atom` builds: upstream's `verify`
 // folds `SignerVerify::Unknown` into an error, and so does a token that is not
 // CMS-wrapped, both of which reach the caller as `:invalid_pdf`.
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -1484,7 +1484,7 @@ mod tests {
     #[test]
     fn refuses_a_date_no_clock_or_calendar_produces() {
         for date in [
-            // The four shapes upstream normalizes instead of refusing.
+            // Shapes upstream normalizes instead of refusing.
             "D:20240231000000Z",
             "D:20240101990000Z",
             "D:20240101000000+99'00'",

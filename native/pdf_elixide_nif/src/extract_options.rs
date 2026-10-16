@@ -870,7 +870,6 @@ mod tests {
         expected.median_multiplier = 0.75;
 
         assert_eq!(overrides.apply(Some(base.clone())), expected);
-        // And with nothing overridden at all, the base survives untouched.
         assert_eq!(no_adaptive_overrides().apply(Some(base.clone())), base);
     }
 
@@ -958,25 +957,21 @@ mod tests {
 
     #[test]
     fn the_presets_still_mean_what_the_typedocs_say() {
-        // ":strict (demands ruling lines and regular rows)"
         let strict = table_preset(TablePresetNif::Strict);
         assert_eq!(strict.horizontal_strategy, TableStrategy::Lines);
         assert_eq!(strict.vertical_strategy, TableStrategy::Lines);
         assert!(strict.regular_row_ratio > table_preset(TablePresetNif::Default).regular_row_ratio);
 
-        // ":relaxed (… text-driven)"
         let relaxed = table_preset(TablePresetNif::Relaxed);
         assert_eq!(relaxed.horizontal_strategy, TableStrategy::Text);
         assert_eq!(relaxed.vertical_strategy, TableStrategy::Text);
 
-        // ":aggressive (splits more readily)" / ":conservative (merges across
-        // wider gaps)" — the gap that becomes a space, as a fraction of font
-        // size, so *lower* means more splitting.
+        // The gap that becomes a space, as a fraction of font size: *lower* means
+        // more splitting.
         let default_ratio = span_preset(SpanPresetNif::Default).space_threshold_em_ratio;
         assert!(span_preset(SpanPresetNif::Aggressive).space_threshold_em_ratio < default_ratio);
         assert!(span_preset(SpanPresetNif::Conservative).space_threshold_em_ratio > default_ratio);
 
-        // ":adaptive (derives thresholds from page gap statistics)"
         let adaptive = span_preset(SpanPresetNif::Adaptive);
         assert!(adaptive.use_adaptive_threshold);
         assert!(adaptive.adaptive_config.is_some());

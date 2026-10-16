@@ -7,8 +7,9 @@ defmodule PdfElixide.Document.Word do
   cut from — the same value as the `:rotation` of the `PdfElixide.Document.Span`
   it came from — `0.0` for upright text, and `0.0` when its characters disagree.
   On a page whose `PdfElixide.Document.Page.rotation/1` is `90` or `270` it also
-  says whether `:bbox` was mapped into the displayed frame; see "Rotated pages
-  and extracted geometry" in `PdfElixide.Document`.
+  says whether `:bbox` was mapped into the displayed frame; see [Rotated pages
+  and extracted
+  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
 
   Float fields follow the "Unbounded values" rule in
   `PdfElixide.Geometry.Rect`.

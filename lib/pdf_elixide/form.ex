@@ -22,21 +22,19 @@ defmodule PdfElixide.Form do
   `export/3` hands the same fields back as FDF or XFDF bytes, so a filled form's
   data can leave without the PDF around it.
 
-  Fields come back as one struct per field type, listed in
-  `PdfElixide.Form.Field`, each carrying the widget it is as a `:kind`, its
-  decoded `/Ff` bits as `:flags`, and the metadata a filler needs to render it —
-  a tooltip, a box, a default value, and a choice field's permitted options —
-  and are addressed by the fully qualified name each carries. Only an existing
-  field can be set — there is no way to add one — and a name that is not in the
-  form is `{:error, %PdfElixide.Error{reason: :not_found}}`, from `field/2` and
-  `value/2` as much as from `put_value/3`. Signature fields are not fillable and
-  are not reported at all — `PdfElixide.Signature` reads those — and writing a
-  check box or radio group back is not always faithful; inspect its
-  `:on_states` first.
+  Fields come back as per-type structs, addressed by their fully qualified
+  names; see `PdfElixide.Form.Field`. Recognized types carry `:kind` and decoded
+  `:flags`; `PdfElixide.Form.Field.Unknown` has flags but no `:kind`.
 
-  A form whose field hierarchy is cyclic, or nested far deeper than any real
-  form, is reported as an error by every function here rather than read; the
-  [Forms](guides/forms.md) guide gives the reason atoms.
+  Only existing fillable fields can be written. Missing names and signature
+  fields return `{:error, %PdfElixide.Error{reason: :not_found}}`.
+  `PdfElixide.Signature` reads signatures separately. Check a button field's
+  `:on_states` before writing it back; see
+  [Button limitations](guides/forms.md#check-boxes-and-radio-groups).
+
+  Operations that read the field hierarchy reject cycles and excessive depth
+  or size. Deferred `flatten/1,2` marks do not validate that hierarchy; see
+  [Field hierarchy errors](guides/forms.md#field-hierarchy-errors).
 
   Which lock a call takes follows its source: a shared read on a
   `PdfElixide.Document`, and the editor's exclusive lock on a

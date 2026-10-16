@@ -24,8 +24,8 @@ defmodule PdfElixide.Color do
   colorspace is no longer available in those results.
 
   `PdfElixide.Document.Annotation` is the exception: its `:color` and
-  `:interior_color` carry the raw `/C` and `/IC` component arrays, so any of the
-  four structs can appear there.
+  `:interior_color` carry the raw `/C` and `/IC` component arrays, so any of
+  these structs can appear there.
   """
   alias PdfElixide.Color.CMYK
   alias PdfElixide.Color.Gray

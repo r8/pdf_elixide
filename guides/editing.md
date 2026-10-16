@@ -184,20 +184,22 @@ insetting its media box:
 Every box is a `PdfElixide.Geometry.Rect` in the page's raw, unrotated user
 space, so a box read from `PdfElixide.Document.Page.media_box/1`, or a `bbox`
 from an extractor that reports in that space, can be handed straight back. For
-rotated extractor boxes, see "Rotated pages and extracted geometry" in
-`PdfElixide.Document`; only boxes reported in the displayed frame should pass
-through `PdfElixide.Geometry.Rect.to_user_space/3`. A reversed rectangle is
-normalized before it is written, and the getters report the box as it will land
-in the file.
+rotated extractor boxes, see [Rotated pages and extracted
+geometry](page-geometry.md#rotated-pages-and-extracted-geometry); only boxes
+reported in the displayed frame should pass through
+`PdfElixide.Geometry.Rect.to_user_space/3`. A reversed rectangle is normalized
+before it is written, and the getters report the box as it will land in the
+file.
 
 **Cropping hides content; it does not remove it.** Whatever lies outside the
 crop box is still in the written file, and anything that reads the content
-stream still finds it. Text extraction is not such a reader: a run lying
-entirely outside the crop box is dropped from `PdfElixide.Document.text/1` and
-its siblings, so cropping is a way to hide text from extraction but not a way to
-delete it — use [Redaction](redaction.md) for that. A viewer clips the crop box
-to the media box, so a crop box larger than the media box shows the whole page,
-and nothing here checks one against the other.
+stream still finds it. Text extraction is not such a reader — see [What the crop
+box hides from
+extraction](page-geometry.md#what-the-crop-box-hides-from-extraction) — so
+cropping is a way to hide text from extraction but not a way to delete it; use
+[Redaction](redaction.md) for that. A viewer clips the crop box to the media
+box, so a crop box larger than the media box shows the whole page, and nothing
+here checks one against the other.
 
 **Setting the media box leaves an existing crop box alone.** A page whose crop
 box was declared by the document keeps it after
@@ -218,9 +220,10 @@ with nothing changed. Give such a page a media box with
 
 A box belongs to the page rather than to the position, so it follows the page
 through `PdfElixide.Editor.move_page/3` and survives the deletion of another
-page. Where a box is inherited from the page tree, see "Page boxes and the
-coordinate origin" in `PdfElixide.Document` for which ancestor it comes from.
-See [Saving edits](#saving-edits) for the incremental-save refusal.
+page. Where a box is inherited from the page tree, see [Which ancestor an
+inherited box comes
+from](page-geometry.md#which-ancestor-an-inherited-box-comes-from). See [Saving
+edits](#saving-edits) for the incremental-save refusal.
 
 ## Erasing regions
 
