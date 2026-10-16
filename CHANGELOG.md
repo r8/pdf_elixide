@@ -5,6 +5,27 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.23.0](https://github.com/r8/pdf_elixide/compare/v0.22.0...v0.23.0) (2026-10-16)
+
+
+
+
+### Features:
+
+* report a redaction-mark query's failure as a value instead of raising by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* raise on a broken native library by [@r8](https://github.com/r8)
+
+* fail whole-document text extraction on an unreadable page by default by [@r8](https://github.com/r8)
+
+* refuse text and Markdown options that have no effect by [@r8](https://github.com/r8)
+
+* report closed editors for empty form batches by [@r8](https://github.com/r8)
+
+* contain native panics in handle-free operations by [@r8](https://github.com/r8)
+
 ## [v0.22.0](https://github.com/r8/pdf_elixide/compare/v0.21.0...v0.22.0) (2026-10-05)
 
 
