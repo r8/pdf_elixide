@@ -34,6 +34,8 @@ rustler = "0.37.4"
 sha1 = "0.11"
 sha2 = "0.11"
 unicode-normalization = "0.1"
+# Grapheme clusters, so a word split across lines never separates a cluster.
+unicode-segmentation = "1.13"
 
 [dev-dependencies]
 # Builds the stores used by the certificate tests.

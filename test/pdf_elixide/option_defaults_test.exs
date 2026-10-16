@@ -2,6 +2,7 @@ defmodule PdfElixide.OptionDefaultsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  alias PdfElixide.Builder
   alias PdfElixide.Compliance
   alias PdfElixide.Document
   alias PdfElixide.Editor
@@ -328,6 +329,26 @@ defmodule PdfElixide.OptionDefaultsTest do
                margin_left: 72,
                line_height: 1.5
              }
+    end
+
+    test "Builder.new/1" do
+      assert Builder.__option_defaults__(:new) == %{
+               title: nil,
+               author: nil,
+               subject: nil,
+               creator: nil,
+               page_size: {612.0, 792.0},
+               margin_top: 72.0,
+               margin_bottom: 72.0,
+               margin_left: 72.0,
+               margin_right: 72.0,
+               font_size: 12.0,
+               line_height: 1.5
+             }
+    end
+
+    test "Builder.paragraph/3" do
+      assert Builder.__option_defaults__(:paragraph) == %{font_size: nil}
     end
 
     test "Editor.from_images/2" do

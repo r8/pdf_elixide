@@ -121,6 +121,7 @@ defmodule PdfElixide.Editor do
   side.
   """
 
+  alias PdfElixide.Builder
   alias PdfElixide.Color.RGB
   alias PdfElixide.Document
   alias PdfElixide.Document.BookmarkSegment
@@ -128,6 +129,7 @@ defmodule PdfElixide.Editor do
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.LayoutOptions
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
   alias PdfElixide.RedactionReport
@@ -512,6 +514,44 @@ defmodule PdfElixide.Editor do
   @spec from_images!([binary()], image_create_opts()) :: t()
   def from_images!(images, opts \\ []) when is_list(images) and is_list(opts) do
     from_images(images, opts) |> Wrap.unwrap!()
+  end
+
+  @doc group: "Creating documents"
+  @doc """
+  Lays out a `PdfElixide.Builder` description and opens the result for editing.
+
+  Use this when the document needs more work after it is built, such as
+  merging, attachments or form fields. To get the PDF straight away, use
+  `PdfElixide.Builder.to_binary/2` or `PdfElixide.Builder.save/3`, which
+  close the editor for you.
+
+      PdfElixide.Builder.new(title: "Report")
+      |> PdfElixide.Builder.paragraph("All good.")
+      |> PdfElixide.Editor.from_builder!()
+      |> PdfElixide.Editor.set_keywords!("quarterly")
+      |> PdfElixide.Editor.save!("report.pdf")
+
+  See [Builder errors](PdfElixide.Builder.html#module-errors) for what is
+  refused.
+  """
+  @spec from_builder(Builder.t()) :: {:ok, t()} | {:error, Error.t()}
+  def from_builder(%Builder{} = builder) do
+    description = Builder.__native__(builder)
+
+    with {:ok, {ref, version}} <-
+           Wrap.call(fn -> Native.editor_from_builder(description) end) do
+      {:ok, %__MODULE__{ref: ref, version: version, source_path: nil}}
+    end
+  end
+
+  @doc group: "Creating documents"
+  @doc """
+  Lays out a `PdfElixide.Builder` description and opens the result for editing,
+  raising an error if it fails.
+  """
+  @spec from_builder!(Builder.t()) :: t()
+  def from_builder!(%Builder{} = builder) do
+    from_builder(builder) |> Wrap.unwrap!()
   end
 
   @doc group: "Opening and lifecycle"
@@ -2452,24 +2492,13 @@ defmodule PdfElixide.Editor do
   defp build_crop_margins(opts) do
     opts = Keyword.validate!(opts, Enum.map(@crop_margins_keys, &{&1, 0}))
 
-    Map.new(opts, fn {key, value} -> {key, validate_margin!(key, value)} end)
+    Map.new(opts, fn {key, value} -> {key, LayoutOptions.margin!(key, value)} end)
   end
-
-  # Range only; a value that is not a number is left to the NIF's field decoder.
-  defp validate_margin!(key, value) when is_number(value) and (value < 0 or value > @max_f32) do
-    raise ArgumentError,
-          "invalid #{inspect(key)}, expected a non-negative number that fits a " <>
-            "32-bit float: #{inspect(value)}"
-  end
-
-  defp validate_margin!(_key, value), do: value
-
-  @paper_sizes %{letter: {612, 792}, a4: {595, 842}, legal: {612, 1008}, a3: {842, 1190}}
 
   # See `__option_defaults__/1` for why every key is emitted.
   defp build_create_options(opts) do
     opts = Keyword.validate!(opts, @create_opts_keys)
-    font_size = validate_positive!(:font_size, Keyword.get(opts, :font_size, 12))
+    font_size = LayoutOptions.positive!(:font_size, Keyword.get(opts, :font_size, 12))
 
     # A `#` heading, the tallest line Markdown sets, is twice the body size, and
     # code and table lines, the shortest, are nine tenths of it.
@@ -2490,10 +2519,10 @@ defmodule PdfElixide.Editor do
 
     margins =
       Map.new([:margin_top, :margin_bottom, :margin_left, :margin_right], fn key ->
-        {key, validate_margin!(key, Keyword.get(opts, key, 72))}
+        {key, LayoutOptions.margin!(key, Keyword.get(opts, key, 72))}
       end)
 
-    validate_image_area_fits!(Map.get(@paper_sizes, page_size, page_size), margins)
+    validate_image_area_fits!(Map.get(LayoutOptions.paper_sizes(), page_size, page_size), margins)
 
     Map.merge(margins, %{
       title: Keyword.get(opts, :title),
@@ -2540,11 +2569,11 @@ defmodule PdfElixide.Editor do
 
   defp create_layout(opts, font_size, scales) do
     page_size = validate_page_size!(Keyword.get(opts, :page_size, :letter))
-    line_height = validate_positive!(:line_height, Keyword.get(opts, :line_height, 1.5))
+    line_height = LayoutOptions.positive!(:line_height, Keyword.get(opts, :line_height, 1.5))
 
     margins =
       Map.new([:margin_top, :margin_bottom, :margin_left], fn key ->
-        {key, validate_margin!(key, Keyword.get(opts, key, 72))}
+        {key, LayoutOptions.margin!(key, Keyword.get(opts, key, 72))}
       end)
 
     validate_layout_fits!(page_size, margins, {font_size, scales, line_height})
@@ -2557,32 +2586,20 @@ defmodule PdfElixide.Editor do
     })
   end
 
-  # Range only, as `validate_margin!/2`: anything not recognised here is left to
+  # Range only, as `LayoutOptions.margin!/2`: anything not recognised here is left to
   # the NIF's field decoder, which names `:page_size`.
   defp validate_page_size!({width, height} = size) when is_number(width) and is_number(height) do
-    validate_positive!(:page_size, width)
-    validate_positive!(:page_size, height)
+    LayoutOptions.positive!(:page_size, width)
+    LayoutOptions.positive!(:page_size, height)
 
     size
   end
 
   defp validate_page_size!(size), do: size
 
-  @min_normal_f32 1.175_494_35e-38
-
-  # Below the smallest normal f32 a positive value reaches the layout as zero.
-  defp validate_positive!(key, value)
-       when is_number(value) and (value < @min_normal_f32 or value > @max_f32) do
-    raise ArgumentError,
-          "invalid #{inspect(key)}, expected a positive number that fits a " <>
-            "32-bit float: #{inspect(value)}"
-  end
-
-  defp validate_positive!(_key, value), do: value
-
   # Refuse layouts that would stack lines instead of starting a new page.
   defp validate_layout_fits!(page_size, margins, line) do
-    case Map.get(@paper_sizes, page_size, page_size) do
+    case Map.get(LayoutOptions.paper_sizes(), page_size, page_size) do
       {width, height} when is_number(width) and is_number(height) ->
         validate_width_fits!(width, margins)
         validate_height_fits!(width, height, margins, line)

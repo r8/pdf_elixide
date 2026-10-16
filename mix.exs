@@ -169,6 +169,9 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Color.Gray,
         PdfElixide.Color.Unknown
       ],
+      "Document creation": [
+        PdfElixide.Builder
+      ],
       "Editing and forms": [
         PdfElixide.Editor,
         PdfElixide.Form,

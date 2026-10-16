@@ -2,6 +2,7 @@ defmodule PdfElixide.OptionKeysTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  alias PdfElixide.Builder
   alias PdfElixide.Compliance
   alias PdfElixide.Document
   alias PdfElixide.Editor
@@ -33,6 +34,22 @@ defmodule PdfElixide.OptionKeysTest do
   ]
 
   @create_opts @plain_text_create_opts ++ [subject: "Subject", font_size: 10.0]
+
+  @builder_new_opts [
+    title: "Title",
+    author: "Author",
+    subject: "Subject",
+    creator: "Creator",
+    page_size: {300.0, 400.0},
+    margin_top: 10,
+    margin_bottom: 10.0,
+    margin_left: 10,
+    margin_right: 10.0,
+    font_size: 10.0,
+    line_height: 1.2
+  ]
+
+  @builder_output_opts [compress: false, garbage_collect: false, encryption: nil]
 
   @image_create_opts [
     title: "Title",
@@ -400,6 +417,12 @@ defmodule PdfElixide.OptionKeysTest do
       )
     end
 
+    test "Builder.new/1, paragraph/3 and to_binary/2" do
+      accepts_each!(@builder_new_opts, &Builder.new/1)
+      accepts_each!([font_size: 10], &Builder.paragraph(Builder.new(), "Text", &1))
+      accepts_each!(@builder_output_opts, &Builder.to_binary(Builder.new(), &1))
+    end
+
     test "Editor.save/3 and to_binary/2" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -564,7 +587,11 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Editor.from_markdown("Text", opts) end,
         fn opts -> Editor.from_html("Text", opts) end,
         fn opts -> Editor.from_plain_text("Text", opts) end,
-        fn opts -> Editor.from_images([PdfElixide.Png.solid(8, 8, :rgb)], opts) end
+        fn opts -> Editor.from_images([PdfElixide.Png.solid(8, 8, :rgb)], opts) end,
+        fn opts -> Builder.new(opts) end,
+        fn opts -> Builder.paragraph(Builder.new(), "Text", opts) end,
+        fn opts -> Builder.to_binary(Builder.new(), opts) end,
+        fn opts -> Builder.save(Builder.new(), "/dev/null", opts) end
       ]
 
       for call <- calls do
@@ -644,6 +671,16 @@ defmodule PdfElixide.OptionKeysTest do
         assert_raise ArgumentError, ~r/#{inspect(key)}/, fn ->
           Editor.from_plain_text("Text", [{key, value}])
         end
+      end
+    end
+
+    test "Builder.to_binary/2 and save/3 take no :incremental" do
+      assert_raise ArgumentError, ~r/:incremental/, fn ->
+        Builder.to_binary(Builder.new(), incremental: false)
+      end
+
+      assert_raise ArgumentError, ~r/:incremental/, fn ->
+        Builder.save(Builder.new(), "/dev/null", incremental: false)
       end
     end
 

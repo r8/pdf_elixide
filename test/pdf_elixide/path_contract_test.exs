@@ -123,6 +123,14 @@ defmodule PdfElixide.PathContractTest do
       assert doc.page_count == 3
     end
 
+    test "Builder.save/3 writes one, and it reopens", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "built-" <> @bad_name)
+
+      assert :ok = PdfElixide.Builder.new() |> PdfElixide.Builder.save(path)
+      assert {:ok, doc} = Document.open(path)
+      assert doc.page_count == 1
+    end
+
     test "Image.save/3 writes one", %{tmp_dir: tmp_dir} do
       [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
       path = Path.join(tmp_dir, <<0xFF>> <> ".png")

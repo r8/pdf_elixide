@@ -191,9 +191,15 @@ fn blank_lines_drawn(content: &str) -> String {
 // There is no `Closable` until the editor exists, so `catch_unwind` contains a
 // panic in the layout or the parse of its output.
 fn create(build: impl FnOnce() -> NifResult<Pdf>) -> NifResult<OpenedEditor> {
+    create_from_bytes(|| build().map(Pdf::into_bytes))
+}
+
+pub(crate) fn create_from_bytes(
+    build: impl FnOnce() -> NifResult<Vec<u8>>,
+) -> NifResult<OpenedEditor> {
     let editor = warnings::drained(|| {
         catch_unwind(AssertUnwindSafe(|| {
-            let bytes = build()?.into_bytes();
+            let bytes = build()?;
 
             DocumentEditor::from_bytes(bytes).map_err(to_nif_err)
         }))

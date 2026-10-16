@@ -5,7 +5,9 @@ use pdf_oxide::{extractors::PdfImage, fonts::FontInfo, structure::table_extracto
 use crate::{open_editor::OpenEditor, resource::Closable, warnings::OpenDocument};
 
 mod annotations;
+mod base14;
 mod binary;
+mod builder;
 mod certificate_files;
 mod char;
 mod color;
@@ -16,6 +18,7 @@ mod editor;
 mod embedded_files;
 mod error;
 mod extract_options;
+mod flow;
 mod fonts;
 mod form;
 mod form_tree;
