@@ -84,8 +84,39 @@ defmodule PdfElixide.MixProject do
         "guides/concurrency.md": [],
         "CHANGELOG.md": []
       ],
-      groups_for_modules: groups_for_modules()
+      groups_for_modules: groups_for_modules(),
+      groups_for_docs: groups_for_docs()
     ]
+  end
+
+  # Function groups within a module page. The order here is the order ExDoc
+  # renders them; a module shows only the groups its functions carry.
+  # `doc_groups_test.exs` pins that every documented function in `Document`,
+  # `Editor` and `Document.Page` carries one of these and that none is unused.
+  defp groups_for_docs do
+    for group <- [
+          "Opening and lifecycle",
+          "Creating documents",
+          "Saving",
+          "Page properties",
+          "Metadata and structure",
+          "Text extraction",
+          "Conversion",
+          "Graphics, images and annotations",
+          "Search",
+          "Rendering",
+          "Page structure",
+          "Merging and splitting",
+          "Page rotation",
+          "Page boxes",
+          "Erasing regions",
+          "Redaction",
+          "Attachments",
+          "Document information",
+          "Flattening"
+        ] do
+      {group, &(&1[:group] == group)}
+    end
   end
 
   defp groups_for_modules do

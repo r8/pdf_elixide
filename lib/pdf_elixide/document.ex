@@ -318,6 +318,7 @@ defmodule PdfElixide.Document do
 
   @open_opts_keys [:password]
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document from the specified file path.
 
@@ -340,6 +341,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document from the specified file path, raising an error if it fails.
 
@@ -351,6 +353,7 @@ defmodule PdfElixide.Document do
     open(path, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document from the given binary data.
 
@@ -374,6 +377,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document from the given binary data, raising an error if it fails.
 
@@ -390,18 +394,21 @@ defmodule PdfElixide.Document do
     %{password: Keyword.get(opts, :password)}
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the PDF specification version of the given document as a `{major, minor}` tuple.
   """
   @spec version(t()) :: {non_neg_integer(), non_neg_integer()}
   def version(%__MODULE__{version: v}), do: v
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the file path from which the document was loaded, or `nil` if it was loaded from binary data.
   """
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Releases the document's native memory without waiting for garbage collection.
 
@@ -434,12 +441,14 @@ defmodule PdfElixide.Document do
   @spec close(t()) :: :ok
   def close(%__MODULE__{ref: ref}), do: Native.document_close(ref)
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns whether the document has been released with `close/1`.
   """
   @spec closed?(t()) :: boolean()
   def closed?(%__MODULE__{ref: ref}), do: Native.document_closed(ref)
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the number of pages in the given PDF document.
 
@@ -458,6 +467,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_page_count(ref) end)
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the number of pages in the given PDF document, raising an error if it fails.
   """
@@ -466,6 +476,7 @@ defmodule PdfElixide.Document do
     page_count(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns whether the PDF document is a Tagged PDF with a structure tree.
 
@@ -480,6 +491,7 @@ defmodule PdfElixide.Document do
     Predicate.tolerant!(fn -> Native.document_has_structure_tree(ref) end)
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns whether the PDF document is a Tagged PDF with a structure tree,
   reporting a structure tree that cannot be read.
@@ -494,6 +506,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_has_structure_tree(ref) end)
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns whether the PDF document contains XFA (XML Forms Architecture) form data.
 
@@ -506,6 +519,7 @@ defmodule PdfElixide.Document do
     Predicate.tolerant!(fn -> Native.document_has_xfa(ref) end)
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns whether the PDF document contains XFA (XML Forms Architecture) form
   data, reporting a catalog that cannot be read.
@@ -520,6 +534,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_has_xfa(ref) end)
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns whether the PDF document is encrypted.
 
@@ -549,6 +564,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Authenticates against the document's encryption with the given password.
 
@@ -582,6 +598,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_authenticate(ref, password) end)
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Same as `authenticate/2` but raises on error.
 
@@ -592,6 +609,7 @@ defmodule PdfElixide.Document do
     authenticate(doc, password) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document's Info dictionary metadata (title, author, dates, etc.).
 
@@ -606,6 +624,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document's Info dictionary metadata, raising an error if it fails.
   """
@@ -614,6 +633,7 @@ defmodule PdfElixide.Document do
     metadata(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document's XMP (Extensible Metadata Platform) metadata.
 
@@ -628,6 +648,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document's XMP metadata, raising an error if it fails.
   """
@@ -636,6 +657,7 @@ defmodule PdfElixide.Document do
     xmp_metadata(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document's `/P` permission flags.
 
@@ -653,6 +675,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document's permission flags, raising an error if it fails.
   """
@@ -661,6 +684,7 @@ defmodule PdfElixide.Document do
     permissions(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns the document's logical page labels — one per page, in page order.
 
@@ -677,6 +701,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_page_labels(ref) end)
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns the document's logical page labels, raising an error if it fails.
   """
@@ -685,6 +710,7 @@ defmodule PdfElixide.Document do
     page_labels(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns the document's declared page-label ranges, sorted by `:start_page`.
 
@@ -698,6 +724,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Returns the document's page-label ranges, raising an error if it fails.
   """
@@ -706,6 +733,7 @@ defmodule PdfElixide.Document do
     page_label_ranges(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the warnings recorded while reading this document, oldest first.
 
@@ -732,6 +760,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the warnings recorded while reading this document, raising an error if
   it fails.
@@ -741,6 +770,7 @@ defmodule PdfElixide.Document do
     structured_warnings(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the file attachments the document carries, in name-tree order.
 
@@ -765,6 +795,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the document's file attachments, raising an error if it fails.
   """
@@ -773,6 +804,7 @@ defmodule PdfElixide.Document do
     embedded_files(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the names of the optional-content groups (OCG layers) the document
   declares — the values `:exclude_layers` accepts, see `t:text_opts/0`. Pass one
@@ -790,6 +822,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_layers(ref) end)
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the document's optional-content group names, raising an error if it fails.
   """
@@ -821,6 +854,7 @@ defmodule PdfElixide.Document do
 
   @inks_opts_keys [:deep]
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the Separation and DeviceN ink names the page at the given zero-based
   index declares — the values `:exclude_inks` accepts, see `t:text_opts/0`.
@@ -847,6 +881,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_page_inks(ref, page_index, options) end)
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Lists the page's ink names, raising an error if it fails.
   """
@@ -923,6 +958,7 @@ defmodule PdfElixide.Document do
     :max_output_pixels
   ]
 
+  @doc group: "Rendering"
   @doc """
   Renders the page at the given zero-based index to a `PdfElixide.Document.RenderedPage`.
   See `t:render_opts/0` for options.
@@ -956,6 +992,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders the page to a raster image, raising an error if it fails.
   """
@@ -978,6 +1015,7 @@ defmodule PdfElixide.Document do
 
   @dpi_opts_keys [:dpi]
 
+  @doc group: "Rendering"
   @doc """
   Renders ink plates for the page at the given zero-based index as
   `PdfElixide.Document.SeparationPlate` structs. See `t:dpi_opts/0` for options.
@@ -1004,6 +1042,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders every ink plate for the page, raising an error if it fails.
   """
@@ -1013,6 +1052,7 @@ defmodule PdfElixide.Document do
     separations(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders a single named ink's plate for the page at the given zero-based index.
   See `t:dpi_opts/0` for options.
@@ -1037,6 +1077,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders one named ink's plate, raising an error if it fails.
   """
@@ -1046,6 +1087,7 @@ defmodule PdfElixide.Document do
     separation(doc, page_index, ink, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders every page to an image and returns a new PDF built from those images.
   See `t:dpi_opts/0` for options.
@@ -1079,6 +1121,7 @@ defmodule PdfElixide.Document do
     )
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders the whole document to a raster PDF, raising an error if it fails.
   """
@@ -1371,6 +1414,7 @@ defmodule PdfElixide.Document do
 
   @text_opts_keys @page_text_opts_keys ++ [:on_page_error]
 
+  @doc group: "Text extraction"
   @doc """
   Extracts text content.
 
@@ -1407,6 +1451,7 @@ defmodule PdfElixide.Document do
     text(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts text content, raising an error if it fails.
   """
@@ -1422,6 +1467,7 @@ defmodule PdfElixide.Document do
     text!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the text content of the page at the given zero-based index.
 
@@ -1435,6 +1481,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_extract_text(ref, page_index, options) end)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the text content of the page at the given zero-based index,
   raising an error if it fails.
@@ -1563,6 +1610,7 @@ defmodule PdfElixide.Document do
     :bold_markers
   ]
 
+  @doc group: "Conversion"
   @doc """
   Converts the document to Markdown.
 
@@ -1601,6 +1649,7 @@ defmodule PdfElixide.Document do
     to_markdown(doc, page_index, [])
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the document to Markdown, raising an error if it fails.
   """
@@ -1616,6 +1665,7 @@ defmodule PdfElixide.Document do
     to_markdown!(doc, page_index, [])
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the page at the given zero-based index to Markdown.
 
@@ -1629,6 +1679,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> call_markdown(ref, page_index, options) end)
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the page at the given zero-based index to Markdown, raising an
   error if it fails.
@@ -1759,6 +1810,7 @@ defmodule PdfElixide.Document do
     :reading_order
   ]
 
+  @doc group: "Conversion"
   @doc """
   Converts the document to HTML.
 
@@ -1815,6 +1867,7 @@ defmodule PdfElixide.Document do
     to_html(doc, page_index, [])
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the document to HTML, raising an error if it fails.
   """
@@ -1830,6 +1883,7 @@ defmodule PdfElixide.Document do
     to_html!(doc, page_index, [])
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the page at the given zero-based index to HTML.
 
@@ -1844,6 +1898,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> call_html(ref, page_index, options) end)
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the page at the given zero-based index to HTML, raising an
   error if it fails.
@@ -1903,6 +1958,7 @@ defmodule PdfElixide.Document do
 
   @office_opts_keys [:mode]
 
+  @doc group: "Conversion"
   @doc """
   Converts the whole document to a Word (DOCX) file and returns its bytes.
   See `t:office_opts/0` for options.
@@ -1919,6 +1975,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_to_docx(ref, options) end)
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the whole document to a Word (DOCX) file, raising an error if it fails.
   """
@@ -1927,6 +1984,7 @@ defmodule PdfElixide.Document do
     to_docx(doc, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the whole document to a PowerPoint (PPTX) file and returns its
   bytes. See `t:office_opts/0` for options.
@@ -1940,6 +1998,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_to_pptx(ref, options) end)
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the whole document to a PowerPoint (PPTX) file, raising an error if
   it fails.
@@ -1949,6 +2008,7 @@ defmodule PdfElixide.Document do
     to_pptx(doc, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the whole document to an Excel (XLSX) file and returns its bytes.
   See `t:office_opts/0` for options.
@@ -1962,6 +2022,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_to_xlsx(ref, options) end)
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the whole document to an Excel (XLSX) file, raising an error if it
   fails.
@@ -2018,6 +2079,7 @@ defmodule PdfElixide.Document do
     :include_form_fields
   ]
 
+  @doc group: "Text extraction"
   @doc """
   Converts the document to plain text.
 
@@ -2061,6 +2123,7 @@ defmodule PdfElixide.Document do
     to_plain_text(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Converts the document to plain text, raising an error if it fails.
   """
@@ -2076,6 +2139,7 @@ defmodule PdfElixide.Document do
     to_plain_text!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Converts the page at the given zero-based index to plain text.
 
@@ -2090,6 +2154,7 @@ defmodule PdfElixide.Document do
     Wrap.call(fn -> Native.document_to_plain_text(ref, page_index, options) end)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Converts the page at the given zero-based index to plain text, raising an
   error if it fails.
@@ -2175,6 +2240,7 @@ defmodule PdfElixide.Document do
 
   @words_opts_keys [:include_artifacts, :region, :region_mode, :word_gap_threshold, :profile]
 
+  @doc group: "Text extraction"
   @doc """
   Extracts words, each with its bounding box and font metadata as a
   `PdfElixide.Document.Word` struct.
@@ -2210,6 +2276,7 @@ defmodule PdfElixide.Document do
     words(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts words, raising an error if it fails.
   """
@@ -2225,6 +2292,7 @@ defmodule PdfElixide.Document do
     words!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the words of the page at the given zero-based index.
 
@@ -2240,6 +2308,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the words of the page at the given zero-based index, raising an error
   if it fails.
@@ -2287,6 +2356,7 @@ defmodule PdfElixide.Document do
 
   @text_lines_opts_keys [:line_gap_threshold | @words_opts_keys]
 
+  @doc group: "Text extraction"
   @doc """
   Extracts text lines, each with its bounding box and constituent words as a
   `PdfElixide.Document.TextLine` struct.
@@ -2323,6 +2393,7 @@ defmodule PdfElixide.Document do
     text_lines(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts text lines, raising an error if it fails.
   """
@@ -2338,6 +2409,7 @@ defmodule PdfElixide.Document do
     text_lines!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the text lines of the page at the given zero-based index.
 
@@ -2354,6 +2426,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the text lines of the page at the given zero-based index, raising an
   error if it fails.
@@ -2398,6 +2471,7 @@ defmodule PdfElixide.Document do
 
   @chars_opts_keys [:region, :region_mode, :exclude_layers, :exclude_inks]
 
+  @doc group: "Text extraction"
   @doc """
   Extracts characters, each with its bounding box, font metadata and
   typographic placement as a `PdfElixide.Document.Char` struct.
@@ -2435,6 +2509,7 @@ defmodule PdfElixide.Document do
     chars(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts characters, raising an error if it fails.
   """
@@ -2450,6 +2525,7 @@ defmodule PdfElixide.Document do
     chars!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the characters of the page at the given zero-based index.
 
@@ -2465,6 +2541,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the characters of the page at the given zero-based index, raising an
   error if it fails.
@@ -2618,6 +2695,7 @@ defmodule PdfElixide.Document do
     :exclude_inks
   ]
 
+  @doc group: "Text extraction"
   @doc """
   Extracts spans — runs of text sharing one text state — as
   `PdfElixide.Document.Span` structs.
@@ -2654,6 +2732,7 @@ defmodule PdfElixide.Document do
     spans(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts spans, raising an error if it fails.
   """
@@ -2669,6 +2748,7 @@ defmodule PdfElixide.Document do
     spans!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the spans of the page at the given zero-based index.
 
@@ -2684,6 +2764,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the spans of the page at the given zero-based index, raising an
   error if it fails.
@@ -2774,6 +2855,7 @@ defmodule PdfElixide.Document do
 
   @structured_opts_keys [:column_mode]
 
+  @doc group: "Text extraction"
   @doc """
   Reads pages as `PdfElixide.Document.StructuredPage` structs containing typed
   regions. See `PdfElixide.Document.StructuredPage.Region` for grouping and
@@ -2808,6 +2890,7 @@ defmodule PdfElixide.Document do
     structured(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Reads pages as typed regions, raising an error if it fails.
   """
@@ -2824,6 +2907,7 @@ defmodule PdfElixide.Document do
     structured!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Reads the page at the given zero-based index as typed regions.
 
@@ -2841,6 +2925,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Text extraction"
   @doc """
   Reads the page at the given zero-based index as typed regions, raising an
   error if it fails.
@@ -2871,6 +2956,7 @@ defmodule PdfElixide.Document do
 
   @running_regions_opts_keys [:area, :threshold]
 
+  @doc group: "Text extraction"
   @doc """
   Finds the running headers and footers of the whole document.
 
@@ -2922,6 +3008,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Text extraction"
   @doc """
   Finds the running headers and footers of the whole document, raising an
   error if it fails.
@@ -3075,6 +3162,7 @@ defmodule PdfElixide.Document do
 
   @tables_opts_keys [:region, :region_mode | @table_detection_opts_keys]
 
+  @doc group: "Text extraction"
   @doc """
   Detects tables, as `PdfElixide.Document.Table` structs.
 
@@ -3110,6 +3198,7 @@ defmodule PdfElixide.Document do
     tables(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Detects tables, raising an error if it fails.
   """
@@ -3125,6 +3214,7 @@ defmodule PdfElixide.Document do
     tables!(doc, page_index, [])
   end
 
+  @doc group: "Text extraction"
   @doc """
   Detects the tables of the page at the given zero-based index.
 
@@ -3141,6 +3231,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Text extraction"
   @doc """
   Detects the tables of the page at the given zero-based index, raising an
   error if it fails.
@@ -3215,6 +3306,7 @@ defmodule PdfElixide.Document do
   def __option_defaults__(:span_merging), do: build_span_merging_option([])
   def __option_defaults__(:adaptive_threshold), do: build_adaptive_threshold_option([])
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the vector paths of the whole document.
 
@@ -3232,6 +3324,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the vector paths of the whole document, raising an error if it fails.
   """
@@ -3240,6 +3333,7 @@ defmodule PdfElixide.Document do
     paths(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the vector paths of the page at the given zero-based index.
 
@@ -3256,6 +3350,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the vector paths of the page at the given zero-based index, raising an
   error if it fails.
@@ -3266,6 +3361,7 @@ defmodule PdfElixide.Document do
     paths(doc, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the rectangles of the whole document.
 
@@ -3285,6 +3381,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the rectangles of the whole document, raising an error if it fails.
   """
@@ -3293,6 +3390,7 @@ defmodule PdfElixide.Document do
     rects(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the rectangles of the page at the given zero-based index.
 
@@ -3309,6 +3407,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the rectangles of the page at the given zero-based index, raising an
   error if it fails.
@@ -3319,6 +3418,7 @@ defmodule PdfElixide.Document do
     rects(doc, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the straight lines of the whole document.
 
@@ -3340,6 +3440,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the straight lines of the whole document, raising an error if it
   fails.
@@ -3349,6 +3450,7 @@ defmodule PdfElixide.Document do
     lines(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the straight lines of the page at the given zero-based index.
 
@@ -3365,6 +3467,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the straight lines of the page at the given zero-based index, raising
   an error if it fails.
@@ -3407,6 +3510,7 @@ defmodule PdfElixide.Document do
 
   @search_opts_keys [:literal, :case_insensitive, :whole_word, :max_results]
 
+  @doc group: "Search"
   @doc """
   Finds every occurrence of `pattern` in the document's text, as
   `PdfElixide.Document.SearchMatch` structs.
@@ -3458,6 +3562,7 @@ defmodule PdfElixide.Document do
     search(doc, pattern, page_index, [])
   end
 
+  @doc group: "Search"
   @doc """
   Finds every occurrence of `pattern`, raising an error if it fails.
   """
@@ -3474,6 +3579,7 @@ defmodule PdfElixide.Document do
     search!(doc, pattern, page_index, [])
   end
 
+  @doc group: "Search"
   @doc """
   Finds every occurrence of `pattern` on the page at the given zero-based index.
 
@@ -3492,6 +3598,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Search"
   @doc """
   Finds every occurrence of `pattern` on the page at the given zero-based index,
   raising an error if it fails.
@@ -3514,6 +3621,7 @@ defmodule PdfElixide.Document do
     }
   end
 
+  @doc group: "Search"
   @doc """
   Builds the search index for every page, so a later `search/2` does not pay for
   the whole document at once.
@@ -3529,6 +3637,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Search"
   @doc """
   Builds the search index for every page, raising an error if it fails.
   """
@@ -3542,6 +3651,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Search"
   @doc """
   Releases the cached search index, with the page text and boxes it holds and
   the runs kept for matches.
@@ -3562,6 +3672,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Search"
   @doc """
   Releases the cached search index, raising an error if it fails.
   """
@@ -3574,6 +3685,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the fonts of the whole document.
 
@@ -3598,6 +3710,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the fonts of the whole document, raising an error if it fails.
   """
@@ -3606,6 +3719,7 @@ defmodule PdfElixide.Document do
     fonts(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the fonts referenced by the page at the given zero-based index.
 
@@ -3626,6 +3740,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the fonts referenced by the page at the given zero-based index, raising
   an error if it fails.
@@ -3636,6 +3751,7 @@ defmodule PdfElixide.Document do
     fonts(doc, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document outline — its bookmarks / table of contents.
 
@@ -3655,6 +3771,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Reads the document outline, raising an error if it fails.
   """
@@ -3689,6 +3806,7 @@ defmodule PdfElixide.Document do
 
   @bookmark_opts_keys [:depth, :title_prefix, :ignore_case, :include_front_matter]
 
+  @doc group: "Metadata and structure"
   @doc """
   Plans a split of the document at its bookmarks, without writing anything.
 
@@ -3706,6 +3824,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Metadata and structure"
   @doc """
   Plans a split of the document at its bookmarks, raising an error if it fails.
   """
@@ -3747,6 +3866,7 @@ defmodule PdfElixide.Document do
 
   defp depth_option(depth), do: depth
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Reads the annotations of the whole document.
 
@@ -3765,6 +3885,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Reads the annotations of the whole document, raising an error if it fails.
   """
@@ -3773,6 +3894,7 @@ defmodule PdfElixide.Document do
     annotations(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Reads the annotations of the page at the given zero-based index.
 
@@ -3789,6 +3911,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Reads the annotations of the page at the given zero-based index, raising an
   error if it fails.
@@ -3799,6 +3922,7 @@ defmodule PdfElixide.Document do
     annotations(doc, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the raster images of the whole document.
 
@@ -3825,6 +3949,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the raster images of the whole document, raising an error if it fails.
   """
@@ -3833,6 +3958,7 @@ defmodule PdfElixide.Document do
     images(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the raster images of the page at the given zero-based index.
 
@@ -3854,6 +3980,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the raster images of the page at the given zero-based index, raising an
   error if it fails.
@@ -3864,6 +3991,7 @@ defmodule PdfElixide.Document do
     images(doc, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns a `PdfElixide.Document.Page` handle for every page in the document.
 
@@ -3878,6 +4006,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Same as `pages/1` but raises an error if it fails.
   """
@@ -3886,6 +4015,7 @@ defmodule PdfElixide.Document do
     pages(doc) |> Wrap.unwrap!()
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns a `PdfElixide.Document.Page` handle for the page at the given
   zero-based index.
@@ -3912,6 +4042,7 @@ defmodule PdfElixide.Document do
     end
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Same as `page/2` but raises an error if it fails.
   """

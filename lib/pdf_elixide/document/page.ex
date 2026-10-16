@@ -57,6 +57,7 @@ defmodule PdfElixide.Document.Page do
   """
   @type rotation :: 0 | 90 | 180 | 270
 
+  @doc group: "Page properties"
   @doc """
   Returns the page's `/MediaBox` — the sheet it is imposed on — as a
   `PdfElixide.Geometry.Rect` in unrotated user space.
@@ -79,6 +80,7 @@ defmodule PdfElixide.Document.Page do
     Wrap.call(fn -> Native.document_get_page_media_box(ref, index) end)
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `media_box/1` but raises an error if it fails.
   """
@@ -87,6 +89,7 @@ defmodule PdfElixide.Document.Page do
     media_box(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Returns the page's `/CropBox` — the region a viewer displays and prints — as
   a normalized `PdfElixide.Geometry.Rect` in unrotated user space. It is
@@ -107,6 +110,7 @@ defmodule PdfElixide.Document.Page do
     Wrap.call(fn -> Native.document_get_page_crop_box(ref, index) end)
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `crop_box/1` but raises an error if it fails.
   """
@@ -115,6 +119,7 @@ defmodule PdfElixide.Document.Page do
     crop_box(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Returns the page's visible region — its `/CropBox` intersected with its
   `/MediaBox` — as a normalized `PdfElixide.Geometry.Rect` in unrotated user
@@ -138,6 +143,7 @@ defmodule PdfElixide.Document.Page do
     Wrap.call(fn -> Native.document_get_page_visible_box(ref, index) end)
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `visible_box/1` but raises an error if it fails.
   """
@@ -146,6 +152,7 @@ defmodule PdfElixide.Document.Page do
     visible_box(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Returns the page's width in points.
 
@@ -165,6 +172,7 @@ defmodule PdfElixide.Document.Page do
     end
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `width/1` but raises an error if it fails.
   """
@@ -173,6 +181,7 @@ defmodule PdfElixide.Document.Page do
     width(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Returns the page's height in points.
 
@@ -187,6 +196,7 @@ defmodule PdfElixide.Document.Page do
     end
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `height/1` but raises an error if it fails.
   """
@@ -195,6 +205,7 @@ defmodule PdfElixide.Document.Page do
     height(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Returns the page's `/Rotate` — the clockwise rotation a viewer applies when
   displaying it — as `0`, `90`, `180` or `270`.
@@ -218,6 +229,7 @@ defmodule PdfElixide.Document.Page do
     Wrap.call(fn -> Native.document_get_page_rotation(ref, index) end)
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `rotation/1` but raises an error if it fails.
   """
@@ -226,6 +238,7 @@ defmodule PdfElixide.Document.Page do
     rotation(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Returns whether the page carries a text layer, as opposed to being image-only
   or blank.
@@ -254,6 +267,7 @@ defmodule PdfElixide.Document.Page do
     Wrap.call(fn -> Native.document_has_text_layer(ref, index) end)
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `has_text_layer/1` but returns the bare boolean, raising on failure.
 
@@ -271,6 +285,7 @@ defmodule PdfElixide.Document.Page do
     has_text_layer(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Returns the page's logical page label (e.g. `"i"`, `"1"`, `"A-1"`).
 
@@ -286,6 +301,7 @@ defmodule PdfElixide.Document.Page do
     Wrap.call(fn -> Native.document_page_label(ref, index) end)
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `label/1` but raises an error if it fails.
   """
@@ -294,6 +310,7 @@ defmodule PdfElixide.Document.Page do
     label(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the text content of the page.
 
@@ -308,6 +325,7 @@ defmodule PdfElixide.Document.Page do
     Document.text(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `text/2` but raises an error if it fails.
   """
@@ -316,6 +334,7 @@ defmodule PdfElixide.Document.Page do
     text(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the page to Markdown.
 
@@ -327,6 +346,7 @@ defmodule PdfElixide.Document.Page do
     Document.to_markdown(doc, index, opts)
   end
 
+  @doc group: "Conversion"
   @doc """
   Same as `to_markdown/2` but raises an error if it fails.
   """
@@ -335,6 +355,7 @@ defmodule PdfElixide.Document.Page do
     to_markdown(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Conversion"
   @doc """
   Converts the page to an HTML fragment.
 
@@ -346,6 +367,7 @@ defmodule PdfElixide.Document.Page do
     Document.to_html(doc, index, opts)
   end
 
+  @doc group: "Conversion"
   @doc """
   Same as `to_html/2` but raises an error if it fails.
   """
@@ -354,6 +376,7 @@ defmodule PdfElixide.Document.Page do
     to_html(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Converts the page to plain text.
 
@@ -367,6 +390,7 @@ defmodule PdfElixide.Document.Page do
     Document.to_plain_text(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `to_plain_text/2` but raises an error if it fails.
   """
@@ -375,6 +399,7 @@ defmodule PdfElixide.Document.Page do
     to_plain_text(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the words of the page, each with its bounding box and font metadata.
 
@@ -385,6 +410,7 @@ defmodule PdfElixide.Document.Page do
     Document.words(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `words/2` but raises an error if it fails.
   """
@@ -393,6 +419,7 @@ defmodule PdfElixide.Document.Page do
     words(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the text lines of the page, each with its bounding box and words.
 
@@ -404,6 +431,7 @@ defmodule PdfElixide.Document.Page do
     Document.text_lines(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `text_lines/2` but raises an error if it fails.
   """
@@ -412,6 +440,7 @@ defmodule PdfElixide.Document.Page do
     text_lines(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the characters of the page, each with its bounding box, font
   metadata, and typographic placement.
@@ -423,6 +452,7 @@ defmodule PdfElixide.Document.Page do
     Document.chars(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `chars/2` but raises an error if it fails.
   """
@@ -431,6 +461,7 @@ defmodule PdfElixide.Document.Page do
     chars(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Extracts the spans of the page, each a run of text sharing one text state.
 
@@ -441,6 +472,7 @@ defmodule PdfElixide.Document.Page do
     Document.spans(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `spans/2` but raises an error if it fails.
   """
@@ -449,6 +481,7 @@ defmodule PdfElixide.Document.Page do
     spans(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Reads the page as a `PdfElixide.Document.StructuredPage` containing typed
   regions.
@@ -461,6 +494,7 @@ defmodule PdfElixide.Document.Page do
     Document.structured(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `structured/2` but raises an error if it fails.
   """
@@ -469,6 +503,7 @@ defmodule PdfElixide.Document.Page do
     structured(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Text extraction"
   @doc """
   Detects the tables of the page.
 
@@ -480,6 +515,7 @@ defmodule PdfElixide.Document.Page do
     Document.tables(doc, index, opts)
   end
 
+  @doc group: "Text extraction"
   @doc """
   Same as `tables/2` but raises an error if it fails.
   """
@@ -488,6 +524,7 @@ defmodule PdfElixide.Document.Page do
     tables(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the vector paths of the page — lines, curves, rectangles, and shapes.
 
@@ -498,6 +535,7 @@ defmodule PdfElixide.Document.Page do
     Document.paths(doc, index)
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Same as `paths/1` but raises an error if it fails.
   """
@@ -506,6 +544,7 @@ defmodule PdfElixide.Document.Page do
     paths(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the rectangles of the page.
 
@@ -518,6 +557,7 @@ defmodule PdfElixide.Document.Page do
     Document.rects(doc, index)
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Same as `rects/1` but raises an error if it fails.
   """
@@ -526,6 +566,7 @@ defmodule PdfElixide.Document.Page do
     rects(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the straight lines of the page.
 
@@ -539,6 +580,7 @@ defmodule PdfElixide.Document.Page do
     Document.lines(doc, index)
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Same as `lines/1` but raises an error if it fails.
   """
@@ -547,6 +589,7 @@ defmodule PdfElixide.Document.Page do
     lines(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Search"
   @doc """
   Finds every occurrence of `pattern` on the page.
 
@@ -560,6 +603,7 @@ defmodule PdfElixide.Document.Page do
     Document.search(doc, pattern, index, opts)
   end
 
+  @doc group: "Search"
   @doc """
   Same as `search/3` but raises an error if it fails.
   """
@@ -568,6 +612,7 @@ defmodule PdfElixide.Document.Page do
     search(page, pattern, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the raster images of the page — photos, logos, and scanned pictures.
 
@@ -580,6 +625,7 @@ defmodule PdfElixide.Document.Page do
     Document.images(doc, index)
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Same as `images/1` but raises an error if it fails.
   """
@@ -588,6 +634,7 @@ defmodule PdfElixide.Document.Page do
     images(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders the page to a raster image.
 
@@ -605,6 +652,7 @@ defmodule PdfElixide.Document.Page do
     Document.render(doc, index, opts)
   end
 
+  @doc group: "Rendering"
   @doc """
   Same as `render/2` but raises an error if it fails.
   """
@@ -613,6 +661,7 @@ defmodule PdfElixide.Document.Page do
     render(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders one grayscale plate per ink used by the page.
 
@@ -625,6 +674,7 @@ defmodule PdfElixide.Document.Page do
     Document.separations(doc, index, opts)
   end
 
+  @doc group: "Rendering"
   @doc """
   Same as `separations/2` but raises an error if it fails.
   """
@@ -633,6 +683,7 @@ defmodule PdfElixide.Document.Page do
     separations(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Rendering"
   @doc """
   Renders a single named ink's plate for the page.
 
@@ -646,6 +697,7 @@ defmodule PdfElixide.Document.Page do
     Document.separation(doc, index, ink, opts)
   end
 
+  @doc group: "Rendering"
   @doc """
   Same as `separation/3` but raises an error if it fails.
   """
@@ -654,6 +706,7 @@ defmodule PdfElixide.Document.Page do
     separation(page, ink, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Extracts the fonts referenced by the page.
 
@@ -666,6 +719,7 @@ defmodule PdfElixide.Document.Page do
     Document.fonts(doc, index)
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Same as `fonts/1` but raises an error if it fails.
   """
@@ -674,6 +728,7 @@ defmodule PdfElixide.Document.Page do
     fonts(page) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page properties"
   @doc """
   Lists the Separation and DeviceN ink names the page declares.
 
@@ -686,6 +741,7 @@ defmodule PdfElixide.Document.Page do
     Document.inks(doc, index, opts)
   end
 
+  @doc group: "Page properties"
   @doc """
   Same as `inks/2` but raises an error if it fails.
   """
@@ -694,6 +750,7 @@ defmodule PdfElixide.Document.Page do
     inks(page, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Reads the annotations on the page.
 
@@ -704,6 +761,7 @@ defmodule PdfElixide.Document.Page do
     Document.annotations(doc, index)
   end
 
+  @doc group: "Graphics, images and annotations"
   @doc """
   Same as `annotations/1` but raises an error if it fails.
   """

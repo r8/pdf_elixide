@@ -175,6 +175,7 @@ defmodule PdfElixide.Editor do
 
   @open_opts_keys [:password]
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document for editing from the specified file path.
 
@@ -194,6 +195,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document for editing from the specified file path,
   raising an error if it fails.
@@ -209,6 +211,7 @@ defmodule PdfElixide.Editor do
     open(path, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document for editing from the given binary data.
 
@@ -228,6 +231,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Opens a PDF document for editing from the given binary data,
   raising an error if it fails.
@@ -314,6 +318,7 @@ defmodule PdfElixide.Editor do
 
   @plain_text_create_opts_keys @create_opts_keys -- [:subject, :font_size]
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from Markdown and opens it for editing.
 
@@ -338,6 +343,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from Markdown and opens it for editing, raising an
   error if it fails.
@@ -347,6 +353,7 @@ defmodule PdfElixide.Editor do
     from_markdown(content, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from HTML and opens it for editing.
 
@@ -367,6 +374,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from HTML and opens it for editing, raising an error if
   it fails.
@@ -376,6 +384,7 @@ defmodule PdfElixide.Editor do
     from_html(content, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from plain text and opens it for editing.
 
@@ -400,6 +409,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from plain text and opens it for editing, raising an
   error if it fails.
@@ -446,6 +456,7 @@ defmodule PdfElixide.Editor do
     :margin_right
   ]
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from JPEG and PNG images and opens it for editing.
 
@@ -493,6 +504,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Creating documents"
   @doc """
   Creates a new document from JPEG and PNG images and opens it for editing,
   raising an error if it fails.
@@ -502,6 +514,7 @@ defmodule PdfElixide.Editor do
     from_images(images, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the file path the editor was opened from, or `nil` if it has no
   source file: one built with `from_binary/2`, `from_markdown/2`,
@@ -510,6 +523,7 @@ defmodule PdfElixide.Editor do
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the PDF specification version of the document being edited, as a
   `{major, minor}` tuple.
@@ -524,6 +538,7 @@ defmodule PdfElixide.Editor do
   @spec version(t()) :: {non_neg_integer(), non_neg_integer()}
   def version(%__MODULE__{version: v}), do: v
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the number of pages the editor currently holds.
 
@@ -537,6 +552,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_page_count(ref) end)
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns the number of pages the editor currently holds, raising an error if it fails.
   """
@@ -545,6 +561,7 @@ defmodule PdfElixide.Editor do
     page_count(editor) |> Wrap.unwrap!()
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns whether the editor holds changes that have not been written out.
 
@@ -562,6 +579,7 @@ defmodule PdfElixide.Editor do
     Wrap.call!(fn -> Native.editor_is_modified(ref) end)
   end
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Releases the editor's native memory without waiting for garbage collection.
 
@@ -589,6 +607,7 @@ defmodule PdfElixide.Editor do
   @spec close(t()) :: :ok
   def close(%__MODULE__{ref: ref}), do: Native.editor_close(ref)
 
+  @doc group: "Opening and lifecycle"
   @doc """
   Returns whether the editor has been released with `close/1`.
   """
@@ -722,6 +741,7 @@ defmodule PdfElixide.Editor do
     :assemble
   ]
 
+  @doc group: "Saving"
   @doc """
   Writes the editor to a PDF file at the given path, and returns the editor.
 
@@ -756,6 +776,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Saving"
   @doc """
   Writes the editor to a PDF file at the given path, raising an error if it fails.
 
@@ -771,6 +792,7 @@ defmodule PdfElixide.Editor do
     editor |> save(path, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Saving"
   @doc """
   Serialises all in-memory changes into a PDF binary.
 
@@ -801,6 +823,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_to_bytes(ref, options) end)
   end
 
+  @doc group: "Saving"
   @doc """
   Serialises all in-memory changes into a PDF binary, raising an error if it fails.
   """
@@ -809,6 +832,7 @@ defmodule PdfElixide.Editor do
     to_binary(editor, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page structure"
   @doc """
   Deletes the page at the given zero-based index, and returns the editor.
 
@@ -829,6 +853,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page structure"
   @doc """
   Deletes the page at the given zero-based index, raising an error if it fails.
   """
@@ -838,6 +863,7 @@ defmodule PdfElixide.Editor do
     editor |> delete_page(page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page structure"
   @doc """
   Moves the page at zero-based index `from` so that it sits at index `to`, and
   returns the editor.
@@ -861,6 +887,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page structure"
   @doc """
   Moves the page at zero-based index `from` so that it sits at index `to`,
   raising an error if it fails.
@@ -871,6 +898,7 @@ defmodule PdfElixide.Editor do
     editor |> move_page(from, to) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page structure"
   @doc """
   Keeps only the pages at the given zero-based indices, in the order given, and
   returns the editor.
@@ -894,6 +922,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page structure"
   @doc """
   Keeps only the pages at the given zero-based indices, in the order given,
   raising an error if it fails.
@@ -903,6 +932,7 @@ defmodule PdfElixide.Editor do
     editor |> keep_pages(pages) |> Wrap.unwrap!()
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Writes the pages at the given zero-based indices, in the order given, to a new
   PDF binary. The editor's pages and pending edits are not changed, but an editor
@@ -927,6 +957,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_extract_pages(ref, pages) end)
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Writes the pages at the given zero-based indices to a new PDF binary, raising
   an error if it fails.
@@ -936,6 +967,7 @@ defmodule PdfElixide.Editor do
     editor |> extract_pages(pages) |> Wrap.unwrap!()
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Writes each range of zero-based page indices to its own PDF binary, as
   `extract_pages/2` does, and returns the binaries in the order of `ranges`.
@@ -964,6 +996,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_extract_page_ranges(ref, spans) end)
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Writes each range of zero-based page indices to its own PDF binary, raising an
   error if it fails.
@@ -973,6 +1006,7 @@ defmodule PdfElixide.Editor do
     editor |> extract_page_ranges(ranges) |> Wrap.unwrap!()
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Plans a split of the editor's pages at the document's bookmarks, without
   writing anything, as `PdfElixide.Document.bookmark_segments/2` does.
@@ -991,6 +1025,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Plans a split of the editor's pages at the document's bookmarks, raising an
   error if it fails.
@@ -1000,6 +1035,7 @@ defmodule PdfElixide.Editor do
     editor |> bookmark_segments(opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Splits the editor's pages at the document's bookmarks, writing each part to
   its own PDF binary as `extract_page_ranges/2` does.
@@ -1034,6 +1070,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Splits the editor's pages at the document's bookmarks, raising an error if it
   fails.
@@ -1072,6 +1109,7 @@ defmodule PdfElixide.Editor do
             inspect(range)
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Appends every page of the PDF file at `path` to the end of the editor, and
   returns the editor.
@@ -1095,6 +1133,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Appends every page of the PDF file at `path` to the end of the editor, raising
   an error if it fails.
@@ -1104,6 +1143,7 @@ defmodule PdfElixide.Editor do
     editor |> merge(path) |> Wrap.unwrap!()
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Appends every page of a PDF binary to the end of the editor, and returns the
   editor. Behaves as `merge/2` does for a file.
@@ -1116,6 +1156,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Merging and splitting"
   @doc """
   Appends every page of a PDF binary to the end of the editor, raising an error
   if it fails.
@@ -1125,6 +1166,7 @@ defmodule PdfElixide.Editor do
     editor |> merge_binary(bytes) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page rotation"
   @doc """
   Returns the clockwise display rotation of the page at the given zero-based
   index, as `0`, `90`, `180` or `270`.
@@ -1142,6 +1184,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_page_rotation(ref, page_index) end)
   end
 
+  @doc group: "Page rotation"
   @doc """
   Returns the clockwise display rotation of the page at the given zero-based
   index, raising an error if it fails.
@@ -1152,6 +1195,7 @@ defmodule PdfElixide.Editor do
     rotation(editor, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page rotation"
   @doc """
   Sets the page at the given zero-based index to rotate by `degrees` clockwise,
   and returns the editor.
@@ -1173,6 +1217,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page rotation"
   @doc """
   Sets the page at the given zero-based index to rotate by `degrees` clockwise,
   raising an error if it fails.
@@ -1183,6 +1228,7 @@ defmodule PdfElixide.Editor do
     editor |> set_rotation(page_index, degrees) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page rotation"
   @doc """
   Turns the page at the given zero-based index a further `degrees` clockwise from
   where it already is, and returns the editor.
@@ -1205,6 +1251,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page rotation"
   @doc """
   Turns the page at the given zero-based index a further `degrees` clockwise,
   raising an error if it fails.
@@ -1216,6 +1263,7 @@ defmodule PdfElixide.Editor do
     editor |> rotate_page_by(page_index, degrees) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page rotation"
   @doc """
   Turns every page a further `degrees` clockwise from where it already is, and
   returns the editor.
@@ -1238,6 +1286,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page rotation"
   @doc """
   Turns every page a further `degrees` clockwise, raising an error if it fails.
   """
@@ -1250,6 +1299,7 @@ defmodule PdfElixide.Editor do
   # Reduce before the NIF so arbitrary-size Elixir integers fit `i32`.
   defp delta(degrees), do: rem(degrees, 360)
 
+  @doc group: "Erasing regions"
   @doc """
   Paints a white rectangle over `rect` on the page at the given zero-based index
   when the document is written, and returns the editor.
@@ -1270,6 +1320,7 @@ defmodule PdfElixide.Editor do
     erase_regions(editor, page_index, [rect])
   end
 
+  @doc group: "Erasing regions"
   @doc """
   Paints a white rectangle over `rect` on the page at the given zero-based
   index, raising an error if it fails.
@@ -1280,6 +1331,7 @@ defmodule PdfElixide.Editor do
     editor |> erase_region(page_index, rect) |> Wrap.unwrap!()
   end
 
+  @doc group: "Erasing regions"
   @doc """
   Paints a white rectangle over each of `rects` on the page at the given
   zero-based index when the document is written, and returns the editor.
@@ -1321,6 +1373,7 @@ defmodule PdfElixide.Editor do
 
   defp validate_region!(_rect), do: :ok
 
+  @doc group: "Erasing regions"
   @doc """
   Paints a white rectangle over each of `rects` on the page at the given
   zero-based index, raising an error if it fails.
@@ -1331,6 +1384,7 @@ defmodule PdfElixide.Editor do
     editor |> erase_regions(page_index, rects) |> Wrap.unwrap!()
   end
 
+  @doc group: "Erasing regions"
   @doc """
   Discards the regions pending on the page at the given zero-based index, so
   the next write paints nothing over it, and returns the editor.
@@ -1348,6 +1402,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Erasing regions"
   @doc """
   Discards the regions pending on the page at the given zero-based index,
   raising an error if it fails.
@@ -1358,6 +1413,7 @@ defmodule PdfElixide.Editor do
     editor |> clear_erase_regions(page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Marks every page so its redaction annotations are painted over when the
   document is written, and returns the editor.
@@ -1374,6 +1430,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Redaction"
   @doc """
   Marks every page for redaction, raising an error if it fails.
   """
@@ -1382,6 +1439,7 @@ defmodule PdfElixide.Editor do
     editor |> mark_redactions() |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Marks the page at the given zero-based index so each of its `/Redact`
   annotations is painted over when the document is written, and returns the
@@ -1417,6 +1475,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Redaction"
   @doc """
   Marks the page at the given zero-based index for redaction, raising an error
   if it fails.
@@ -1427,6 +1486,7 @@ defmodule PdfElixide.Editor do
     editor |> mark_redactions(page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Removes the redaction mark from the page at the given zero-based index, so the
   next write paints nothing over it, and returns the editor.
@@ -1449,6 +1509,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Redaction"
   @doc """
   Removes the redaction mark from the page at the given zero-based index,
   raising an error if it fails.
@@ -1459,6 +1520,7 @@ defmodule PdfElixide.Editor do
     editor |> unmark_redactions(page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Returns whether the page at the given zero-based index is marked for
   redaction.
@@ -1477,6 +1539,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_is_page_marked_for_redaction(ref, page_index) end)
   end
 
+  @doc group: "Redaction"
   @doc """
   Same as `marked_for_redaction/2` but returns the bare boolean, raising on
   failure — a page that does not exist included. See the "Errors versus
@@ -1488,6 +1551,7 @@ defmodule PdfElixide.Editor do
     editor |> marked_for_redaction(page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Returns how many redaction regions the page at the given zero-based index
   carries.
@@ -1507,6 +1571,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_redaction_count(ref, page_index) end)
   end
 
+  @doc group: "Redaction"
   @doc """
   Returns how many redaction regions a page carries, raising an error if it
   fails.
@@ -1517,6 +1582,7 @@ defmodule PdfElixide.Editor do
     editor |> redaction_count(page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Queues `rect` on the page at the given zero-based index for removal by
   `apply_redactions/1,2`, and returns the editor.
@@ -1564,6 +1630,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Redaction"
   @doc """
   Queues a region for removal by `apply_redactions/1,2`, raising an error if it
   fails.
@@ -1574,6 +1641,7 @@ defmodule PdfElixide.Editor do
     editor |> add_redaction(page_index, rect, fill) |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Removes covered page text from marked pages and pages with queued regions,
   and returns a `PdfElixide.RedactionReport`. Glyphs whose boxes touch a region
@@ -1640,6 +1708,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Redaction"
   @doc """
   Removes the content covered by every queued region, raising an error if it
   fails.
@@ -1649,6 +1718,7 @@ defmodule PdfElixide.Editor do
     editor |> apply_redactions(opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Redaction"
   @doc """
   Strips document-level metadata, JavaScript and embedded files, and returns a
   `PdfElixide.SanitizeReport`.
@@ -1694,6 +1764,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Redaction"
   @doc """
   Strips document-level metadata, JavaScript and embedded files, raising an
   error if it fails.
@@ -1703,6 +1774,7 @@ defmodule PdfElixide.Editor do
     editor |> sanitize(opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page boxes"
   @doc """
   Returns the `/MediaBox` of the page at the given zero-based index — the sheet
   it is imposed on — including pending changes. For an unchanged page it
@@ -1717,6 +1789,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_page_media_box(ref, page_index) end)
   end
 
+  @doc group: "Page boxes"
   @doc """
   Returns the `/MediaBox` of the page at the given zero-based index, raising an
   error if it fails.
@@ -1727,6 +1800,7 @@ defmodule PdfElixide.Editor do
     media_box(editor, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page boxes"
   @doc """
   Returns the `/CropBox` of the page at the given zero-based index — the region
   a viewer displays and prints — including pending changes. For an unchanged
@@ -1742,6 +1816,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_page_crop_box(ref, page_index) end)
   end
 
+  @doc group: "Page boxes"
   @doc """
   Returns the `/CropBox` of the page at the given zero-based index, or `nil`,
   raising an error if it fails.
@@ -1752,6 +1827,7 @@ defmodule PdfElixide.Editor do
     crop_box(editor, page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page boxes"
   @doc """
   Sets the `/MediaBox` of the page at the given zero-based index to `rect`, and
   returns the editor.
@@ -1773,6 +1849,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page boxes"
   @doc """
   Sets the `/MediaBox` of the page at the given zero-based index, raising an
   error if it fails.
@@ -1783,6 +1860,7 @@ defmodule PdfElixide.Editor do
     editor |> set_media_box(page_index, rect) |> Wrap.unwrap!()
   end
 
+  @doc group: "Page boxes"
   @doc """
   Sets the `/CropBox` of the page at the given zero-based index to `rect`, and
   returns the editor.
@@ -1804,6 +1882,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page boxes"
   @doc """
   Sets the `/CropBox` of the page at the given zero-based index, raising an
   error if it fails.
@@ -1827,6 +1906,7 @@ defmodule PdfElixide.Editor do
 
   @crop_margins_keys [:left, :right, :top, :bottom]
 
+  @doc group: "Page boxes"
   @doc """
   Sets every page's `/CropBox` to its media box inset by `margins`, and returns
   the editor.
@@ -1846,6 +1926,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Page boxes"
   @doc """
   Sets every page's `/CropBox` to its media box inset by `margins`, raising an
   error if it fails.
@@ -1884,6 +1965,7 @@ defmodule PdfElixide.Editor do
     :unspecified
   ]
 
+  @doc group: "Attachments"
   @doc """
   Attaches `data` to the document under `name`, and returns the editor.
 
@@ -1924,6 +2006,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Attachments"
   @doc """
   Attaches `data` to the document under `name`, raising an error if it fails.
   """
@@ -1933,6 +2016,7 @@ defmodule PdfElixide.Editor do
     editor |> embed_file(name, data, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Attachments"
   @doc """
   Lists the file attachments the edited document will carry, in name-tree order.
 
@@ -1954,6 +2038,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Attachments"
   @doc """
   Lists the file attachments the edited document will carry, raising an error if
   it fails.
@@ -1969,6 +2054,7 @@ defmodule PdfElixide.Editor do
   """
   @type info_date :: DateTime.t() | String.t()
 
+  @doc group: "Document information"
   @doc """
   Reads the document information the edited document will carry: values given
   to the setters below over the source's `/Info` dictionary.
@@ -1985,6 +2071,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Document information"
   @doc """
   Reads the document information the edited document will carry, raising an
   error if it fails.
@@ -1994,6 +2081,7 @@ defmodule PdfElixide.Editor do
     metadata(editor) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Title` and returns the editor. `nil` removes the entry.
 
@@ -2005,6 +2093,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :title, validate_text!(:title, title))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Title`, raising an error if it fails.
   """
@@ -2013,6 +2102,7 @@ defmodule PdfElixide.Editor do
     editor |> set_title(title) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Author` and returns the editor. `nil` removes the
   entry.
@@ -2022,6 +2112,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :author, validate_text!(:author, author))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Author`, raising an error if it fails.
   """
@@ -2030,6 +2121,7 @@ defmodule PdfElixide.Editor do
     editor |> set_author(author) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Subject` and returns the editor. `nil` removes the
   entry.
@@ -2039,6 +2131,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :subject, validate_text!(:subject, subject))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Subject`, raising an error if it fails.
   """
@@ -2047,6 +2140,7 @@ defmodule PdfElixide.Editor do
     editor |> set_subject(subject) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Keywords` and returns the editor. `nil` removes the
   entry.
@@ -2059,6 +2153,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :keywords, validate_text!(:keywords, keywords))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Keywords`, raising an error if it fails.
   """
@@ -2067,6 +2162,7 @@ defmodule PdfElixide.Editor do
     editor |> set_keywords(keywords) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Creator`, the application that made the original
   document, and returns the editor. `nil` removes the entry.
@@ -2076,6 +2172,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :creator, validate_text!(:creator, creator))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Creator`, raising an error if it fails.
   """
@@ -2084,6 +2181,7 @@ defmodule PdfElixide.Editor do
     editor |> set_creator(creator) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Producer`, the application that produced the PDF, and
   returns the editor. `nil` removes the entry.
@@ -2093,6 +2191,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :producer, validate_text!(:producer, producer))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/Producer`, raising an error if it fails.
   """
@@ -2101,6 +2200,7 @@ defmodule PdfElixide.Editor do
     editor |> set_producer(producer) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/CreationDate` and returns the editor.
 
@@ -2112,6 +2212,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :creation_date, pdf_date(:creation_date, date))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/CreationDate`, raising an error if it fails.
   """
@@ -2120,6 +2221,7 @@ defmodule PdfElixide.Editor do
     editor |> set_creation_date(date) |> Wrap.unwrap!()
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/ModDate` and returns the editor.
 
@@ -2131,6 +2233,7 @@ defmodule PdfElixide.Editor do
     set_info_field(editor, :mod_date, pdf_date(:mod_date, date))
   end
 
+  @doc group: "Document information"
   @doc """
   Sets the document's `/ModDate`, raising an error if it fails.
   """
@@ -2193,6 +2296,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Flattening"
   @doc """
   Marks every page's annotations for flattening.
 
@@ -2226,6 +2330,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Flattening"
   @doc """
   Marks every page's annotations for flattening, raising an error if it fails.
   """
@@ -2234,6 +2339,7 @@ defmodule PdfElixide.Editor do
     editor |> flatten_annotations() |> Wrap.unwrap!()
   end
 
+  @doc group: "Flattening"
   @doc """
   Marks the annotations of the page at the given zero-based index for flattening.
 
@@ -2254,6 +2360,7 @@ defmodule PdfElixide.Editor do
     end
   end
 
+  @doc group: "Flattening"
   @doc """
   Marks the annotations of the page at the given zero-based index for flattening,
   raising an error if it fails.
@@ -2264,6 +2371,7 @@ defmodule PdfElixide.Editor do
     editor |> flatten_annotations(page_index) |> Wrap.unwrap!()
   end
 
+  @doc group: "Flattening"
   @doc """
   Lists the warnings collected while flattening.
 
@@ -2288,6 +2396,7 @@ defmodule PdfElixide.Editor do
     Wrap.call(fn -> Native.editor_flatten_warnings(ref) end)
   end
 
+  @doc group: "Flattening"
   @doc """
   Lists the warnings collected while flattening, raising an error if it fails.
   """
