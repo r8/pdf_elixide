@@ -407,6 +407,231 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "headings" do
+    test "a heading is set bold at a size scaled by its level" do
+      for {level, size} <- [{1, 24.0}, {2, 18.0}, {3, 15.0}, {4, 13.2}] do
+        [char | _] =
+          Builder.new() |> Builder.heading(level, "Title") |> written() |> Document.chars!(0)
+
+        assert char.font == "Helvetica-Bold"
+        assert_in_delta char.font_size, size, 0.001
+      end
+    end
+
+    test "its own font and size, and runs in italic" do
+      doc =
+        Builder.new()
+        |> Builder.heading(2, ["Plain ", {"slanted", italic: true}], font: :times, font_size: 30)
+        |> written()
+
+      fonts = fonts_by_text(doc)
+
+      assert fonts["P"] == "Times-Bold"
+      assert fonts["s"] == "Times-BoldItalic"
+      assert_in_delta hd(Document.chars!(doc, 0)).font_size, 30, 0.001
+    end
+
+    test "a heading starts the next page rather than end this one alone" do
+      # 34 lines leave 30 points: room for a 19.8-point heading line, but not
+      # for it, its 6.6-point gap and the next 18-point line.
+      doc =
+        Builder.new()
+        |> Builder.paragraph(lines(34))
+        |> Builder.heading(4, "Heading")
+        |> Builder.paragraph("Body")
+        |> written()
+
+      assert Document.page_count!(doc) == 2
+      refute Document.text!(doc, 0) =~ "Heading"
+      assert Document.text!(doc, 1) =~ ~r/^Heading/
+    end
+
+    test "space between a heading and the next block does not part them" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(lines(34))
+        |> Builder.heading(4, "Heading")
+        |> Builder.space(0)
+        |> Builder.paragraph("Body")
+        |> written()
+
+      refute Document.text!(doc, 0) =~ "Heading"
+      assert Document.text!(doc, 1) =~ ~r/^Heading/
+    end
+
+    test "consecutive headings move together with the line after them" do
+      # 33 lines leave 48 points: room for one heading and the body's first
+      # line, but not for two headings and that line.
+      doc =
+        Builder.new()
+        |> Builder.paragraph(lines(33))
+        |> Builder.heading(4, "First")
+        |> Builder.heading(4, "Second")
+        |> Builder.paragraph("Body")
+        |> written()
+
+      refute Document.text!(doc, 0) =~ "First"
+      assert Document.text!(doc, 1) =~ ~r/^First\s+Second\s+Body/
+    end
+
+    test "a heading that fits with the line after it stays" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(lines(33))
+        |> Builder.heading(4, "Heading")
+        |> Builder.paragraph("Body")
+        |> written()
+
+      assert Document.page_count!(doc) == 1
+    end
+
+    test "a family without a bold face cannot set a heading" do
+      family = FontFamily.new(regular: font("font_truetype.ttf"))
+      message = Builder.new(font: family) |> Builder.heading(1, "Title") |> refusal()
+
+      assert message =~ "has no bold face"
+    end
+  end
+
+  describe "lists" do
+    defp chars_by_line(doc, page) do
+      doc
+      |> Document.chars!(page)
+      |> Enum.group_by(&Float.round(&1.bbox.y, 3))
+      |> Enum.sort_by(fn {y, _} -> -y end)
+      |> Enum.map(fn {_, chars} -> Enum.sort_by(chars, & &1.bbox.x) end)
+    end
+
+    test "bullets sit in a column and the items' text starts at one x" do
+      doc = Builder.new() |> Builder.bullet_list(["one", "two"]) |> written()
+      [[bullet1, text1 | _], [bullet2, text2 | _]] = chars_by_line(doc, 0)
+
+      assert bullet1.text == "•" and bullet2.text == "•"
+      assert_in_delta text1.bbox.x, text2.bbox.x, 0.001
+      assert_in_delta bullet1.bbox.x, 72 + 18, 0.01
+      assert text1.bbox.x > bullet1.bbox.x + bullet1.bbox.width
+    end
+
+    test "numbers are right-aligned so the text lines up" do
+      items = Enum.map(1..12, &"item #{&1}")
+      doc = Builder.new() |> Builder.numbered_list(items) |> written()
+      lines = chars_by_line(doc, 0)
+
+      dots =
+        Enum.map(lines, fn chars ->
+          dot = Enum.find(chars, &(&1.text == "."))
+          dot.bbox.x + dot.bbox.width
+        end)
+
+      assert length(lines) == 12
+      assert Enum.all?(dots, &(abs(&1 - hd(dots)) < 0.01))
+      assert Document.text!(doc) =~ "12."
+    end
+
+    test "numbering carries on across a page break" do
+      items = Enum.map(1..50, &"item #{&1}")
+      doc = Builder.new() |> Builder.numbered_list(items) |> written()
+
+      assert Document.page_count!(doc) == 2
+      assert Document.text!(doc, 1) =~ ~r/^37\./
+    end
+
+    test "Roman and alphabetic numbering, from a start" do
+      roman = Builder.new() |> Builder.numbered_list(["a", "b"], style: :lower_roman, start: 4)
+      alpha = Builder.new() |> Builder.numbered_list(["a", "b"], style: :lower_alpha, start: 26)
+
+      assert roman |> written() |> Document.text!() =~ ~r/iv\..*\n.*v\./s
+      assert alpha |> written() |> Document.text!() =~ ~r/z\..*\n.*aa\./s
+    end
+
+    test "an item longer than a line wraps under its own text" do
+      long = String.duplicate("wrapping words ", 40)
+      doc = Builder.new() |> Builder.bullet_list([long]) |> written()
+      [[_bullet, first | _], [second | _] | _] = chars_by_line(doc, 0)
+
+      assert_in_delta first.bbox.x, second.bbox.x, 0.001
+    end
+
+    test "a marker the family cannot draw is refused" do
+      message = Builder.new(font: cff_family()) |> Builder.bullet_list(["a"]) |> refusal()
+
+      assert message =~ "has no glyph for '•'"
+    end
+
+    test "malformed list arguments raise" do
+      builder = Builder.new()
+
+      assert_raise ArgumentError, ~r/3999/, fn ->
+        Builder.numbered_list(builder, ["a", "b"], style: :lower_roman, start: 3999)
+      end
+
+      assert_raise ArgumentError, ~r/:style/, fn ->
+        Builder.numbered_list(builder, ["a"], style: :upper_roman)
+      end
+
+      assert_raise ArgumentError, ~r/:start/, fn ->
+        Builder.numbered_list(builder, ["a"], start: 0)
+      end
+
+      assert_raise ArgumentError, ~r/stop at 2147483647/, fn ->
+        Builder.numbered_list(builder, ["one"], start: 18_446_744_073_709_551_615)
+      end
+
+      assert %Builder{} = Builder.numbered_list(builder, ["last"], start: 2_147_483_647)
+
+      assert_raise ArgumentError, ~r/invalid item/, fn ->
+        Builder.bullet_list(builder, [untyped(1)])
+      end
+    end
+  end
+
+  describe "space and rules" do
+    test "space adds to the gap before the next block" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("a")
+        |> Builder.space(20)
+        |> Builder.paragraph("b")
+        |> written()
+
+      [a, b] = baselines(doc, 0)
+
+      assert_in_delta a - b, 18 + 6 + 20, 0.01
+    end
+
+    test "space is dropped at a page break" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(lines(36))
+        |> Builder.space(100)
+        |> Builder.paragraph("next")
+        |> written()
+
+      assert_in_delta hd(baselines(doc, 1)), baseline(792 - 72, 12), 0.001
+    end
+
+    test "a rule is a thin grey line across the content width, in a box of the text size" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("a")
+        |> Builder.rule()
+        |> Builder.paragraph("b")
+        |> written()
+
+      assert [line] = Document.lines!(doc)
+      assert_in_delta line.bbox.x, 72, 0.01
+      assert_in_delta line.bbox.x + line.bbox.width, 540, 0.01
+      # "a" ends at 702, its 6-point gap brings the rule's box to 696..684.
+      assert_in_delta line.bbox.y + line.bbox.height / 2, 690, 0.5
+      assert_in_delta line.stroke_width, 0.5, 0.001
+      assert_in_delta List.last(baselines(doc, 0)), baseline(684, 12), 0.001
+    end
+
+    test "negative space raises" do
+      assert_raise ArgumentError, ~r/:points/, fn -> Builder.space(Builder.new(), -1) end
+    end
+  end
+
   describe "font refusals" do
     test "a style the family has no face for" do
       message =

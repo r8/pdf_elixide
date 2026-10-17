@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use pdf_oxide::writer::EmbeddedFont;
 use unicode_bidi::{bidi_class, BidiClass};
 use unicode_segmentation::UnicodeSegmentation;
@@ -13,7 +15,14 @@ const PRECISION_STEPS: f64 = 131_072.0;
 
 pub enum Face {
     Base14(&'static Base14),
-    Embedded(Box<EmbeddedFont>),
+    Embedded(Box<Embedded>),
+}
+
+pub struct Embedded {
+    pub font: EmbeddedFont,
+    // The characters the font's own cmap maps. Upstream's `glyph_id` also
+    // answers for some it lacks, drawing `*` for `•` and `-` for a dash.
+    pub coverage: HashSet<char>,
 }
 
 pub struct Fonts {
@@ -40,14 +49,14 @@ impl Fonts {
     fn display_name(&self, face: usize) -> &str {
         match &self.faces[face] {
             Face::Base14(base14) => base14.name,
-            Face::Embedded(font) => &font.name,
+            Face::Embedded(embedded) => &embedded.font.name,
         }
     }
 
     pub fn covers(&self, face: usize, c: char) -> bool {
         match &self.faces[face] {
             Face::Base14(base14) => base14.width(c).is_some(),
-            Face::Embedded(font) => font.glyph_id(u32::from(c)).is_some(),
+            Face::Embedded(embedded) => embedded.coverage.contains(&c),
         }
     }
 
@@ -56,7 +65,7 @@ impl Fonts {
     fn char_units(&self, face: usize, c: char) -> f64 {
         match &self.faces[face] {
             Face::Base14(base14) => f64::from(base14.width(c).unwrap_or(0)),
-            Face::Embedded(font) => f64::from(font.char_width(u32::from(c))),
+            Face::Embedded(embedded) => f64::from(embedded.font.char_width(u32::from(c))),
         }
     }
 
@@ -67,7 +76,10 @@ impl Fonts {
     fn ascent_descent(&self, face: usize) -> (f64, f64) {
         match &self.faces[face] {
             Face::Base14(base14) => (base14.ascent, base14.descent),
-            Face::Embedded(font) => (f64::from(font.ascender), f64::from(font.descender)),
+            Face::Embedded(embedded) => (
+                f64::from(embedded.font.ascender),
+                f64::from(embedded.font.descender),
+            ),
         }
     }
 }
@@ -110,11 +122,81 @@ pub enum Op {
         width: f64,
         height: f64,
     },
+    // A heading is a paragraph kept on the page of the line after it.
     Paragraph {
         runs: Vec<Run>,
         face: usize,
         size: f64,
+        keep_with_next: bool,
     },
+    List {
+        items: Vec<Vec<Run>>,
+        face: usize,
+        size: f64,
+        marker: Marker,
+        start: usize,
+    },
+    Space(f64),
+    Rule {
+        size: f64,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub enum Marker {
+    Bullet,
+    Decimal,
+    LowerRoman,
+    LowerAlpha,
+}
+
+impl Marker {
+    fn label(self, number: usize) -> String {
+        match self {
+            Marker::Bullet => "\u{2022}".to_string(),
+            Marker::Decimal => format!("{number}."),
+            Marker::LowerRoman => format!("{}.", roman(number)),
+            Marker::LowerAlpha => format!("{}.", alpha(number)),
+        }
+    }
+}
+
+// Numbers past 3999 have no Roman numeral; the Elixir side refuses them.
+fn roman(mut number: usize) -> String {
+    const NUMERALS: [(usize, &str); 13] = [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ];
+    let mut out = String::new();
+    for (value, numeral) in NUMERALS {
+        while number >= value {
+            out.push_str(numeral);
+            number -= value;
+        }
+    }
+    out
+}
+
+// a … z, then aa … az, ba …, as spreadsheet columns are lettered.
+fn alpha(mut number: usize) -> String {
+    let mut letters = Vec::new();
+    while number > 0 {
+        number -= 1;
+        letters.push(char::from(b'a' + (number % 26) as u8));
+        number /= 26;
+    }
+    letters.iter().rev().collect()
 }
 
 pub struct Placed {
@@ -131,6 +213,13 @@ pub struct PagePlan {
     pub width: f64,
     pub height: f64,
     pub placed: Vec<Placed>,
+    pub rules: Vec<RuleLine>,
+}
+
+pub struct RuleLine {
+    pub from: f64,
+    pub to: f64,
+    pub y: f64,
 }
 
 pub enum Refused {
@@ -168,6 +257,10 @@ pub enum Refused {
         page: usize,
         character: char,
         reason: Unordered,
+    },
+    CounterOverflow {
+        op: usize,
+        page: usize,
     },
 }
 
@@ -234,12 +327,36 @@ pub fn lay_out(
     for (index, op) in ops.iter().enumerate() {
         match op {
             Op::Page { width, height } => layout.new_page(*width, *height),
-            Op::Paragraph { runs, face, size } => layout.paragraph(index, runs, *face, *size)?,
+            Op::Paragraph {
+                runs,
+                face,
+                size,
+                keep_with_next,
+            } => {
+                let kept = keep_with_next.then(|| layout.kept_after(&ops[index + 1..], *size));
+                layout.paragraph(index, runs, *face, *size, kept)?;
+            }
+            Op::List {
+                items,
+                face,
+                size,
+                marker,
+                start,
+            } => layout.list(index, items, *face, *size, *marker, *start)?,
+            Op::Space(points) => layout.space(*points),
+            Op::Rule { size } => layout.rule(*size),
         }
     }
 
     layout.ensure_page();
     Ok(layout.pages)
+}
+
+// What a block's checks establish before any of its lines is placed.
+struct Block {
+    line: f64,
+    above_baseline: f64,
+    page: usize,
 }
 
 struct Layout<'a> {
@@ -275,6 +392,7 @@ impl Layout<'_> {
             width,
             height,
             placed: Vec::new(),
+            rules: Vec::new(),
         });
         self.cursor = height - self.margins.top;
         self.fresh = true;
@@ -286,13 +404,14 @@ impl Layout<'_> {
         self.new_page(width, height);
     }
 
-    fn paragraph(
+    fn block(
         &mut self,
         op: usize,
-        runs: &[Run],
+        texts: &[&[Run]],
+        extra: &[(usize, &str)],
         face: usize,
         size: f64,
-    ) -> Result<(), Refused> {
+    ) -> Result<Block, Refused> {
         self.ensure_page();
 
         let page = self.page();
@@ -317,10 +436,20 @@ impl Layout<'_> {
             });
         }
 
-        if let Some((character, reason)) = runs
-            .iter()
-            .flat_map(|run| run.text.chars())
-            .find_map(|c| unordered(c).map(|reason| (c, reason)))
+        let drawn = || {
+            texts
+                .iter()
+                .flat_map(|runs| runs.iter())
+                .flat_map(|run| run.text.chars().map(move |c| (run.face, c)))
+                .chain(
+                    extra
+                        .iter()
+                        .flat_map(|&(face, text)| text.chars().map(move |c| (face, c))),
+                )
+        };
+
+        if let Some((character, reason)) =
+            drawn().find_map(|(_, c)| unordered(c).map(|reason| (c, reason)))
         {
             return Err(Refused::Unordered {
                 op,
@@ -331,88 +460,251 @@ impl Layout<'_> {
         }
 
         // A base-14 font would draw `?` and an embedded one an empty box.
-        for run in runs {
-            if let Some(character) = run
-                .text
-                .chars()
-                .find(|&c| !c.is_whitespace() && !self.fonts.covers(run.face, c))
-            {
-                return Err(Refused::Undrawable {
-                    op,
-                    page: page_index,
-                    character,
-                    face: self.fonts.display_name(run.face).to_string(),
-                    built_in: matches!(self.fonts.faces[run.face], Face::Base14(_)),
-                });
-            }
-        }
-
-        let max_width = page.width - self.margins.left - self.margins.right;
-        if max_width <= 0.0 {
-            return Err(Refused::NoWidth {
+        if let Some((face, character)) =
+            drawn().find(|&(face, c)| !c.is_whitespace() && !self.fonts.covers(face, c))
+        {
+            return Err(Refused::Undrawable {
                 op,
                 page: page_index,
+                character,
+                face: self.fonts.display_name(face).to_string(),
+                built_in: matches!(self.fonts.faces[face], Face::Base14(_)),
             });
         }
 
         let (ascent, descent) = self.fonts.ascent_descent(face);
         let half_leading = (line - (ascent - descent) * size / 1000.0) / 2.0;
-        let above_baseline = half_leading + ascent * size / 1000.0;
 
-        let lines = wrap(self.fonts, runs, size, max_width).map_err(|(cluster, width)| {
+        Ok(Block {
+            line,
+            above_baseline: half_leading + ascent * size / 1000.0,
+            page: page_index,
+        })
+    }
+
+    fn content_width(&self, op: usize, page: usize, left: f64) -> Result<f64, Refused> {
+        let width = self.page().width - left - self.margins.right;
+        if width <= 0.0 {
+            return Err(Refused::NoWidth { op, page });
+        }
+        Ok(width)
+    }
+
+    fn wrapped(
+        &self,
+        op: usize,
+        page: usize,
+        runs: &[Run],
+        size: f64,
+        width: f64,
+    ) -> Result<Vec<Vec<Segment>>, Refused> {
+        wrap(self.fonts, runs, size, width).map_err(|(cluster, cluster_width)| {
             Refused::ClusterTooWide {
                 op,
-                page: page_index,
+                page,
                 cluster,
-                width,
-                room: max_width,
+                width: cluster_width,
+                room: width,
             }
-        })?;
+        })
+    }
 
-        for wrapped in lines {
-            self.place_line(line, above_baseline, wrapped, size);
+    fn paragraph(
+        &mut self,
+        op: usize,
+        runs: &[Run],
+        face: usize,
+        size: f64,
+        kept: Option<f64>,
+    ) -> Result<(), Refused> {
+        let block = self.block(op, &[runs], &[], face, size)?;
+        let left = self.margins.left;
+        let width = self.content_width(op, block.page, left)?;
+        let lines = self.wrapped(op, block.page, runs, size, width)?;
+
+        if let Some(kept) = kept {
+            let needed = lines.len() as f64 * block.line + kept;
+            if !self.fresh && !self.fits(self.cursor - self.pending_space, needed) {
+                self.break_page();
+            }
+        }
+
+        for segments in lines {
+            self.place_line(&block, segments, size, left, None);
         }
 
         self.pending_space = 0.5 * size;
         Ok(())
     }
 
+    // Reserve following headings and spacing through the next content line.
+    fn kept_after(&self, following: &[Op], size: f64) -> f64 {
+        let mut gap = 0.5 * size;
+        let mut total = 0.0;
+        for op in following {
+            match op {
+                Op::Space(points) => gap += points,
+                Op::Paragraph {
+                    runs,
+                    size,
+                    keep_with_next: true,
+                    ..
+                } => {
+                    total += gap + self.line_count(runs, *size) as f64 * size * self.line_height;
+                    gap = 0.5 * size;
+                }
+                Op::Paragraph { size, .. } | Op::List { size, .. } => {
+                    return total + gap + size * self.line_height;
+                }
+                Op::Rule { size } => return total + gap + size,
+                Op::Page { .. } => return total,
+            }
+        }
+        total
+    }
+
+    // A heading too wide to wrap is refused when it is placed; here it counts
+    // as one line.
+    fn line_count(&self, runs: &[Run], size: f64) -> usize {
+        let width = self.page().width - self.margins.left - self.margins.right;
+        wrap(self.fonts, runs, size, width).map_or(1, |lines| lines.len())
+    }
+
+    fn list(
+        &mut self,
+        op: usize,
+        items: &[Vec<Run>],
+        face: usize,
+        size: f64,
+        marker: Marker,
+        start: usize,
+    ) -> Result<(), Refused> {
+        self.ensure_page();
+        let labels = (0..items.len())
+            .map(|offset| start.checked_add(offset).map(|number| marker.label(number)))
+            .collect::<Option<Vec<String>>>()
+            .ok_or(Refused::CounterOverflow {
+                op,
+                page: self.pages.len() - 1,
+            })?;
+        let texts: Vec<&[Run]> = items.iter().map(Vec::as_slice).collect();
+        let extra: Vec<(usize, &str)> = labels.iter().map(|label| (face, label.as_str())).collect();
+        let block = self.block(op, &texts, &extra, face, size)?;
+
+        // Markers are right-aligned in a column as wide as the widest, so the
+        // text of every item starts at the same x.
+        let gap = 0.5 * size;
+        let widest = labels
+            .iter()
+            .map(|label| self.fonts.width(face, label, size))
+            .fold(0.0, f64::max);
+        let text_x = self.margins.left + 1.5 * size + widest + gap;
+        let width = self.content_width(op, block.page, text_x)?;
+
+        for (item, label) in items.iter().zip(labels) {
+            let label_width = self.fonts.width(face, &label, size);
+            let marker = Segment {
+                text: label,
+                face,
+                color: None,
+                width: label_width,
+            };
+            let mut lines = self.wrapped(op, block.page, item, size, width)?.into_iter();
+            let first = lines.next().unwrap_or_default();
+            self.place_line(
+                &block,
+                first,
+                size,
+                text_x,
+                Some((text_x - gap - label_width, marker)),
+            );
+            for segments in lines {
+                self.place_line(&block, segments, size, text_x, None);
+            }
+        }
+
+        self.pending_space = 0.5 * size;
+        Ok(())
+    }
+
+    fn space(&mut self, points: f64) {
+        if !self.fresh {
+            self.pending_space += points;
+        }
+    }
+
+    fn rule(&mut self, size: f64) {
+        self.ensure_page();
+        if !self.fresh {
+            let spaced = self.cursor - self.pending_space;
+            if self.fits(spaced, size) {
+                self.cursor = spaced;
+            } else {
+                self.break_page();
+            }
+        }
+        self.pending_space = 0.0;
+
+        let (left, right) = (self.margins.left, self.margins.right);
+        let y = self.cursor - size / 2.0;
+        let page = self.pages.last_mut().expect("rule ensured a page");
+        page.rules.push(RuleLine {
+            from: left,
+            to: page.width - right,
+            y,
+        });
+
+        self.cursor -= size;
+        self.fresh = false;
+    }
+
     fn fits(&self, top: f64, line: f64) -> bool {
         top - line >= self.margins.bottom - FIT_TOLERANCE
     }
 
-    fn place_line(&mut self, line: f64, above_baseline: f64, segments: Vec<Segment>, size: f64) {
+    fn place_line(
+        &mut self,
+        block: &Block,
+        segments: Vec<Segment>,
+        size: f64,
+        x: f64,
+        marker: Option<(f64, Segment)>,
+    ) {
         if !self.fresh {
             let spaced = self.cursor - self.pending_space;
             self.pending_space = 0.0;
             // A page never breaks before its first line, so a line the refusal
             // above let through always lands somewhere.
-            if self.fits(spaced, line) {
+            if self.fits(spaced, block.line) {
                 self.cursor = spaced;
             } else {
                 self.break_page();
             }
         }
 
-        let baseline = self.cursor - above_baseline;
-        let left = self.margins.left;
-        let page = self.pages.last_mut().expect("paragraph ensured a page");
-        let mut x = left;
-        for segment in segments {
-            let width = segment.width;
+        let baseline = self.cursor - block.above_baseline;
+        let page = self.pages.last_mut().expect("the block ensured a page");
+        let mut x = x;
+        let placed = marker
+            .into_iter()
+            .chain(segments.into_iter().map(|segment| {
+                let at = x;
+                x += segment.width;
+                (at, segment)
+            }));
+        for (at, segment) in placed {
             page.placed.push(Placed {
-                x,
+                x: at,
                 baseline,
-                width,
+                width: segment.width,
                 text: segment.text,
                 face: segment.face,
                 size,
                 color: segment.color,
             });
-            x += width;
         }
 
-        self.cursor -= line;
+        self.cursor -= block.line;
         self.fresh = false;
     }
 }

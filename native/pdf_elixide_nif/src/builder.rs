@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pdf_oxide::{
     elements::{ContentElement, FontSpec, TextContent, TextStyle},
     fonts::bundled::{DEJAVU_SANS, DEJAVU_SANS_BOLD},
     geometry::Rect,
     layout::Color,
-    writer::{DocumentBuilder, EmbeddedFont, PageSize},
+    writer::{DocumentBuilder, EmbeddedFont, LineStyle, PageSize},
 };
-use rustler::{Binary, NifMap, NifResult, NifTaggedEnum};
+use rustler::{Binary, NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
 
 use crate::{
     atoms, base14,
@@ -15,7 +15,10 @@ use crate::{
     create::create_from_bytes,
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
-    flow::{self, embedded_key, Face, Fonts, Margins, Op, PagePlan, Refused, Run, Unordered},
+    flow::{
+        self, embedded_key, Embedded, Face, Fonts, Margins, Marker, Op, PagePlan, Refused, Run,
+        Unordered,
+    },
 };
 
 #[derive(NifMap)]
@@ -46,6 +49,38 @@ pub struct FamilyNif<'a> {
 pub enum OpNif {
     Page((f64, f64)),
     Paragraph(ParagraphNif),
+    Heading(ParagraphNif),
+    List(ListNif),
+    Space(f64),
+    Rule(f64),
+}
+
+#[derive(NifMap)]
+pub struct ListNif {
+    items: Vec<Vec<RunNif>>,
+    font: FontNif,
+    font_size: f64,
+    marker: MarkerNif,
+    start: usize,
+}
+
+#[derive(NifUnitEnum, Clone, Copy)]
+pub enum MarkerNif {
+    Bullet,
+    Decimal,
+    LowerRoman,
+    LowerAlpha,
+}
+
+impl From<MarkerNif> for Marker {
+    fn from(marker: MarkerNif) -> Self {
+        match marker {
+            MarkerNif::Bullet => Marker::Bullet,
+            MarkerNif::Decimal => Marker::Decimal,
+            MarkerNif::LowerRoman => Marker::LowerRoman,
+            MarkerNif::LowerAlpha => Marker::LowerAlpha,
+        }
+    }
 }
 
 #[derive(NifMap)]
@@ -199,7 +234,10 @@ impl<'f> Faces<'f, '_> {
 
     fn embed(&mut self, op: usize, style: Style, bytes: &'f [u8]) -> NifResult<usize> {
         let font = parse(op, style, bytes)?;
-        let face = self.fonts.add(Face::Embedded(Box::new(font)));
+        let coverage = coverage(bytes);
+        let face = self
+            .fonts
+            .add(Face::Embedded(Box::new(Embedded { font, coverage })));
         self.sources.push((face, bytes));
         Ok(face)
     }
@@ -245,6 +283,26 @@ fn postscript_name(bytes: &[u8]) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+fn coverage(bytes: &[u8]) -> HashSet<char> {
+    let mut covered = HashSet::new();
+    if let Some(cmap) = ttf_parser::Face::parse(bytes, 0)
+        .ok()
+        .and_then(|face| face.tables().cmap)
+    {
+        for subtable in cmap.subtables {
+            if subtable.is_unicode() {
+                subtable.codepoints(|code| {
+                    let mapped = subtable.glyph_index(code).is_some_and(|glyph| glyph.0 != 0);
+                    if let (true, Some(c)) = (mapped, char::from_u32(code)) {
+                        covered.insert(c);
+                    }
+                });
+            }
+        }
+    }
+    covered
+}
+
 fn unsupported(message: String) -> rustler::Error {
     tagged_err(atoms::unsupported(), message)
 }
@@ -262,23 +320,59 @@ fn family_of(font: FontNif, auto: Family) -> Family {
 
 fn auto_family(ops: &[OpNif]) -> Family {
     let helvetica = base14::face("Helvetica").expect("Helvetica is a base-14 face");
-    let needs_unicode = ops.iter().any(|op| match op {
-        OpNif::Paragraph(ParagraphNif {
-            font: FontNif::Auto,
-            runs,
-            ..
-        }) => runs
-            .iter()
-            .flat_map(|run| run.text.chars())
-            .any(|c| !c.is_whitespace() && helvetica.width(c).is_none()),
-        _ => false,
-    });
+    let needs_unicode = ops
+        .iter()
+        .filter_map(|op| match op {
+            OpNif::Paragraph(ParagraphNif {
+                font: FontNif::Auto,
+                runs,
+                ..
+            })
+            | OpNif::Heading(ParagraphNif {
+                font: FontNif::Auto,
+                runs,
+                ..
+            }) => Some(vec![runs]),
+            OpNif::List(ListNif {
+                font: FontNif::Auto,
+                items,
+                ..
+            }) => Some(items.iter().collect()),
+            _ => None,
+        })
+        .flatten()
+        .flatten()
+        .flat_map(|run| run.text.chars())
+        .any(|c| !c.is_whitespace() && helvetica.width(c).is_none());
 
     if needs_unicode {
         Family::DejaVu
     } else {
         Family::Helvetica
     }
+}
+
+fn runs(
+    op: usize,
+    runs: Vec<RunNif>,
+    font: FontNif,
+    auto: Family,
+    faces: &mut Faces<'_, '_>,
+) -> NifResult<Vec<Run>> {
+    let family = family_of(font, auto);
+    let from_auto = matches!(font, FontNif::Auto);
+
+    runs.into_iter()
+        .map(|run| {
+            // DejaVu Sans has no italic, so `:auto` sets it upright.
+            let italic = run.italic && !(from_auto && family == Family::DejaVu);
+            Ok(Run {
+                face: faces.face(op, family, Style::of(run.bold, italic))?,
+                color: run.color.map(|c| [c.r, c.g, c.b]),
+                text: run.text,
+            })
+        })
+        .collect()
 }
 
 fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
@@ -288,29 +382,32 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
         .enumerate()
         .map(|(index, op)| match op {
             OpNif::Page((width, height)) => Ok(Op::Page { width, height }),
-            OpNif::Paragraph(paragraph) => {
-                let family = family_of(paragraph.font, auto);
-                let from_auto = matches!(paragraph.font, FontNif::Auto);
-                let runs = paragraph
-                    .runs
+            OpNif::Paragraph(paragraph) => Ok(Op::Paragraph {
+                face: faces.face(index, family_of(paragraph.font, auto), Style::Regular)?,
+                runs: runs(index, paragraph.runs, paragraph.font, auto, faces)?,
+                size: paragraph.font_size,
+                keep_with_next: false,
+            }),
+            // A heading's runs arrive bold, and its line box is the bold face's.
+            OpNif::Heading(heading) => Ok(Op::Paragraph {
+                face: faces.face(index, family_of(heading.font, auto), Style::Bold)?,
+                runs: runs(index, heading.runs, heading.font, auto, faces)?,
+                size: heading.font_size,
+                keep_with_next: true,
+            }),
+            OpNif::List(list) => Ok(Op::List {
+                face: faces.face(index, family_of(list.font, auto), Style::Regular)?,
+                items: list
+                    .items
                     .into_iter()
-                    .map(|run| {
-                        // DejaVu Sans has no italic, so `:auto` sets it upright.
-                        let italic = run.italic && !(from_auto && family == Family::DejaVu);
-                        Ok(Run {
-                            face: faces.face(index, family, Style::of(run.bold, italic))?,
-                            color: run.color.map(|c| [c.r, c.g, c.b]),
-                            text: run.text,
-                        })
-                    })
-                    .collect::<NifResult<Vec<_>>>()?;
-
-                Ok(Op::Paragraph {
-                    runs,
-                    face: faces.face(index, family, Style::Regular)?,
-                    size: paragraph.font_size,
-                })
-            }
+                    .map(|item| runs(index, item, list.font, auto, faces))
+                    .collect::<NifResult<_>>()?,
+                size: list.font_size,
+                marker: list.marker.into(),
+                start: list.start,
+            }),
+            OpNif::Space(points) => Ok(Op::Space(points)),
+            OpNif::Rule(size) => Ok(Op::Rule { size }),
         })
         .collect()
 }
@@ -388,10 +485,16 @@ fn refused(refusal: Refused) -> rustler::Error {
                 u32::from(character)
             )
         }
+        Refused::CounterOverflow { op, page } => {
+            format!("op {op} on page {page}: the list's numbering overflows; use a smaller :start")
+        }
     };
 
     unsupported(message)
 }
+
+const RULE_WIDTH: f32 = 0.5;
+const RULE_GRAY: f32 = 0.5;
 
 fn emit(
     meta: Meta,
@@ -440,6 +543,16 @@ fn emit(
                 style,
             );
             builder = builder.element(ContentElement::Text(text));
+        }
+        for rule in page.rules {
+            let y = rule.y as f32;
+            builder = builder.stroke_line(
+                rule.from as f32,
+                y,
+                rule.to as f32,
+                y,
+                LineStyle::new(RULE_WIDTH, RULE_GRAY, RULE_GRAY, RULE_GRAY),
+            );
         }
         builder.done();
     }
@@ -555,6 +668,14 @@ mod tests {
             super::postscript_name(DEJAVU_SANS).as_deref(),
             Some("DejaVuSans")
         );
+    }
+
+    #[test]
+    fn upstream_still_substitutes_a_glyph_the_font_lacks() {
+        let font = EmbeddedFont::from_data(None, fixture("font_truetype.ttf")).expect("parses");
+
+        assert!(!super::coverage(&fixture("font_truetype.ttf")).contains(&'•'));
+        assert_eq!(font.glyph_id(u32::from('•')), font.glyph_id(u32::from('*')));
     }
 
     #[test]

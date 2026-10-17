@@ -25,6 +25,12 @@ defmodule PdfElixide.Builder do
   `page/2` starts a new page. The first content starts a page of its own, so
   calling `page/2` first does not add a blank one.
 
+  A heading is never left alone at the bottom of a page: if it and the first
+  line after it do not both fit, the heading starts the next page. A list
+  item's marker stays on the line with the item's first line, and numbering
+  carries on across pages. `space/2` adds to the space before the next block
+  and, like a paragraph's own space, is dropped at a page break.
+
   ## Fonts
 
   Text is set in a font family: one of the built-in families `:helvetica`,
@@ -199,6 +205,56 @@ defmodule PdfElixide.Builder do
   @paragraph_opts_keys [:font, :font_size]
 
   @typedoc """
+  Options accepted by `heading/4`.
+
+    * `:font` — the heading's `t:font/0`. Defaults to `nil`, which uses the
+      document's `:font`. The heading is set in that family's bold face.
+    * `:font_size` — text size in points. Defaults to `nil`, which scales the
+      document's `:font_size` by the level: 2, 1.5, 1.25 and 1.1 times for
+      levels 1 to 4.
+
+  A size whose line box is taller than the page's content area raises
+  `ArgumentError`.
+  """
+  @type heading_opts :: [font: font() | nil, font_size: number() | nil]
+
+  @heading_opts_keys [:font, :font_size]
+
+  @heading_scales %{1 => 2.0, 2 => 1.5, 3 => 1.25, 4 => 1.1}
+
+  @typedoc """
+  Options accepted by `bullet_list/3`: `:font` and `:font_size`, as for
+  `paragraph/3`.
+  """
+  @type bullet_list_opts :: [font: font() | nil, font_size: number() | nil]
+
+  @bullet_list_opts_keys [:font, :font_size]
+
+  @typedoc """
+  Options accepted by `numbered_list/3`.
+
+    * `:font`, `:font_size` — as for `paragraph/3`.
+    * `:style` — `:decimal` (1. 2. 3.), `:lower_roman` (i. ii. iii.) or
+      `:lower_alpha` (a. b. c., then aa. ab. …). Defaults to `:decimal`.
+    * `:start` — the number of the first item, a positive integer. Defaults
+      to `1`. Numbers stop at 2147483647, and lower Roman numerals at 3999.
+  """
+  @type numbered_list_opts :: [
+          font: font() | nil,
+          font_size: number() | nil,
+          style: :decimal | :lower_roman | :lower_alpha,
+          start: pos_integer()
+        ]
+
+  @numbered_list_opts_keys [:font, :font_size, :style, :start]
+
+  @list_styles [:decimal, :lower_roman, :lower_alpha]
+
+  # The largest number a counter holds on every supported target, 32-bit
+  # included.
+  @max_list_number 2_147_483_647
+
+  @typedoc """
   Options accepted by `to_binary/2` and `save/3`: the keys of
   `t:PdfElixide.Editor.save_opts/0` except `:incremental`, since a new
   document has no earlier revision to append to.
@@ -264,6 +320,125 @@ defmodule PdfElixide.Builder do
 
     op = {:paragraph, %{runs: runs, font: font || builder.font, font_size: font_size}}
     %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Adds a heading of `level` 1 to 4, set in the bold face of its font family.
+
+  `text` is a `t:text/0`; every run is bold. A heading is kept on the page of
+  the line after it; see [Layout](#module-layout). See `t:heading_opts/0` for
+  the options.
+
+      PdfElixide.Builder.heading(builder, 1, "Quarterly report")
+  """
+  @spec heading(t(), 1..4, text(), heading_opts()) :: t()
+  def heading(%__MODULE__{} = builder, level, text, opts \\ [])
+      when level in 1..4 and (is_binary(text) or is_list(text)) and is_list(opts) do
+    runs = text |> runs!() |> Enum.map(&%{&1 | bold: true})
+    %{font: font, font_size: font_size} = build_heading_options(opts)
+    font_size = font_size || builder.font_size * Map.fetch!(@heading_scales, level)
+    validate_line_fits!(builder, font_size)
+
+    op = {:heading, %{runs: runs, font: font || builder.font, font_size: font_size}}
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Adds a list whose items are marked with a bullet.
+
+  `items` is a list of `t:text/0`, one per item. An item longer than a line
+  wraps under its own text, not under the bullet. See
+  `t:bullet_list_opts/0` for the options.
+
+      PdfElixide.Builder.bullet_list(builder, ["Revenue", ["Costs ", {"down", bold: true}]])
+  """
+  @spec bullet_list(t(), [text()], bullet_list_opts()) :: t()
+  def bullet_list(%__MODULE__{} = builder, items, opts \\ [])
+      when is_list(items) and is_list(opts) do
+    opts = Keyword.validate!(opts, @bullet_list_opts_keys)
+    list(builder, items, :bullet, 1, opts)
+  end
+
+  @doc """
+  Adds a list whose items are numbered.
+
+  As `bullet_list/3`, with the numbers right-aligned so the items' text
+  lines up. See `t:numbered_list_opts/0` for the options.
+
+      PdfElixide.Builder.numbered_list(builder, ["First", "Second"], style: :lower_roman)
+  """
+  @spec numbered_list(t(), [text()], numbered_list_opts()) :: t()
+  def numbered_list(%__MODULE__{} = builder, items, opts \\ [])
+      when is_list(items) and is_list(opts) do
+    opts = Keyword.validate!(opts, @numbered_list_opts_keys)
+    style = list_style!(Keyword.get(opts, :style, :decimal))
+    start = start!(Keyword.get(opts, :start, 1))
+
+    last = start + length(items) - 1
+
+    if style == :lower_roman and last > 3999 do
+      raise ArgumentError,
+            "invalid :start, lower Roman numerals stop at 3999, and these items " <>
+              "would reach #{last}"
+    end
+
+    if last > @max_list_number do
+      raise ArgumentError,
+            "invalid :start, list numbers stop at #{@max_list_number}, and these " <>
+              "items would reach #{last}"
+    end
+
+    list(builder, items, style, start, Keyword.take(opts, [:font, :font_size]))
+  end
+
+  defp list(builder, items, marker, start, opts) do
+    items = Enum.map(items, &item!/1)
+    %{font: font, font_size: font_size} = build_paragraph_options(opts)
+    font_size = font_size || builder.font_size
+    validate_line_fits!(builder, font_size)
+
+    op =
+      {:list,
+       %{
+         items: items,
+         font: font || builder.font,
+         font_size: font_size,
+         marker: marker,
+         start: start
+       }}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Adds `points` of space before the next block.
+
+  The space adds to a paragraph's own space after it. It is dropped when a
+  page break comes first, so it never pushes a page's first line down.
+  """
+  @spec space(t(), number()) :: t()
+  def space(%__MODULE__{} = builder, points) when is_number(points) do
+    %{builder | ops: [{:space, margin!(:points, points)} | builder.ops]}
+  end
+
+  @doc """
+  Adds a thin grey line across the page between the margins.
+
+  The line sits in the middle of a box as tall as the document's
+  `:font_size`.
+  """
+  @spec rule(t()) :: t()
+  def rule(%__MODULE__{} = builder) do
+    {_width, height} = builder.current_page_size
+    room = height - builder.margin_top - builder.margin_bottom
+
+    if builder.font_size > room do
+      raise ArgumentError,
+            "invalid layout, a rule takes #{builder.font_size} points (the document's " <>
+              ":font_size), more than the #{room}-point content height"
+    end
+
+    %{builder | ops: [{:rule, builder.font_size} | builder.ops]}
   end
 
   @doc """
@@ -357,7 +532,7 @@ defmodule PdfElixide.Builder do
     |> Map.merge(%{ops: ops, families: families |> Enum.reverse() |> Enum.map(faces)})
   end
 
-  defp native_op({:paragraph, %{font: %FontFamily{id: id} = family} = paragraph}, acc) do
+  defp native_op({tag, %{font: %FontFamily{id: id} = family} = block}, acc) do
     {families, index} = acc
 
     {position, acc} =
@@ -366,15 +541,16 @@ defmodule PdfElixide.Builder do
         :error -> {map_size(index), {[family | families], Map.put(index, id, map_size(index))}}
       end
 
-    {{:paragraph, %{paragraph | font: {:family, position}}}, acc}
+    {{tag, %{block | font: {:family, position}}}, acc}
   end
 
   defp native_op(op, acc), do: {op, acc}
 
   @doc false
-  @spec __option_defaults__(:new | :paragraph) :: map()
+  @spec __option_defaults__(:new | :paragraph | :heading) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
+  def __option_defaults__(:heading), do: build_heading_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -396,6 +572,10 @@ defmodule PdfElixide.Builder do
     })
   end
 
+  defp build_heading_options(opts) do
+    opts |> Keyword.validate!(@heading_opts_keys) |> build_paragraph_options()
+  end
+
   defp build_paragraph_options(opts) do
     opts = Keyword.validate!(opts, @paragraph_opts_keys)
 
@@ -415,6 +595,25 @@ defmodule PdfElixide.Builder do
     raise ArgumentError,
           "invalid :font, expected one of #{inspect(@fonts)} or a " <>
             "PdfElixide.Builder.FontFamily: #{inspect(font)}"
+  end
+
+  defp item!(text) when is_binary(text) or is_list(text), do: runs!(text)
+
+  defp item!(other) do
+    raise ArgumentError, "invalid item, expected a string or a list of runs: #{inspect(other)}"
+  end
+
+  defp list_style!(style) when style in @list_styles, do: style
+
+  defp list_style!(style) do
+    raise ArgumentError,
+          "invalid :style, expected one of #{inspect(@list_styles)}: #{inspect(style)}"
+  end
+
+  defp start!(start) when is_integer(start) and start >= 1, do: start
+
+  defp start!(start) do
+    raise ArgumentError, "invalid :start, expected a positive integer: #{inspect(start)}"
   end
 
   defp runs!(text) when is_binary(text), do: [run!(text)]

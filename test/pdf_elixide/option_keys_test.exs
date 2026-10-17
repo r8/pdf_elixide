@@ -431,6 +431,18 @@ defmodule PdfElixide.OptionKeysTest do
         &Builder.paragraph(Builder.new(), [{"Text", &1}])
       )
 
+      accepts_each!([font: :times, font_size: 20], &Builder.heading(Builder.new(), 1, "T", &1))
+
+      accepts_each!(
+        [font: :courier, font_size: 10],
+        &Builder.bullet_list(Builder.new(), ["a"], &1)
+      )
+
+      accepts_each!(
+        [font: :courier, font_size: 10, style: :lower_alpha, start: 3],
+        &Builder.numbered_list(Builder.new(), ["a"], &1)
+      )
+
       accepts_each!(
         [regular: "a", bold: "b", italic: "c", bold_italic: "d"],
         &Builder.FontFamily.new(Keyword.merge([regular: "r"], &1))
@@ -609,6 +621,9 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.to_binary(Builder.new(), opts) end,
         fn opts -> Builder.save(Builder.new(), "/dev/null", opts) end,
         fn opts -> Builder.paragraph(Builder.new(), [{"Text", opts}]) end,
+        fn opts -> Builder.heading(Builder.new(), 1, "Text", opts) end,
+        fn opts -> Builder.bullet_list(Builder.new(), ["Text"], opts) end,
+        fn opts -> Builder.numbered_list(Builder.new(), ["Text"], opts) end,
         fn opts -> Builder.FontFamily.new([regular: "a"] ++ opts) end
       ]
 

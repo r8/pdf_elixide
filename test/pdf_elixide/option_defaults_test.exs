@@ -352,6 +352,10 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Builder.__option_defaults__(:paragraph) == %{font: nil, font_size: nil}
     end
 
+    test "Builder.heading/4" do
+      assert Builder.__option_defaults__(:heading) == %{font: nil, font_size: nil}
+    end
+
     test "Editor.from_images/2" do
       assert Editor.__option_defaults__(:image_create) == %{
                title: nil,
