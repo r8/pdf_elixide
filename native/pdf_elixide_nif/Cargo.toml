@@ -30,9 +30,13 @@ pkcs12 = { version = "=0.2.0-pre.0", features = ["kdf"] }
 pkcs5 = { version = "0.8", features = ["alloc", "pbes2"] }
 rc2 = "0.9"
 rustler = "0.37.4"
+# Keep aligned with the version `pdf_oxide` resolves; reads a font's PostScript name.
+ttf-parser = "0.25"
 # RFC 3161 message-imprint hashing.
 sha1 = "0.11"
 sha2 = "0.11"
+# Bidi classes, so right-to-left text the layout cannot order is refused.
+unicode-bidi = "0.3"
 unicode-normalization = "0.1"
 # Grapheme clusters, so a word split across lines never separates a cluster.
 unicode-segmentation = "1.13"

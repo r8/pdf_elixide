@@ -1389,6 +1389,8 @@ dependencies = [
  "rustler",
  "sha1",
  "sha2",
+ "ttf-parser",
+ "unicode-bidi",
  "unicode-normalization",
  "unicode-segmentation",
 ]

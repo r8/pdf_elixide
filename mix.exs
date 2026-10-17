@@ -170,7 +170,8 @@ defmodule PdfElixide.MixProject do
         PdfElixide.Color.Unknown
       ],
       "Document creation": [
-        PdfElixide.Builder
+        PdfElixide.Builder,
+        PdfElixide.Builder.FontFamily
       ],
       "Editing and forms": [
         PdfElixide.Editor,

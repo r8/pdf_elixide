@@ -342,13 +342,14 @@ defmodule PdfElixide.OptionDefaultsTest do
                margin_bottom: 72.0,
                margin_left: 72.0,
                margin_right: 72.0,
+               font: :auto,
                font_size: 12.0,
                line_height: 1.5
              }
     end
 
     test "Builder.paragraph/3" do
-      assert Builder.__option_defaults__(:paragraph) == %{font_size: nil}
+      assert Builder.__option_defaults__(:paragraph) == %{font: nil, font_size: nil}
     end
 
     test "Editor.from_images/2" do

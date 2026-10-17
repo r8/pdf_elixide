@@ -14,3 +14,6 @@
 *.xlsx binary
 *.p12 binary
 *.pem binary
+*.ttf binary
+*.otf binary
+*.ttc binary

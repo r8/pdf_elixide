@@ -25,6 +25,29 @@ defmodule PdfElixide.Builder do
   `page/2` starts a new page. The first content starts a page of its own, so
   calling `page/2` first does not add a blank one.
 
+  ## Fonts
+
+  Text is set in a font family: one of the built-in families `:helvetica`,
+  `:times` and `:courier`, the bundled `:dejavu_sans`, or a
+  `PdfElixide.Builder.FontFamily` you embed. The document's `:font` applies to
+  every paragraph that does not name its own.
+
+  The default, `:auto`, uses Helvetica, unless some text set in `:auto` needs a
+  character outside Windows-1252. Then every `:auto` paragraph is set in
+  DejaVu Sans, which also covers Greek, Cyrillic and many other scripts.
+  DejaVu Sans has no italic face, so italic text in `:auto` is set upright
+  there.
+
+  The built-in families draw only Windows-1252 characters, and need no font
+  embedded. A character the chosen font cannot draw is refused rather than
+  replaced, as is bold or italic text in a family without that face.
+
+  Text is laid out left to right, one character after another. Right-to-left
+  text, such as Hebrew or Arabic, and scripts whose letters join, reorder or
+  form conjuncts, such as Devanagari, are refused in any font. A combining
+  accent is drawn where the font's own metrics put it, which in most fonts is
+  over the letter before it.
+
   ## Errors
 
   Malformed arguments raise where they are passed. Unknown options and
@@ -32,10 +55,11 @@ defmodule PdfElixide.Builder do
 
   Content that cannot be set faithfully returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` when built, with a
-  message identifying the operation and refusal. Text uses Helvetica with
-  Windows-1252 encoding; characters it cannot draw are refused.
+  message naming the operation, what was refused and what to change.
   """
 
+  alias PdfElixide.Builder.FontFamily
+  alias PdfElixide.Color.RGB
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.LayoutOptions
@@ -51,6 +75,7 @@ defmodule PdfElixide.Builder do
     :margin_bottom,
     :margin_left,
     :margin_right,
+    :font,
     :font_size,
     :line_height,
     :current_page_size,
@@ -74,11 +99,39 @@ defmodule PdfElixide.Builder do
           margin_bottom: float(),
           margin_left: float(),
           margin_right: float(),
+          font: font(),
           font_size: float(),
           line_height: float(),
           current_page_size: {float(), float()},
           ops: [tuple()]
         }
+
+  @typedoc """
+  A font family: a built-in one, the bundled `:dejavu_sans`, a
+  `PdfElixide.Builder.FontFamily`, or `:auto`. See [Fonts](#module-fonts).
+  """
+  @type font :: :auto | :helvetica | :times | :courier | :dejavu_sans | FontFamily.t()
+
+  @fonts [:auto, :helvetica, :times, :courier, :dejavu_sans]
+
+  @typedoc """
+  Text for `paragraph/3`: a string, or a list of runs, each a string or a
+  `{string, opts}` tuple styling that run.
+
+    * `:bold`, `:italic` — set the run in the family's bold, italic or bold
+      italic face. Each defaults to `false`.
+    * `:color` — a `PdfElixide.Color.RGB` with components from `0.0` to `1.0`.
+      Defaults to `nil`, which is black.
+
+  Runs are joined as they are written, so a space between two runs belongs
+  in one of them.
+  """
+  @type text :: String.t() | [String.t() | {String.t(), run_opts()}]
+
+  @typedoc "Options styling one run of `t:text/0`."
+  @type run_opts :: [bold: boolean(), italic: boolean(), color: RGB.t() | nil]
+
+  @run_opts_keys [:bold, :italic, :color]
 
   @typedoc """
   Options accepted by `new/1`.
@@ -90,6 +143,8 @@ defmodule PdfElixide.Builder do
       does not name its own. Defaults to `:letter`.
     * `:margin_top`, `:margin_bottom`, `:margin_left`, `:margin_right` —
       margins in points. Each defaults to `72`.
+    * `:font` — the `t:font/0` for content that does not set its own.
+      Defaults to `:auto`.
     * `:font_size` — text size in points for content that does not set its
       own. Defaults to `12`.
     * `:line_height` — line box height as a multiple of the text size.
@@ -108,6 +163,7 @@ defmodule PdfElixide.Builder do
           margin_bottom: number(),
           margin_left: number(),
           margin_right: number(),
+          font: font(),
           font_size: number(),
           line_height: number()
         ]
@@ -122,6 +178,7 @@ defmodule PdfElixide.Builder do
     :margin_bottom,
     :margin_left,
     :margin_right,
+    :font,
     :font_size,
     :line_height
   ]
@@ -129,15 +186,17 @@ defmodule PdfElixide.Builder do
   @typedoc """
   Options accepted by `paragraph/3`.
 
+    * `:font` — the paragraph's `t:font/0`. Defaults to `nil`, which uses the
+      document's `:font`.
     * `:font_size` — text size in points. Defaults to `nil`, which uses the
       document's `:font_size`.
 
   A size whose line box is taller than the page's content area raises
   `ArgumentError`. See [Errors](#module-errors) for other failures.
   """
-  @type paragraph_opts :: [font_size: number() | nil]
+  @type paragraph_opts :: [font: font() | nil, font_size: number() | nil]
 
-  @paragraph_opts_keys [:font_size]
+  @paragraph_opts_keys [:font, :font_size]
 
   @typedoc """
   Options accepted by `to_binary/2` and `save/3`: the keys of
@@ -188,17 +247,22 @@ defmodule PdfElixide.Builder do
   @doc """
   Adds a paragraph of text, wrapped at the right margin.
 
+  `text` is a string or a list of styled runs; see `t:text/0`.
+
+      PdfElixide.Builder.paragraph(builder, ["Revenue rose ", {"12%", bold: true}])
+
   See [Layout](#module-layout) for how lines break and pages turn, and
   `t:paragraph_opts/0` for the options.
   """
-  @spec paragraph(t(), String.t(), paragraph_opts()) :: t()
+  @spec paragraph(t(), text(), paragraph_opts()) :: t()
   def paragraph(%__MODULE__{} = builder, text, opts \\ [])
-      when is_binary(text) and is_list(opts) do
-    %{font_size: font_size} = build_paragraph_options(opts)
+      when (is_binary(text) or is_list(text)) and is_list(opts) do
+    runs = runs!(text)
+    %{font: font, font_size: font_size} = build_paragraph_options(opts)
     font_size = font_size || builder.font_size
     validate_line_fits!(builder, font_size)
 
-    op = {:paragraph, %{text: text, font_size: font_size}}
+    op = {:paragraph, %{runs: runs, font: font || builder.font, font_size: font_size}}
     %{builder | ops: [op | builder.ops]}
   end
 
@@ -265,9 +329,18 @@ defmodule PdfElixide.Builder do
     end
   end
 
+  # Each family's bytes cross to the native side once, however many paragraphs
+  # use it; a paragraph names it by its position in `:families`.
   @doc false
   @spec __native__(t()) :: map()
   def __native__(%__MODULE__{} = builder) do
+    {ops, {families, _index}} =
+      builder.ops
+      |> Enum.reverse()
+      |> Enum.map_reduce({[], %{}}, &native_op/2)
+
+    faces = fn family -> Map.take(family, [:regular, :bold, :italic, :bold_italic]) end
+
     builder
     |> Map.take([
       :title,
@@ -281,8 +354,22 @@ defmodule PdfElixide.Builder do
       :margin_right,
       :line_height
     ])
-    |> Map.put(:ops, Enum.reverse(builder.ops))
+    |> Map.merge(%{ops: ops, families: families |> Enum.reverse() |> Enum.map(faces)})
   end
+
+  defp native_op({:paragraph, %{font: %FontFamily{id: id} = family} = paragraph}, acc) do
+    {families, index} = acc
+
+    {position, acc} =
+      case Map.fetch(index, id) do
+        {:ok, position} -> {position, acc}
+        :error -> {map_size(index), {[family | families], Map.put(index, id, map_size(index))}}
+      end
+
+    {{:paragraph, %{paragraph | font: {:family, position}}}, acc}
+  end
+
+  defp native_op(op, acc), do: {op, acc}
 
   @doc false
   @spec __option_defaults__(:new | :paragraph) :: map()
@@ -303,6 +390,7 @@ defmodule PdfElixide.Builder do
       subject: text!(:subject, Keyword.get(opts, :subject)),
       creator: text!(:creator, Keyword.get(opts, :creator)),
       page_size: page_size!(Keyword.get(opts, :page_size, :letter)),
+      font: font!(Keyword.get(opts, :font, :auto)),
       font_size: positive!(:font_size, Keyword.get(opts, :font_size, 12)),
       line_height: positive!(:line_height, Keyword.get(opts, :line_height, 1.5))
     })
@@ -311,7 +399,64 @@ defmodule PdfElixide.Builder do
   defp build_paragraph_options(opts) do
     opts = Keyword.validate!(opts, @paragraph_opts_keys)
 
-    %{font_size: optional_positive!(:font_size, Keyword.get(opts, :font_size))}
+    font =
+      case Keyword.get(opts, :font) do
+        nil -> nil
+        font -> font!(font)
+      end
+
+    %{font: font, font_size: optional_positive!(:font_size, Keyword.get(opts, :font_size))}
+  end
+
+  defp font!(%FontFamily{} = family), do: family
+  defp font!(font) when font in @fonts, do: font
+
+  defp font!(font) do
+    raise ArgumentError,
+          "invalid :font, expected one of #{inspect(@fonts)} or a " <>
+            "PdfElixide.Builder.FontFamily: #{inspect(font)}"
+  end
+
+  defp runs!(text) when is_binary(text), do: [run!(text)]
+  defp runs!(runs), do: Enum.map(runs, &run!/1)
+
+  defp run!(text) when is_binary(text), do: %{text: text, bold: false, italic: false, color: nil}
+
+  defp run!({text, opts}) when is_binary(text) and is_list(opts) do
+    opts = Keyword.validate!(opts, @run_opts_keys)
+
+    %{
+      text: text,
+      bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
+      italic: boolean!(:italic, Keyword.get(opts, :italic, false)),
+      color: color!(Keyword.get(opts, :color))
+    }
+  end
+
+  defp run!(other) do
+    raise ArgumentError,
+          "invalid run, expected a string or a {string, opts} tuple: #{inspect(other)}"
+  end
+
+  defp boolean!(_key, value) when is_boolean(value), do: value
+
+  defp boolean!(key, value) do
+    raise ArgumentError, "invalid #{inspect(key)}, expected a boolean: #{inspect(value)}"
+  end
+
+  defp color!(nil), do: nil
+
+  defp color!(%RGB{r: r, g: g, b: b} = color) do
+    if Enum.all?([r, g, b], &(is_number(&1) and &1 >= 0 and &1 <= 1)) do
+      %RGB{r: r * 1.0, g: g * 1.0, b: b * 1.0}
+    else
+      raise ArgumentError,
+            "invalid :color, expected components from 0.0 to 1.0: #{inspect(color)}"
+    end
+  end
+
+  defp color!(other) do
+    raise ArgumentError, "invalid :color, expected a PdfElixide.Color.RGB: #{inspect(other)}"
   end
 
   defp text!(_key, nil), do: nil

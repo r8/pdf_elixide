@@ -45,6 +45,7 @@ defmodule PdfElixide.OptionKeysTest do
     margin_bottom: 10.0,
     margin_left: 10,
     margin_right: 10.0,
+    font: :times,
     font_size: 10.0,
     line_height: 1.2
   ]
@@ -419,7 +420,22 @@ defmodule PdfElixide.OptionKeysTest do
 
     test "Builder.new/1, paragraph/3 and to_binary/2" do
       accepts_each!(@builder_new_opts, &Builder.new/1)
-      accepts_each!([font_size: 10], &Builder.paragraph(Builder.new(), "Text", &1))
+
+      accepts_each!(
+        [font: :courier, font_size: 10],
+        &Builder.paragraph(Builder.new(), "Text", &1)
+      )
+
+      accepts_each!(
+        [bold: true, italic: true, color: %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}],
+        &Builder.paragraph(Builder.new(), [{"Text", &1}])
+      )
+
+      accepts_each!(
+        [regular: "a", bold: "b", italic: "c", bold_italic: "d"],
+        &Builder.FontFamily.new(Keyword.merge([regular: "r"], &1))
+      )
+
       accepts_each!(@builder_output_opts, &Builder.to_binary(Builder.new(), &1))
     end
 
@@ -591,7 +607,9 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.new(opts) end,
         fn opts -> Builder.paragraph(Builder.new(), "Text", opts) end,
         fn opts -> Builder.to_binary(Builder.new(), opts) end,
-        fn opts -> Builder.save(Builder.new(), "/dev/null", opts) end
+        fn opts -> Builder.save(Builder.new(), "/dev/null", opts) end,
+        fn opts -> Builder.paragraph(Builder.new(), [{"Text", opts}]) end,
+        fn opts -> Builder.FontFamily.new([regular: "a"] ++ opts) end
       ]
 
       for call <- calls do

@@ -6,6 +6,8 @@ defmodule PdfElixide.BuilderTest do
   import PdfElixide.Untyped
 
   alias PdfElixide.Builder
+  alias PdfElixide.Builder.FontFamily
+  alias PdfElixide.Color.RGB
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
   alias PdfElixide.Editor
@@ -29,13 +31,33 @@ defmodule PdfElixide.BuilderTest do
     |> Enum.sort(:desc)
   end
 
-  # Where a line box with its top at `top` puts its baseline.
   defp baseline(top, size, line_height \\ 1.5) do
     half_leading = (size * line_height - (@ascent - @descent) * size / 1000) / 2
     top - half_leading - @ascent * size / 1000
   end
 
   defp lines(count), do: Enum.map_join(1..count, "\n", &"line #{&1}")
+
+  @fixtures Path.join([__DIR__, "..", "fixtures"])
+
+  defp font(name), do: File.read!(Path.join(@fixtures, name))
+
+  defp cff_family do
+    FontFamily.new(
+      regular: font("font_cff_regular.otf"),
+      bold: font("font_cff_bold.otf"),
+      italic: font("font_cff_italic.otf")
+    )
+  end
+
+  defp fonts_by_text(doc) do
+    doc |> Document.chars!(0) |> Map.new(&{&1.text, &1.font})
+  end
+
+  defp refusal(builder) do
+    assert {:error, %Error{reason: :unsupported, message: message}} = Builder.to_binary(builder)
+    message
+  end
 
   describe "the output" do
     test "an empty description is one blank page of the default size" do
@@ -244,10 +266,213 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "fonts" do
+    test ":auto sets Windows-1252 text in Helvetica" do
+      assert %{"a" => "Helvetica"} =
+               Builder.new() |> Builder.paragraph("a") |> written() |> fonts_by_text()
+    end
+
+    test ":auto sets every :auto paragraph in DejaVu Sans once one needs it" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("Latin")
+        |> Builder.paragraph(["Звіт ", {"κόσμε", italic: true}])
+        |> written()
+
+      fonts = doc |> Document.chars!(0) |> Enum.map(& &1.font) |> Enum.uniq()
+
+      assert [font] = fonts
+      assert font =~ "DejaVuSans"
+      assert Document.text!(doc) =~ "Звіт κόσμε"
+    end
+
+    test "a paragraph's own font is not switched by :auto" do
+      message =
+        Builder.new()
+        |> Builder.paragraph("Звіт")
+        |> Builder.paragraph("Звіт", font: :helvetica)
+        |> refusal()
+
+      assert message =~ "op 1 on page 0: Helvetica cannot draw"
+      assert message =~ "U+0417"
+    end
+
+    test "the built-in families set bold and italic runs in their faces" do
+      runs = ["a", {"b", bold: true}, {"c", italic: true}, {"d", bold: true, italic: true}]
+
+      for {family, faces} <- [
+            times: ~w(Times-Roman Times-Bold Times-Italic Times-BoldItalic),
+            courier: ~w(Courier Courier-Bold Courier-Oblique Courier-BoldOblique),
+            helvetica: ~w(Helvetica Helvetica-Bold Helvetica-Oblique Helvetica-BoldOblique)
+          ] do
+        fonts =
+          Builder.new(font: family) |> Builder.paragraph(runs) |> written() |> fonts_by_text()
+
+        assert Enum.map(~w(a b c d), &fonts[&1]) == faces
+      end
+    end
+
+    test "a FontFamily embeds its faces, CFF and TrueType alike" do
+      bytes =
+        Builder.new(font: cff_family())
+        |> Builder.paragraph(["Звіт ", {"Очі", bold: true}])
+        |> Builder.paragraph("Привет", font: FontFamily.new(regular: font("font_truetype.ttf")))
+        |> Builder.to_binary!()
+
+      assert bytes =~ "/FontFile3"
+      assert bytes =~ "/FontFile2"
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+      fonts = fonts_by_text(doc)
+
+      assert Document.text!(doc) =~ "Звіт"
+      assert fonts["З"] =~ "FixtureCFF-Regular"
+      assert fonts["О"] =~ "FixtureCFF-Bold"
+      assert fonts["П"] =~ "FixtureTrueType-Regular"
+    end
+
+    test "an embedded face wraps by its own widths, inside the margins" do
+      text = String.duplicate("Привет Звіт Очі ", 40)
+
+      doc =
+        Builder.new(font: FontFamily.new(regular: font("font_truetype.ttf")))
+        |> Builder.paragraph(text)
+        |> written()
+
+      chars = Document.chars!(doc, 0)
+
+      assert length(baselines(doc, 0)) > 1
+      assert Enum.all?(chars, &(&1.bbox.x + &1.bbox.width <= 612 - 72 + 0.01))
+    end
+
+    test "a run's colour is drawn" do
+      red = %RGB{r: 1.0, g: 0.0, b: 0.0}
+      doc = Builder.new() |> Builder.paragraph(["a", {"b", color: red}]) |> written()
+      colors = doc |> Document.chars!(0) |> Map.new(&{&1.text, &1.color})
+
+      assert colors["b"] == red
+      assert colors["a"] == %RGB{r: 0.0, g: 0.0, b: 0.0}
+    end
+
+    test "a word wider than the line breaks between grapheme clusters" do
+      word = String.duplicate("e\u0301", 120)
+      family = FontFamily.new(regular: font("font_truetype.ttf"))
+      doc = Builder.new(font: family) |> Builder.paragraph(word) |> written()
+
+      lines = doc |> Document.text!() |> String.split("\n", trim: true)
+
+      assert length(lines) > 1
+      assert Enum.all?(lines, &String.starts_with?(&1, "e"))
+    end
+
+    test "a grapheme cluster stays whole when a style change falls inside it" do
+      red = %RGB{r: 1.0, g: 0.0, b: 0.0}
+      runs = Enum.flat_map(1..120, fn _ -> ["e", {"\u0301", color: red}] end)
+      family = FontFamily.new(regular: font("font_truetype.ttf"))
+      doc = Builder.new(font: family) |> Builder.paragraph(runs) |> written()
+
+      lines = doc |> Document.text!() |> String.split("\n", trim: true)
+
+      assert length(lines) > 1
+      assert Enum.all?(lines, &String.starts_with?(&1, "e"))
+
+      narrow = Builder.new(page_size: {164, 300})
+
+      for runs <- [["😀\u200D😀"], ["😀", {"\u200D😀", color: red}]] do
+        assert refusal(Builder.paragraph(narrow, runs)) =~ "wider than"
+      end
+    end
+
+    test "a family used by several paragraphs crosses to the native side once" do
+      family = cff_family()
+
+      native =
+        Builder.new(font: family)
+        |> Builder.paragraph("a")
+        |> Builder.paragraph("b", font: family)
+        |> Builder.__native__()
+
+      assert length(native.families) == 1
+
+      assert [{:paragraph, %{font: {:family, 0}}}, {:paragraph, %{font: {:family, 0}}}] =
+               native.ops
+    end
+
+    test "a face is only read when text uses it" do
+      family = FontFamily.new(regular: font("font_cff_regular.otf"), bold: "not a font")
+
+      assert {:ok, _} =
+               Builder.new(font: family) |> Builder.paragraph("plain") |> Builder.to_binary()
+    end
+  end
+
+  describe "font refusals" do
+    test "a style the family has no face for" do
+      message =
+        Builder.new(font: cff_family())
+        |> Builder.paragraph([{"both", bold: true, italic: true}])
+        |> refusal()
+
+      assert message =~ "op 0: its FontFamily has no bold italic face; pass :bold_italic"
+    end
+
+    test "italic in an explicit :dejavu_sans, which has no italic face" do
+      message =
+        Builder.new(font: :dejavu_sans)
+        |> Builder.paragraph([{"slanted", italic: true}])
+        |> refusal()
+
+      assert message =~ ":dejavu_sans has no italic face"
+    end
+
+    test "a character the embedded face has no glyph for" do
+      message = Builder.new(font: cff_family()) |> Builder.paragraph("Жук") |> refusal()
+
+      assert message =~ "FixtureCFF-Regular has no glyph for 'Ж' (U+0416)"
+    end
+
+    test "a character DejaVu Sans lacks under :auto" do
+      message = Builder.new() |> Builder.paragraph("中文") |> refusal()
+
+      assert message =~ "DejaVuSans has no glyph for '中'"
+    end
+
+    test "right-to-left text, in any font" do
+      for text <- ["שלום", "مرحبا"] do
+        message = Builder.new() |> Builder.paragraph("ok " <> text) |> refusal()
+
+        assert message =~ "op 0 on page 0"
+        assert message =~ "is right-to-left text"
+      end
+    end
+
+    test "a script that needs shaping" do
+      family = FontFamily.new(regular: font("font_truetype.ttf"))
+      message = Builder.new(font: family) |> Builder.paragraph("नमस्ते") |> refusal()
+
+      assert message =~ "'न' (U+0928) is in a script that needs shaping"
+    end
+
+    test "a font collection" do
+      family = FontFamily.new(regular: font("font_collection.ttc"))
+      message = Builder.new(font: family) |> Builder.paragraph("a") |> refusal()
+
+      assert message =~ "its :regular face is a font collection (.ttc)"
+    end
+
+    test "bytes that are not a font" do
+      family = FontFamily.new(regular: "not a font")
+      message = Builder.new(font: family) |> Builder.paragraph("a") |> refusal()
+
+      assert message =~ "its :regular face is not a font this library can read"
+    end
+  end
+
   describe "refusals" do
     test "a character Helvetica cannot draw is refused, naming the op" do
       assert {:error, %Error{reason: :unsupported, message: message}} =
-               Builder.new()
+               Builder.new(font: :helvetica)
                |> Builder.paragraph("fine")
                |> Builder.paragraph("Привет")
                |> Builder.to_binary()
@@ -281,7 +506,7 @@ defmodule PdfElixide.BuilderTest do
 
     test "from_builder!/1 raises the refusal" do
       assert_raise Error, ~r/U\+041F/, fn ->
-        Builder.new() |> Builder.paragraph("Привет") |> Editor.from_builder!()
+        Builder.new(font: :helvetica) |> Builder.paragraph("Привет") |> Editor.from_builder!()
       end
     end
   end
@@ -327,6 +552,37 @@ defmodule PdfElixide.BuilderTest do
       assert_raise ArgumentError, ~r/:font_size/, fn -> Builder.new(font_size: "12") end
       assert_raise ArgumentError, ~r/:font_size/, fn -> Builder.new(font_size: 0) end
       assert_raise ArgumentError, ~r/:margin_top/, fn -> Builder.new(margin_top: -1) end
+    end
+
+    test "a font that is neither built in nor a FontFamily" do
+      assert_raise ArgumentError, ~r/invalid :font/, fn -> Builder.new(font: :arial) end
+
+      assert_raise ArgumentError, ~r/invalid :font/, fn ->
+        Builder.paragraph(Builder.new(), "x", font: "Helvetica")
+      end
+    end
+
+    test "a malformed run" do
+      assert_raise ArgumentError, ~r/invalid run/, fn ->
+        Builder.paragraph(Builder.new(), [untyped(:text)])
+      end
+
+      assert_raise ArgumentError, ~r/:bold/, fn ->
+        Builder.paragraph(Builder.new(), [{"x", bold: :yes}])
+      end
+
+      assert_raise ArgumentError, ~r/:color/, fn ->
+        Builder.paragraph(Builder.new(), [{"x", color: %RGB{r: 2.0, g: 0.0, b: 0.0}}])
+      end
+
+      assert_raise ArgumentError, ~r/:color/, fn ->
+        Builder.paragraph(Builder.new(), [{"x", color: {1, 0, 0}}])
+      end
+    end
+
+    test "a FontFamily without a regular face, or with a face that is not a binary" do
+      assert_raise ArgumentError, ~r/missing :regular/, fn -> FontFamily.new(bold: "b") end
+      assert_raise ArgumentError, ~r/:italic/, fn -> FontFamily.new(regular: "r", italic: 1) end
     end
 
     test "paragraph text that is not a string" do
