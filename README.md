@@ -53,6 +53,8 @@ high-performance PDF library written in Rust. Built with
   editor
 - Create a new PDF from Markdown, HTML, plain text, or JPEG and PNG images, ready
   to edit and save
+- Build a new PDF from headings, wrapped paragraphs, lists and styled text,
+  paginated automatically and set in built-in or embedded fonts
 - Merge documents, and split one into pages, ranges, chunks or bookmarked
   sections in memory
 - Redact pages destructively, removing the covered text from the page rather
@@ -236,6 +238,23 @@ Most editing functions return the same mutable editor handle, so rebinding does
 not fork its state. `Editor.to_binary/2` returns a PDF binary instead of writing a
 file. See the [Forms](guides/forms.md) guide for field kinds and flags, bulk
 updates, save behavior, and button-field limitations.
+
+### Build a document
+
+Describe the content as a pipeline and lay it out in one call:
+
+```elixir
+alias PdfElixide.Builder
+
+Builder.new(title: "Quarterly report")
+|> Builder.heading(1, "Quarterly report")
+|> Builder.paragraph(["Revenue rose ", {"12%", bold: true}, " on the year."])
+|> Builder.bullet_list(["Costs fell", "Margins widened"])
+|> Builder.save!("path/to/report.pdf")
+```
+
+See [Building documents](guides/building-documents.md) for layout, fonts and
+limitations.
 
 ### Read a signature
 

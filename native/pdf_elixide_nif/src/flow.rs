@@ -23,8 +23,7 @@ pub enum Face<'f> {
 
 pub struct Embedded<'f> {
     pub font: EmbeddedFont,
-    // The characters the font's own cmap maps. Upstream's `glyph_id` also
-    // answers for some it lacks, drawing `*` for `•` and `-` for a dash.
+    // Check cmap coverage: `glyph_id` can substitute a different character.
     pub coverage: HashSet<char>,
     // Glyph outlines, which `EmbeddedFont` does not expose.
     pub outlines: ttf_parser::Face<'f>,
@@ -406,7 +405,6 @@ pub fn lay_out(
     Ok(layout.pages)
 }
 
-// What a block's checks establish before any of its lines is placed.
 struct Block {
     op: usize,
     line: f64,
@@ -503,8 +501,6 @@ impl Layout<'_> {
         })
     }
 
-    // Every character drawn, the runs' and any marker's, must be laid out in
-    // order and present in its face.
     fn drawable(
         &self,
         op: usize,

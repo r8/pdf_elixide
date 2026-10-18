@@ -2,9 +2,8 @@ defmodule PdfElixide.Builder do
   @moduledoc """
   Describes a new PDF as a pipeline of content, then lays it out in one call.
 
-  Content operations return the builder for piping. Layout runs when the
-  description is turned into a PDF with
-  `to_binary/2` or `save/3`, or opened for further editing with
+  Content operations return the builder for piping. Layout runs with
+  `to_binary/2`, `save/3` or
   `PdfElixide.Editor.from_builder/1`:
 
       PdfElixide.Builder.new(title: "Report")
@@ -13,55 +12,29 @@ defmodule PdfElixide.Builder do
       |> PdfElixide.Builder.paragraph("Appendix")
       |> PdfElixide.Builder.save!("report.pdf")
 
+  The [Building documents](guides/building-documents.md) guide walks through
+  layout, fonts and what is refused, with examples.
+
   ## Layout
 
-  Text flows from the top margin down. Each line takes a box
-  `font_size × line_height` points tall, and no box crosses a margin: a line
-  that would cross the bottom margin starts a new page of the same size. Lines
-  wrap at the right margin. A word wider than the line is split, and `\\n` in
-  the text starts a new line. A paragraph leaves half its font size of space
-  after it, which is dropped when a page break comes first.
-
-  `page/2` starts a new page. The first content starts a page of its own, so
-  calling `page/2` first does not add a blank one.
-
-  A heading is never left alone at the bottom of a page: if it and the first
-  line after it do not both fit, the heading starts the next page. A list
-  item's marker stays on the line with the item's first line, and numbering
-  carries on across pages. `space/2` adds to the space before the next block
-  and, like a paragraph's own space, is dropped at a page break.
+  Paragraphs, headings and lists wrap within the margins and start new pages
+  as needed. `text_at/5` places text outside that flow. See
+  [Flowing text](guides/building-documents.md#flowing-text) for line spacing,
+  page breaks and heading placement.
 
   ## Fonts
 
-  Text is set in a font family: one of the built-in families `:helvetica`,
-  `:times` and `:courier`, the bundled `:dejavu_sans`, or a
-  `PdfElixide.Builder.FontFamily` you embed. The document's `:font` applies to
-  every paragraph that does not name its own.
-
-  The default, `:auto`, uses Helvetica, unless some text set in `:auto` needs a
-  character outside Windows-1252. Then every `:auto` paragraph is set in
-  DejaVu Sans, which also covers Greek, Cyrillic and many other scripts.
-  DejaVu Sans has no italic face, so italic text in `:auto` is set upright
-  there.
-
-  The built-in families draw only Windows-1252 characters, and need no font
-  embedded. A character the chosen font cannot draw is refused rather than
-  replaced, as is bold or italic text in a family without that face.
-
-  Text is laid out left to right, one character after another. Right-to-left
-  text, such as Hebrew or Arabic, and scripts whose letters join, reorder or
-  form conjuncts, such as Devanagari, are refused in any font. A combining
-  accent is drawn where the font's own metrics put it, which in most fonts is
-  over the letter before it.
+  Use a built-in family, bundled DejaVu Sans or a
+  `PdfElixide.Builder.FontFamily`. The default is `:auto`. See
+  [Fonts](guides/building-documents.md#fonts) for character coverage, style
+  requirements and automatic font selection.
 
   ## Errors
 
-  Malformed arguments raise where they are passed. Unknown options and
-  invalid option values raise `ArgumentError`.
-
-  Content that cannot be set faithfully returns
-  `{:error, %PdfElixide.Error{reason: :unsupported}}` when built, with a
-  message naming the operation, what was refused and what to change.
+  Invalid arguments raise at the call that receives them. Unsupported content
+  returns `{:error, %PdfElixide.Error{reason: :unsupported}}` at build time;
+  bang variants raise. See [Errors](guides/building-documents.md#errors) and
+  [unsupported content](guides/building-documents.md#what-the-builder-will-not-draw).
   """
 
   alias PdfElixide.Builder.FontFamily
@@ -121,7 +94,7 @@ defmodule PdfElixide.Builder do
   @fonts [:auto, :helvetica, :times, :courier, :dejavu_sans]
 
   @typedoc """
-  Text for `paragraph/3`: a string, or a list of runs, each a string or a
+  Text for content operations: a string, or a list of runs, each a string or a
   `{string, opts}` tuple styling that run.
 
     * `:bold`, `:italic` — set the run in the family's bold, italic or bold
@@ -213,8 +186,7 @@ defmodule PdfElixide.Builder do
       document's `:font_size` by the level: 2, 1.5, 1.25 and 1.1 times for
       levels 1 to 4.
 
-  A size whose line box is taller than the page's content area raises
-  `ArgumentError`.
+  Size validation is as for `t:paragraph_opts/0`.
   """
   @type heading_opts :: [font: font() | nil, font_size: number() | nil]
 

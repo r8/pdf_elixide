@@ -15,7 +15,9 @@ it as a binary:
 The text functions are simple typesetters, not the reverse of the document
 conversion functions. Lines are not wrapped, so break long lines in the
 source. Editors created this way have no source file and cannot be saved
-incrementally.
+incrementally. For wrapped paragraphs, automatic page breaks and fonts you
+supply, describe the document with `PdfElixide.Builder` instead; see
+[Building documents](building-documents.md).
 
 ## Markdown
 

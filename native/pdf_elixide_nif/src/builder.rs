@@ -674,8 +674,6 @@ struct Meta {
     creator: Option<String>,
 }
 
-// Dirty because laying out a whole document and parsing the result is
-// CPU-bound; the only lock taken is the new handle's, which nothing else holds.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
     let margins = Margins {
