@@ -438,6 +438,14 @@ defmodule PdfElixide.BuilderTest do
       assert colors["a"] == %RGB{r: 0.0, g: 0.0, b: 0.0}
     end
 
+    test "an integer colour component is as good as a float" do
+      doc =
+        Builder.new() |> Builder.paragraph([{"b", color: %RGB{r: 1, g: 0, b: 0}}]) |> written()
+
+      assert [%{color: color}] = Document.chars!(doc, 0)
+      assert color == %RGB{r: 1.0, g: 0.0, b: 0.0}
+    end
+
     test "a word wider than the line breaks between grapheme clusters" do
       word = String.duplicate("e\u0301", 120)
       family = FontFamily.new(regular: font("font_truetype.ttf"))

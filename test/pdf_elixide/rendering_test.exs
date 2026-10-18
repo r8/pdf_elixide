@@ -130,6 +130,12 @@ defmodule PdfElixide.RenderingTest do
       assert {clipped.width, clipped.height} == {50, 80}
     end
 
+    test ":region is checked as 32-bit floats", %{doc: doc} do
+      assert_raise ArgumentError, ~r/^invalid :region .* corners must fit/, fn ->
+        Document.render(doc, 0, region: %Rect{x: 0.0, y: 0.0, width: 10.0, height: 1.0e39})
+      end
+    end
+
     test ":region with nothing on the page is out of range" do
       doc = Document.open!(@render_layers_pdf)
       on_exit(fn -> Document.close(doc) end)

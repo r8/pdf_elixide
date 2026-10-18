@@ -171,6 +171,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.XmpMetadata
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.LayoutOptions
   alias PdfElixide.Logging
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
@@ -459,6 +460,20 @@ defmodule PdfElixide.Document do
 
   # Validate the semantic range here so it raises the same `ArgumentError` as
   # other bad option values; the NIF keeps the same check as defence in depth.
+  # A region is decoded as 32-bit floats and compared through its corners; see
+  # `PdfElixide.LayoutOptions.rect!/2`. Anything but a rect is left to the decoder.
+  defp region!(opts), do: LayoutOptions.rect!(:region, Keyword.get(opts, :region))
+
+  defp exclude_regions!(opts) do
+    case Keyword.get(opts, :exclude_regions, []) do
+      regions when is_list(regions) ->
+        Enum.map(regions, &LayoutOptions.rect!(:exclude_regions, &1))
+
+      other ->
+        other
+    end
+  end
+
   defp validate_region_mode!(opts, key) do
     case Keyword.get(opts, key, :intersects) do
       {:min_overlap, ratio} when is_number(ratio) and (ratio < 0.0 or ratio > 1.0) ->
@@ -1050,7 +1065,7 @@ defmodule PdfElixide.Document do
       jpeg_quality: validate_jpeg_quality!(opts),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       fit: validate_fit!(opts),
-      region: Keyword.get(opts, :region),
+      region: region!(opts),
       max_output_pixels: validate_max_output_pixels!(opts)
     }
   end
@@ -1147,24 +1162,14 @@ defmodule PdfElixide.Document do
       nil ->
         nil
 
-      %Color.RGB{r: r, g: g, b: b} = color ->
-        if in_unit_range?(r) and in_unit_range?(g) and in_unit_range?(b) do
-          # `/ 1` coerces an integer component: `in_unit_range?` admits one and
-          # `BackgroundNif` decodes `f32`, which Rustler refuses for an integer term.
-          {r / 1, g / 1, b / 1, 1.0}
-        else
-          raise ArgumentError,
-                ":background components must each be in 0.0..1.0, got: #{inspect(color)}"
-        end
+      %Color.RGB{} = color ->
+        %Color.RGB{r: r, g: g, b: b} = LayoutOptions.rgb!(:background, color)
+        {r, g, b, 1.0}
 
       other ->
         raise ArgumentError,
               ":background must be a PdfElixide.Color.RGB struct or nil, got: #{inspect(other)}"
     end
-  end
-
-  defp in_unit_range?(component) do
-    is_number(component) and component >= 0.0 and component <= 1.0
   end
 
   defp validate_fit!(opts) do
@@ -1412,9 +1417,9 @@ defmodule PdfElixide.Document do
       extract_tables: Keyword.get(opts, :extract_tables, true),
       expand_ligatures: Keyword.get(opts, :expand_ligatures, false),
       table_detection: build_text_table_detection_option(Keyword.get(opts, :table_detection)),
-      region: Keyword.get(opts, :region),
+      region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode),
-      exclude_regions: Keyword.get(opts, :exclude_regions, []),
+      exclude_regions: exclude_regions!(opts),
       exclude_regions_mode: validate_region_mode!(opts, :exclude_regions_mode),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, []),
@@ -2233,7 +2238,7 @@ defmodule PdfElixide.Document do
       include_artifacts: Keyword.get(opts, :include_artifacts, true),
       word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
       profile: Keyword.get(opts, :profile),
-      region: Keyword.get(opts, :region),
+      region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode)
     }
   end
@@ -2352,7 +2357,7 @@ defmodule PdfElixide.Document do
       word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
       line_gap_threshold: Keyword.get(opts, :line_gap_threshold),
       profile: Keyword.get(opts, :profile),
-      region: Keyword.get(opts, :region),
+      region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode)
     }
   end
@@ -2463,7 +2468,7 @@ defmodule PdfElixide.Document do
     opts = Keyword.validate!(opts, @chars_opts_keys)
 
     %{
-      region: Keyword.get(opts, :region),
+      region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, [])
@@ -2688,7 +2693,7 @@ defmodule PdfElixide.Document do
     options = %{
       reading_order: Keyword.get(opts, :reading_order, :top_to_bottom),
       span_merging: build_span_merging_option(Keyword.get(opts, :span_merging)),
-      region: Keyword.get(opts, :region),
+      region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode),
       exclude_layers: Keyword.get(opts, :exclude_layers, []),
       exclude_inks: Keyword.get(opts, :exclude_inks, [])
@@ -3147,7 +3152,7 @@ defmodule PdfElixide.Document do
 
     %{
       detection: build_table_detection(opts),
-      region: Keyword.get(opts, :region),
+      region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode)
     }
   end

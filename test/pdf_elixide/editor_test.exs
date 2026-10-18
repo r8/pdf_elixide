@@ -2730,6 +2730,13 @@ defmodule PdfElixide.EditorTest do
       assert_raise ArgumentError, ~r/:bottom/, fn -> Editor.crop_margins(editor, bottom: "1") end
       refute Editor.modified?(editor)
     end
+
+    test "an integer margin too large for 64 bits is a margin, not an argument error" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert {:error, %Error{}} = Editor.crop_margins(editor, left: 10_000_000_000_000_000_000)
+    end
   end
 
   describe "page boxes and the page operations" do
@@ -2911,6 +2918,30 @@ defmodule PdfElixide.EditorTest do
 
       assert_raise ArgumentError, ~r/corners must fit a 32-bit float/, fn ->
         Editor.erase_regions(editor, 0, [%Rect{x: 1.0e300, y: 0.0, width: 10.0, height: 10.0}])
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "accepts an integer coordinate too large for 64 bits that fits a 32-bit float" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+      big = 10_000_000_000_000_000_000
+
+      assert {:ok, _} = Editor.erase_region(editor, 0, %Rect{x: big, y: 0, width: 1, height: 1})
+      assert {:ok, _} = Editor.add_redaction(editor, 0, %Rect{x: big, y: 0, width: 1, height: 1})
+    end
+
+    test "raises for a region whose corners fit a 32-bit float but whose size does not" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/width and height must fit a 32-bit float/, fn ->
+        Editor.erase_region(editor, 0, %Rect{x: -3.0e38, y: 0.0, width: 6.0e38, height: 10.0})
+      end
+
+      assert_raise ArgumentError, ~r/width and height must fit a 32-bit float/, fn ->
+        Editor.set_crop_box(editor, 0, %Rect{x: 0.0, y: 3.0e38, width: 10.0, height: -6.0e38})
       end
 
       refute Editor.modified?(editor)
@@ -3528,6 +3559,10 @@ defmodule PdfElixide.EditorTest do
 
       assert_raise ArgumentError, ~r/:edge_padding/, fn ->
         Editor.apply_redactions(editor, edge_padding: -1.0)
+      end
+
+      assert_raise ArgumentError, ~r/:edge_padding, expected .* 32-bit float/, fn ->
+        Editor.apply_redactions(editor, edge_padding: 1.0e39)
       end
     end
 

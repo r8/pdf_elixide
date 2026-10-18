@@ -632,6 +632,24 @@ defmodule PdfElixide.ExtractionOptionsTest do
       end
     end
 
+    test "a region is checked as 32-bit floats", %{doc: doc} do
+      big = %Rect{x: 10_000_000_000_000_000_000, y: 0, width: 1, height: 1}
+      assert {:ok, []} = Document.chars(doc, 0, region: big)
+
+      # Both corners fit; the distance between them does not.
+      wide = %Rect{x: -3.0e38, y: 0.0, width: 6.0e38, height: 1.0}
+
+      assert_raise ArgumentError, ~r/^invalid :region .* width and height must fit/, fn ->
+        Document.words(doc, 0, region: wide)
+      end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :exclude_regions .* width and height must fit/,
+                   fn ->
+                     Document.text(doc, 0, exclude_regions: [wide])
+                   end
+    end
+
     test "a bad value inside a nested option map names the outer field", %{doc: doc} do
       # Rustler reports the field it failed to decode, and for a nested map
       # that is the nesting key rather than the offending leaf.

@@ -68,7 +68,8 @@ impl RedactionOptionsNif {
             return Err(tagged_err(
                 atoms::other(),
                 format!(
-                    "Invalid :edge_padding {:?}: it must be a non-negative number",
+                    "invalid :edge_padding, expected a non-negative number that fits a \
+                     32-bit float: {:?}",
                     self.edge_padding
                 ),
             ));

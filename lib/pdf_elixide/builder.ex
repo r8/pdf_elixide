@@ -230,8 +230,6 @@ defmodule PdfElixide.Builder do
   # their rounding could merge neighbouring lines or runs.
   @precision_steps 131_072
 
-  @max_f32 3.402_823_466_385_288_6e38
-
   @typedoc """
   Options accepted by `text_at/5`: `:font` and `:font_size`, as for
   `paragraph/3`.
@@ -451,7 +449,8 @@ defmodule PdfElixide.Builder do
     opts = Keyword.validate!(opts, @text_at_opts_keys)
     %{font: font, font_size: font_size} = build_paragraph_options(opts)
     font_size = font_size || builder.font_size
-    validate_point!(x: x, y: y)
+    LayoutOptions.coordinate!(:x, x)
+    LayoutOptions.coordinate!(:y, y)
     validate_precise!(builder, font_size)
 
     op =
@@ -665,14 +664,7 @@ defmodule PdfElixide.Builder do
 
   defp color!(nil), do: nil
 
-  defp color!(%RGB{r: r, g: g, b: b} = color) do
-    if Enum.all?([r, g, b], &(is_number(&1) and &1 >= 0 and &1 <= 1)) do
-      %RGB{r: r * 1.0, g: g * 1.0, b: b * 1.0}
-    else
-      raise ArgumentError,
-            "invalid :color, expected components from 0.0 to 1.0: #{inspect(color)}"
-    end
-  end
+  defp color!(%RGB{} = color), do: LayoutOptions.rgb!(":color", color)
 
   defp color!(other) do
     raise ArgumentError, "invalid :color, expected a PdfElixide.Color.RGB: #{inspect(other)}"
@@ -688,14 +680,13 @@ defmodule PdfElixide.Builder do
   defp optional_positive!(_key, nil), do: nil
   defp optional_positive!(key, value), do: positive!(key, value)
 
-  defp positive!(key, value) when is_number(value),
-    do: LayoutOptions.positive!(key, value) * 1.0
+  defp positive!(key, value) when is_number(value), do: LayoutOptions.positive!(key, value)
 
   defp positive!(key, value) do
     raise ArgumentError, "invalid #{inspect(key)}, expected a positive number: #{inspect(value)}"
   end
 
-  defp margin!(key, value) when is_number(value), do: LayoutOptions.margin!(key, value) * 1.0
+  defp margin!(key, value) when is_number(value), do: LayoutOptions.margin!(key, value)
 
   defp margin!(key, value) do
     raise ArgumentError,
@@ -740,14 +731,6 @@ defmodule PdfElixide.Builder do
       raise ArgumentError,
             "invalid text, text_at/5 draws one line, so it cannot contain \"\\n\"; " <>
               "use paragraph/3 for text that breaks"
-    end
-  end
-
-  defp validate_point!(coordinates) do
-    for {key, value} <- coordinates, abs(value) > @max_f32 do
-      raise ArgumentError,
-            "invalid #{inspect(key)}, expected a number that fits a 32-bit float: " <>
-              "#{inspect(value)}"
     end
   end
 

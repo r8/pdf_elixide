@@ -1390,28 +1390,13 @@ defmodule PdfElixide.Editor do
       raise ArgumentError, "erase_regions/3 needs at least one region, got []"
     end
 
-    Enum.each(rects, &validate_region!/1)
+    rects = Enum.map(rects, &LayoutOptions.rect!("region", &1))
 
     case Wrap.call(fn -> Native.editor_erase_regions(ref, page_index, rects) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err
     end
   end
-
-  # Finite fields can still overflow when added. Validate here to raise
-  # ArgumentError before the NIF; leave type errors to its field decoder.
-  @max_f32 3.402_823_466_385_288_6e38
-
-  defp validate_region!(%Rect{x: x, y: y, width: width, height: height} = rect)
-       when is_number(x) and is_number(y) and is_number(width) and is_number(height) do
-    if Enum.any?([x, y, x + width, y + height], &(abs(&1) > @max_f32)) do
-      raise ArgumentError, "invalid region #{inspect(rect)}: its corners must fit a 32-bit float"
-    end
-
-    :ok
-  end
-
-  defp validate_region!(_rect), do: :ok
 
   @doc group: "Erasing regions"
   @doc """
@@ -1662,8 +1647,8 @@ defmodule PdfElixide.Editor do
           {:ok, t()} | {:error, Error.t()}
   def add_redaction(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect, fill \\ nil)
       when is_integer(page_index) and page_index >= 0 and (is_struct(fill, RGB) or is_nil(fill)) do
-    validate_region!(rect)
-    validate_fill!(fill, "fill")
+    rect = LayoutOptions.rect!("region", rect)
+    LayoutOptions.rgb!("fill", fill)
 
     case Wrap.call(fn -> Native.editor_add_redaction(ref, page_index, rect, fill) end) do
       {:ok, _} -> {:ok, editor}
@@ -1883,7 +1868,7 @@ defmodule PdfElixide.Editor do
   @spec set_media_box(t(), non_neg_integer(), Rect.t()) :: {:ok, t()} | {:error, Error.t()}
   def set_media_box(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect)
       when is_integer(page_index) and page_index >= 0 do
-    validate_region!(rect)
+    rect = LayoutOptions.rect!("region", rect)
 
     case Wrap.call(fn -> Native.editor_set_page_media_box(ref, page_index, rect) end) do
       {:ok, _} -> {:ok, editor}
@@ -1916,7 +1901,7 @@ defmodule PdfElixide.Editor do
   @spec set_crop_box(t(), non_neg_integer(), Rect.t()) :: {:ok, t()} | {:error, Error.t()}
   def set_crop_box(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect)
       when is_integer(page_index) and page_index >= 0 do
-    validate_region!(rect)
+    rect = LayoutOptions.rect!("region", rect)
 
     case Wrap.call(fn -> Native.editor_set_page_crop_box(ref, page_index, rect) end) do
       {:ok, _} -> {:ok, editor}
@@ -2588,11 +2573,8 @@ defmodule PdfElixide.Editor do
 
   # Range only, as `LayoutOptions.margin!/2`: anything not recognised here is left to
   # the NIF's field decoder, which names `:page_size`.
-  defp validate_page_size!({width, height} = size) when is_number(width) and is_number(height) do
-    LayoutOptions.positive!(:page_size, width)
-    LayoutOptions.positive!(:page_size, height)
-
-    size
+  defp validate_page_size!({width, height}) when is_number(width) and is_number(height) do
+    {LayoutOptions.positive!(:page_size, width), LayoutOptions.positive!(:page_size, height)}
   end
 
   defp validate_page_size!(size), do: size
@@ -2764,44 +2746,18 @@ defmodule PdfElixide.Editor do
       optional_content: :strip_hidden,
       edge_padding: validate_edge_padding!(Keyword.get(opts, :edge_padding, 0.5)),
       default_fill:
-        validate_fill!(
-          Keyword.get(opts, :default_fill, %RGB{r: 0.0, g: 0.0, b: 0.0}),
-          ":default_fill"
+        LayoutOptions.rgb!(
+          :default_fill,
+          Keyword.get(opts, :default_fill, %RGB{r: 0.0, g: 0.0, b: 0.0})
         ),
       draw_default_overlay: Keyword.get(opts, :draw_default_overlay, true),
       emit_redaction_artifacts: false
     }
   end
 
-  # Range only; a value that is not a number is left to the NIF's field decoder,
-  # which also rejects a non-finite float before this can see one. Upstream
-  # substitutes its own default for a negative padding rather than reporting one,
-  # so accepting it would ignore the caller silently.
-  defp validate_edge_padding!(value) when is_number(value) and value < 0 do
-    raise ArgumentError,
-          "invalid :edge_padding, expected a non-negative number: #{inspect(value)}"
-  end
-
-  defp validate_edge_padding!(value), do: value
-
-  # Upstream clamps a component into range instead of reporting it, with NaN
-  # becoming 0.0 — same reasoning as `validate_edge_padding!/1`. Takes the label
-  # because it serves both the option and `add_redaction/4`'s positional
-  # argument, which must not be able to disagree about the range.
-  defp validate_fill!(fill, label)
-
-  defp validate_fill!(%RGB{r: r, g: g, b: b} = fill, label)
-       when is_number(r) and is_number(g) and is_number(b) do
-    if Enum.any?([r, g, b], &(&1 < 0.0 or &1 > 1.0)) do
-      raise ArgumentError,
-            "invalid #{label} #{inspect(fill)}: each component must be " <>
-              "between 0.0 and 1.0"
-    end
-
-    fill
-  end
-
-  defp validate_fill!(other, _label), do: other
+  # Upstream substitutes its own default for a negative padding rather than
+  # reporting one, so accepting it would ignore the caller silently.
+  defp validate_edge_padding!(value), do: LayoutOptions.margin!(:edge_padding, value)
 
   # Every key is emitted for the reason given on
   # `PdfElixide.Document.__option_defaults__/1`.
