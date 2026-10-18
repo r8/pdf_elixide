@@ -237,6 +237,41 @@ defmodule PdfElixide.BuilderTest do
       assert_in_delta one - two, 20, 0.01
       assert_in_delta hd(Document.chars!(doc, 0)).bbox.x, 50, 0.01
     end
+
+    # Each line's box and advances stay inside the margins; only the glyph's
+    # own outline crosses the edge.
+    test "a flowing glyph whose ink crosses the page edge is refused" do
+      for {settings, run, font} <- [
+            {[margin_left: 0], {"j", italic: true}, :times},
+            {[margin_left: 0], {"j", italic: true}, cff_family()},
+            {[page_size: {200, 300}, margin_left: 196.6, margin_right: 0], {"f", italic: true},
+             :times},
+            {[margin_top: 0, line_height: 1.0], "É", :helvetica},
+            {[page_size: {200, 11}, margin_top: 0, margin_bottom: 0, line_height: 0.9], "ç",
+             :helvetica}
+          ] do
+        assert Builder.new(font: font) |> Builder.paragraph([run]) |> written()
+
+        message =
+          Builder.new([font: font] ++ settings) |> Builder.paragraph([run]) |> refusal()
+
+        assert message =~ "op 0 on page 0"
+        assert message =~ "past the edge of the page"
+        assert message =~ "widen the margins"
+      end
+    end
+
+    test "a list item's ink is checked like a paragraph's" do
+      # The item's text starts 28.2 points in, leaving its italic f's advance
+      # on the page and its ink past the right edge.
+      message =
+        Builder.new(page_size: {200, 300}, margin_left: 168.4, margin_right: 0, font: :times)
+        |> Builder.paragraph("fine")
+        |> Builder.bullet_list([[{"f", italic: true}]])
+        |> refusal()
+
+      assert message =~ "op 1 on page 0"
+    end
   end
 
   describe "page/2" do
@@ -245,6 +280,25 @@ defmodule PdfElixide.BuilderTest do
 
       assert Document.page_count!(doc) == 1
       assert %{width: 595.0, height: 842.0} = Page.media_box!(Document.page!(doc, 0))
+    end
+
+    test "a block that draws nothing before it does not start a page either" do
+      for empty <- [
+            &Builder.paragraph(&1, ""),
+            &Builder.paragraph(&1, "  "),
+            &Builder.heading(&1, 1, ""),
+            &Builder.bullet_list(&1, [])
+          ] do
+        doc =
+          Builder.new()
+          |> empty.()
+          |> Builder.page(:a4)
+          |> Builder.paragraph("A4")
+          |> written()
+
+        assert Document.page_count!(doc) == 1
+        assert %{width: 595.0, height: 842.0} = Page.media_box!(Document.page!(doc, 0))
+      end
     end
 
     test "without a size, the new page repeats the size before it" do
@@ -297,6 +351,14 @@ defmodule PdfElixide.BuilderTest do
       assert message =~ "U+0417"
     end
 
+    # U+10300 is outside the Basic Multilingual Plane, and U+1D5A0 is a
+    # mathematical letter with a plain A of its own; DejaVu Sans covers both.
+    test "a character beyond the Basic Multilingual Plane is drawn as itself" do
+      doc = Builder.new() |> Builder.paragraph("x\u{10300}y \u{1D5A0}A") |> written()
+
+      assert Document.text!(doc, 0) =~ "x\u{10300}y \u{1D5A0}A"
+    end
+
     test "the built-in families set bold and italic runs in their faces" do
       runs = ["a", {"b", bold: true}, {"c", italic: true}, {"d", bold: true, italic: true}]
 
@@ -330,6 +392,27 @@ defmodule PdfElixide.BuilderTest do
       assert fonts["З"] =~ "FixtureCFF-Regular"
       assert fonts["О"] =~ "FixtureCFF-Bold"
       assert fonts["П"] =~ "FixtureTrueType-Regular"
+    end
+
+    # The title spells the old subtype to show that only the font is relabelled.
+    test "a CFF face is embedded as the OpenType font it is" do
+      title = "/Subtype /CIDFontType0C"
+
+      bytes =
+        Builder.new(font: cff_family(), title: title)
+        |> Builder.paragraph("Звіт")
+        |> Builder.to_binary!(compress: false)
+
+      # The font program is the one stream whose data starts with an sfnt tag.
+      [dict] = Regex.run(~r{<<([^<>]*)>>\s*stream\r?\nOTTO}, bytes, capture: :all_but_first)
+
+      assert dict =~ ~r{/Subtype\s*/OpenType\b}
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.metadata!(doc).title == title
+      assert Document.text!(doc) =~ "Звіт"
     end
 
     test "an embedded face wraps by its own widths, inside the margins" do
@@ -474,6 +557,39 @@ defmodule PdfElixide.BuilderTest do
       assert Document.text!(doc, 1) =~ ~r/^First\s+Second\s+Body/
     end
 
+    test "consecutive headings at the start of the document" do
+      doc =
+        Builder.new()
+        |> Builder.heading(1, "Title")
+        |> Builder.heading(2, "Section")
+        |> Builder.paragraph("Body")
+        |> written()
+
+      assert Document.text!(doc, 0) =~ ~r/^Title\s+Section\s+Body/
+    end
+
+    test "a block that draws nothing does not part a heading from its body" do
+      # 33 lines leave 48 points: room for the heading and the empty block's
+      # line, but not for the heading, its gap and the 36-point body line.
+      for empty <- [
+            &Builder.paragraph(&1, ""),
+            &Builder.paragraph(&1, "  "),
+            &Builder.heading(&1, 4, ""),
+            &Builder.bullet_list(&1, [])
+          ] do
+        doc =
+          Builder.new()
+          |> Builder.paragraph(lines(33))
+          |> Builder.heading(4, "Heading")
+          |> empty.()
+          |> Builder.paragraph("Body", font_size: 24)
+          |> written()
+
+        refute Document.text!(doc, 0) =~ "Heading"
+        assert Document.text!(doc, 1) =~ ~r/^Heading\s+Body/
+      end
+    end
+
     test "a heading that fits with the line after it stays" do
       doc =
         Builder.new()
@@ -599,6 +715,26 @@ defmodule PdfElixide.BuilderTest do
       assert_in_delta a - b, 18 + 6 + 20, 0.01
     end
 
+    test "a block that draws nothing leaves the gap as it was" do
+      for empty <- [
+            &Builder.paragraph(&1, "", font_size: 4),
+            &Builder.heading(&1, 1, ""),
+            &Builder.bullet_list(&1, [])
+          ] do
+        doc =
+          Builder.new()
+          |> Builder.paragraph("a")
+          |> Builder.space(20)
+          |> empty.()
+          |> Builder.paragraph("b")
+          |> written()
+
+        [a, b] = baselines(doc, 0)
+
+        assert_in_delta a - b, 18 + 6 + 20, 0.01
+      end
+    end
+
     test "space is dropped at a page break" do
       doc =
         Builder.new()
@@ -627,8 +763,115 @@ defmodule PdfElixide.BuilderTest do
       assert_in_delta List.last(baselines(doc, 0)), baseline(684, 12), 0.001
     end
 
+    test "a rule and text are drawn in the order they were added" do
+      first_drawn = fn builder ->
+        bytes = builder |> Editor.from_builder!() |> Editor.to_binary!(compress: false)
+        streams = Regex.scan(~r/stream\r?\n(.*?)endstream/s, bytes, capture: :all_but_first)
+        [body] = for [stream] <- streams, stream =~ "BT", do: stream
+
+        {text, _} = :binary.match(body, "BT")
+        {rule, _} = :binary.match(body, " l\n")
+        if text < rule, do: :text, else: :rule
+      end
+
+      rule_first = Builder.new() |> Builder.rule() |> Builder.text_at(72, 715, "MMMM")
+      text_first = Builder.new() |> Builder.text_at(72, 715, "MMMM") |> Builder.rule()
+
+      assert first_drawn.(rule_first) == :rule
+      assert first_drawn.(text_first) == :text
+    end
+
     test "negative space raises" do
       assert_raise ArgumentError, ~r/:points/, fn -> Builder.space(Builder.new(), -1) end
+    end
+  end
+
+  describe "text_at/5" do
+    test "draws one line with its baseline at the point" do
+      doc = Builder.new() |> Builder.text_at(100, 200, "Mark") |> written()
+      [first | _] = Document.chars!(doc, 0)
+
+      assert Document.page_count!(doc) == 1
+      assert_in_delta first.bbox.x, 100, 0.01
+      assert_in_delta first.bbox.y, 200, 0.01
+    end
+
+    test "stays outside the flow, on the current page, and may sit in the margins" do
+      doc =
+        Builder.new()
+        |> Builder.text_at(10, 10, "corner")
+        |> Builder.paragraph("first")
+        |> Builder.page()
+        |> Builder.text_at(300, 400, "second page")
+        |> written()
+
+      fonts = doc |> Document.chars!(0) |> Enum.map_join(& &1.text)
+
+      assert fonts =~ "corner"
+      assert_in_delta Enum.max(baselines(doc, 0)), baseline(792 - 72, 12), 0.001
+      assert Document.text!(doc, 1) =~ "second page"
+    end
+
+    test "takes runs, a font and a size" do
+      doc =
+        Builder.new()
+        |> Builder.text_at(72, 72, ["a", {"b", bold: true}], font: :times, font_size: 20)
+        |> written()
+
+      fonts = fonts_by_text(doc)
+
+      assert fonts["a"] == "Times-Roman"
+      assert fonts["b"] == "Times-Bold"
+      assert_in_delta hd(Document.chars!(doc, 0)).font_size, 20, 0.001
+    end
+
+    test "counts for :auto" do
+      [char | _] =
+        Builder.new() |> Builder.text_at(72, 72, "Звіт") |> written() |> Document.chars!(0)
+
+      assert char.font =~ "DejaVuSans"
+    end
+
+    test "a line past the edge of the page is refused" do
+      for {x, y} <- [{580, 100}, {72, 788}, {72, 1}, {-1, 100}] do
+        message = Builder.new() |> Builder.text_at(x, y, "Wide text") |> refusal()
+
+        assert message =~ "past the edge of the page"
+      end
+    end
+
+    # Each point keeps the advances and the font's ascent and descent on the
+    # page; only the glyph's own outline crosses the edge.
+    test "a glyph whose ink crosses the edge is refused" do
+      for {x, y, run, font} <- [
+            {72, 782, "É", :helvetica},
+            {72, 2.6, "Ç", :helvetica},
+            {607, 100, {"f", italic: true}, :times},
+            {1, 100, {"j", italic: true}, cff_family()}
+          ] do
+        builder = Builder.new() |> Builder.text_at(x, y, [run], font: font)
+
+        assert refusal(builder) =~ "past the edge of the page"
+      end
+    end
+
+    test "a character its font cannot draw is refused" do
+      message = Builder.new() |> Builder.text_at(72, 72, "Звіт", font: :helvetica) |> refusal()
+
+      assert message =~ "Helvetica cannot draw"
+    end
+
+    test "malformed arguments raise" do
+      builder = Builder.new()
+
+      assert_raise ArgumentError, ~r/one line/, fn -> Builder.text_at(builder, 72, 72, "a\nb") end
+      assert_raise ArgumentError, ~r/:x/, fn -> Builder.text_at(builder, 1.0e39, 72, "a") end
+
+      assert_raise ArgumentError, ~r/too large/, fn ->
+        Builder.new(page_size: {612, 1.0e9}) |> Builder.text_at(72, 72, "a")
+      end
+
+      assert_raise FunctionClauseError, fn -> Builder.text_at(builder, untyped("72"), 72, "a") end
     end
   end
 
@@ -677,6 +920,32 @@ defmodule PdfElixide.BuilderTest do
       message = Builder.new(font: family) |> Builder.paragraph("नमस्ते") |> refusal()
 
       assert message =~ "'न' (U+0928) is in a script that needs shaping"
+    end
+
+    test "a spacing vowel sign, a virama or a joining letter in any script" do
+      for {text, refused} <- [
+            {"\u{1140E}\u{11436}", "U+11436"},
+            {"\u{1C00}\u{1C27}", "U+1C27"},
+            {"\u{1140E}\u{11442}", "U+11442"},
+            {"\u{A840}\u{A841}", "U+A840"}
+          ] do
+        message = Builder.new() |> Builder.paragraph(text) |> refusal()
+
+        assert message =~ "(#{refused}) is in a script that needs shaping"
+      end
+    end
+
+    test "empty text needs no face" do
+      family = FontFamily.new(regular: font("font_truetype.ttf"))
+
+      doc =
+        Builder.new(font: family)
+        |> Builder.heading(1, "")
+        |> Builder.heading(2, " ")
+        |> Builder.paragraph(["Body", {"", italic: true}])
+        |> written()
+
+      assert Document.text!(doc, 0) == "Body"
     end
 
     test "a font collection" do

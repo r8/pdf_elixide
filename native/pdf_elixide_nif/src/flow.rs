@@ -2,39 +2,44 @@ use std::collections::HashSet;
 
 use pdf_oxide::writer::EmbeddedFont;
 use unicode_bidi::{bidi_class, BidiClass};
+use unicode_normalization::char::canonical_combining_class;
+use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::base14::Base14;
 
 // A fit test on accumulated f64 positions must not lose a line that fits
-// exactly, so a box may cross the bottom margin by this much.
+// exactly, so a box may cross the bottom margin, and flowing ink the page
+// edge, by this much.
 const FIT_TOLERANCE: f64 = 1.0e-6;
 
 // Limit coordinate rounding so distinct lines and runs cannot merge on emission.
 const PRECISION_STEPS: f64 = 131_072.0;
 
-pub enum Face {
+pub enum Face<'f> {
     Base14(&'static Base14),
-    Embedded(Box<Embedded>),
+    Embedded(Box<Embedded<'f>>),
 }
 
-pub struct Embedded {
+pub struct Embedded<'f> {
     pub font: EmbeddedFont,
     // The characters the font's own cmap maps. Upstream's `glyph_id` also
     // answers for some it lacks, drawing `*` for `•` and `-` for a dash.
     pub coverage: HashSet<char>,
+    // Glyph outlines, which `EmbeddedFont` does not expose.
+    pub outlines: ttf_parser::Face<'f>,
 }
 
-pub struct Fonts {
-    faces: Vec<Face>,
+pub struct Fonts<'f> {
+    faces: Vec<Face<'f>>,
 }
 
-impl Fonts {
+impl<'f> Fonts<'f> {
     pub fn new() -> Self {
         Self { faces: Vec::new() }
     }
 
-    pub fn add(&mut self, face: Face) -> usize {
+    pub fn add(&mut self, face: Face<'f>) -> usize {
         self.faces.push(face);
         self.faces.len() - 1
     }
@@ -71,6 +76,23 @@ impl Fonts {
 
     fn width(&self, face: usize, text: &str, size: f64) -> f64 {
         text.chars().map(|c| self.char_units(face, c)).sum::<f64>() * size / 1000.0
+    }
+
+    // A glyph's ink box in thousandths of an em from its origin, or `None`
+    // when it draws nothing.
+    fn char_bounds(&self, face: usize, c: char) -> Option<[f64; 4]> {
+        match &self.faces[face] {
+            Face::Base14(base14) => base14.bounds(c),
+            Face::Embedded(embedded) => {
+                let outlines = &embedded.outlines;
+                let rect = outlines.glyph_bounding_box(outlines.glyph_index(c)?)?;
+                let scale = 1000.0 / f64::from(outlines.units_per_em());
+                Some(
+                    [rect.x_min, rect.y_min, rect.x_max, rect.y_max]
+                        .map(|value| f64::from(value) * scale),
+                )
+            }
+        }
     }
 
     fn ascent_descent(&self, face: usize) -> (f64, f64) {
@@ -118,6 +140,8 @@ impl Run {
 }
 
 pub enum Op {
+    // A block that draws nothing, kept so later ops keep their numbers.
+    Empty,
     Page {
         width: f64,
         height: f64,
@@ -139,6 +163,13 @@ pub enum Op {
     Space(f64),
     Rule {
         size: f64,
+    },
+    // One line with its baseline starting at a point, outside the flow.
+    TextAt {
+        runs: Vec<Run>,
+        size: f64,
+        x: f64,
+        y: f64,
     },
 }
 
@@ -212,8 +243,13 @@ pub struct Placed {
 pub struct PagePlan {
     pub width: f64,
     pub height: f64,
-    pub placed: Vec<Placed>,
-    pub rules: Vec<RuleLine>,
+    // In the order the ops drew them, so later ops paint over earlier ones.
+    pub items: Vec<Item>,
+}
+
+pub enum Item {
+    Text(Placed),
+    Rule(RuleLine),
 }
 
 pub struct RuleLine {
@@ -262,6 +298,11 @@ pub enum Refused {
         op: usize,
         page: usize,
     },
+    OffPage {
+        op: usize,
+        page: usize,
+        flowing: bool,
+    },
 }
 
 // Text is drawn character by character in logical order, with no bidi
@@ -273,8 +314,9 @@ pub enum Unordered {
     NeedsShaping,
 }
 
-// Scripts whose letters reorder, join or form conjuncts left to right. The
-// right-to-left ones (Arabic, Syriac, N'Ko and so on) are caught by bidi class.
+// Scripts whose letters reorder, join or form conjuncts left to right with no
+// spacing vowel sign or virama to show it. The right-to-left ones (Arabic,
+// Syriac, N'Ko and so on) are caught by bidi class.
 const SHAPED_BLOCKS: &[(u32, u32)] = &[
     (0x0900, 0x0DFF), // Devanagari through Sinhala
     (0x0F00, 0x0FFF), // Tibetan
@@ -284,6 +326,7 @@ const SHAPED_BLOCKS: &[(u32, u32)] = &[
     (0x19E0, 0x19FF), // Khmer Symbols
     (0x1A20, 0x1AAF), // Tai Tham
     (0x1B00, 0x1BBF), // Balinese, Sundanese
+    (0xA840, 0xA87F), // Phags-pa
     (0xA8E0, 0xA8FF), // Devanagari Extended
     (0xA960, 0xA97F), // Hangul Jamo Extended-A
     (0xA980, 0xA9FF), // Javanese, Myanmar Extended-B
@@ -300,10 +343,17 @@ fn unordered(c: char) -> Option<Unordered> {
     }
 
     let code = u32::from(c);
-    SHAPED_BLOCKS
-        .iter()
-        .any(|&(first, last)| (first..=last).contains(&code))
-        .then_some(Unordered::NeedsShaping)
+    // A spacing vowel sign may be drawn before its consonant, and a virama
+    // forms conjuncts, in every script that has one. Thai and Lao use theirs
+    // only to mark a bare consonant.
+    let shaped_mark = c.general_category() == GeneralCategory::SpacingMark
+        || (canonical_combining_class(c) == 9 && !(0x0E00..=0x0EFF).contains(&code));
+
+    (shaped_mark
+        || SHAPED_BLOCKS
+            .iter()
+            .any(|&(first, last)| (first..=last).contains(&code)))
+    .then_some(Unordered::NeedsShaping)
 }
 
 pub fn lay_out(
@@ -326,6 +376,7 @@ pub fn lay_out(
 
     for (index, op) in ops.iter().enumerate() {
         match op {
+            Op::Empty => {}
             Op::Page { width, height } => layout.new_page(*width, *height),
             Op::Paragraph {
                 runs,
@@ -333,6 +384,8 @@ pub fn lay_out(
                 size,
                 keep_with_next,
             } => {
+                // The lookahead measures headings against the current page.
+                layout.ensure_page();
                 let kept = keep_with_next.then(|| layout.kept_after(&ops[index + 1..], *size));
                 layout.paragraph(index, runs, *face, *size, kept)?;
             }
@@ -345,6 +398,7 @@ pub fn lay_out(
             } => layout.list(index, items, *face, *size, *marker, *start)?,
             Op::Space(points) => layout.space(*points),
             Op::Rule { size } => layout.rule(*size),
+            Op::TextAt { runs, size, x, y } => layout.text_at(index, runs, *size, *x, *y)?,
         }
     }
 
@@ -354,13 +408,14 @@ pub fn lay_out(
 
 // What a block's checks establish before any of its lines is placed.
 struct Block {
+    op: usize,
     line: f64,
     above_baseline: f64,
     page: usize,
 }
 
 struct Layout<'a> {
-    fonts: &'a Fonts,
+    fonts: &'a Fonts<'a>,
     margins: &'a Margins,
     line_height: f64,
     first_page: (f64, f64),
@@ -391,8 +446,7 @@ impl Layout<'_> {
         self.pages.push(PagePlan {
             width,
             height,
-            placed: Vec::new(),
-            rules: Vec::new(),
+            items: Vec::new(),
         });
         self.cursor = height - self.margins.top;
         self.fresh = true;
@@ -436,6 +490,28 @@ impl Layout<'_> {
             });
         }
 
+        self.drawable(op, page_index, texts, extra)?;
+
+        let (ascent, descent) = self.fonts.ascent_descent(face);
+        let half_leading = (line - (ascent - descent) * size / 1000.0) / 2.0;
+
+        Ok(Block {
+            op,
+            line,
+            above_baseline: half_leading + ascent * size / 1000.0,
+            page: page_index,
+        })
+    }
+
+    // Every character drawn, the runs' and any marker's, must be laid out in
+    // order and present in its face.
+    fn drawable(
+        &self,
+        op: usize,
+        page_index: usize,
+        texts: &[&[Run]],
+        extra: &[(usize, &str)],
+    ) -> Result<(), Refused> {
         let drawn = || {
             texts
                 .iter()
@@ -460,8 +536,11 @@ impl Layout<'_> {
         }
 
         // A base-14 font would draw `?` and an embedded one an empty box.
-        if let Some((face, character)) =
-            drawn().find(|&(face, c)| !c.is_whitespace() && !self.fonts.covers(face, c))
+        // Whitespace is drawn as a space in its run's face, and `\n` not at all.
+        if let Some((face, character)) = drawn()
+            .filter(|&(_, c)| c != '\n')
+            .map(|(face, c)| (face, if c.is_whitespace() { ' ' } else { c }))
+            .find(|&(face, c)| !self.fonts.covers(face, c))
         {
             return Err(Refused::Undrawable {
                 op,
@@ -472,14 +551,7 @@ impl Layout<'_> {
             });
         }
 
-        let (ascent, descent) = self.fonts.ascent_descent(face);
-        let half_leading = (line - (ascent - descent) * size / 1000.0) / 2.0;
-
-        Ok(Block {
-            line,
-            above_baseline: half_leading + ascent * size / 1000.0,
-            page: page_index,
-        })
+        Ok(())
     }
 
     fn content_width(&self, op: usize, page: usize, left: f64) -> Result<f64, Refused> {
@@ -530,19 +602,21 @@ impl Layout<'_> {
         }
 
         for segments in lines {
-            self.place_line(&block, segments, size, left, None);
+            self.place_line(&block, segments, size, left, None)?;
         }
 
         self.pending_space = 0.5 * size;
         Ok(())
     }
 
-    // Reserve following headings and spacing through the next content line.
+    // Reserve following headings and spacing through the next content line,
+    // looking through blocks that draw nothing.
     fn kept_after(&self, following: &[Op], size: f64) -> f64 {
         let mut gap = 0.5 * size;
         let mut total = 0.0;
         for op in following {
             match op {
+                Op::Empty => {}
                 Op::Space(points) => gap += points,
                 Op::Paragraph {
                     runs,
@@ -558,6 +632,7 @@ impl Layout<'_> {
                 }
                 Op::Rule { size } => return total + gap + size,
                 Op::Page { .. } => return total,
+                Op::TextAt { .. } => {}
             }
         }
         total
@@ -617,14 +692,102 @@ impl Layout<'_> {
                 size,
                 text_x,
                 Some((text_x - gap - label_width, marker)),
-            );
+            )?;
             for segments in lines {
-                self.place_line(&block, segments, size, text_x, None);
+                self.place_line(&block, segments, size, text_x, None)?;
             }
         }
 
         self.pending_space = 0.5 * size;
         Ok(())
+    }
+
+    fn text_at(
+        &mut self,
+        op: usize,
+        runs: &[Run],
+        size: f64,
+        x: f64,
+        y: f64,
+    ) -> Result<(), Refused> {
+        self.ensure_page();
+        let page_index = self.pages.len() - 1;
+        let (width, height) = (self.page().width, self.page().height);
+
+        // Spelled as the Elixir check spells it.
+        if width.max(height) > size * PRECISION_STEPS {
+            return Err(Refused::Imprecise {
+                op,
+                page: page_index,
+                size,
+            });
+        }
+        self.drawable(op, page_index, &[runs], &[])?;
+
+        let off_page = || Refused::OffPage {
+            op,
+            page: page_index,
+            flowing: false,
+        };
+        let segments = wrap(self.fonts, runs, size, f64::INFINITY)
+            .map_err(|_| off_page())?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+
+        // Neither the line's box nor any glyph's ink, which can overhang its
+        // advance or rise above the ascent, may cross the edge.
+        let mut extent = [x, y, x, y];
+        let mut pen = x;
+        for segment in &segments {
+            let (ascent, descent) = self.fonts.ascent_descent(segment.face);
+            extent[1] = extent[1].min(y + descent * size / 1000.0);
+            extent[3] = extent[3].max(y + ascent * size / 1000.0);
+            pen = self.add_ink(&mut extent, segment, pen, y, size);
+        }
+        extent[2] = extent[2].max(pen);
+
+        if extent[0] < 0.0 || extent[1] < 0.0 || extent[2] > width || extent[3] > height {
+            return Err(off_page());
+        }
+
+        let page = self.pages.last_mut().expect("text_at ensured a page");
+        let mut at = x;
+        for segment in segments {
+            page.items.push(Item::Text(Placed {
+                x: at,
+                baseline: y,
+                width: segment.width,
+                text: segment.text,
+                face: segment.face,
+                size,
+                color: segment.color,
+            }));
+            at += segment.width;
+        }
+        Ok(())
+    }
+
+    // Widens `extent` to the ink of `segment` drawn from `pen` on `baseline`,
+    // returning the pen after it.
+    fn add_ink(
+        &self,
+        extent: &mut [f64; 4],
+        segment: &Segment,
+        mut pen: f64,
+        baseline: f64,
+        size: f64,
+    ) -> f64 {
+        for c in segment.text.chars() {
+            if let Some([left, bottom, right, top]) = self.fonts.char_bounds(segment.face, c) {
+                extent[0] = extent[0].min(pen + left * size / 1000.0);
+                extent[1] = extent[1].min(baseline + bottom * size / 1000.0);
+                extent[2] = extent[2].max(pen + right * size / 1000.0);
+                extent[3] = extent[3].max(baseline + top * size / 1000.0);
+            }
+            pen += self.fonts.char_units(segment.face, c) * size / 1000.0;
+        }
+        pen
     }
 
     fn space(&mut self, points: f64) {
@@ -648,11 +811,11 @@ impl Layout<'_> {
         let (left, right) = (self.margins.left, self.margins.right);
         let y = self.cursor - size / 2.0;
         let page = self.pages.last_mut().expect("rule ensured a page");
-        page.rules.push(RuleLine {
+        page.items.push(Item::Rule(RuleLine {
             from: left,
             to: page.width - right,
             y,
-        });
+        }));
 
         self.cursor -= size;
         self.fresh = false;
@@ -669,7 +832,7 @@ impl Layout<'_> {
         size: f64,
         x: f64,
         marker: Option<(f64, Segment)>,
-    ) {
+    ) -> Result<(), Refused> {
         if !self.fresh {
             let spaced = self.cursor - self.pending_space;
             self.pending_space = 0.0;
@@ -683,17 +846,43 @@ impl Layout<'_> {
         }
 
         let baseline = self.cursor - block.above_baseline;
-        let page = self.pages.last_mut().expect("the block ensured a page");
         let mut x = x;
-        let placed = marker
+        let placed: Vec<(f64, Segment)> = marker
             .into_iter()
             .chain(segments.into_iter().map(|segment| {
                 let at = x;
                 x += segment.width;
                 (at, segment)
-            }));
+            }))
+            .collect();
+
+        // The line's box and advances are inside the margins, but a glyph's
+        // ink can overhang its advance or rise above the ascent.
+        let mut ink = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for (at, segment) in &placed {
+            self.add_ink(&mut ink, segment, *at, baseline, size);
+        }
+        let (width, height) = (self.page().width, self.page().height);
+        if ink[0] < -FIT_TOLERANCE
+            || ink[1] < -FIT_TOLERANCE
+            || ink[2] > width + FIT_TOLERANCE
+            || ink[3] > height + FIT_TOLERANCE
+        {
+            return Err(Refused::OffPage {
+                op: block.op,
+                page: self.pages.len() - 1,
+                flowing: true,
+            });
+        }
+
+        let page = self.pages.last_mut().expect("the block ensured a page");
         for (at, segment) in placed {
-            page.placed.push(Placed {
+            page.items.push(Item::Text(Placed {
                 x: at,
                 baseline,
                 width: segment.width,
@@ -701,11 +890,12 @@ impl Layout<'_> {
                 face: segment.face,
                 size,
                 color: segment.color,
-            });
+            }));
         }
 
         self.cursor -= block.line;
         self.fresh = false;
+        Ok(())
     }
 }
 
@@ -753,6 +943,15 @@ fn tokens(runs: &[Run]) -> Vec<Token> {
     flush(&mut word, &mut out);
 
     out
+}
+
+// `wrap` makes a line of every word and every `\n`, at any width, so text
+// with neither draws nothing.
+pub fn draws_nothing<'t>(texts: impl IntoIterator<Item = &'t str>) -> bool {
+    texts
+        .into_iter()
+        .flat_map(str::chars)
+        .all(|c| c != '\n' && c.is_whitespace())
 }
 
 #[derive(Default)]
@@ -913,4 +1112,66 @@ fn split_word(
     }
 
     Ok(chunks)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use pdf_oxide::{fonts::bundled::DEJAVU_SANS, writer::EmbeddedFont};
+
+    use super::{lay_out, unordered, Embedded, Face, Fonts, Margins, Op, Refused, Run, Unordered};
+
+    // DejaVu Sans with its cmap cut down to `covered`, as a font with no space
+    // glyph would have it.
+    fn laid_out(text: &str, covered: &str) -> Result<(), Refused> {
+        let mut fonts = Fonts::new();
+        fonts.add(Face::Embedded(Box::new(Embedded {
+            font: EmbeddedFont::from_data(None, DEJAVU_SANS.to_vec()).expect("parses"),
+            coverage: covered.chars().collect::<HashSet<char>>(),
+            outlines: ttf_parser::Face::parse(DEJAVU_SANS, 0).expect("parses"),
+        })));
+        let margins = Margins {
+            top: 72.0,
+            bottom: 72.0,
+            left: 72.0,
+            right: 72.0,
+        };
+        let paragraph = Op::Paragraph {
+            runs: vec![Run {
+                text: text.to_string(),
+                face: 0,
+                color: None,
+            }],
+            face: 0,
+            size: 12.0,
+            keep_with_next: false,
+        };
+
+        lay_out(&fonts, &margins, 1.5, (612.0, 792.0), &[paragraph]).map(|_| ())
+    }
+
+    #[test]
+    fn whitespace_needs_the_space_it_is_drawn_as() {
+        for text in ["a b", "a\tb"] {
+            let refused = laid_out(text, "ab");
+            assert!(matches!(
+                refused,
+                Err(Refused::Undrawable { character: ' ', .. })
+            ));
+            assert!(laid_out(text, "ab ").is_ok());
+        }
+        assert!(laid_out("a\nb", "ab").is_ok());
+    }
+
+    #[test]
+    fn a_virama_needs_shaping_except_in_thai_and_lao() {
+        assert!(matches!(
+            unordered('\u{11442}'),
+            Some(Unordered::NeedsShaping)
+        ));
+        assert!(unordered('\u{0E3A}').is_none());
+        assert!(unordered('\u{0EBA}').is_none());
+        assert!(unordered('\u{0301}').is_none());
+    }
 }

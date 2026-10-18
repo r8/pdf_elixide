@@ -16,8 +16,8 @@ use crate::{
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Embedded, Face, Fonts, Margins, Marker, Op, PagePlan, Refused, Run,
-        Unordered,
+        self, embedded_key, Embedded, Face, Fonts, Item, Margins, Marker, Op, PagePlan, Refused,
+        Run, Unordered,
     },
 };
 
@@ -53,6 +53,16 @@ pub enum OpNif {
     List(ListNif),
     Space(f64),
     Rule(f64),
+    TextAt(TextAtNif),
+}
+
+#[derive(NifMap)]
+pub struct TextAtNif {
+    runs: Vec<RunNif>,
+    font: FontNif,
+    font_size: f64,
+    x: f64,
+    y: f64,
 }
 
 #[derive(NifMap)]
@@ -176,7 +186,7 @@ fn base14_name(family: Family, style: Style) -> Option<&'static str> {
 // written; `EmbeddedFont` cannot be cloned, so the layout keeps its own parse.
 struct Faces<'f, 'a> {
     families: &'f [FamilyNif<'a>],
-    fonts: Fonts,
+    fonts: Fonts<'f>,
     sources: Vec<(usize, &'f [u8])>,
     index: HashMap<(Family, Style), usize>,
 }
@@ -234,10 +244,14 @@ impl<'f> Faces<'f, '_> {
 
     fn embed(&mut self, op: usize, style: Style, bytes: &'f [u8]) -> NifResult<usize> {
         let font = parse(op, style, bytes)?;
-        let coverage = coverage(bytes);
-        let face = self
-            .fonts
-            .add(Face::Embedded(Box::new(Embedded { font, coverage })));
+        let outlines = ttf_parser::Face::parse(bytes, 0)
+            .map_err(|reason| unsupported(format!("a face parsed once failed again: {reason}")))?;
+        let coverage = coverage(&outlines);
+        let face = self.fonts.add(Face::Embedded(Box::new(Embedded {
+            font,
+            coverage,
+            outlines,
+        })));
         self.sources.push((face, bytes));
         Ok(face)
     }
@@ -264,7 +278,22 @@ fn parse(op: usize, style: Style, bytes: &[u8]) -> NifResult<EmbeddedFont> {
 
 fn load(bytes: &[u8]) -> Result<EmbeddedFont, String> {
     let name = postscript_name(bytes).unwrap_or_else(|| "EmbeddedFont".to_string());
-    EmbeddedFont::from_data(Some(name), bytes.to_vec())
+    let mut font = EmbeddedFont::from_data(Some(name), bytes.to_vec())?;
+    if let Ok(face) = ttf_parser::Face::parse(bytes, 0) {
+        font.extend_glyph_lookup(supplementary_glyphs(&face));
+    }
+    Ok(font)
+}
+
+// The font maps only the Basic Multilingual Plane and U+1F000..=U+1FAFF from
+// the cmap, so any other character `coverage` accepts would be drawn as GID 0,
+// or a mathematical letter as its plain one.
+fn supplementary_glyphs(face: &ttf_parser::Face<'_>) -> HashMap<u32, u16> {
+    coverage(face)
+        .into_iter()
+        .filter(|&c| c > '\u{FFFF}')
+        .filter_map(|c| Some((u32::from(c), face.glyph_index(c)?.0)))
+        .collect()
 }
 
 // PDF names are written unescaped, so retain only characters needing no escape.
@@ -283,12 +312,9 @@ fn postscript_name(bytes: &[u8]) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-fn coverage(bytes: &[u8]) -> HashSet<char> {
+fn coverage(face: &ttf_parser::Face<'_>) -> HashSet<char> {
     let mut covered = HashSet::new();
-    if let Some(cmap) = ttf_parser::Face::parse(bytes, 0)
-        .ok()
-        .and_then(|face| face.tables().cmap)
-    {
+    if let Some(cmap) = face.tables().cmap {
         for subtable in cmap.subtables {
             if subtable.is_unicode() {
                 subtable.codepoints(|code| {
@@ -333,6 +359,11 @@ fn auto_family(ops: &[OpNif]) -> Family {
                 runs,
                 ..
             }) => Some(vec![runs]),
+            OpNif::TextAt(TextAtNif {
+                font: FontNif::Auto,
+                runs,
+                ..
+            }) => Some(vec![runs]),
             OpNif::List(ListNif {
                 font: FontNif::Auto,
                 items,
@@ -363,6 +394,7 @@ fn runs(
     let from_auto = matches!(font, FontNif::Auto);
 
     runs.into_iter()
+        .filter(|run| !run.text.is_empty())
         .map(|run| {
             // DejaVu Sans has no italic, so `:auto` sets it upright.
             let italic = run.italic && !(from_auto && family == Family::DejaVu);
@@ -382,6 +414,14 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
         .enumerate()
         .map(|(index, op)| match op {
             OpNif::Page((width, height)) => Ok(Op::Page { width, height }),
+            // Skipped before its faces resolve, so it needs none.
+            OpNif::Paragraph(ParagraphNif { runs, .. })
+            | OpNif::Heading(ParagraphNif { runs, .. })
+                if flow::draws_nothing(runs.iter().map(|run| run.text.as_str())) =>
+            {
+                Ok(Op::Empty)
+            }
+            OpNif::List(ListNif { items, .. }) if items.is_empty() => Ok(Op::Empty),
             OpNif::Paragraph(paragraph) => Ok(Op::Paragraph {
                 face: faces.face(index, family_of(paragraph.font, auto), Style::Regular)?,
                 runs: runs(index, paragraph.runs, paragraph.font, auto, faces)?,
@@ -408,6 +448,12 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
             }),
             OpNif::Space(points) => Ok(Op::Space(points)),
             OpNif::Rule(size) => Ok(Op::Rule { size }),
+            OpNif::TextAt(text) => Ok(Op::TextAt {
+                runs: runs(index, text.runs, text.font, auto, faces)?,
+                size: text.font_size,
+                x: text.x,
+                y: text.y,
+            }),
         })
         .collect()
 }
@@ -485,6 +531,22 @@ fn refused(refusal: Refused) -> rustler::Error {
                 u32::from(character)
             )
         }
+        Refused::OffPage {
+            op,
+            page,
+            flowing: false,
+        } => format!(
+            "op {op} on page {page}: the text would extend past the edge of the page; \
+             move it or make it shorter"
+        ),
+        Refused::OffPage {
+            op,
+            page,
+            flowing: true,
+        } => format!(
+            "op {op} on page {page}: an accent or italic overhang would extend past the \
+             edge of the page; widen the margins or increase the line height"
+        ),
         Refused::CounterOverflow { op, page } => {
             format!("op {op} on page {page}: the list's numbering overflows; use a smaller :start")
         }
@@ -523,41 +585,86 @@ fn emit(
 
     for page in plan {
         let mut builder = doc.page(PageSize::Custom(page.width as f32, page.height as f32));
-        for placed in page.placed {
-            let mut style = TextStyle::default();
-            if let Some([r, g, b]) = placed.color {
-                style.color = Color { r, g, b };
-            }
-            let text = TextContent::new(
-                placed.text,
-                Rect::new(
-                    placed.x as f32,
-                    placed.baseline as f32,
-                    placed.width as f32,
-                    placed.size as f32,
-                ),
-                FontSpec {
-                    name: fonts.key(placed.face),
-                    size: placed.size as f32,
-                },
-                style,
-            );
-            builder = builder.element(ContentElement::Text(text));
-        }
-        for rule in page.rules {
-            let y = rule.y as f32;
-            builder = builder.stroke_line(
-                rule.from as f32,
-                y,
-                rule.to as f32,
-                y,
-                LineStyle::new(RULE_WIDTH, RULE_GRAY, RULE_GRAY, RULE_GRAY),
-            );
+        for item in page.items {
+            builder = match item {
+                Item::Text(placed) => {
+                    let mut style = TextStyle::default();
+                    if let Some([r, g, b]) = placed.color {
+                        style.color = Color { r, g, b };
+                    }
+                    let text = TextContent::new(
+                        placed.text,
+                        Rect::new(
+                            placed.x as f32,
+                            placed.baseline as f32,
+                            placed.width as f32,
+                            placed.size as f32,
+                        ),
+                        FontSpec {
+                            name: fonts.key(placed.face),
+                            size: placed.size as f32,
+                        },
+                        style,
+                    );
+                    builder.element(ContentElement::Text(text))
+                }
+                Item::Rule(rule) => {
+                    let y = rule.y as f32;
+                    builder.stroke_line(
+                        rule.from as f32,
+                        y,
+                        rule.to as f32,
+                        y,
+                        LineStyle::new(RULE_WIDTH, RULE_GRAY, RULE_GRAY, RULE_GRAY),
+                    )
+                }
+            };
         }
         builder.done();
     }
 
-    doc.build().map_err(to_nif_err)
+    doc.build().map(label_opentype_fonts).map_err(to_nif_err)
+}
+
+// The writer embeds a CFF face as the whole OpenType file but labels it bare
+// CFF. The label is renamed in place, padded so no offset in the file moves.
+// The writer escapes a newline in every string, so the pattern can only open a
+// stream, and it is taken only where that stream holds an OpenType font and
+// ends where its `/Length` says.
+fn label_opentype_fonts(mut pdf: Vec<u8>) -> Vec<u8> {
+    const BARE_CFF: &[u8] = b"/Subtype /CIDFontType0C>>\nstream\n";
+    const OPENTYPE: &[u8] = b"/Subtype /OpenType     >>\nstream\n";
+
+    let mut from = 0;
+    while let Some(found) = pdf[from..]
+        .windows(BARE_CFF.len())
+        .position(|window| window == BARE_CFF)
+        .map(|offset| from + offset)
+    {
+        let data = found + BARE_CFF.len();
+        let ends = stream_length(&pdf[..found])
+            .and_then(|length| pdf.get(data + length..))
+            .is_some_and(|rest| rest.starts_with(b"\nendstream"));
+        if ends && pdf[data..].starts_with(b"OTTO") {
+            pdf[found..data].copy_from_slice(OPENTYPE);
+        }
+        from = data;
+    }
+    pdf
+}
+
+// The `/Length` that opens the dictionary ending at `before`'s end.
+fn stream_length(before: &[u8]) -> Option<usize> {
+    let digits = before
+        .iter()
+        .rev()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    let (head, number) = before.split_at(before.len() - digits);
+    if !head.ends_with(b"<</Length ") {
+        return None;
+    }
+    std::str::from_utf8(number).ok()?.parse().ok()
 }
 
 struct Meta {
@@ -672,10 +779,50 @@ mod tests {
 
     #[test]
     fn upstream_still_substitutes_a_glyph_the_font_lacks() {
-        let font = EmbeddedFont::from_data(None, fixture("font_truetype.ttf")).expect("parses");
+        let bytes = fixture("font_truetype.ttf");
+        let font = EmbeddedFont::from_data(None, bytes.clone()).expect("parses");
+        let face = ttf_parser::Face::parse(&bytes, 0).expect("parses");
 
-        assert!(!super::coverage(&fixture("font_truetype.ttf")).contains(&'•'));
+        assert!(!super::coverage(&face).contains(&'•'));
         assert_eq!(font.glyph_id(u32::from('•')), font.glyph_id(u32::from('*')));
+    }
+
+    #[test]
+    fn upstream_still_maps_only_part_of_the_cmap_beyond_the_bmp() {
+        let font = EmbeddedFont::from_data(None, DEJAVU_SANS.to_vec()).expect("parses");
+        let face = ttf_parser::Face::parse(DEJAVU_SANS, 0).expect("parses");
+
+        assert!(face.glyph_index('\u{10300}').is_some());
+        assert_eq!(font.glyph_id(0x10300), None);
+        assert_eq!(font.glyph_id(0x1D5A0), font.glyph_id(u32::from('A')));
+    }
+
+    #[test]
+    fn upstream_still_labels_an_opentype_font_as_bare_cff() {
+        let font = EmbeddedFont::from_data(None, fixture("font_cff_regular.otf")).expect("parses");
+        let mut builder = DocumentBuilder::new().register_embedded_font("F", font);
+        builder
+            .page(PageSize::Letter)
+            .font("F", 12.0)
+            .text("a")
+            .done();
+        let pdf = builder.build().expect("builds");
+        let bare = b"/Subtype /CIDFontType0C>>\nstream\nOTTO";
+
+        assert!(pdf.windows(bare.len()).any(|window| window == bare));
+    }
+
+    #[test]
+    fn only_a_stream_that_ends_at_its_length_is_relabelled() {
+        let stream = |length: usize| {
+            format!("<</Length {length}/Subtype /CIDFontType0C>>\nstream\nOTTOdata\nendstream")
+                .into_bytes()
+        };
+
+        assert!(String::from_utf8(super::label_opentype_fonts(stream(8)))
+            .expect("ascii")
+            .contains("/Subtype /OpenType     >>"));
+        assert_eq!(super::label_opentype_fonts(stream(9)), stream(9));
     }
 
     #[test]

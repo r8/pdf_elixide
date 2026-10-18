@@ -254,6 +254,20 @@ defmodule PdfElixide.Builder do
   # included.
   @max_list_number 2_147_483_647
 
+  # Positions are written as 32-bit floats; past this many steps across a page
+  # their rounding could merge neighbouring lines or runs.
+  @precision_steps 131_072
+
+  @max_f32 3.402_823_466_385_288_6e38
+
+  @typedoc """
+  Options accepted by `text_at/5`: `:font` and `:font_size`, as for
+  `paragraph/3`.
+  """
+  @type text_at_opts :: [font: font() | nil, font_size: number() | nil]
+
+  @text_at_opts_keys [:font, :font_size]
+
   @typedoc """
   Options accepted by `to_binary/2` and `save/3`: the keys of
   `t:PdfElixide.Editor.save_opts/0` except `:incremental`, since a new
@@ -439,6 +453,40 @@ defmodule PdfElixide.Builder do
     end
 
     %{builder | ops: [{:rule, builder.font_size} | builder.ops]}
+  end
+
+  @doc """
+  Draws one line of text on the current page, its baseline starting at
+  `{x, y}`.
+
+  `x` and `y` are in points from the page's bottom-left corner. The text is
+  placed outside the flow: it does not wrap, it may sit in the margins, and
+  paragraphs, headings and lists around it neither move it nor make room for
+  it. If no page has started yet, the first one starts here.
+
+  `text` is a `t:text/0` without `\\n`; a run of whitespace is laid out as one
+  space. Text extending beyond the page edge is refused when the document
+  is built. See `t:text_at_opts/0` for the options.
+
+      PdfElixide.Builder.text_at(builder, 72, 36, "Confidential", font_size: 9)
+  """
+  @spec text_at(t(), number(), number(), text(), text_at_opts()) :: t()
+  def text_at(%__MODULE__{} = builder, x, y, text, opts \\ [])
+      when is_number(x) and is_number(y) and (is_binary(text) or is_list(text)) and
+             is_list(opts) do
+    runs = runs!(text)
+    validate_one_line!(runs)
+    opts = Keyword.validate!(opts, @text_at_opts_keys)
+    %{font: font, font_size: font_size} = build_paragraph_options(opts)
+    font_size = font_size || builder.font_size
+    validate_point!(x: x, y: y)
+    validate_precise!(builder, font_size)
+
+    op =
+      {:text_at,
+       %{runs: runs, font: font || builder.font, font_size: font_size, x: x * 1.0, y: y * 1.0}}
+
+    %{builder | ops: [op | builder.ops]}
   end
 
   @doc """
@@ -715,9 +763,32 @@ defmodule PdfElixide.Builder do
     :ok
   end
 
-  # Positions are written as 32-bit floats; past this many steps across a page
-  # their rounding could merge neighbouring lines or runs.
-  @precision_steps 131_072
+  defp validate_one_line!(runs) do
+    if Enum.any?(runs, &String.contains?(&1.text, "\n")) do
+      raise ArgumentError,
+            "invalid text, text_at/5 draws one line, so it cannot contain \"\\n\"; " <>
+              "use paragraph/3 for text that breaks"
+    end
+  end
+
+  defp validate_point!(coordinates) do
+    for {key, value} <- coordinates, abs(value) > @max_f32 do
+      raise ArgumentError,
+            "invalid #{inspect(key)}, expected a number that fits a 32-bit float: " <>
+              "#{inspect(value)}"
+    end
+  end
+
+  # Spelled as the layout spells it, so both refuse the same text.
+  defp validate_precise!(builder, font_size) do
+    {width, height} = builder.current_page_size
+
+    if max(width, height) > font_size * @precision_steps do
+      raise ArgumentError,
+            "invalid :font_size, a #{width} × #{height} page is too large to place " <>
+              "#{font_size}-point text precisely; use a smaller page or larger text"
+    end
+  end
 
   # Spelled as the layout spells them, so both refuse the same lines.
   defp validate_line_fits!(builder, font_size) do
