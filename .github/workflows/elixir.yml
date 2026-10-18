@@ -124,6 +124,13 @@ jobs:
       - name: Build docs
         if: matrix.docs
         run: mix docs --warnings-as-errors
+      # THIRD_PARTY_LICENSES lists every crate the native library links, so a
+      # dependency change makes it stale. The script needs Elixir 1.18 for
+      # JSON, which rules out the oldest leg; one leg suffices, since the
+      # crate set does not depend on the host.
+      - name: Check third-party licence notices
+        if: matrix.docs
+        run: elixir priv/scripts/third_party_licenses.exs --check
       # Dialyzer runs on the newest Elixir/OTP leg only: success typings differ
       # subtly across OTP releases, and the analysis is a gate, not a matrix.
       # It shares this job because `config/test.exs` force-builds the NIF, so a

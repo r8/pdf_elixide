@@ -313,3 +313,9 @@ Full API documentation is published on
 ## License
 
 Released under the [MIT License](https://github.com/r8/pdf_elixide/blob/main/LICENSE).
+
+The native library also compiles in third-party Rust crates, fonts and
+colour data. Their licences and notices, and how each dependency is
+reached, are listed in
+[THIRD_PARTY_LICENSES](https://github.com/r8/pdf_elixide/blob/main/THIRD_PARTY_LICENSES),
+which ships with the package.

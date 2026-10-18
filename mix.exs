@@ -57,6 +57,7 @@ defmodule PdfElixide.MixProject do
       "mix.exs",
       "README.md",
       "LICENSE",
+      "THIRD_PARTY_LICENSES",
       "CHANGELOG.md",
       "checksum-*.exs"
     ]

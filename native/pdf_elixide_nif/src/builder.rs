@@ -285,9 +285,7 @@ fn load(bytes: &[u8]) -> Result<EmbeddedFont, String> {
     Ok(font)
 }
 
-// The font maps only the Basic Multilingual Plane and U+1F000..=U+1FAFF from
-// the cmap, so any other character `coverage` accepts would be drawn as GID 0,
-// or a mathematical letter as its plain one.
+// Populate supplementary cmap entries omitted by the embedded-font lookup.
 fn supplementary_glyphs(face: &ttf_parser::Face<'_>) -> HashMap<u32, u16> {
     coverage(face)
         .into_iter()

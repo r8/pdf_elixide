@@ -278,6 +278,10 @@ fn document_validate(
     }
 }
 
+// CC0 sRGB profile from Compact-ICC-Profiles. Using it explicitly keeps
+// Ghostscript's AGPL-licensed profile out of generated PDFs.
+const SRGB_PROFILE: &[u8] = include_bytes!("srgb-v2-magic.icc");
+
 #[derive(NifMap)]
 struct ConvertOptionsNif<'a> {
     embed_fonts: bool,
@@ -296,7 +300,11 @@ impl ConvertOptionsNif<'_> {
             remove_embedded_files: self.remove_embedded_files,
             flatten_transparency: false,
             add_structure: false,
-            icc_profile: self.icc_profile.map(|profile| profile.as_slice().to_vec()),
+            icc_profile: Some(
+                self.icc_profile
+                    .map_or(SRGB_PROFILE, |profile| profile.as_slice())
+                    .to_vec(),
+            ),
             ..ConversionConfig::default()
         }
     }
@@ -609,6 +617,13 @@ mod tests {
     fn fixture(name: &str) -> PdfDocument {
         let path = format!("{}/../../test/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         PdfDocument::open(&path).expect("fixture opens")
+    }
+
+    #[test]
+    fn upstream_still_defaults_to_the_ghostscript_profile() {
+        let profile = PdfAConverter::get_srgb_icc_profile();
+
+        assert!(profile.windows(8).any(|window| window == b"Artifex "));
     }
 
     #[test]

@@ -206,7 +206,8 @@ defmodule PdfElixide.Compliance do
       PDF/A-2 report lists as a violation. They are kept for a PDF/A-3 target
       whatever this says. Defaults to `true`.
     * `:icc_profile` — the ICC profile to embed in the output intent, as the
-      profile's bytes. Defaults to `nil`, which embeds an sRGB profile.
+      profile's bytes. Defaults to `nil`, which embeds a public-domain (CC0)
+      sRGB profile.
       Supplying one for a document that already has an output intent returns
       `{:error, %PdfElixide.Error{reason: :unsupported}}` and converts nothing.
       Profiles are embedded without validation and identified as sRGB, so

@@ -662,8 +662,6 @@ impl Layout<'_> {
         let extra: Vec<(usize, &str)> = labels.iter().map(|label| (face, label.as_str())).collect();
         let block = self.block(op, &texts, &extra, face, size)?;
 
-        // Markers are right-aligned in a column as wide as the widest, so the
-        // text of every item starts at the same x.
         let gap = 0.5 * size;
         let widest = labels
             .iter()
@@ -764,8 +762,6 @@ impl Layout<'_> {
         Ok(())
     }
 
-    // Widens `extent` to the ink of `segment` drawn from `pen` on `baseline`,
-    // returning the pen after it.
     fn add_ink(
         &self,
         extent: &mut [f64; 4],

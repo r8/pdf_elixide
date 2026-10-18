@@ -314,6 +314,29 @@ defmodule PdfElixide.ComplianceConversionTest do
                  Enum.filter(conversion.failures, &(&1.code == "FONT-001"))
     end
 
+    test "embeds a public-domain sRGB profile when given none" do
+      editor = open(@sample_pdf)
+
+      profile =
+        File.read!(
+          Path.join([
+            __DIR__,
+            "..",
+            "..",
+            "native",
+            "pdf_elixide_nif",
+            "src",
+            "srgb-v2-magic.icc"
+          ])
+        )
+
+      Compliance.convert!(editor, :pdf_a_1b)
+      written = Editor.to_binary!(editor, compress: false)
+
+      assert :binary.match(written, profile) != :nomatch
+      assert :binary.match(written, "Artifex") == :nomatch
+    end
+
     test "embeds the ICC profile it is given" do
       editor = open(@sample_pdf)
       profile = :binary.copy("PROFILE!", 16)

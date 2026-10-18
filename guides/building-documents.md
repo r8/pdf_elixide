@@ -80,8 +80,8 @@ margins. With narrow margins they could reach past the edge of the page, so
 such a line is refused when the document is built.
 
 `Builder.heading/4` takes a level from 1 to 4 and sets the text in the bold
-face of its font, at 2, 1.5, 1.25 or 1.1 times the document's text size. A
-heading is never left alone at the bottom of a page: if it does not fit there
+face of its font; `t:PdfElixide.Builder.heading_opts/0` lists the text sizes.
+A heading is never left alone at the bottom of a page: if it does not fit there
 with the first line of what follows, it starts the next page. Consecutive
 headings move together.
 
