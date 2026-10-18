@@ -94,12 +94,12 @@ across pages, and `:style` and `:start` choose the numerals.
 
 ## Text at a position
 
-`Builder.text_at/5` draws one line on the current page with its baseline at
+`Builder.text_at/4` draws one line on the current page with its baseline at
 `{x, y}`, in points from the page's bottom-left corner:
 
 ```elixir
 Builder.new()
-|> Builder.text_at(72, 36, "Confidential", font_size: 9)
+|> Builder.text_at({72, 36}, "Confidential", font_size: 9)
 |> Builder.paragraph("The body starts at the top margin as usual.")
 ```
 

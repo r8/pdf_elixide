@@ -18,7 +18,7 @@ defmodule PdfElixide.Builder do
   ## Layout
 
   Paragraphs, headings and lists wrap within the margins and start new pages
-  as needed. `text_at/5` places text outside that flow. See
+  as needed. `text_at/4` places text outside that flow. See
   [Flowing text](guides/building-documents.md#flowing-text) for line spacing,
   page breaks and heading placement.
 
@@ -106,6 +106,11 @@ defmodule PdfElixide.Builder do
   in one of them.
   """
   @type text :: String.t() | [String.t() | {String.t(), run_opts()}]
+
+  @typedoc """
+  A position `{x, y}` in points from the page's bottom-left corner.
+  """
+  @type point :: {number(), number()}
 
   @typedoc "Options styling one run of `t:text/0`."
   @type run_opts :: [bold: boolean(), italic: boolean(), color: RGB.t() | nil]
@@ -231,7 +236,7 @@ defmodule PdfElixide.Builder do
   @precision_steps 131_072
 
   @typedoc """
-  Options accepted by `text_at/5`: `:font` and `:font_size`, as for
+  Options accepted by `text_at/4`: `:font` and `:font_size`, as for
   `paragraph/3`.
   """
   @type text_at_opts :: [font: font() | nil, font_size: number() | nil]
@@ -427,10 +432,9 @@ defmodule PdfElixide.Builder do
 
   @doc """
   Draws one line of text on the current page, its baseline starting at
-  `{x, y}`.
+  `point`.
 
-  `x` and `y` are in points from the page's bottom-left corner. The text is
-  placed outside the flow: it does not wrap, it may sit in the margins, and
+  `point` is a `t:point/0`. The text is placed outside the flow: it does not wrap, it may sit in the margins, and
   paragraphs, headings and lists around it neither move it nor make room for
   it. If no page has started yet, the first one starts here.
 
@@ -438,10 +442,10 @@ defmodule PdfElixide.Builder do
   space. Text extending beyond the page edge is refused when the document
   is built. See `t:text_at_opts/0` for the options.
 
-      PdfElixide.Builder.text_at(builder, 72, 36, "Confidential", font_size: 9)
+      PdfElixide.Builder.text_at(builder, {72, 36}, "Confidential", font_size: 9)
   """
-  @spec text_at(t(), number(), number(), text(), text_at_opts()) :: t()
-  def text_at(%__MODULE__{} = builder, x, y, text, opts \\ [])
+  @spec text_at(t(), point(), text(), text_at_opts()) :: t()
+  def text_at(%__MODULE__{} = builder, {x, y} = point, text, opts \\ [])
       when is_number(x) and is_number(y) and (is_binary(text) or is_list(text)) and
              is_list(opts) do
     runs = runs!(text)
@@ -449,8 +453,7 @@ defmodule PdfElixide.Builder do
     opts = Keyword.validate!(opts, @text_at_opts_keys)
     %{font: font, font_size: font_size} = build_paragraph_options(opts)
     font_size = font_size || builder.font_size
-    LayoutOptions.coordinate!(:x, x)
-    LayoutOptions.coordinate!(:y, y)
+    LayoutOptions.point!("point", point)
     validate_precise!(builder, font_size)
 
     op =
@@ -729,7 +732,7 @@ defmodule PdfElixide.Builder do
   defp validate_one_line!(runs) do
     if Enum.any?(runs, &String.contains?(&1.text, "\n")) do
       raise ArgumentError,
-            "invalid text, text_at/5 draws one line, so it cannot contain \"\\n\"; " <>
+            "invalid text, text_at/4 draws one line, so it cannot contain \"\\n\"; " <>
               "use paragraph/3 for text that breaks"
     end
   end

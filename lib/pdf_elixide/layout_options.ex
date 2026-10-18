@@ -42,14 +42,16 @@ defmodule PdfElixide.LayoutOptions do
   def positive!(_label, value) when is_number(value), do: value * 1.0
   def positive!(_label, value), do: value
 
-  @spec coordinate!(atom(), term()) :: term()
-  def coordinate!(key, value) when is_number(value) and abs(value) > @max_f32 do
+  # Range only; a point of another shape is left to the caller.
+  @spec point!(label(), term()) :: term()
+  def point!(label, {x, y} = point)
+      when is_number(x) and is_number(y) and (abs(x) > @max_f32 or abs(y) > @max_f32) do
     raise ArgumentError,
-          "invalid #{inspect(key)}, expected a number that fits a 32-bit float: " <>
-            "#{inspect(value)}"
+          "invalid #{label(label)}, expected coordinates that fit a 32-bit float: " <>
+            "#{inspect(point)}"
   end
 
-  def coordinate!(_key, value), do: value
+  def point!(_key, point), do: point
 
   # Dimensions and corners must each fit f32.
   @spec rect!(label(), term()) :: term()

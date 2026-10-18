@@ -782,8 +782,8 @@ defmodule PdfElixide.BuilderTest do
         if text < rule, do: :text, else: :rule
       end
 
-      rule_first = Builder.new() |> Builder.rule() |> Builder.text_at(72, 715, "MMMM")
-      text_first = Builder.new() |> Builder.text_at(72, 715, "MMMM") |> Builder.rule()
+      rule_first = Builder.new() |> Builder.rule() |> Builder.text_at({72, 715}, "MMMM")
+      text_first = Builder.new() |> Builder.text_at({72, 715}, "MMMM") |> Builder.rule()
 
       assert first_drawn.(rule_first) == :rule
       assert first_drawn.(text_first) == :text
@@ -794,9 +794,9 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
-  describe "text_at/5" do
+  describe "text_at/4" do
     test "draws one line with its baseline at the point" do
-      doc = Builder.new() |> Builder.text_at(100, 200, "Mark") |> written()
+      doc = Builder.new() |> Builder.text_at({100, 200}, "Mark") |> written()
       [first | _] = Document.chars!(doc, 0)
 
       assert Document.page_count!(doc) == 1
@@ -807,10 +807,10 @@ defmodule PdfElixide.BuilderTest do
     test "stays outside the flow, on the current page, and may sit in the margins" do
       doc =
         Builder.new()
-        |> Builder.text_at(10, 10, "corner")
+        |> Builder.text_at({10, 10}, "corner")
         |> Builder.paragraph("first")
         |> Builder.page()
-        |> Builder.text_at(300, 400, "second page")
+        |> Builder.text_at({300, 400}, "second page")
         |> written()
 
       fonts = doc |> Document.chars!(0) |> Enum.map_join(& &1.text)
@@ -823,7 +823,7 @@ defmodule PdfElixide.BuilderTest do
     test "takes runs, a font and a size" do
       doc =
         Builder.new()
-        |> Builder.text_at(72, 72, ["a", {"b", bold: true}], font: :times, font_size: 20)
+        |> Builder.text_at({72, 72}, ["a", {"b", bold: true}], font: :times, font_size: 20)
         |> written()
 
       fonts = fonts_by_text(doc)
@@ -835,14 +835,14 @@ defmodule PdfElixide.BuilderTest do
 
     test "counts for :auto" do
       [char | _] =
-        Builder.new() |> Builder.text_at(72, 72, "Звіт") |> written() |> Document.chars!(0)
+        Builder.new() |> Builder.text_at({72, 72}, "Звіт") |> written() |> Document.chars!(0)
 
       assert char.font =~ "DejaVuSans"
     end
 
     test "a line past the edge of the page is refused" do
       for {x, y} <- [{580, 100}, {72, 788}, {72, 1}, {-1, 100}] do
-        message = Builder.new() |> Builder.text_at(x, y, "Wide text") |> refusal()
+        message = Builder.new() |> Builder.text_at({x, y}, "Wide text") |> refusal()
 
         assert message =~ "past the edge of the page"
       end
@@ -857,14 +857,14 @@ defmodule PdfElixide.BuilderTest do
             {607, 100, {"f", italic: true}, :times},
             {1, 100, {"j", italic: true}, cff_family()}
           ] do
-        builder = Builder.new() |> Builder.text_at(x, y, [run], font: font)
+        builder = Builder.new() |> Builder.text_at({x, y}, [run], font: font)
 
         assert refusal(builder) =~ "past the edge of the page"
       end
     end
 
     test "a character its font cannot draw is refused" do
-      message = Builder.new() |> Builder.text_at(72, 72, "Звіт", font: :helvetica) |> refusal()
+      message = Builder.new() |> Builder.text_at({72, 72}, "Звіт", font: :helvetica) |> refusal()
 
       assert message =~ "Helvetica cannot draw"
     end
@@ -872,14 +872,23 @@ defmodule PdfElixide.BuilderTest do
     test "malformed arguments raise" do
       builder = Builder.new()
 
-      assert_raise ArgumentError, ~r/one line/, fn -> Builder.text_at(builder, 72, 72, "a\nb") end
-      assert_raise ArgumentError, ~r/:x/, fn -> Builder.text_at(builder, 1.0e39, 72, "a") end
-
-      assert_raise ArgumentError, ~r/too large/, fn ->
-        Builder.new(page_size: {612, 1.0e9}) |> Builder.text_at(72, 72, "a")
+      assert_raise ArgumentError, ~r/one line/, fn ->
+        Builder.text_at(builder, {72, 72}, "a\nb")
       end
 
-      assert_raise FunctionClauseError, fn -> Builder.text_at(builder, untyped("72"), 72, "a") end
+      assert_raise ArgumentError, ~r/invalid point,/, fn ->
+        Builder.text_at(builder, {1.0e39, 72}, "a")
+      end
+
+      assert_raise ArgumentError, ~r/too large/, fn ->
+        Builder.new(page_size: {612, 1.0e9}) |> Builder.text_at({72, 72}, "a")
+      end
+
+      assert_raise FunctionClauseError, fn ->
+        Builder.text_at(builder, {untyped("72"), 72}, "a")
+      end
+
+      assert_raise FunctionClauseError, fn -> Builder.text_at(builder, untyped(72), "a") end
     end
   end
 

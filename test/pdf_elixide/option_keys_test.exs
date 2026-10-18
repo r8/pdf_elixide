@@ -435,7 +435,7 @@ defmodule PdfElixide.OptionKeysTest do
 
       accepts_each!(
         [font: :times, font_size: 20],
-        &Builder.text_at(Builder.new(), 72, 72, "T", &1)
+        &Builder.text_at(Builder.new(), {72, 72}, "T", &1)
       )
 
       accepts_each!(
@@ -627,7 +627,7 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.save(Builder.new(), "/dev/null", opts) end,
         fn opts -> Builder.paragraph(Builder.new(), [{"Text", opts}]) end,
         fn opts -> Builder.heading(Builder.new(), 1, "Text", opts) end,
-        fn opts -> Builder.text_at(Builder.new(), 72, 72, "Text", opts) end,
+        fn opts -> Builder.text_at(Builder.new(), {72, 72}, "Text", opts) end,
         fn opts -> Builder.bullet_list(Builder.new(), ["Text"], opts) end,
         fn opts -> Builder.numbered_list(Builder.new(), ["Text"], opts) end,
         fn opts -> Builder.FontFamily.new([regular: "a"] ++ opts) end
