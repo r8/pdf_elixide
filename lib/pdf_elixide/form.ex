@@ -222,6 +222,8 @@ defmodule PdfElixide.Form do
   @spec put_value(Editor.t(), String.t(), Field.value()) ::
           {:ok, Editor.t()} | {:error, Error.t()}
   def put_value(%Editor{ref: ref} = editor, name, value) when is_binary(name) do
+    validate_pair!({name, value})
+
     case Wrap.call(fn -> Native.editor_set_form_field_value(ref, name, value) end) do
       {:ok, _} -> {:ok, editor}
       {:error, _} = err -> err

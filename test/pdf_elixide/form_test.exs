@@ -954,7 +954,9 @@ defmodule PdfElixide.FormTest do
       editor = Editor.open!(@form_pdf)
 
       for bad <- [42, :yes, ["a", 5], {:name, 5}, {:name, "Export1"}, {:nope, "x"}] do
-        assert_raise ArgumentError, fn -> Form.put_value(editor, "full_name", bad) end
+        assert_raise ArgumentError, ~r/invalid value for form field "full_name"/, fn ->
+          Form.put_value(editor, "full_name", bad)
+        end
       end
     end
 
@@ -962,7 +964,9 @@ defmodule PdfElixide.FormTest do
       editor = Editor.open!(@form_pdf)
 
       for value <- [{:text, "x"}, {:boolean, true}, {:array, ["a"]}] do
-        assert_raise ArgumentError, fn -> Form.put_value(editor, "full_name", value) end
+        assert_raise ArgumentError, ~r/invalid value for form field "full_name"/, fn ->
+          Form.put_value(editor, "full_name", value)
+        end
       end
     end
   end
@@ -1204,7 +1208,9 @@ defmodule PdfElixide.FormTest do
     test "raises ArgumentError when the fun returns a shape that cannot be written" do
       editor = Editor.open!(@form_pdf)
 
-      assert_raise ArgumentError, fn -> Form.update_value(editor, "full_name", fn _ -> 42 end) end
+      assert_raise ArgumentError, ~r/invalid value for form field "full_name": 42/, fn ->
+        Form.update_value(editor, "full_name", fn _ -> 42 end)
+      end
     end
 
     test "raises FunctionClauseError for a non-function or a wrong arity" do
