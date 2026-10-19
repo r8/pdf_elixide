@@ -1089,13 +1089,14 @@ defmodule PdfElixide.Builder do
   defp runs!(text) when is_binary(text), do: [run!(text)]
   defp runs!(runs), do: Enum.map(runs, &run!/1)
 
-  defp run!(text) when is_binary(text), do: %{text: text, bold: false, italic: false, color: nil}
+  defp run!(text) when is_binary(text),
+    do: %{text: LayoutOptions.utf8!("text", text), bold: false, italic: false, color: nil}
 
   defp run!({text, opts}) when is_binary(text) and is_list(opts) do
     opts = Keyword.validate!(opts, @run_opts_keys)
 
     %{
-      text: text,
+      text: LayoutOptions.utf8!("text", text),
       bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
       italic: boolean!(:italic, Keyword.get(opts, :italic, false)),
       color: color!(:color, Keyword.get(opts, :color))
@@ -1123,7 +1124,7 @@ defmodule PdfElixide.Builder do
   end
 
   defp text!(_key, nil), do: nil
-  defp text!(_key, value) when is_binary(value), do: value
+  defp text!(key, value) when is_binary(value), do: LayoutOptions.utf8!(key, value)
 
   defp text!(key, value) do
     raise ArgumentError, "invalid #{inspect(key)}, expected a string or nil: #{inspect(value)}"

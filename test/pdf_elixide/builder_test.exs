@@ -1421,6 +1421,23 @@ defmodule PdfElixide.BuilderTest do
   end
 
   describe "malformed arguments raise where they are passed" do
+    test "text and metadata that are not UTF-8" do
+      for build <- [
+            &Builder.paragraph(&1, <<0xFF>>),
+            &Builder.heading(&1, 1, ["ok ", {<<0xFF>>, bold: true}]),
+            &Builder.bullet_list(&1, [<<0xFF>>]),
+            &Builder.text_at(&1, {72, 72}, <<0xFF>>)
+          ] do
+        assert_raise ArgumentError, ~r/^invalid text, expected a UTF-8 string/, fn ->
+          build.(Builder.new())
+        end
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :title, expected a UTF-8 string/, fn ->
+        Builder.new(title: <<0xFF>>)
+      end
+    end
+
     test "a line taller than the content area" do
       assert_raise ArgumentError, ~r/does not fit the 648.0-point content height/, fn ->
         Builder.new() |> Builder.paragraph("x", font_size: 500)

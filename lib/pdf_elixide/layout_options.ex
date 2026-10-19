@@ -92,6 +92,20 @@ defmodule PdfElixide.LayoutOptions do
 
   def rgb!(_label, color), do: color
 
+  # Text reaches the writer as a Rust string. A value that is not a binary is
+  # left to the caller.
+  @spec utf8!(label(), term()) :: term()
+  def utf8!(label, value) when is_binary(value) do
+    if not String.valid?(value) do
+      raise ArgumentError,
+            "invalid #{label(label)}, expected a UTF-8 string: #{inspect(value)}"
+    end
+
+    value
+  end
+
+  def utf8!(_label, value), do: value
+
   defp label(key) when is_atom(key), do: inspect(key)
   defp label(name) when is_binary(name), do: name
 end

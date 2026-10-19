@@ -2452,13 +2452,7 @@ defmodule PdfElixide.Editor do
 
   defp validate_text!(_key, nil), do: nil
 
-  defp validate_text!(key, value) when is_binary(value) do
-    if String.valid?(value) do
-      value
-    else
-      raise ArgumentError, "invalid #{inspect(key)}, expected a UTF-8 string: #{inspect(value)}"
-    end
-  end
+  defp validate_text!(key, value) when is_binary(value), do: LayoutOptions.utf8!(key, value)
 
   defp validate_text!(key, other) do
     raise ArgumentError, "invalid #{inspect(key)}, expected a string: #{inspect(other)}"
@@ -2489,7 +2483,10 @@ defmodule PdfElixide.Editor do
     # code and table lines, the shortest, are nine tenths of it.
     opts
     |> create_layout(font_size, {0.9, 2})
-    |> Map.merge(%{subject: Keyword.get(opts, :subject), font_size: font_size})
+    |> Map.merge(%{
+      subject: validate_text!(:subject, Keyword.get(opts, :subject)),
+      font_size: font_size
+    })
   end
 
   defp build_plain_text_create_options(opts) do
@@ -2510,9 +2507,9 @@ defmodule PdfElixide.Editor do
     validate_image_area_fits!(Map.get(LayoutOptions.paper_sizes(), page_size, page_size), margins)
 
     Map.merge(margins, %{
-      title: Keyword.get(opts, :title),
-      author: Keyword.get(opts, :author),
-      subject: Keyword.get(opts, :subject),
+      title: validate_text!(:title, Keyword.get(opts, :title)),
+      author: validate_text!(:author, Keyword.get(opts, :author)),
+      subject: validate_text!(:subject, Keyword.get(opts, :subject)),
       page_size: page_size
     })
   end
@@ -2564,8 +2561,8 @@ defmodule PdfElixide.Editor do
     validate_layout_fits!(page_size, margins, {font_size, scales, line_height})
 
     Map.merge(margins, %{
-      title: Keyword.get(opts, :title),
-      author: Keyword.get(opts, :author),
+      title: validate_text!(:title, Keyword.get(opts, :title)),
+      author: validate_text!(:author, Keyword.get(opts, :author)),
       page_size: page_size,
       line_height: line_height
     })

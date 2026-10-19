@@ -413,6 +413,20 @@ defmodule PdfElixide.EditorCreateTest do
       assert_raise ArgumentError, fn -> Editor.from_plain_text(<<0xFF>>) end
     end
 
+    test "metadata that is not UTF-8 raises naming the option" do
+      assert_raise ArgumentError, ~r/^invalid :title, expected a UTF-8 string/, fn ->
+        Editor.from_markdown("x", title: <<0xFF>>)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :author, expected a UTF-8 string/, fn ->
+        Editor.from_plain_text("x", author: <<0xFF>>)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :subject, expected a UTF-8 string/, fn ->
+        Editor.from_images([PdfElixide.Png.solid(8, 8, :rgb)], subject: <<0xFF>>)
+      end
+    end
+
     test "content that is not a binary raises" do
       assert_raise FunctionClauseError, fn -> Editor.from_html(untyped(~c"<p>x</p>")) end
     end
