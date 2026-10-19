@@ -456,6 +456,30 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!(@builder_output_opts, &Builder.to_binary(Builder.new(), &1))
     end
 
+    test "the Builder drawing operations" do
+      red = %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}
+      line_opts = [stroke_color: red, stroke_width: 2, dash_pattern: {[3, 2], 0}]
+      shape_opts = Keyword.put(line_opts, :fill_color, red)
+      rect = %PdfElixide.Geometry.Rect{x: 72, y: 72, width: 10, height: 10}
+
+      accepts_each!(shape_opts, &Builder.rect(Builder.new(), rect, &1))
+      accepts_each!(shape_opts, &Builder.circle(Builder.new(), {72, 72}, 10, &1))
+      accepts_each!(shape_opts, &Builder.ellipse(Builder.new(), {72, 72}, {10, 5}, &1))
+      accepts_each!(shape_opts, &Builder.polygon(Builder.new(), [{0, 0}, {1, 0}, {0, 1}], &1))
+      accepts_each!(shape_opts, &Builder.path(Builder.new(), [{:move_to, 0, 0}], &1))
+      accepts_each!(line_opts, &Builder.line(Builder.new(), {0, 0}, {1, 1}, &1))
+      accepts_each!(line_opts, &Builder.arc(Builder.new(), {72, 72}, 10, 0, 90, &1))
+
+      accepts_each!(
+        line_opts,
+        &Builder.bezier(Builder.new(), {0, 0}, {1, 1}, {2, 1}, {3, 0}, &1)
+      )
+
+      assert_raise ArgumentError, ~r/:fill_color/, fn ->
+        Builder.line(Builder.new(), {0, 0}, {1, 1}, fill_color: red)
+      end
+    end
+
     test "Editor.save/3 and to_binary/2" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -630,7 +654,21 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.text_at(Builder.new(), {72, 72}, "Text", opts) end,
         fn opts -> Builder.bullet_list(Builder.new(), ["Text"], opts) end,
         fn opts -> Builder.numbered_list(Builder.new(), ["Text"], opts) end,
-        fn opts -> Builder.FontFamily.new([regular: "a"] ++ opts) end
+        fn opts -> Builder.FontFamily.new([regular: "a"] ++ opts) end,
+        fn opts ->
+          Builder.rect(
+            Builder.new(),
+            %PdfElixide.Geometry.Rect{x: 0, y: 0, width: 1, height: 1},
+            opts
+          )
+        end,
+        fn opts -> Builder.line(Builder.new(), {0, 0}, {1, 1}, opts) end,
+        fn opts -> Builder.circle(Builder.new(), {0, 0}, 1, opts) end,
+        fn opts -> Builder.ellipse(Builder.new(), {0, 0}, {1, 1}, opts) end,
+        fn opts -> Builder.polygon(Builder.new(), [{0, 0}, {1, 0}, {0, 1}], opts) end,
+        fn opts -> Builder.arc(Builder.new(), {0, 0}, 1, 0, 90, opts) end,
+        fn opts -> Builder.bezier(Builder.new(), {0, 0}, {1, 1}, {2, 1}, {3, 0}, opts) end,
+        fn opts -> Builder.path(Builder.new(), [{:move_to, 0, 0}], opts) end
       ]
 
       for call <- calls do

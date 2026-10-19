@@ -356,6 +356,25 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Builder.__option_defaults__(:heading) == %{font: nil, font_size: nil}
     end
 
+    test "the Builder drawing operations" do
+      black = %PdfElixide.Color.RGB{r: 0.0, g: 0.0, b: 0.0}
+
+      assert Builder.__option_defaults__(:shape) == %{
+               stroke_color: black,
+               fill_color: nil,
+               stroke_width: 1.0,
+               dash_pattern: nil
+             }
+
+      # A line has no `:fill_color` option; the key is emitted for the native op.
+      assert Builder.__option_defaults__(:line) == %{
+               stroke_color: black,
+               fill_color: nil,
+               stroke_width: 1.0,
+               dash_pattern: nil
+             }
+    end
+
     test "Editor.from_images/2" do
       assert Editor.__option_defaults__(:image_create) == %{
                title: nil,

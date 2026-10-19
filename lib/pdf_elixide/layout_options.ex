@@ -51,7 +51,11 @@ defmodule PdfElixide.LayoutOptions do
             "#{inspect(point)}"
   end
 
-  def point!(_key, point), do: point
+  def point!(_label, {x, y}) when is_number(x) and is_number(y), do: {x * 1.0, y * 1.0}
+  def point!(_label, point), do: point
+
+  @spec fits_f32?(number()) :: boolean()
+  def fits_f32?(value), do: abs(value) <= @max_f32
 
   # Dimensions and corners must each fit f32.
   @spec rect!(label(), term()) :: term()

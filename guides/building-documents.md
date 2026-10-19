@@ -107,6 +107,70 @@ Positioned text can sit in the margins; flowing text does not make room for
 it. It does not wrap, and text containing `\n` raises. At build time, the
 whole line must fit on the page, including accents and italic overhangs.
 
+## Drawing shapes
+
+The builder draws rectangles, lines, circles, ellipses, polygons, arcs, Bézier
+curves and general paths. Points are `{x, y}` tuples and rectangles are
+`PdfElixide.Geometry.Rect` structs, both in points from the page's
+bottom-left corner:
+
+```elixir
+alias PdfElixide.Color.RGB
+alias PdfElixide.Geometry.Rect
+
+grey = %RGB{r: 0.9, g: 0.9, b: 0.9}
+
+Builder.new()
+|> Builder.rect(%Rect{x: 72.0, y: 640.0, width: 468.0, height: 80.0}, fill_color: grey, stroke_color: nil)
+|> Builder.line({72, 620}, {540, 620}, dash_pattern: {[3, 2], 0})
+|> Builder.circle({306, 400}, 50, stroke_width: 2)
+|> Builder.arc({306, 250}, 50, 0, 180)
+|> Builder.paragraph("The body starts at the top margin as usual.")
+```
+
+Shapes are positioned content, like `text_at/4`: they are drawn on the
+current page, flowing text neither moves them nor makes room for them, and
+each is painted over everything added before it. A shape may run past the
+page edge; the part outside is not shown. `PdfElixide.Builder.arc/6` describes
+arc angles and direction.
+
+Closed shapes (`rect/3`, `circle/4`, `ellipse/4`, `polygon/3` and `path/3`)
+take an outline and a fill; lines, arcs and curves take an outline only. To
+fill without an outline, pass `stroke_color: nil` with a `:fill_color`.
+`t:PdfElixide.Builder.shape_opts/0` lists paint options and defaults.
+Where an outline crosses itself, the inside is filled by the nonzero winding
+rule.
+
+Line ends are cut square at the end point and corners are mitred; neither can
+be changed.
+
+The operations, and the `:stroke_color`, `:fill_color`, `:stroke_width` and
+`:dash_pattern` options, are those of `PdfElixide.Document.Path`, so a path
+extracted with `PdfElixide.Document.paths/1` can be drawn again:
+
+```elixir
+source
+|> PdfElixide.Document.paths!(0)
+|> Enum.filter(&(&1.stroke_color || &1.fill_color))
+|> Enum.reduce(Builder.new(), fn path, builder ->
+  Builder.path(builder, path.operations,
+    stroke_color: path.stroke_color,
+    fill_color: path.fill_color,
+    stroke_width: path.stroke_width
+  )
+end)
+```
+
+Extraction does not report dash patterns, and line ends and corners are always
+square and mitred here, so a redrawn outline is solid and square-ended whatever
+the source drew.
+
+An extracted path or `bbox` lands where it was on the source page only when
+that page has no rotation and its media box starts at `{0.0, 0.0}`. Otherwise
+convert it first; see
+[Page boxes and the coordinate origin](page-geometry.md#page-boxes-and-the-coordinate-origin)
+and [Rotated pages and extracted geometry](page-geometry.md#rotated-pages-and-extracted-geometry).
+
 ## Styled text
 
 Wherever the builder takes text, it takes either a string or a list of runs.

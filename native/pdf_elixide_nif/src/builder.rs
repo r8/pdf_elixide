@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use pdf_oxide::{
-    elements::{ContentElement, FontSpec, TextContent, TextStyle},
+    elements::{ContentElement, FontSpec, PathContent, TextContent, TextStyle},
     fonts::bundled::{DEJAVU_SANS, DEJAVU_SANS_BOLD},
     geometry::Rect,
     layout::Color,
-    writer::{DocumentBuilder, EmbeddedFont, LineStyle, PageSize},
+    writer::{DocumentBuilder, EmbeddedFont, PageSize},
 };
 use rustler::{Binary, NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
 
@@ -17,8 +17,9 @@ use crate::{
     error::{tagged_err, to_nif_err},
     flow::{
         self, embedded_key, Embedded, Face, Fonts, Item, Margins, Marker, Op, PagePlan, Refused,
-        Run, Unordered,
+        Run, Shape, Stroke, Unordered,
     },
+    paths::PathOpNif,
 };
 
 #[derive(NifMap)]
@@ -54,6 +55,30 @@ pub enum OpNif {
     Space(f64),
     Rule(f64),
     TextAt(TextAtNif),
+    Path(ShapeNif),
+}
+
+#[derive(NifMap)]
+pub struct ShapeNif {
+    operations: Vec<PathOpNif>,
+    stroke_color: Option<RgbNif>,
+    fill_color: Option<RgbNif>,
+    stroke_width: f32,
+    dash_pattern: Option<(Vec<f32>, f32)>,
+}
+
+impl From<ShapeNif> for Shape {
+    fn from(shape: ShapeNif) -> Self {
+        Shape {
+            operations: shape.operations.into_iter().map(Into::into).collect(),
+            stroke: shape.stroke_color.map(|c| Stroke {
+                color: [c.r, c.g, c.b],
+                width: shape.stroke_width,
+                dash: shape.dash_pattern,
+            }),
+            fill: shape.fill_color.map(|c| [c.r, c.g, c.b]),
+        }
+    }
 }
 
 #[derive(NifMap)]
@@ -452,6 +477,7 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
                 x: text.x,
                 y: text.y,
             }),
+            OpNif::Path(shape) => Ok(Op::Path(shape.into())),
         })
         .collect()
 }
@@ -553,9 +579,6 @@ fn refused(refusal: Refused) -> rustler::Error {
     unsupported(message)
 }
 
-const RULE_WIDTH: f32 = 0.5;
-const RULE_GRAY: f32 = 0.5;
-
 fn emit(
     meta: Meta,
     fonts: &Fonts,
@@ -606,22 +629,27 @@ fn emit(
                     );
                     builder.element(ContentElement::Text(text))
                 }
-                Item::Rule(rule) => {
-                    let y = rule.y as f32;
-                    builder.stroke_line(
-                        rule.from as f32,
-                        y,
-                        rule.to as f32,
-                        y,
-                        LineStyle::new(RULE_WIDTH, RULE_GRAY, RULE_GRAY, RULE_GRAY),
-                    )
-                }
+                Item::Path(shape) => builder.element(ContentElement::Path(path_content(shape))),
             };
         }
         builder.done();
     }
 
     doc.build().map(label_opentype_fonts).map_err(to_nif_err)
+}
+
+// Assigned field by field so a field upstream adds keeps its default.
+fn path_content(shape: Shape) -> PathContent {
+    let rgb = |[r, g, b]: [f32; 3]| Color { r, g, b };
+    let mut path = PathContent::from_operations(shape.operations);
+    path.fill_color = shape.fill.map(rgb);
+    path.stroke_color = None;
+    if let Some(stroke) = shape.stroke {
+        path.stroke_color = Some(rgb(stroke.color));
+        path.stroke_width = stroke.width;
+        path.dash_pattern = stroke.dash;
+    }
+    path
 }
 
 // The writer embeds a CFF face as the whole OpenType file but labels it bare
@@ -710,6 +738,7 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
 #[cfg(test)]
 mod tests {
     use pdf_oxide::{
+        elements::{ContentElement, LineCap, LineJoin, PathContent, PathOperation},
         fonts::bundled::DEJAVU_SANS,
         writer::{DocumentBuilder, EmbeddedFont, FontManager, PageSize, TextLayout},
         PdfDocument,
@@ -729,6 +758,27 @@ mod tests {
         let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
 
         assert_eq!(read_metadata(&doc).keywords, None);
+    }
+
+    #[test]
+    fn upstream_still_ignores_line_cap_and_join_on_a_path() {
+        let mut path = PathContent::from_operations(vec![
+            PathOperation::MoveTo(0.0, 0.0),
+            PathOperation::LineTo(10.0, 10.0),
+        ]);
+        path.line_cap = LineCap::Round;
+        path.line_join = LineJoin::Round;
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .element(ContentElement::Path(path))
+            .done();
+        let pdf = builder.build().expect("builds");
+        let contains = |op: &[u8]| pdf.windows(op.len()).any(|window| window == op);
+
+        assert!(contains(b"\nS\n"));
+        assert!(!contains(b"1 J\n"));
+        assert!(!contains(b"1 j\n"));
     }
 
     #[test]

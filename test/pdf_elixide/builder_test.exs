@@ -12,6 +12,7 @@ defmodule PdfElixide.BuilderTest do
   alias PdfElixide.Document.Page
   alias PdfElixide.Editor
   alias PdfElixide.Error
+  alias PdfElixide.Geometry.Rect
 
   # Helvetica's ascent and descent, in thousandths of an em.
   @ascent 718
@@ -52,6 +53,15 @@ defmodule PdfElixide.BuilderTest do
 
   defp fonts_by_text(doc) do
     doc |> Document.chars!(0) |> Map.new(&{&1.text, &1.font})
+  end
+
+  # A built page has a single content stream, so `ContentOrder`, which reads a
+  # `/Contents` array, does not apply.
+  defp content(builder) do
+    bytes = builder |> Builder.to_binary!(compress: false)
+    streams = Regex.scan(~r/stream\r?\n(.*?)endstream/s, bytes, capture: :all_but_first)
+    [body] = for [stream] <- streams, stream =~ " w\n", do: stream
+    body
   end
 
   defp refusal(builder) do
@@ -773,10 +783,7 @@ defmodule PdfElixide.BuilderTest do
 
     test "a rule and text are drawn in the order they were added" do
       first_drawn = fn builder ->
-        bytes = builder |> Editor.from_builder!() |> Editor.to_binary!(compress: false)
-        streams = Regex.scan(~r/stream\r?\n(.*?)endstream/s, bytes, capture: :all_but_first)
-        [body] = for [stream] <- streams, stream =~ "BT", do: stream
-
+        body = content(builder)
         {text, _} = :binary.match(body, "BT")
         {rule, _} = :binary.match(body, " l\n")
         if text < rule, do: :text, else: :rule
@@ -889,6 +896,397 @@ defmodule PdfElixide.BuilderTest do
       end
 
       assert_raise FunctionClauseError, fn -> Builder.text_at(builder, untyped(72), "a") end
+    end
+  end
+
+  describe "drawing" do
+    @grey %RGB{r: 0.5, g: 0.5, b: 0.5}
+    @black %RGB{r: 0.0, g: 0.0, b: 0.0}
+    @red %RGB{r: 1.0, g: 0.0, b: 0.0}
+
+    defp drawn(builder), do: builder |> written() |> Document.paths!()
+
+    defp distance({x1, y1}, {x2, y2}), do: :math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+
+    defp ends(operations) do
+      for op <- operations, op != :close_path, do: op |> Tuple.to_list() |> Enum.take(-2)
+    end
+
+    test "a rectangle is drawn from a Rect, reversed corners normalized" do
+      for rect <- [
+            %Rect{x: 72, y: 600, width: 100, height: 50},
+            %Rect{x: 172, y: 650, width: -100, height: -50}
+          ] do
+        assert [path] =
+                 Builder.new()
+                 |> Builder.rect(rect, fill_color: @grey, stroke_color: nil)
+                 |> drawn()
+
+        assert path.operations == [{:rectangle, 72.0, 600.0, 100.0, 50.0}]
+        assert path.fill_color == @grey
+        assert path.stroke_color == nil
+      end
+    end
+
+    test "an extracted bbox draws back as a rectangle around its text" do
+      doc = Builder.new() |> Builder.paragraph("Mark") |> written()
+      [word] = Document.words!(doc, 0)
+
+      assert [path] = Builder.new() |> Builder.rect(word.bbox) |> drawn()
+      assert path.bbox == word.bbox
+    end
+
+    test "lines, polygons and curves read back as written" do
+      [line, polygon, bezier] =
+        Builder.new()
+        |> Builder.line({72, 580}, {540, 580}, stroke_width: 2.5)
+        |> Builder.polygon([{100, 100}, {200, 100}, {150, 180}], fill_color: @red)
+        |> Builder.bezier({72, 300}, {150, 400}, {250, 200}, {340, 300}, stroke_color: @red)
+        |> drawn()
+
+      assert line.operations == [{:move_to, 72.0, 580.0}, {:line_to, 540.0, 580.0}]
+      assert {line.stroke_color, line.fill_color, line.stroke_width} == {@black, nil, 2.5}
+
+      assert polygon.operations == [
+               {:move_to, 100.0, 100.0},
+               {:line_to, 200.0, 100.0},
+               {:line_to, 150.0, 180.0},
+               :close_path
+             ]
+
+      assert {polygon.stroke_color, polygon.fill_color} == {@black, @red}
+
+      assert bezier.operations == [
+               {:move_to, 72.0, 300.0},
+               {:curve_to, 150.0, 400.0, 250.0, 200.0, 340.0, 300.0}
+             ]
+
+      assert bezier.stroke_color == @red
+    end
+
+    test "a zero-width outline is drawn as the thinnest line and reads back as zero" do
+      builder = Builder.new() |> Builder.line({72, 600}, {540, 600}, stroke_width: 0)
+
+      assert content(builder) =~ "0 w\n72 600 m\n"
+      assert [%{stroke_width: +0.0}] = drawn(builder)
+    end
+
+    test "an extracted path draws back unchanged" do
+      original =
+        Builder.new()
+        |> Builder.path([
+          {:move_to, 100, 100},
+          {:line_to, 200, 100},
+          {:curve_to, 250, 100, 250, 200, 200, 200},
+          :close_path,
+          {:rectangle, 300, 300, 50, 50}
+        ])
+        |> drawn()
+
+      [path] = original
+
+      redrawn =
+        Builder.new()
+        |> Builder.path(path.operations,
+          stroke_color: path.stroke_color,
+          fill_color: path.fill_color,
+          stroke_width: path.stroke_width
+        )
+        |> drawn()
+
+      assert redrawn == original
+    end
+
+    test "circles and ellipses are closed curves on their outline" do
+      [circle, ellipse] =
+        Builder.new()
+        |> Builder.circle({300, 400}, 50)
+        |> Builder.ellipse({300, 200}, {80, 40}, fill_color: @red)
+        |> drawn()
+
+      assert [{:move_to, _, _} | curves] = circle.operations
+      assert length(curves) == 5 and List.last(curves) == :close_path
+
+      for [x, y] <- ends(circle.operations) do
+        assert_in_delta distance({x, y}, {300, 400}), 50, 0.001
+      end
+
+      for [x, y] <- ends(ellipse.operations) do
+        assert_in_delta ((x - 300) / 80) ** 2 + ((y - 200) / 40) ** 2, 1, 0.001
+      end
+
+      assert_in_delta circle.bbox.width, 100, 0.01
+      assert_in_delta ellipse.bbox.height, 80, 0.01
+      assert ellipse.fill_color == @red
+    end
+
+    test "an arc runs counter-clockwise, or clockwise when the end angle is lower" do
+      [quarter, three_quarters, full] =
+        Builder.new()
+        |> Builder.arc({100, 100}, 50, 0, 90)
+        |> Builder.arc({100, 100}, 50, 0, -270)
+        |> Builder.arc({100, 100}, 50, 30, 390)
+        |> drawn()
+
+      points = fn path ->
+        for [x, y] <- ends(path.operations), do: {Float.round(x, 3), Float.round(y, 3)}
+      end
+
+      assert points.(quarter) == [{150.0, 100.0}, {100.0, 150.0}]
+
+      assert points.(three_quarters) == [
+               {150.0, 100.0},
+               {100.0, 50.0},
+               {50.0, 100.0},
+               {100.0, 150.0}
+             ]
+
+      # Clockwise from the rightmost point, the curve first bends downwards.
+      [_, {:curve_to, _, c1y, _, _, _, _} | _] = three_quarters.operations
+      assert c1y < 100
+
+      # An angle too large for its sweep to survive conversion to radians.
+      huge = 100_000_000_000_000_000_000_000
+
+      [far_quarter] =
+        Builder.new() |> Builder.arc({100, 100}, 50, huge, huge + 90) |> drawn()
+
+      [near_quarter] =
+        Builder.new()
+        |> Builder.arc({100, 100}, 50, rem(huge, 360), rem(huge, 360) + 90)
+        |> drawn()
+
+      assert far_quarter == near_quarter
+      assert [start, finish] = points.(far_quarter)
+      assert_in_delta distance(start, finish), 50 * :math.sqrt(2), 0.01
+
+      [first | rest] = points.(full)
+      assert length(rest) == 4 and List.last(rest) == first
+      assert three_quarters.fill_color == nil
+
+      for path <- [quarter, three_quarters, full],
+          {:curve_to, c1x, c1y, c2x, c2y, _, _} <- path.operations,
+          point <- [{c1x, c1y}, {c2x, c2y}] do
+        assert distance(point, {100, 100}) <= 50 * :math.sqrt(1 + 0.5523 ** 2)
+      end
+    end
+
+    test "a dash pattern applies to its own outline only" do
+      body =
+        Builder.new()
+        |> Builder.line({72, 600}, {540, 600}, dash_pattern: {[3, 2], 1})
+        |> Builder.line({72, 500}, {540, 500})
+        |> content()
+
+      assert [_, after_dashed] = String.split(body, "[3 2] 1 d\n")
+      assert [dashed, solid] = String.split(after_dashed, "[] 0 d\n")
+      assert dashed =~ "600 m"
+      assert solid =~ "500 m"
+      refute solid =~ " d\n"
+    end
+
+    test "shapes and text are painted in the order they were added" do
+      first_drawn = fn builder ->
+        body = content(builder)
+        {text, _} = :binary.match(body, "BT")
+        {rect, _} = :binary.match(body, " re\n")
+        if text < rect, do: :text, else: :rect
+      end
+
+      box = %Rect{x: 72, y: 700, width: 100, height: 30}
+      text_first = Builder.new() |> Builder.text_at({72, 715}, "MMMM") |> Builder.rect(box)
+      rect_first = Builder.new() |> Builder.rect(box) |> Builder.text_at({72, 715}, "MMMM")
+
+      assert first_drawn.(text_first) == :text
+      assert first_drawn.(rect_first) == :rect
+    end
+
+    test "text after a filled shape keeps its own colour" do
+      doc =
+        Builder.new()
+        |> Builder.rect(%Rect{x: 72, y: 700, width: 100, height: 30}, fill_color: @red)
+        |> Builder.paragraph("Mark")
+        |> written()
+
+      assert doc |> Document.chars!(0) |> Enum.all?(&(&1.color == @black))
+    end
+
+    test "shapes sit outside the flow, on the current page" do
+      plain = Builder.new() |> Builder.paragraph("Body") |> written()
+
+      shaped =
+        Builder.new()
+        |> Builder.rect(%Rect{x: 72, y: 600, width: 100, height: 100})
+        |> Builder.paragraph("Body")
+        |> Builder.page(:a4)
+        |> Builder.circle({100, 100}, 10)
+        |> written()
+
+      assert baselines(shaped, 0) == baselines(plain, 0)
+      assert Document.page_count!(shaped) == 2
+      assert shaped |> Document.paths!() |> Enum.map(& &1.page) == [0, 1]
+
+      alone = Builder.new() |> Builder.line({0, 0}, {10, 10}) |> written()
+      assert Document.page_count!(alone) == 1
+    end
+
+    test "a shape may run past the page edge" do
+      assert [path] =
+               Builder.new()
+               |> Builder.rect(%Rect{x: -10, y: -10, width: 700, height: 900},
+                 fill_color: @grey,
+                 stroke_color: nil
+               )
+               |> Builder.circle({612, 792}, 100)
+               |> drawn()
+               |> Enum.take(1)
+
+      assert path.operations == [{:rectangle, -10.0, -10.0, 700.0, 900.0}]
+    end
+
+    test "a setting the shape would not draw raises" do
+      builder = Builder.new()
+      rect = %Rect{x: 72, y: 72, width: 10, height: 10}
+
+      assert_raise ArgumentError, ~r/:stroke_color/, fn ->
+        Builder.rect(builder, rect, stroke_color: nil)
+      end
+
+      assert_raise ArgumentError, ~r/:stroke_color/, fn ->
+        Builder.line(builder, {0, 0}, {1, 1}, stroke_color: nil)
+      end
+
+      for {key, value} <- [stroke_width: 2, dash_pattern: {[3, 2], 0}] do
+        assert_raise ArgumentError,
+                     ~r/#{inspect(key)} has no effect with stroke_color: nil/,
+                     fn ->
+                       Builder.rect(builder, rect, [
+                         {key, value},
+                         fill_color: @grey,
+                         stroke_color: nil
+                       ])
+                     end
+      end
+
+      assert %Builder{} =
+               Builder.rect(builder, rect,
+                 fill_color: @grey,
+                 stroke_color: nil,
+                 stroke_width: 1,
+                 dash_pattern: nil
+               )
+    end
+
+    test "malformed paint options raise" do
+      builder = Builder.new()
+
+      for dash <- [{[], 0}, {[0, 2], 0}, {[3], -1}, [3, 2], {[3, "2"], 0}] do
+        assert_raise ArgumentError, ~r/:dash_pattern/, fn ->
+          Builder.line(builder, {0, 0}, {1, 1}, dash_pattern: dash)
+        end
+      end
+
+      assert_raise ArgumentError, ~r/:stroke_width/, fn ->
+        Builder.line(builder, {0, 0}, {1, 1}, stroke_width: -1)
+      end
+
+      assert_raise ArgumentError, ~r/:fill_color/, fn ->
+        Builder.circle(builder, {0, 0}, 1, fill_color: %RGB{r: 2, g: 0, b: 0})
+      end
+
+      assert_raise ArgumentError, ~r/:stroke_color/, fn ->
+        Builder.circle(builder, {0, 0}, 1, stroke_color: {0, 0, 0})
+      end
+    end
+
+    test "malformed geometry raises" do
+      builder = Builder.new()
+
+      assert_raise ArgumentError, ~r/three/, fn ->
+        Builder.polygon(builder, [{0, 0}, {1, 1}])
+      end
+
+      assert_raise ArgumentError, ~r/invalid point/, fn ->
+        Builder.polygon(builder, [{0, 0}, {1, 1}, {:a, 2}])
+      end
+
+      for {from, to} <- [{0, 0}, {0, 361}, {90, -271}] do
+        assert_raise ArgumentError, ~r/angles/, fn ->
+          Builder.arc(builder, {0, 0}, 1, from, to)
+        end
+      end
+
+      for operations <- [[], [{:line_to, 1, 2}], [:close_path]] do
+        assert_raise ArgumentError, ~r/must start with/, fn ->
+          Builder.path(builder, operations)
+        end
+      end
+
+      for operation <- [{:move_to, 1}, {:curve_to, 1, 2, 3, 4, 5, "6"}, :stroke] do
+        assert_raise ArgumentError, ~r/invalid operation/, fn ->
+          Builder.path(builder, [{:move_to, 0, 0}, operation])
+        end
+      end
+
+      assert_raise ArgumentError, ~r/^invalid radius,/, fn ->
+        Builder.circle(builder, {0, 0}, 0)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid radii,/, fn ->
+        Builder.ellipse(builder, {0, 0}, {1, -1})
+      end
+
+      assert_raise ArgumentError, ~r/invalid rect/, fn ->
+        Builder.rect(builder, %Rect{x: untyped("0"), y: 0, width: 1, height: 1})
+      end
+
+      assert_raise FunctionClauseError, fn -> Builder.line(builder, untyped({1}), {0, 0}) end
+      assert_raise FunctionClauseError, fn -> Builder.rect(builder, untyped({0, 0, 1, 1})) end
+    end
+
+    test "an integer coordinate too large for 64 bits is drawn" do
+      draw = fn x ->
+        Builder.new()
+        |> Builder.line({x, 0}, {0, 0})
+        |> Builder.rect(%Rect{x: x, y: 0, width: 1, height: 1})
+        |> drawn()
+      end
+
+      assert draw.(10_000_000_000_000_000_000) == draw.(1.0e19)
+    end
+
+    test "geometry beyond the 32-bit float range raises" do
+      builder = Builder.new()
+
+      assert_raise ArgumentError, ~r/^invalid from,/, fn ->
+        Builder.line(builder, {1.0e39, 0}, {0, 0})
+      end
+
+      # The message names the arguments, not the control point that overflowed.
+      assert_raise ArgumentError, ~r/^invalid radius 1.0e38 around center \{3.0e38, 0.0\}/, fn ->
+        Builder.circle(builder, {3.0e38, 0}, 1.0e38)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid radius .* around center/, fn ->
+        Builder.arc(builder, {3.0e38, 0}, 1.0e38, 0, 90)
+      end
+
+      assert_raise ArgumentError, ~r/corners/, fn ->
+        Builder.rect(builder, %Rect{x: 3.0e38, y: 0, width: 1.0e38, height: 1})
+      end
+
+      # Both corners fit; the distance between them does not.
+      assert_raise ArgumentError, ~r/width and height/, fn ->
+        Builder.rect(builder, %Rect{x: -3.0e38, y: 0, width: 6.0e38, height: 1})
+      end
+
+      for operation <- [{:rectangle, 3.0e38, 0, 1.0e38, 1}, {:rectangle, -3.0e38, 0, 6.0e38, 1}] do
+        message = "invalid operation #{inspect(operation)}"
+
+        assert_raise ArgumentError, ~r/^#{Regex.escape(message)}:/, fn ->
+          Builder.path(builder, [operation])
+        end
+      end
     end
   end
 

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use pdf_oxide::writer::EmbeddedFont;
+use pdf_oxide::{elements::PathOperation, writer::EmbeddedFont};
 use unicode_bidi::{bidi_class, BidiClass};
 use unicode_normalization::char::canonical_combining_class;
 use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
@@ -170,6 +170,8 @@ pub enum Op {
         x: f64,
         y: f64,
     },
+    // A path drawn as given, outside the flow.
+    Path(Shape),
 }
 
 #[derive(Clone, Copy)]
@@ -248,14 +250,25 @@ pub struct PagePlan {
 
 pub enum Item {
     Text(Placed),
-    Rule(RuleLine),
+    Path(Shape),
 }
 
-pub struct RuleLine {
-    pub from: f64,
-    pub to: f64,
-    pub y: f64,
+#[derive(Clone)]
+pub struct Shape {
+    pub operations: Vec<PathOperation>,
+    pub stroke: Option<Stroke>,
+    pub fill: Option<Rgb>,
 }
+
+#[derive(Clone)]
+pub struct Stroke {
+    pub color: Rgb,
+    pub width: f32,
+    pub dash: Option<(Vec<f32>, f32)>,
+}
+
+const RULE_WIDTH: f32 = 0.5;
+const RULE_GRAY: f32 = 0.5;
 
 pub enum Refused {
     LineTooTall {
@@ -398,6 +411,7 @@ pub fn lay_out(
             Op::Space(points) => layout.space(*points),
             Op::Rule { size } => layout.rule(*size),
             Op::TextAt { runs, size, x, y } => layout.text_at(index, runs, *size, *x, *y)?,
+            Op::Path(shape) => layout.path(shape),
         }
     }
 
@@ -628,7 +642,7 @@ impl Layout<'_> {
                 }
                 Op::Rule { size } => return total + gap + size,
                 Op::Page { .. } => return total,
-                Op::TextAt { .. } => {}
+                Op::TextAt { .. } | Op::Path(_) => {}
             }
         }
         total
@@ -782,6 +796,12 @@ impl Layout<'_> {
         pen
     }
 
+    fn path(&mut self, shape: &Shape) {
+        self.ensure_page();
+        let page = self.pages.last_mut().expect("path ensured a page");
+        page.items.push(Item::Path(shape.clone()));
+    }
+
     fn space(&mut self, points: f64) {
         if !self.fresh {
             self.pending_space += points;
@@ -801,12 +821,20 @@ impl Layout<'_> {
         self.pending_space = 0.0;
 
         let (left, right) = (self.margins.left, self.margins.right);
-        let y = self.cursor - size / 2.0;
+        let y = (self.cursor - size / 2.0) as f32;
         let page = self.pages.last_mut().expect("rule ensured a page");
-        page.items.push(Item::Rule(RuleLine {
-            from: left,
-            to: page.width - right,
-            y,
+        let to = page.width - right;
+        page.items.push(Item::Path(Shape {
+            operations: vec![
+                PathOperation::MoveTo(left as f32, y),
+                PathOperation::LineTo(to as f32, y),
+            ],
+            stroke: Some(Stroke {
+                color: [RULE_GRAY; 3],
+                width: RULE_WIDTH,
+                dash: None,
+            }),
+            fill: None,
         }));
 
         self.cursor -= size;

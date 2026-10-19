@@ -1,5 +1,7 @@
 use pdf_oxide::elements::{LineCap, LineJoin, PathContent, PathOperation};
-use rustler::{Encoder, Env, NifMap, NifUnitEnum, Term};
+use rustler::{
+    types::tuple::get_tuple, Atom, Decoder, Encoder, Env, NifMap, NifResult, NifUnitEnum, Term,
+};
 
 use crate::{
     atoms,
@@ -58,6 +60,49 @@ impl Encoder for PathOpNif {
             }
             PathOpNif::Rectangle(x, y, w, h) => (atoms::rectangle(), x, y, w, h).encode(env),
             PathOpNif::ClosePath => atoms::close_path().encode(env),
+        }
+    }
+}
+
+// The builder's input: the same tuples `Encoder` writes.
+impl<'a> Decoder<'a> for PathOpNif {
+    fn decode(term: Term<'a>) -> NifResult<Self> {
+        if term.is_atom() {
+            return match term.decode::<Atom>()? == atoms::close_path() {
+                true => Ok(PathOpNif::ClosePath),
+                false => Err(rustler::Error::BadArg),
+            };
+        }
+        let elements = get_tuple(term)?;
+        let (tag, values) = elements.split_first().ok_or(rustler::Error::BadArg)?;
+        let tag: Atom = tag.decode()?;
+        let values = values
+            .iter()
+            .map(|value| value.decode::<f32>())
+            .collect::<NifResult<Vec<f32>>>()?;
+
+        match values[..] {
+            [x, y] if tag == atoms::move_to() => Ok(PathOpNif::MoveTo(x, y)),
+            [x, y] if tag == atoms::line_to() => Ok(PathOpNif::LineTo(x, y)),
+            [c1x, c1y, c2x, c2y, ex, ey] if tag == atoms::curve_to() => {
+                Ok(PathOpNif::CurveTo(c1x, c1y, c2x, c2y, ex, ey))
+            }
+            [x, y, w, h] if tag == atoms::rectangle() => Ok(PathOpNif::Rectangle(x, y, w, h)),
+            _ => Err(rustler::Error::BadArg),
+        }
+    }
+}
+
+impl From<PathOpNif> for PathOperation {
+    fn from(op: PathOpNif) -> Self {
+        match op {
+            PathOpNif::MoveTo(x, y) => PathOperation::MoveTo(x, y),
+            PathOpNif::LineTo(x, y) => PathOperation::LineTo(x, y),
+            PathOpNif::CurveTo(c1x, c1y, c2x, c2y, ex, ey) => {
+                PathOperation::CurveTo(c1x, c1y, c2x, c2y, ex, ey)
+            }
+            PathOpNif::Rectangle(x, y, w, h) => PathOperation::Rectangle(x, y, w, h),
+            PathOpNif::ClosePath => PathOperation::ClosePath,
         }
     }
 }

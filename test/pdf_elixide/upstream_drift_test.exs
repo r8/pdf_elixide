@@ -4,6 +4,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   @moduletag :upstream_drift
 
+  alias PdfElixide.Builder
   alias PdfElixide.Compliance
   alias PdfElixide.Document
   alias PdfElixide.Document.Image
@@ -969,6 +970,21 @@ defmodule PdfElixide.UpstreamDriftTest do
         assert rects -- lines == rects
         assert length(rects) + length(lines) <= length(paths)
       end
+    end
+  end
+
+  describe "what path extraction reports of a dashed stroke" do
+    test "the dash pattern is written but not read back" do
+      pdf =
+        Builder.new()
+        |> Builder.line({72, 600}, {540, 600}, dash_pattern: {[3, 2], 1})
+        |> Builder.to_binary!(compress: false)
+
+      doc = Document.from_binary!(pdf)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert pdf =~ "[3 2] 1 d\n"
+      assert [%{dash_pattern: nil}] = Document.paths!(doc)
     end
   end
 

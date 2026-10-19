@@ -18,6 +18,9 @@ defmodule PdfElixide.Document.Path do
   to DeviceRGB, so these are always RGB — never the other
   `PdfElixide.Color` structs.
 
+  `:dash_pattern` is always `nil`: extraction does not report whether a stroke
+  is dashed.
+
   ## Rectangles and straight lines
 
   `PdfElixide.Document.rects/2` and `PdfElixide.Document.lines/2` return these

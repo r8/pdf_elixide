@@ -22,6 +22,12 @@ defmodule PdfElixide.Builder do
   [Flowing text](guides/building-documents.md#flowing-text) for line spacing,
   page breaks and heading placement.
 
+  ## Drawing
+
+  Draw shapes and paths outside the text flow. See
+  [Drawing shapes](guides/building-documents.md#drawing-shapes) for positioning,
+  paint options and redrawing an extracted path.
+
   ## Fonts
 
   Use a built-in family, bundled DejaVu Sans or a
@@ -34,13 +40,14 @@ defmodule PdfElixide.Builder do
   Invalid arguments raise at the call that receives them. Unsupported content
   returns `{:error, %PdfElixide.Error{reason: :unsupported}}` at build time;
   bang variants raise. See [Errors](guides/building-documents.md#errors) and
-  [unsupported content](guides/building-documents.md#what-the-builder-will-not-draw).
+  [What the builder will not draw](guides/building-documents.md#what-the-builder-will-not-draw).
   """
 
   alias PdfElixide.Builder.FontFamily
   alias PdfElixide.Color.RGB
   alias PdfElixide.Editor
   alias PdfElixide.Error
+  alias PdfElixide.Geometry.Rect
   alias PdfElixide.LayoutOptions
   alias PdfElixide.Native.Wrap
 
@@ -93,6 +100,10 @@ defmodule PdfElixide.Builder do
 
   @fonts [:auto, :helvetica, :times, :courier, :dejavu_sans]
 
+  defguardp is_point(point)
+            when is_tuple(point) and tuple_size(point) == 2 and is_number(elem(point, 0)) and
+                   is_number(elem(point, 1))
+
   @typedoc """
   Text for content operations: a string, or a list of runs, each a string or a
   `{string, opts}` tuple styling that run.
@@ -111,6 +122,17 @@ defmodule PdfElixide.Builder do
   A position `{x, y}` in points from the page's bottom-left corner.
   """
   @type point :: {number(), number()}
+
+  @typedoc """
+  An operation of `path/3`: a `t:PdfElixide.Document.Path.operation/0`, with
+  any number as a coordinate.
+  """
+  @type path_operation ::
+          {:move_to, number(), number()}
+          | {:line_to, number(), number()}
+          | {:curve_to, number(), number(), number(), number(), number(), number()}
+          | {:rectangle, number(), number(), number(), number()}
+          | :close_path
 
   @typedoc "Options styling one run of `t:text/0`."
   @type run_opts :: [bold: boolean(), italic: boolean(), color: RGB.t() | nil]
@@ -242,6 +264,52 @@ defmodule PdfElixide.Builder do
   @type text_at_opts :: [font: font() | nil, font_size: number() | nil]
 
   @text_at_opts_keys [:font, :font_size]
+
+  @typedoc """
+  Options accepted by `rect/3`, `circle/4`, `ellipse/4`, `polygon/3` and
+  `path/3`. Each is named and typed as the `PdfElixide.Document.Path` field it
+  matches, so an extracted path's values for these four can be passed back.
+
+    * `:stroke_color` — the outline's `PdfElixide.Color.RGB`, or `nil` for no
+      outline. Defaults to black.
+    * `:fill_color` — the inside's `PdfElixide.Color.RGB`, or `nil` to leave it
+      unpainted. Defaults to `nil`.
+    * `:stroke_width` — the outline's width in points, at least `0`. A width
+      of `0` draws the thinnest line the display or printer can show.
+      Defaults to `1`.
+    * `:dash_pattern` — `{lengths, phase}`: a non-empty list of positive
+      lengths in points, alternately drawn and skipped, and how far into that
+      pattern the outline starts. Defaults to `nil`, a solid outline.
+
+  A shape must be painted, so `stroke_color: nil` needs a `:fill_color`, and
+  `:stroke_width` and `:dash_pattern` describe the outline, so they raise
+  `ArgumentError` with `stroke_color: nil` unless left at their defaults.
+  """
+  @type shape_opts :: [
+          stroke_color: RGB.t() | nil,
+          fill_color: RGB.t() | nil,
+          stroke_width: number(),
+          dash_pattern: {[number(), ...], number()} | nil
+        ]
+
+  @shape_opts_keys [:stroke_color, :fill_color, :stroke_width, :dash_pattern]
+
+  @typedoc """
+  Options accepted by `line/4`, `arc/6` and `bezier/6`: the keys of
+  `t:shape_opts/0` except `:fill_color`, since these draw an open line. The
+  line must be drawn, so `:stroke_color` cannot be `nil`.
+  """
+  @type line_opts :: [
+          stroke_color: RGB.t(),
+          stroke_width: number(),
+          dash_pattern: {[number(), ...], number()} | nil
+        ]
+
+  @line_opts_keys [:stroke_color, :stroke_width, :dash_pattern]
+
+  # The control-point distance that makes a cubic curve approximate a quarter
+  # circle: 4 × (√2 − 1) / 3.
+  @kappa 0.5522847498307936
 
   @typedoc """
   Options accepted by `to_binary/2` and `save/3`: the keys of
@@ -434,9 +502,10 @@ defmodule PdfElixide.Builder do
   Draws one line of text on the current page, its baseline starting at
   `point`.
 
-  `point` is a `t:point/0`. The text is placed outside the flow: it does not wrap, it may sit in the margins, and
-  paragraphs, headings and lists around it neither move it nor make room for
-  it. If no page has started yet, the first one starts here.
+  `point` is a `t:point/0`. The text is placed outside the flow: it does not
+  wrap, it may sit in the margins, and paragraphs, headings and lists around it
+  neither move it nor make room for it. If no page has started yet, the first
+  one starts here.
 
   `text` is a `t:text/0` without `\\n`; a run of whitespace is laid out as one
   space. Text extending beyond the page edge is refused when the document
@@ -445,22 +514,340 @@ defmodule PdfElixide.Builder do
       PdfElixide.Builder.text_at(builder, {72, 36}, "Confidential", font_size: 9)
   """
   @spec text_at(t(), point(), text(), text_at_opts()) :: t()
-  def text_at(%__MODULE__{} = builder, {x, y} = point, text, opts \\ [])
-      when is_number(x) and is_number(y) and (is_binary(text) or is_list(text)) and
-             is_list(opts) do
+  def text_at(%__MODULE__{} = builder, point, text, opts \\ [])
+      when is_point(point) and (is_binary(text) or is_list(text)) and is_list(opts) do
     runs = runs!(text)
     validate_one_line!(runs)
     opts = Keyword.validate!(opts, @text_at_opts_keys)
     %{font: font, font_size: font_size} = build_paragraph_options(opts)
     font_size = font_size || builder.font_size
-    LayoutOptions.point!("point", point)
+    {x, y} = LayoutOptions.point!("point", point)
     validate_precise!(builder, font_size)
 
     op =
-      {:text_at,
-       %{runs: runs, font: font || builder.font, font_size: font_size, x: x * 1.0, y: y * 1.0}}
+      {:text_at, %{runs: runs, font: font || builder.font, font_size: font_size, x: x, y: y}}
 
     %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Draws a rectangle on the current page.
+
+  `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
+  bottom-left corner, such as the `bbox` of an extracted word, span or path;
+  reversed corners are normalized. See
+  [Drawing shapes](guides/building-documents.md#drawing-shapes) for where an
+  extracted box lands, and `t:shape_opts/0` for the options.
+
+      alias PdfElixide.{Color.RGB, Geometry.Rect}
+
+      PdfElixide.Builder.rect(
+        builder,
+        %Rect{x: 72.0, y: 600.0, width: 468.0, height: 100.0},
+        fill_color: %RGB{r: 0.9, g: 0.9, b: 0.9},
+        stroke_color: nil
+      )
+  """
+  @spec rect(t(), Rect.t(), shape_opts()) :: t()
+  def rect(%__MODULE__{} = builder, %Rect{} = rect, opts \\ []) when is_list(opts) do
+    %Rect{x: x, y: y, width: width, height: height} = rect!(rect)
+    {x, width} = if width < 0, do: {x + width, -width}, else: {x, width}
+    {y, height} = if height < 0, do: {y + height, -height}, else: {y, height}
+
+    shape(builder, [{:rectangle, x, y, width, height}], build_shape_options(opts))
+  end
+
+  @doc """
+  Draws a straight line from one `t:point/0` to another on the current page.
+
+  See [Drawing shapes](guides/building-documents.md#drawing-shapes) and
+  `t:line_opts/0` for the options.
+
+      PdfElixide.Builder.line(builder, {72, 580}, {540, 580}, dash_pattern: {[3, 2], 0})
+  """
+  @spec line(t(), point(), point(), line_opts()) :: t()
+  def line(%__MODULE__{} = builder, from, to, opts \\ [])
+      when is_point(from) and is_point(to) and is_list(opts) do
+    from = LayoutOptions.point!("from", from)
+    to = LayoutOptions.point!("to", to)
+
+    shape(builder, [move_to(from), line_to(to)], build_line_options(opts))
+  end
+
+  @doc """
+  Draws a circle of `radius` points around `center` on the current page.
+
+  See [Drawing shapes](guides/building-documents.md#drawing-shapes) and
+  `t:shape_opts/0` for the options.
+
+      PdfElixide.Builder.circle(builder, {306, 396}, 50, stroke_width: 2)
+  """
+  @spec circle(t(), point(), number(), shape_opts()) :: t()
+  def circle(%__MODULE__{} = builder, center, radius, opts \\ [])
+      when is_point(center) and is_number(radius) and is_list(opts) do
+    center = LayoutOptions.point!("center", center)
+    radius = LayoutOptions.positive!("radius", radius)
+    operations = ellipse_operations(center, radius, radius)
+
+    reach!(operations, "radius #{inspect(radius)} around center #{inspect(center)}")
+    shape(builder, operations, build_shape_options(opts))
+  end
+
+  @doc """
+  Draws an ellipse around `center` on the current page, `{rx, ry}` being its
+  horizontal and vertical radii in points.
+
+  See [Drawing shapes](guides/building-documents.md#drawing-shapes) and
+  `t:shape_opts/0` for the options.
+
+      PdfElixide.Builder.ellipse(builder, {306, 396}, {80, 40})
+  """
+  @spec ellipse(t(), point(), {number(), number()}, shape_opts()) :: t()
+  def ellipse(%__MODULE__{} = builder, center, {rx, ry}, opts \\ [])
+      when is_point(center) and is_number(rx) and is_number(ry) and is_list(opts) do
+    center = LayoutOptions.point!("center", center)
+    radii = {LayoutOptions.positive!("radii", rx), LayoutOptions.positive!("radii", ry)}
+    operations = ellipse_operations(center, elem(radii, 0), elem(radii, 1))
+
+    reach!(operations, "radii #{inspect(radii)} around center #{inspect(center)}")
+    shape(builder, operations, build_shape_options(opts))
+  end
+
+  @doc """
+  Draws a closed polygon through `points`, at least three `t:point/0`s, on the
+  current page.
+
+  See [Drawing shapes](guides/building-documents.md#drawing-shapes) for filling
+  behavior and `t:shape_opts/0` for the options.
+
+      PdfElixide.Builder.polygon(builder, [{100, 100}, {200, 100}, {150, 180}])
+  """
+  @spec polygon(t(), [point()], shape_opts()) :: t()
+  def polygon(%__MODULE__{} = builder, points, opts \\ [])
+      when is_list(points) and is_list(opts) do
+    if not match?([_, _, _ | _], points) do
+      raise ArgumentError, "invalid points, a polygon needs at least three: #{inspect(points)}"
+    end
+
+    [first | rest] = Enum.map(points, &polygon_point!/1)
+    operations = [move_to(first) | Enum.map(rest, &line_to/1)] ++ [:close_path]
+
+    shape(builder, operations, build_shape_options(opts))
+  end
+
+  defp polygon_point!(point) when is_point(point), do: LayoutOptions.point!("points", point)
+
+  defp polygon_point!(point) do
+    raise ArgumentError, "invalid point, expected {x, y} with two numbers: #{inspect(point)}"
+  end
+
+  @doc """
+  Draws an arc of a circle of `radius` points around `center` on the current
+  page, from angle `from` to angle `to`.
+
+  Angles are in degrees, counter-clockwise from the positive x-axis, so `0` is
+  the circle's rightmost point and `90` its top. A `to` below `from` draws
+  clockwise. The arc may go round at most once: `from` and `to` must differ,
+  by no more than 360. See
+  [Drawing shapes](guides/building-documents.md#drawing-shapes) and
+  `t:line_opts/0` for the options.
+
+      PdfElixide.Builder.arc(builder, {306, 396}, 50, 0, 90)
+  """
+  @spec arc(t(), point(), number(), number(), number(), line_opts()) :: t()
+  def arc(%__MODULE__{} = builder, center, radius, from, to, opts \\ [])
+      when is_point(center) and is_number(radius) and is_number(from) and is_number(to) and
+             is_list(opts) do
+    center = LayoutOptions.point!("center", center)
+    radius = LayoutOptions.positive!("radius", radius)
+    sweep = to - from
+
+    if sweep == 0 or abs(sweep) > 360 do
+      raise ArgumentError,
+            "invalid angles, an arc sweeps more than 0 and at most 360 degrees: " <>
+              "from #{inspect(from)} to #{inspect(to)}"
+    end
+
+    operations = arc_operations(center, radius, from, sweep)
+
+    reach!(operations, "radius #{inspect(radius)} around center #{inspect(center)}")
+    shape(builder, operations, build_line_options(opts))
+  end
+
+  @doc """
+  Draws a cubic Bézier curve from `from` to `to`, shaped by the control points
+  `c1` and `c2`, on the current page.
+
+  All four are `t:point/0`s. See
+  [Drawing shapes](guides/building-documents.md#drawing-shapes) and
+  `t:line_opts/0` for the options.
+
+      PdfElixide.Builder.bezier(builder, {72, 300}, {150, 400}, {250, 200}, {340, 300})
+  """
+  @spec bezier(t(), point(), point(), point(), point(), line_opts()) :: t()
+  def bezier(%__MODULE__{} = builder, from, c1, c2, to, opts \\ [])
+      when is_point(from) and is_point(c1) and is_point(c2) and is_point(to) and is_list(opts) do
+    from = LayoutOptions.point!("from", from)
+    {c1x, c1y} = LayoutOptions.point!("c1", c1)
+    {c2x, c2y} = LayoutOptions.point!("c2", c2)
+    {x, y} = LayoutOptions.point!("to", to)
+
+    shape(
+      builder,
+      [move_to(from), {:curve_to, c1x, c1y, c2x, c2y, x, y}],
+      build_line_options(opts)
+    )
+  end
+
+  @doc """
+  Draws a path made of `operations` on the current page.
+
+  `operations` are `t:path_operation/0` tuples, the form
+  `PdfElixide.Document.paths/1` returns, so an extracted path can be drawn
+  again. The first must be `{:move_to, x, y}` or `{:rectangle, x, y, width,
+  height}`, which give the operations after it a point to start from.
+  Coordinates are in points from the page's bottom-left corner. See
+  [Drawing shapes](guides/building-documents.md#drawing-shapes) for filling
+  behavior and `t:shape_opts/0` for the options.
+
+      PdfElixide.Builder.path(builder, [
+        {:move_to, 100, 100},
+        {:line_to, 200, 100},
+        {:curve_to, 250, 100, 250, 200, 200, 200},
+        :close_path
+      ])
+  """
+  @spec path(t(), [path_operation()], shape_opts()) :: t()
+  def path(%__MODULE__{} = builder, operations, opts \\ [])
+      when is_list(operations) and is_list(opts) do
+    Enum.each(operations, &operation!/1)
+    Enum.each(operations, &operation_in_range!/1)
+
+    case operations do
+      [{:move_to, _, _} | _] ->
+        :ok
+
+      [{:rectangle, _, _, _, _} | _] ->
+        :ok
+
+      _ ->
+        raise ArgumentError,
+              "invalid operations, a path must start with :move_to or :rectangle: " <>
+                inspect(operations)
+    end
+
+    shape(builder, operations, build_shape_options(opts))
+  end
+
+  defp shape(builder, operations, options) do
+    operations = Enum.map(operations, &floats/1)
+    op = {:path, Map.put(options, :operations, operations)}
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  # The native side reads an integer only within 64 bits, short of the 32-bit
+  # float range the coordinates were checked against.
+  defp floats(:close_path), do: :close_path
+
+  defp floats(operation) do
+    [tag | values] = Tuple.to_list(operation)
+    List.to_tuple([tag | Enum.map(values, &(&1 * 1.0))])
+  end
+
+  defp move_to({x, y}), do: {:move_to, x, y}
+  defp line_to({x, y}), do: {:line_to, x, y}
+
+  defp ellipse_operations({cx, cy}, rx, ry) do
+    {kx, ky} = {rx * @kappa, ry * @kappa}
+
+    [
+      {:move_to, cx, cy + ry},
+      {:curve_to, cx + kx, cy + ry, cx + rx, cy + ky, cx + rx, cy},
+      {:curve_to, cx + rx, cy - ky, cx + kx, cy - ry, cx, cy - ry},
+      {:curve_to, cx - kx, cy - ry, cx - rx, cy - ky, cx - rx, cy},
+      {:curve_to, cx - rx, cy + ky, cx - kx, cy + ry, cx, cy + ry},
+      :close_path
+    ]
+  end
+
+  # Reduce the start to one turn so a large angle cannot absorb the sweep.
+  defp arc_operations({cx, cy}, radius, from, sweep) do
+    segments = trunc(Float.ceil(abs(sweep) / 90))
+    step = sweep / segments * :math.pi() / 180
+    start = one_turn(from) * :math.pi() / 180
+    k = 4 / 3 * :math.tan(step / 4) * radius
+    at = fn angle -> {cx + radius * :math.cos(angle), cy + radius * :math.sin(angle)} end
+
+    curves =
+      for i <- 0..(segments - 1) do
+        a = start + i * step
+        b = a + step
+        {ax, ay} = at.(a)
+        {bx, by} = at.(b)
+
+        {:curve_to, ax - k * :math.sin(a), ay + k * :math.cos(a), bx + k * :math.sin(b),
+         by - k * :math.cos(b), bx, by}
+      end
+
+    [move_to(at.(start)) | curves]
+  end
+
+  defp one_turn(degrees) when is_integer(degrees), do: rem(degrees, 360)
+  defp one_turn(degrees), do: :math.fmod(degrees, 360.0)
+
+  defp operation!({:move_to, x, y}) when is_number(x) and is_number(y), do: :ok
+  defp operation!({:line_to, x, y}) when is_number(x) and is_number(y), do: :ok
+
+  defp operation!({:curve_to, c1x, c1y, c2x, c2y, x, y})
+       when is_number(c1x) and is_number(c1y) and is_number(c2x) and is_number(c2y) and
+              is_number(x) and is_number(y),
+       do: :ok
+
+  defp operation!({:rectangle, x, y, width, height})
+       when is_number(x) and is_number(y) and is_number(width) and is_number(height),
+       do: :ok
+
+  defp operation!(:close_path), do: :ok
+
+  defp operation!(other) do
+    raise ArgumentError,
+          "invalid operation, expected a PdfElixide.Document.Path operation: " <>
+            inspect(other)
+  end
+
+  # A rectangle's size is written too, and two corners that fit can be further
+  # apart than a width can hold.
+  defp operation_in_range!(op) do
+    values =
+      case op do
+        {:rectangle, x, y, width, height} -> [x, y, width, height, x + width, y + height]
+        :close_path -> []
+        _ -> op |> Tuple.to_list() |> tl()
+      end
+
+    if not Enum.all?(values, &LayoutOptions.fits_f32?/1) do
+      raise ArgumentError,
+            "invalid operation #{inspect(op)}: its coordinates must fit a 32-bit float"
+    end
+  end
+
+  # Arguments that fit can still reach past the range once the curve is laid
+  # around them.
+  defp reach!(operations, what) do
+    values = for op <- operations, op != :close_path, value <- tl(Tuple.to_list(op)), do: value
+
+    if not Enum.all?(values, &LayoutOptions.fits_f32?/1) do
+      raise ArgumentError, "invalid #{what}: the shape reaches past the 32-bit float range"
+    end
+  end
+
+  defp rect!(%Rect{x: x, y: y, width: width, height: height} = rect)
+       when is_number(x) and is_number(y) and is_number(width) and is_number(height) do
+    LayoutOptions.rect!("rect", rect)
+  end
+
+  defp rect!(rect) do
+    raise ArgumentError, "invalid rect, expected numbers in every field: #{inspect(rect)}"
   end
 
   @doc """
@@ -569,10 +956,12 @@ defmodule PdfElixide.Builder do
   defp native_op(op, acc), do: {op, acc}
 
   @doc false
-  @spec __option_defaults__(:new | :paragraph | :heading) :: map()
+  @spec __option_defaults__(:new | :paragraph | :heading | :shape | :line) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
   def __option_defaults__(:heading), do: build_heading_options([])
+  def __option_defaults__(:shape), do: build_shape_options([])
+  def __option_defaults__(:line), do: build_line_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -608,6 +997,65 @@ defmodule PdfElixide.Builder do
       end
 
     %{font: font, font_size: optional_positive!(:font_size, Keyword.get(opts, :font_size))}
+  end
+
+  defp build_shape_options(opts) do
+    opts = Keyword.validate!(opts, @shape_opts_keys)
+    options = paint_options(opts, fill_color: color!(:fill_color, Keyword.get(opts, :fill_color)))
+
+    if options.stroke_color == nil and options.fill_color == nil do
+      raise ArgumentError,
+            "invalid :stroke_color, a shape with no :fill_color needs an outline, " <>
+              "so it cannot be nil"
+    end
+
+    options
+  end
+
+  defp build_line_options(opts) do
+    opts = Keyword.validate!(opts, @line_opts_keys)
+    options = paint_options(opts, fill_color: nil)
+
+    if options.stroke_color == nil do
+      raise ArgumentError, "invalid :stroke_color, a line needs one, so it cannot be nil"
+    end
+
+    options
+  end
+
+  defp paint_options(opts, extra) do
+    options =
+      Map.new(extra)
+      |> Map.merge(%{
+        stroke_color:
+          color!(:stroke_color, Keyword.get(opts, :stroke_color, %RGB{r: 0.0, g: 0.0, b: 0.0})),
+        stroke_width: margin!(:stroke_width, Keyword.get(opts, :stroke_width, 1)),
+        dash_pattern: dash_pattern!(Keyword.get(opts, :dash_pattern))
+      })
+
+    # The outline's settings would be dropped with the outline.
+    if options.stroke_color == nil do
+      defaults = paint_options([], [])
+
+      for key <- [:stroke_width, :dash_pattern], options[key] != defaults[key] do
+        raise ArgumentError,
+              "#{inspect(key)} has no effect with stroke_color: nil; give one or the other"
+      end
+    end
+
+    options
+  end
+
+  defp dash_pattern!(nil), do: nil
+
+  defp dash_pattern!({[_ | _] = lengths, phase}) do
+    {Enum.map(lengths, &positive!(:dash_pattern, &1)), margin!(:dash_pattern, phase)}
+  end
+
+  defp dash_pattern!(other) do
+    raise ArgumentError,
+          "invalid :dash_pattern, expected {lengths, phase} with a non-empty list of " <>
+            "lengths: #{inspect(other)}"
   end
 
   defp font!(%FontFamily{} = family), do: family
@@ -650,7 +1098,7 @@ defmodule PdfElixide.Builder do
       text: text,
       bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
       italic: boolean!(:italic, Keyword.get(opts, :italic, false)),
-      color: color!(Keyword.get(opts, :color))
+      color: color!(:color, Keyword.get(opts, :color))
     }
   end
 
@@ -665,12 +1113,13 @@ defmodule PdfElixide.Builder do
     raise ArgumentError, "invalid #{inspect(key)}, expected a boolean: #{inspect(value)}"
   end
 
-  defp color!(nil), do: nil
+  defp color!(_key, nil), do: nil
 
-  defp color!(%RGB{} = color), do: LayoutOptions.rgb!(":color", color)
+  defp color!(key, %RGB{} = color), do: LayoutOptions.rgb!(key, color)
 
-  defp color!(other) do
-    raise ArgumentError, "invalid :color, expected a PdfElixide.Color.RGB: #{inspect(other)}"
+  defp color!(key, other) do
+    raise ArgumentError,
+          "invalid #{inspect(key)}, expected a PdfElixide.Color.RGB or nil: #{inspect(other)}"
   end
 
   defp text!(_key, nil), do: nil
