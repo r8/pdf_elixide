@@ -28,7 +28,7 @@ use crate::{
     },
     form_tree::Resolved,
     fs_path::path_arg,
-    geometry::{rect_from_corners, rect_from_nif, RectNif},
+    geometry::{rect_from_f32_corners, rect_from_nif, RectNif},
     merge::{self, MergeError},
     metadata::{normalize_text, read_metadata, MetadataNif},
     open_editor::{Marked, OpenEditor, OutOfRange, PageError, Rebuild},
@@ -1512,12 +1512,7 @@ fn editor_page_media_box(
     resource.editor.with_read(|editor| {
         let [llx, lly, urx, ury] = editor.effective_media_box(page_index)?;
 
-        Ok(rect_from_corners(
-            llx.into(),
-            lly.into(),
-            urx.into(),
-            ury.into(),
-        ))
+        Ok(rect_from_f32_corners([llx, lly, urx, ury]))
     })
 }
 
@@ -1529,9 +1524,7 @@ fn editor_page_crop_box(
     resource.editor.with_read(|editor| {
         Ok(editor
             .effective_crop_box(page_index)?
-            .map(|[llx, lly, urx, ury]| {
-                rect_from_corners(llx.into(), lly.into(), urx.into(), ury.into())
-            }))
+            .map(rect_from_f32_corners))
     })
 }
 

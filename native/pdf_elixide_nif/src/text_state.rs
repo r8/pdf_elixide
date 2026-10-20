@@ -55,15 +55,7 @@ impl Reading {
     }
 
     fn translate(&mut self, tx: f32, ty: f32) {
-        self.line_matrix = Matrix {
-            a: 1.0,
-            b: 0.0,
-            c: 0.0,
-            d: 1.0,
-            e: tx,
-            f: ty,
-        }
-        .multiply(&self.line_matrix);
+        self.line_matrix = Matrix::translation(tx, ty).multiply(&self.line_matrix);
     }
 
     // `T*`, and the line move `'` and `"` perform before showing. Each reading

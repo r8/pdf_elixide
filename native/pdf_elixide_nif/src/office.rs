@@ -1,4 +1,4 @@
-use std::{io::Cursor, panic, thread};
+use std::io::Cursor;
 
 use office_oxide::{cfb::CFB_SIGNATURE, core::opc::OpcReader};
 use pdf_oxide::{
@@ -203,29 +203,15 @@ fn convert(bytes: &[u8]) -> std::result::Result<Vec<u8>, Failure> {
 const CONVERT_STACK_SIZE: usize = 16 * 1024 * 1024;
 
 fn convert_on_own_stack(bytes: &[u8]) -> NifResult<Vec<u8>> {
-    let joined = thread::scope(|scope| {
-        thread::Builder::new()
-            .stack_size(CONVERT_STACK_SIZE)
-            .spawn_scoped(scope, || {
-                // The warning sink is thread-local, so drain it here even after
-                // a caught panic.
-                let result = panic::catch_unwind(|| convert(bytes));
-                warnings::collect_global();
-
-                result
-            })
-            .map(|handle| handle.join().and_then(|result| result))
-    });
-
     // `rustler::Error` is not `Send`, so the thread returns data and the
     // tagged error is built here.
-    match joined {
+    match warnings::on_own_stack(CONVERT_STACK_SIZE, || convert(bytes)) {
         Ok(Ok(Ok(pdf))) => Ok(pdf),
         Ok(Ok(Err(Failure::NotOffice(e)))) => Err(tagged_err(atoms::unsupported(), e.message())),
         Ok(Ok(Err(Failure::Conversion(e)))) => Err(to_nif_err(e)),
         Ok(Err(payload)) => Err(panic_err(&*payload)),
         Err(e) => Err(tagged_err(
-            atoms::other(),
+            atoms::io(),
             format!("could not start the conversion thread: {e}"),
         )),
     }

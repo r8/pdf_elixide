@@ -441,10 +441,7 @@ fn root_fields(doc: &PdfDocument, strictness: Strictness) -> Result<Option<Vec<O
 }
 
 fn resolve(doc: &PdfDocument, obj: &Object) -> Option<Object> {
-    match obj.as_reference() {
-        Some(obj_ref) => doc.load_object(obj_ref).ok(),
-        None => Some(obj.clone()),
-    }
+    doc.resolve_object(obj).ok()
 }
 
 // The ancestors' verdict, which a node declaring neither attribute adopts.

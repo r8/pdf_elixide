@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    panic, thread,
+    panic,
 };
 
 use pdf_oxide::{
@@ -90,25 +90,13 @@ const MAX_IMPORT_DEPTH: usize = 4096;
 // A dirty scheduler's stack holds a few hundred of those frames.
 const IMPORT_STACK_SIZE: usize = 16 * 1024 * 1024;
 
-// Upstream's merge work, on the stack `MAX_IMPORT_DEPTH` was set against. The
-// warning sink is thread-local, so it is drained there; a panic is resumed on
-// the calling thread, where the editor's `Closable` contains it.
+// Upstream's merge work, on the stack `MAX_IMPORT_DEPTH` was set against. A
+// panic is resumed on the calling thread, where the editor's `Closable`
+// contains it.
 pub(crate) fn on_import_stack<T: Send>(
     work: impl FnOnce() -> Result<T, MergeError> + Send,
 ) -> Result<T, MergeError> {
-    let joined = thread::scope(|scope| {
-        thread::Builder::new()
-            .stack_size(IMPORT_STACK_SIZE)
-            .spawn_scoped(scope, || {
-                let result = panic::catch_unwind(panic::AssertUnwindSafe(work));
-                warnings::collect_global();
-
-                result
-            })
-            .map(|handle| handle.join().and_then(|result| result))
-    });
-
-    match joined {
+    match warnings::on_own_stack(IMPORT_STACK_SIZE, work) {
         Ok(Ok(result)) => result,
         Ok(Err(payload)) => panic::resume_unwind(payload),
         Err(e) => Err(MergeError::Upstream(PdfError::from(e))),

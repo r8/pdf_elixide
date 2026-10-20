@@ -4,14 +4,13 @@ use pdf_oxide::{
     elements::{ContentElement, FontSpec, PathContent, TextContent, TextStyle},
     fonts::bundled::{DEJAVU_SANS, DEJAVU_SANS_BOLD},
     geometry::Rect,
-    layout::Color,
     writer::{DocumentBuilder, EmbeddedFont, PageSize},
 };
 use rustler::{Binary, NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
 
 use crate::{
     atoms, base14,
-    color::RgbNif,
+    color::{color_from_components, RgbNif},
     create::create_from_bytes,
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
@@ -72,11 +71,11 @@ impl From<ShapeNif> for Shape {
         Shape {
             operations: shape.operations.into_iter().map(Into::into).collect(),
             stroke: shape.stroke_color.map(|c| Stroke {
-                color: [c.r, c.g, c.b],
+                color: c.into(),
                 width: shape.stroke_width,
                 dash: shape.dash_pattern,
             }),
-            fill: shape.fill_color.map(|c| [c.r, c.g, c.b]),
+            fill: shape.fill_color.map(Into::into),
         }
     }
 }
@@ -423,7 +422,7 @@ fn runs(
             let italic = run.italic && !(from_auto && family == Family::DejaVu);
             Ok(Run {
                 face: faces.face(op, family, Style::of(run.bold, italic))?,
-                color: run.color.map(|c| [c.r, c.g, c.b]),
+                color: run.color.map(Into::into),
                 text: run.text,
             })
         })
@@ -610,8 +609,8 @@ fn emit(
             builder = match item {
                 Item::Text(placed) => {
                     let mut style = TextStyle::default();
-                    if let Some([r, g, b]) = placed.color {
-                        style.color = Color { r, g, b };
+                    if let Some(color) = placed.color {
+                        style.color = color_from_components(color);
                     }
                     let text = TextContent::new(
                         placed.text,
@@ -640,12 +639,11 @@ fn emit(
 
 // Assigned field by field so a field upstream adds keeps its default.
 fn path_content(shape: Shape) -> PathContent {
-    let rgb = |[r, g, b]: [f32; 3]| Color { r, g, b };
     let mut path = PathContent::from_operations(shape.operations);
-    path.fill_color = shape.fill.map(rgb);
+    path.fill_color = shape.fill.map(color_from_components);
     path.stroke_color = None;
     if let Some(stroke) = shape.stroke {
-        path.stroke_color = Some(rgb(stroke.color));
+        path.stroke_color = Some(color_from_components(stroke.color));
         path.stroke_width = stroke.width;
         path.dash_pattern = stroke.dash;
     }

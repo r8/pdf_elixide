@@ -454,6 +454,12 @@ impl Layout<'_> {
             .expect("a page exists once ensure_page has run")
     }
 
+    fn page_mut(&mut self) -> &mut PagePlan {
+        self.pages
+            .last_mut()
+            .expect("a page exists once ensure_page has run")
+    }
+
     fn new_page(&mut self, width: f64, height: f64) {
         self.pages.push(PagePlan {
             width,
@@ -759,7 +765,7 @@ impl Layout<'_> {
             return Err(off_page());
         }
 
-        let page = self.pages.last_mut().expect("text_at ensured a page");
+        let page = self.page_mut();
         let mut at = x;
         for segment in segments {
             page.items.push(Item::Text(Placed {
@@ -798,7 +804,7 @@ impl Layout<'_> {
 
     fn path(&mut self, shape: &Shape) {
         self.ensure_page();
-        let page = self.pages.last_mut().expect("path ensured a page");
+        let page = self.page_mut();
         page.items.push(Item::Path(shape.clone()));
     }
 
@@ -822,7 +828,7 @@ impl Layout<'_> {
 
         let (left, right) = (self.margins.left, self.margins.right);
         let y = (self.cursor - size / 2.0) as f32;
-        let page = self.pages.last_mut().expect("rule ensured a page");
+        let page = self.page_mut();
         let to = page.width - right;
         page.items.push(Item::Path(Shape {
             operations: vec![
@@ -900,7 +906,7 @@ impl Layout<'_> {
             });
         }
 
-        let page = self.pages.last_mut().expect("the block ensured a page");
+        let page = self.page_mut();
         for (at, segment) in placed {
             page.items.push(Item::Text(Placed {
                 x: at,

@@ -1,7 +1,4 @@
-use std::{
-    io::Cursor,
-    panic::{catch_unwind, AssertUnwindSafe},
-};
+use std::io::Cursor;
 
 use image::{
     codecs::{jpeg::JpegDecoder, png::PngDecoder},
@@ -19,7 +16,7 @@ use rustler::{Binary, NifMap, NifResult, NifUnitEnum, NifUntaggedEnum};
 use crate::{
     atoms,
     editor::{opened, OpenedEditor},
-    error::{panic_err, tagged_err, to_nif_err},
+    error::{tagged_err, to_nif_err},
     warnings,
 };
 
@@ -188,8 +185,8 @@ fn blank_lines_drawn(content: &str) -> String {
         .join("\n")
 }
 
-// There is no `Closable` until the editor exists, so `catch_unwind` contains a
-// panic in the layout or the parse of its output.
+// There is no `Closable` until the editor exists, so `warnings::drained`
+// contains a panic in the layout or the parse of its output.
 fn create(build: impl FnOnce() -> NifResult<Pdf>) -> NifResult<OpenedEditor> {
     create_from_bytes(|| build().map(Pdf::into_bytes))
 }
@@ -198,12 +195,9 @@ pub(crate) fn create_from_bytes(
     build: impl FnOnce() -> NifResult<Vec<u8>>,
 ) -> NifResult<OpenedEditor> {
     let editor = warnings::drained(|| {
-        catch_unwind(AssertUnwindSafe(|| {
-            let bytes = build()?;
+        let bytes = build()?;
 
-            DocumentEditor::from_bytes(bytes).map_err(to_nif_err)
-        }))
-        .unwrap_or_else(|payload| Err(panic_err(&*payload)))
+        DocumentEditor::from_bytes(bytes).map_err(to_nif_err)
     })?;
 
     opened(editor)

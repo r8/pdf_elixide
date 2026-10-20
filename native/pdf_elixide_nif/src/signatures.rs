@@ -182,10 +182,7 @@ fn dss_of<'a>(env: Env<'a>, doc: &PdfDocument) -> NifResult<Option<DssNif<'a>>> 
 
 // Signature reads must not turn an unreadable object into "no signatures".
 fn resolve(doc: &PdfDocument, obj: &Object) -> NifResult<Object> {
-    match obj.as_reference() {
-        Some(obj_ref) => doc.load_object(obj_ref).map_err(to_nif_err),
-        None => Ok(obj.clone()),
-    }
+    doc.resolve_object(obj).map_err(to_nif_err)
 }
 
 // Upstream decodes these PDF text strings as UTF-8, so re-read them before the

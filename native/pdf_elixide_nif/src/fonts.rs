@@ -130,10 +130,7 @@ fn page_resources(doc: &PdfDocument, page_index: usize) -> Object {
     };
     let resources = dict.get("Resources").cloned().unwrap_or_else(empty);
 
-    match resources.as_reference() {
-        Some(reference) => doc.load_object(reference).unwrap_or_else(|_| empty()),
-        None => resources,
-    }
+    doc.resolve_object(&resources).unwrap_or_else(|_| empty())
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]

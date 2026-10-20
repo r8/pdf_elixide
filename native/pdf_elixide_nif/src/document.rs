@@ -26,7 +26,7 @@ use crate::{
     form::{document_form_field_to_nif, export_bytes, is_exportable, FieldNif, FormDataFormatNif},
     form_tree,
     fs_path::path_arg,
-    geometry::{rect_from_corners, RectNif},
+    geometry::{rect_from_f32_corners, RectNif},
     images::{image_to_nif, ImageNif},
     outline::{outline_to_nif, OutlineItemNif},
     paths::{path_to_nif, PathNif},
@@ -1283,12 +1283,7 @@ fn document_get_page_media_box(
         ensure_page_in_range(doc, page_index)?;
 
         let (llx, lly, urx, ury) = doc.get_page_media_box(page_index).map_err(to_nif_err)?;
-        Ok(rect_from_corners(
-            llx.into(),
-            lly.into(),
-            urx.into(),
-            ury.into(),
-        ))
+        Ok(rect_from_f32_corners([llx, lly, urx, ury]))
     })
 }
 
@@ -1338,9 +1333,7 @@ fn document_get_page_crop_box(
 
         Ok(read_crop_box(doc, page_index)
             .map_err(to_nif_err)?
-            .map(|[llx, lly, urx, ury]| {
-                rect_from_corners(llx.into(), lly.into(), urx.into(), ury.into())
-            }))
+            .map(rect_from_f32_corners))
     })
 }
 
@@ -1357,12 +1350,7 @@ fn document_get_page_visible_box(
 
         let (llx, lly, urx, ury) = doc.get_page_visible_box(page_index).map_err(to_nif_err)?;
 
-        Ok(rect_from_corners(
-            llx.into(),
-            lly.into(),
-            urx.into(),
-            ury.into(),
-        ))
+        Ok(rect_from_f32_corners([llx, lly, urx, ury]))
     })
 }
 

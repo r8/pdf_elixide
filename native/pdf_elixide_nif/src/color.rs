@@ -3,7 +3,7 @@ use rustler::{NifStruct, NifUntaggedEnum};
 
 use crate::geometry::{finite, finite64};
 
-#[derive(NifStruct, Debug)]
+#[derive(NifStruct, Debug, Clone, Copy)]
 #[module = "PdfElixide.Color.RGB"]
 pub struct RgbNif {
     pub r: f32,
@@ -41,6 +41,16 @@ pub enum AnnotationColorNif {
     Rgb(RgbNif),
     Cmyk(CmykNif),
     Unknown(UnknownNif),
+}
+
+impl From<RgbNif> for [f32; 3] {
+    fn from(color: RgbNif) -> Self {
+        [color.r, color.g, color.b]
+    }
+}
+
+pub fn color_from_components([r, g, b]: [f32; 3]) -> Color {
+    Color { r, g, b }
 }
 
 pub fn color_to_nif(color: Color) -> RgbNif {

@@ -1,8 +1,11 @@
 // Bounded per-document and process-wide structured warning buffers.
 
 use std::{
+    io,
     ops::{Deref, DerefMut},
+    panic,
     sync::{Mutex, MutexGuard},
+    thread,
 };
 
 use pdf_oxide::{
@@ -175,6 +178,26 @@ static GLOBAL: Buffer = Buffer::new();
 // Drain after every `Closable` access, even when warnings are never listed.
 pub(crate) fn collect_global() {
     GLOBAL.absorb(drain_global_warnings);
+}
+
+// Runs `work` on a thread of its own with a larger stack. The sink is
+// thread-local, so it is drained there, after a caught panic too; the caller
+// decides what a panic or a thread that cannot start becomes.
+pub(crate) fn on_own_stack<T: Send>(
+    stack_size: usize,
+    work: impl FnOnce() -> T + Send,
+) -> io::Result<thread::Result<T>> {
+    thread::scope(|scope| {
+        thread::Builder::new()
+            .stack_size(stack_size)
+            .spawn_scoped(scope, || {
+                let result = panic::catch_unwind(panic::AssertUnwindSafe(work));
+                collect_global();
+
+                result
+            })
+            .map(|handle| handle.join().and_then(|result| result))
+    })
 }
 
 // For calls without a `Closable`: contain a panic as `with_read` would, and

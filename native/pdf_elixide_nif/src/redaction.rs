@@ -54,7 +54,7 @@ impl From<RedactionOptionsNif> for RedactionOptions {
         opts.remove_embedded_files = o.remove_embedded_files;
         opts.optional_content = o.optional_content.into();
         opts.edge_padding = o.edge_padding;
-        opts.default_fill = [o.default_fill.r, o.default_fill.g, o.default_fill.b];
+        opts.default_fill = o.default_fill.into();
         opts.draw_overlay_when_no_ic = o.draw_default_overlay;
         opts.emit_redaction_artifacts = o.emit_redaction_artifacts;
         opts
@@ -75,14 +75,7 @@ impl RedactionOptionsNif {
             ));
         }
 
-        ensure_fill_in_range(
-            [
-                self.default_fill.r,
-                self.default_fill.g,
-                self.default_fill.b,
-            ],
-            ":default_fill",
-        )
+        ensure_fill_in_range(self.default_fill.into(), ":default_fill")
     }
 }
 
@@ -228,7 +221,7 @@ fn editor_add_redaction(
 ) -> NifResult<Atom> {
     // Converted before the lock: neither check needs an editor.
     let corners = redaction_corners(rect)?;
-    let fill = fill.map(|c| [c.r, c.g, c.b]);
+    let fill: Option<[f32; 3]> = fill.map(Into::into);
     if let Some(fill) = fill {
         ensure_fill_in_range(fill, "fill")?;
     }
