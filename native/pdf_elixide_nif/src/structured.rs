@@ -6,7 +6,7 @@ use rustler::{NifMap, NifResult, NifTaggedEnum, ResourceArc};
 
 use crate::{
     document::ensure_page_in_range,
-    error::to_nif_err,
+    error::{to_nif_err, to_nif_page_err},
     extract_options::StructuredOptionsNif,
     geometry::{finite, rect_to_nif, RectNif},
     span::{span_to_nif, SpanNif},
@@ -119,7 +119,11 @@ fn document_all_structured(
         let mode: ColumnMode = options.column_mode.into();
         let count = doc.page_count().map_err(to_nif_err)?;
         (0..count)
-            .map(|page_index| extract_structured_page(doc, page_index, mode))
+            .map(|page_index| {
+                doc.extract_structured_with_column_mode(page_index, mode)
+                    .map(page_to_nif)
+                    .map_err(|e| to_nif_page_err(page_index, e))
+            })
             .collect()
     })
 }

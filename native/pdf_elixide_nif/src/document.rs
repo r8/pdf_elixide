@@ -418,6 +418,22 @@ fn document_extract_text(
     })
 }
 
+// Every page's items in order, as one list. A failing page halts the call and
+// is named in the message, as `extract_all_text_pages` names it.
+fn all_pages<T, N>(
+    doc: &PdfDocument,
+    extract: impl Fn(usize) -> pdf_oxide::Result<Vec<T>>,
+    to_nif: impl Fn(T, usize) -> N,
+) -> NifResult<Vec<N>> {
+    let count = doc.page_count().map_err(to_nif_err)?;
+    let mut all = Vec::new();
+    for page_index in 0..count {
+        let items = extract(page_index).map_err(|e| to_nif_page_err(page_index, e))?;
+        all.extend(items.into_iter().map(|item| to_nif(item, page_index)));
+    }
+    Ok(all)
+}
+
 // Insert the form feed before extraction so a skipped page still leaves an
 // empty slot. Any non-empty document then splits into `page_count` parts.
 fn extract_all_text_pages(doc: &PdfDocument, options: &TextOptions) -> NifResult<String> {
@@ -665,17 +681,11 @@ fn document_all_words(
         options.validate()?;
         let options: WordsOptions = options.into();
 
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut words = Vec::new();
-        for page_index in 0..count {
-            let page_words = extract_words_page(doc, page_index, &options).map_err(to_nif_err)?;
-            words.extend(
-                page_words
-                    .into_iter()
-                    .map(|word| word_to_nif(word, page_index)),
-            );
-        }
-        Ok(words)
+        all_pages(
+            doc,
+            |page_index| extract_words_page(doc, page_index, &options),
+            word_to_nif,
+        )
     })
 }
 
@@ -731,18 +741,11 @@ fn document_all_text_lines(
         options.validate()?;
         let options: LinesOptions = options.into();
 
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut lines = Vec::new();
-        for page_index in 0..count {
-            let page_lines =
-                extract_text_lines_page(doc, page_index, &options).map_err(to_nif_err)?;
-            lines.extend(
-                page_lines
-                    .into_iter()
-                    .map(|line| text_line_to_nif(line, page_index)),
-            );
-        }
-        Ok(lines)
+        all_pages(
+            doc,
+            |page_index| extract_text_lines_page(doc, page_index, &options),
+            text_line_to_nif,
+        )
     })
 }
 
@@ -791,13 +794,11 @@ fn document_all_chars(
         options.validate()?;
         let options: CharsOptions = options.into();
 
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut chars = Vec::new();
-        for page_index in 0..count {
-            let page_chars = extract_chars_page(doc, page_index, &options).map_err(to_nif_err)?;
-            chars.extend(page_chars.into_iter().map(|ch| char_to_nif(ch, page_index)));
-        }
-        Ok(chars)
+        all_pages(
+            doc,
+            |page_index| extract_chars_page(doc, page_index, &options),
+            char_to_nif,
+        )
     })
 }
 
@@ -852,17 +853,11 @@ fn document_all_spans(
         options.validate()?;
         let options: SpansOptions = options.into();
 
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut spans = Vec::new();
-        for page_index in 0..count {
-            let page_spans = extract_spans_page(doc, page_index, &options).map_err(to_nif_err)?;
-            spans.extend(
-                page_spans
-                    .into_iter()
-                    .map(|span| span_to_nif(span, page_index)),
-            );
-        }
-        Ok(spans)
+        all_pages(
+            doc,
+            |page_index| extract_spans_page(doc, page_index, &options),
+            span_to_nif,
+        )
     })
 }
 
@@ -884,19 +879,9 @@ fn document_paths(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_paths(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
-    resource.doc.with_read(|doc| {
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut paths = Vec::new();
-        for page_index in 0..count {
-            let page_paths = doc.extract_paths(page_index).map_err(to_nif_err)?;
-            paths.extend(
-                page_paths
-                    .into_iter()
-                    .map(|path| path_to_nif(path, page_index)),
-            );
-        }
-        Ok(paths)
-    })
+    resource
+        .doc
+        .with_read(|doc| all_pages(doc, |page_index| doc.extract_paths(page_index), path_to_nif))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -917,19 +902,9 @@ fn document_rects(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_rects(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
-    resource.doc.with_read(|doc| {
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut rects = Vec::new();
-        for page_index in 0..count {
-            let page_rects = doc.extract_rects(page_index).map_err(to_nif_err)?;
-            rects.extend(
-                page_rects
-                    .into_iter()
-                    .map(|path| path_to_nif(path, page_index)),
-            );
-        }
-        Ok(rects)
-    })
+    resource
+        .doc
+        .with_read(|doc| all_pages(doc, |page_index| doc.extract_rects(page_index), path_to_nif))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -950,19 +925,9 @@ fn document_lines(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_lines(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<PathNif>> {
-    resource.doc.with_read(|doc| {
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut lines = Vec::new();
-        for page_index in 0..count {
-            let page_lines = doc.extract_lines(page_index).map_err(to_nif_err)?;
-            lines.extend(
-                page_lines
-                    .into_iter()
-                    .map(|path| path_to_nif(path, page_index)),
-            );
-        }
-        Ok(lines)
-    })
+    resource
+        .doc
+        .with_read(|doc| all_pages(doc, |page_index| doc.extract_lines(page_index), path_to_nif))
 }
 
 // Reaches the page through `page_range` rather than `TextSearcher::search_page`,
@@ -1066,9 +1031,10 @@ fn document_prepare_search(resource: ResourceArc<DocumentResource>) -> NifResult
         for page in 0..count {
             doc.search_runs
                 .get_or_fill(page, || doc.extract_spans(page))
-                .map_err(to_nif_err)?;
+                .map_err(|e| to_nif_page_err(page, e))?;
             let options = SearchOptions::new().with_page_range(page, page);
-            TextSearcher::search(doc, NEVER_MATCHES, &options).map_err(to_nif_err)?;
+            TextSearcher::search(doc, NEVER_MATCHES, &options)
+                .map_err(|e| to_nif_page_err(page, e))?;
         }
         Ok(atoms::ok())
     })
@@ -1127,17 +1093,11 @@ fn document_all_annotations(
     resource: ResourceArc<DocumentResource>,
 ) -> NifResult<Vec<AnnotationNif>> {
     resource.doc.with_read(|doc| {
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut annotations = Vec::new();
-        for page_index in 0..count {
-            let page_annotations = doc.get_annotations(page_index).map_err(to_nif_err)?;
-            annotations.extend(
-                page_annotations
-                    .into_iter()
-                    .map(|annotation| annotation_to_nif(annotation, page_index)),
-            );
-        }
-        Ok(annotations)
+        all_pages(
+            doc,
+            |page_index| doc.get_annotations(page_index),
+            annotation_to_nif,
+        )
     })
 }
 
@@ -1163,17 +1123,11 @@ fn document_images(
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_images(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<ImageNif>> {
     resource.doc.with_read(|doc| {
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut images = Vec::new();
-        for page_index in 0..count {
-            let page_images = doc.extract_images(page_index).map_err(to_nif_err)?;
-            images.extend(
-                page_images
-                    .into_iter()
-                    .map(|image| image_to_nif(image, page_index)),
-            );
-        }
-        Ok(images)
+        all_pages(
+            doc,
+            |page_index| doc.extract_images(page_index),
+            image_to_nif,
+        )
     })
 }
 
@@ -1258,17 +1212,11 @@ fn document_all_tables(
         options.validate()?;
         let options: TablesOptions = options.into();
 
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut tables = Vec::new();
-        for page_index in 0..count {
-            let page_tables = extract_tables_page(doc, page_index, &options).map_err(to_nif_err)?;
-            tables.extend(
-                page_tables
-                    .into_iter()
-                    .map(|table| table_to_nif(table, page_index)),
-            );
-        }
-        Ok(tables)
+        all_pages(
+            doc,
+            |page_index| extract_tables_page(doc, page_index, &options),
+            table_to_nif,
+        )
     })
 }
 

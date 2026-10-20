@@ -3,6 +3,7 @@ defmodule PdfElixide.DocumentTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
   import PdfElixide.Untyped
 
   alias PdfElixide.Color
@@ -204,6 +205,32 @@ defmodule PdfElixide.DocumentTest do
       assert_raise ArgumentError, ~r/on_page_error/, fn ->
         Document.text(doc, on_page_error: :abort)
       end
+    end
+  end
+
+  describe "whole-document extraction on a page that cannot be read" do
+    test "names the failing page, as text/1 does" do
+      doc = open(@broken_page_pdf)
+
+      for name <- [
+            :chars,
+            :words,
+            :text_lines,
+            :spans,
+            :tables,
+            :structured,
+            :paths,
+            :rects,
+            :lines,
+            :images,
+            :annotations
+          ] do
+        assert {:error, %Error{message: message}} = apply(Document, name, [doc])
+        assert message =~ ~r/^page #{@unreachable_page}: /, "#{name}/1: #{message}"
+      end
+
+      assert {:error, %Error{message: message}} = Document.prepare_search(doc)
+      assert message =~ ~r/^page #{@unreachable_page}: /
     end
   end
 

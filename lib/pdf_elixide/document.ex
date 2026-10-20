@@ -78,6 +78,11 @@ defmodule PdfElixide.Document do
   `on_page_error: :skip`. A capped `search/2` may stop before reaching a later
   unreadable page; if it reaches one, it fails. See `t:search_opts/0`.
 
+  `text/1`, `chars/1`, `words/1`, `text_lines/1`, `spans/1`, `tables/1`,
+  `structured/1`, `paths/1`, `rects/1`, `lines/1`, `images/1`,
+  `annotations/1` and `prepare_search/1` start that error's message with the
+  failing page's zero-based index, as in `page 2: …`.
+
   Most damaged pages extract as *empty* rather than failing; see the
   `:on_page_error` section of `t:text_opts/0`.
 
