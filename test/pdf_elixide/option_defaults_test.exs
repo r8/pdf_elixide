@@ -356,6 +356,19 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Builder.__option_defaults__(:heading) == %{font: nil, font_size: nil}
     end
 
+    test "Builder.numbered_list/3" do
+      assert Builder.__option_defaults__(:numbered_list) == %{
+               font: nil,
+               font_size: nil,
+               style: :decimal,
+               start: 1
+             }
+    end
+
+    test "a Builder text run" do
+      assert Builder.__option_defaults__(:run) == %{bold: false, italic: false, color: nil}
+    end
+
     test "the Builder drawing operations" do
       black = %PdfElixide.Color.RGB{r: 0.0, g: 0.0, b: 0.0}
 

@@ -427,9 +427,7 @@ defmodule PdfElixide.Builder do
   @spec numbered_list(t(), [text()], numbered_list_opts()) :: t()
   def numbered_list(%__MODULE__{} = builder, items, opts \\ [])
       when is_list(items) and is_list(opts) do
-    opts = Keyword.validate!(opts, @numbered_list_opts_keys)
-    style = list_style!(Keyword.get(opts, :style, :decimal))
-    start = start!(Keyword.get(opts, :start, 1))
+    %{style: style, start: start} = build_numbered_list_options(opts)
 
     last = start + length(items) - 1
 
@@ -956,12 +954,15 @@ defmodule PdfElixide.Builder do
   defp native_op(op, acc), do: {op, acc}
 
   @doc false
-  @spec __option_defaults__(:new | :paragraph | :heading | :shape | :line) :: map()
+  @spec __option_defaults__(:new | :paragraph | :heading | :shape | :line | :numbered_list | :run) ::
+          map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
   def __option_defaults__(:heading), do: build_heading_options([])
   def __option_defaults__(:shape), do: build_shape_options([])
   def __option_defaults__(:line), do: build_line_options([])
+  def __option_defaults__(:numbered_list), do: build_numbered_list_options([])
+  def __option_defaults__(:run), do: build_run_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -981,6 +982,28 @@ defmodule PdfElixide.Builder do
       font_size: positive!(:font_size, Keyword.get(opts, :font_size, 12)),
       line_height: positive!(:line_height, Keyword.get(opts, :line_height, 1.5))
     })
+  end
+
+  defp build_numbered_list_options(opts) do
+    opts = Keyword.validate!(opts, @numbered_list_opts_keys)
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.merge(%{
+      style: list_style!(Keyword.get(opts, :style, :decimal)),
+      start: start!(Keyword.get(opts, :start, 1))
+    })
+  end
+
+  defp build_run_options(opts) do
+    opts = Keyword.validate!(opts, @run_opts_keys)
+
+    %{
+      bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
+      italic: boolean!(:italic, Keyword.get(opts, :italic, false)),
+      color: color!(:color, Keyword.get(opts, :color))
+    }
   end
 
   defp build_heading_options(opts) do
@@ -1089,18 +1112,10 @@ defmodule PdfElixide.Builder do
   defp runs!(text) when is_binary(text), do: [run!(text)]
   defp runs!(runs), do: Enum.map(runs, &run!/1)
 
-  defp run!(text) when is_binary(text),
-    do: %{text: LayoutOptions.utf8!("text", text), bold: false, italic: false, color: nil}
+  defp run!(text) when is_binary(text), do: run!({text, []})
 
   defp run!({text, opts}) when is_binary(text) and is_list(opts) do
-    opts = Keyword.validate!(opts, @run_opts_keys)
-
-    %{
-      text: LayoutOptions.utf8!("text", text),
-      bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
-      italic: boolean!(:italic, Keyword.get(opts, :italic, false)),
-      color: color!(:color, Keyword.get(opts, :color))
-    }
+    opts |> build_run_options() |> Map.put(:text, LayoutOptions.utf8!("text", text))
   end
 
   defp run!(other) do

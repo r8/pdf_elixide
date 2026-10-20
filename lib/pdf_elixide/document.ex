@@ -1210,7 +1210,7 @@ defmodule PdfElixide.Document do
       and the comparison is `>=`. Use `:intersects` if you meant "any
       overlap".
   """
-  @type region_mode :: :intersects | :fully_contained | {:min_overlap, float()}
+  @type region_mode :: :intersects | :fully_contained | {:min_overlap, number()}
 
   @typedoc """
   Options accepted by the `text` and `text!` functions.
@@ -2146,7 +2146,7 @@ defmodule PdfElixide.Document do
           include_artifacts: boolean(),
           region: Rect.t() | nil,
           region_mode: region_mode(),
-          word_gap_threshold: float() | nil,
+          word_gap_threshold: number() | nil,
           profile: extraction_profile() | nil
         ]
 
@@ -2261,8 +2261,8 @@ defmodule PdfElixide.Document do
           include_artifacts: boolean(),
           region: Rect.t() | nil,
           region_mode: region_mode(),
-          word_gap_threshold: float() | nil,
-          line_gap_threshold: float() | nil,
+          word_gap_threshold: number() | nil,
+          line_gap_threshold: number() | nil,
           profile: extraction_profile() | nil
         ]
 
@@ -2511,16 +2511,16 @@ defmodule PdfElixide.Document do
   """
   @type span_merging_opts :: [
           preset: :default | :aggressive | :conservative | :adaptive | :legacy,
-          space_threshold_em_ratio: float() | nil,
-          conservative_threshold_pt: float() | nil,
-          column_boundary_threshold_pt: float() | nil,
-          severe_overlap_threshold_pt: float() | nil,
+          space_threshold_em_ratio: number() | nil,
+          conservative_threshold_pt: number() | nil,
+          column_boundary_threshold_pt: number() | nil,
+          severe_overlap_threshold_pt: number() | nil,
           use_adaptive_threshold: boolean() | nil,
           adaptive: adaptive_threshold_opts() | nil,
           detect_email_patterns: boolean() | nil,
-          email_threshold_multiplier: float() | nil,
+          email_threshold_multiplier: number() | nil,
           detect_citation_markers: boolean() | nil,
-          citation_font_size_ratio: float() | nil,
+          citation_font_size_ratio: number() | nil,
           merge_tm_tj_runs: boolean() | nil
         ]
 
@@ -2547,9 +2547,9 @@ defmodule PdfElixide.Document do
   Every key defaults to `nil`, meaning "keep the preset's value".
   """
   @type adaptive_threshold_opts :: [
-          median_multiplier: float() | nil,
-          min_threshold_pt: float() | nil,
-          max_threshold_pt: float() | nil,
+          median_multiplier: number() | nil,
+          min_threshold_pt: number() | nil,
+          max_threshold_pt: number() | nil,
           use_iqr: boolean() | nil,
           min_samples: non_neg_integer() | nil
         ]
@@ -2857,7 +2857,7 @@ defmodule PdfElixide.Document do
       answered from tagged artifacts. Values outside the range raise
       `ArgumentError`. Defaults to `0.8`.
   """
-  @type running_regions_opts :: [area: :header | :footer | :both, threshold: float()]
+  @type running_regions_opts :: [area: :header | :footer | :both, threshold: number()]
 
   @running_regions_opts_keys [:area, :threshold]
 
@@ -2979,14 +2979,14 @@ defmodule PdfElixide.Document do
           enabled: boolean() | nil,
           horizontal_strategy: :lines | :text | :both | nil,
           vertical_strategy: :lines | :text | :both | nil,
-          column_tolerance: float() | nil,
-          row_tolerance: float() | nil,
+          column_tolerance: number() | nil,
+          row_tolerance: number() | nil,
           min_table_cells: non_neg_integer() | nil,
           min_table_columns: non_neg_integer() | nil,
-          regular_row_ratio: float() | nil,
+          regular_row_ratio: number() | nil,
           max_table_columns: non_neg_integer() | nil,
-          column_merge_threshold: float() | nil,
-          v_split_gap: float() | nil,
+          column_merge_threshold: number() | nil,
+          v_split_gap: number() | nil,
           text_fallback: boolean() | nil
         ]
 
@@ -3019,14 +3019,14 @@ defmodule PdfElixide.Document do
           enabled: boolean() | nil,
           horizontal_strategy: :lines | :text | :both | nil,
           vertical_strategy: :lines | :text | :both | nil,
-          column_tolerance: float() | nil,
-          row_tolerance: float() | nil,
+          column_tolerance: number() | nil,
+          row_tolerance: number() | nil,
           min_table_cells: non_neg_integer() | nil,
           min_table_columns: non_neg_integer() | nil,
-          regular_row_ratio: float() | nil,
+          regular_row_ratio: number() | nil,
           max_table_columns: non_neg_integer() | nil,
-          column_merge_threshold: float() | nil,
-          v_split_gap: float() | nil
+          column_merge_threshold: number() | nil,
+          v_split_gap: number() | nil
         ]
 
   @text_table_detection_opts_keys @table_detection_opts_keys -- [:text_fallback]
@@ -3054,14 +3054,14 @@ defmodule PdfElixide.Document do
           enabled: boolean() | nil,
           horizontal_strategy: :lines | :text | :both | nil,
           vertical_strategy: :lines | :text | :both | nil,
-          column_tolerance: float() | nil,
-          row_tolerance: float() | nil,
+          column_tolerance: number() | nil,
+          row_tolerance: number() | nil,
           min_table_cells: non_neg_integer() | nil,
           min_table_columns: non_neg_integer() | nil,
-          regular_row_ratio: float() | nil,
+          regular_row_ratio: number() | nil,
           max_table_columns: non_neg_integer() | nil,
-          column_merge_threshold: float() | nil,
-          v_split_gap: float() | nil,
+          column_merge_threshold: number() | nil,
+          v_split_gap: number() | nil,
           text_fallback: boolean() | nil
         ]
 

@@ -1967,16 +1967,16 @@ defmodule PdfElixide.Editor do
   Options for `embed_file/4`.
 
     * `:description` — a human-readable note about the attachment, shown by
-      viewers beside its name. Absent by default.
+      viewers beside its name. Defaults to `nil`, which leaves it out.
     * `:relationship` — how the attachment relates to the document, one of the
-      values in `t:PdfElixide.Document.EmbeddedFile.relationship/0`. Absent by
-      default.
+      values in `t:PdfElixide.Document.EmbeddedFile.relationship/0`. Defaults
+      to `nil`, which leaves it out.
 
   Unknown keys and invalid values raise `ArgumentError` naming the key.
   """
   @type embed_opts :: [
-          description: String.t(),
-          relationship: EmbeddedFile.relationship()
+          description: String.t() | nil,
+          relationship: EmbeddedFile.relationship() | nil
         ]
 
   @embed_opts_keys [:description, :relationship]

@@ -69,14 +69,14 @@ defmodule PdfElixide.Form do
   Options for `export/3`.
 
     * `:file_spec` — the name of the PDF this data came from, written into the
-      output so a reader can pair the two. It is a label, not a path, and is
-      absent by default.
+      output so a reader can pair the two. It is a label, not a path. Defaults
+      to `nil`, which leaves it out.
 
   Unknown keys and an invalid `:file_spec` raise `ArgumentError`. See the
   "Exporting field data" section of the [Forms](guides/forms.md) guide for the
   accepted characters.
   """
-  @type export_opts :: [file_spec: String.t()]
+  @type export_opts :: [file_spec: String.t() | nil]
 
   @export_opts_keys [:file_spec]
 
