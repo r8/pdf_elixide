@@ -2,6 +2,8 @@ defmodule PdfElixide.StructuredTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
   alias PdfElixide.Document.Span
@@ -26,12 +28,6 @@ defmodule PdfElixide.StructuredTest do
 
   @left_lines ~w(one two three four five six) |> Enum.map(&"Left column line #{&1}")
   @right_lines ~w(one two three four five six) |> Enum.map(&"Right column line #{&1}")
-
-  defp open(path) do
-    doc = Document.open!(path)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
 
   defp kinds_and_columns(%StructuredPage{regions: regions}) do
     Enum.map(regions, &{&1.kind, &1.column})

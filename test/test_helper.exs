@@ -2,5 +2,7 @@ Code.require_file("support/nif_source.exs", __DIR__)
 Code.require_file("support/content_order.exs", __DIR__)
 Code.require_file("support/untyped.exs", __DIR__)
 Code.require_file("support/png.exs", __DIR__)
+Code.require_file("support/handles.exs", __DIR__)
+Code.require_file("support/test_helpers.exs", __DIR__)
 
 ExUnit.start()

@@ -3,6 +3,7 @@ defmodule PdfElixide.EditorTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
   import PdfElixide.Untyped
 
   alias PdfElixide.Document
@@ -3034,8 +3035,6 @@ defmodule PdfElixide.EditorTest do
   @quad_rect %Rect{x: 300.0, y: 400.0, width: 100.0, height: 100.0}
   @red %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}
   @black %PdfElixide.Color.RGB{r: 0.0, g: 0.0, b: 0.0}
-
-  defp written(editor), do: Document.from_binary!(Editor.to_binary!(editor))
 
   defp page_text(editor, index) do
     doc = written(editor)

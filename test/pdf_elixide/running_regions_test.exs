@@ -2,6 +2,8 @@ defmodule PdfElixide.RunningRegionsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
   alias PdfElixide.Editor
@@ -18,12 +20,6 @@ defmodule PdfElixide.RunningRegionsTest do
 
   # Page of @running_pdf carrying `/Rotate 90`.
   @rotate_90 3
-
-  defp open(path) do
-    doc = Document.open!(path)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
 
   defp texts(regions),
     do: Map.new(regions, fn {page, spans} -> {page, Enum.map(spans, & &1.text)} end)

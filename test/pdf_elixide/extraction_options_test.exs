@@ -2,6 +2,8 @@ defmodule PdfElixide.ExtractionOptionsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+  import PdfElixide.TestHelpers
   import PdfElixide.Untyped
 
   alias PdfElixide.Document
@@ -20,14 +22,6 @@ defmodule PdfElixide.ExtractionOptionsTest do
   @artifacts 1
   @markup 2
   @ruleless 3
-
-  defp open(path) do
-    doc = Document.open!(path)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
-
-  defp texts(items), do: Enum.map(items, & &1.text)
 
   describe "text/3" do
     setup do: %{doc: open(@extraction_pdf), table_doc: open(@table_pdf)}

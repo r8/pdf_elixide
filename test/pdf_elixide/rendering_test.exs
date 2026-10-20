@@ -2,6 +2,8 @@ defmodule PdfElixide.RenderingTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.TestHelpers
+
   alias PdfElixide.Color
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
@@ -30,11 +32,6 @@ defmodule PdfElixide.RenderingTest do
     on_exit(fn -> Document.close(doc) end)
 
     Map.put(context, :doc, doc)
-  end
-
-  defp pixel(%RenderedPage{format: :rgba8} = rendered, col, row) do
-    <<r, g, b, a>> = binary_part(rendered.data, (row * rendered.width + col) * 4, 4)
-    {r, g, b, a}
   end
 
   describe "render/3" do

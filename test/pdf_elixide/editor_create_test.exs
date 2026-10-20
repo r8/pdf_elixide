@@ -3,6 +3,8 @@ defmodule PdfElixide.EditorCreateTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+  import PdfElixide.TestHelpers
   import PdfElixide.Untyped
 
   alias PdfElixide.Document
@@ -13,14 +15,6 @@ defmodule PdfElixide.EditorCreateTest do
   alias PdfElixide.Png
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
-
-  defp written(%Editor{} = editor) do
-    doc = editor |> Editor.to_binary!() |> Document.from_binary!()
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
-
-  defp lines(count), do: Enum.map_join(1..count, "\n", &"line #{&1}")
 
   describe "from_markdown/2" do
     test "returns an editor with no source path, like from_binary/2" do

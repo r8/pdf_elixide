@@ -5,6 +5,7 @@ defmodule PdfElixide.WarningsTest do
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
+  import PdfElixide.Handles
 
   alias PdfElixide.Compliance
   alias PdfElixide.Compliance.Report
@@ -35,12 +36,6 @@ defmodule PdfElixide.WarningsTest do
   setup do
     Logging.take_structured_warnings()
     :ok
-  end
-
-  defp open(path, opts \\ []) do
-    doc = Document.open!(path, opts)
-    on_exit(fn -> Document.close(doc) end)
-    doc
   end
 
   defp eof_entry(object \\ 5, bytes \\ 256) do

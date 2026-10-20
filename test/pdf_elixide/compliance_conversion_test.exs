@@ -2,6 +2,7 @@ defmodule PdfElixide.ComplianceConversionTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
   import PdfElixide.Untyped
 
   alias PdfElixide.Compliance
@@ -23,24 +24,12 @@ defmodule PdfElixide.ComplianceConversionTest do
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @password "secret"
 
-  defp open(path, opts \\ []) do
-    editor = Editor.open!(path, opts)
-    on_exit(fn -> Editor.close(editor) end)
-    editor
-  end
-
-  defp written(editor) do
-    doc = Document.from_binary!(Editor.to_binary!(editor))
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
-
   defp types(%Conversion{actions: actions}), do: Enum.map(actions, & &1.type)
   defp codes(list), do: Enum.map(list, & &1.code)
 
   describe "convert/3" do
     test "reports the document a full write now produces" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
 
       assert {:ok, %Conversion{report: %Report{} = report} = conversion} =
                Compliance.convert(editor, :pdf_a_2b)
@@ -54,7 +43,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "writes pending edits into the document first" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Editor.delete_page!(editor, 0)
       Editor.embed_file!(editor, "data.csv", "a,b", relationship: :data)
 
@@ -66,7 +55,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "leaves the editor modified until a full write" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Compliance.convert!(editor, :pdf_a_2b)
 
       assert Editor.modified?(editor)
@@ -76,7 +65,7 @@ defmodule PdfElixide.ComplianceConversionTest do
 
     @tag :tmp_dir
     test "refuses an incremental save afterwards", %{tmp_dir: dir} do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Compliance.convert!(editor, :pdf_a_2b)
       path = Path.join(dir, "out.pdf")
 
@@ -89,7 +78,7 @@ defmodule PdfElixide.ComplianceConversionTest do
 
     @tag :tmp_dir
     test "refuses an encrypted write afterwards", %{tmp_dir: dir} do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Compliance.convert!(editor, :pdf_a_2b)
       encryption = [encryption: [user_password: @password]]
 
@@ -106,7 +95,7 @@ defmodule PdfElixide.ComplianceConversionTest do
 
     @tag :tmp_dir
     test "refuses a compressed write after a PDF/A-1 conversion", %{tmp_dir: dir} do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Compliance.convert!(editor, :pdf_a_1b)
       path = Path.join(dir, "out.pdf")
 
@@ -124,7 +113,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "refuses a merge after a PDF/A-1 conversion" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Compliance.convert!(editor, :pdf_a_1b)
 
       assert {:error, %Error{reason: :unsupported, message: message}} =
@@ -136,7 +125,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "keeps the encryption refusal through a later merge" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Compliance.convert!(editor, :pdf_a_2b)
       Editor.merge!(editor, @fonts_pdf)
 
@@ -158,7 +147,7 @@ defmodule PdfElixide.ComplianceConversionTest do
             :pdf_a_3b,
             :pdf_a_3u
           ] do
-        editor = open(@sample_pdf)
+        editor = open_editor(@sample_pdf)
 
         assert %Report{standard: ^level, declared: ^level} =
                  Compliance.convert!(editor, level).report
@@ -168,7 +157,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "refuses a PDF/A-1 declaration it would keep compressed" do
-      converted = open(@sample_pdf)
+      converted = open_editor(@sample_pdf)
       Compliance.convert!(converted, :pdf_a_1b)
       editor = Editor.from_binary!(Editor.to_binary!(converted, compress: false))
       on_exit(fn -> Editor.close(editor) end)
@@ -198,7 +187,7 @@ defmodule PdfElixide.ComplianceConversionTest do
 
     # `metadata.pdf` carries an uncompressed XMP packet declaring no level.
     test "refuses a PDF/A-1 declaration it would add to existing metadata" do
-      editor = open(@metadata_pdf)
+      editor = open_editor(@metadata_pdf)
 
       assert {:error, %Error{reason: :unsupported, message: message}} =
                Compliance.convert(editor, :pdf_a_1b)
@@ -216,7 +205,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "lifts the write refusals once the declaration is scrubbed" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Compliance.convert!(editor, :pdf_a_1b)
 
       Editor.sanitize!(editor,
@@ -231,7 +220,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "refuses a document declaring another level and leaves the editor unchanged" do
-      converted = open(@sample_pdf)
+      converted = open_editor(@sample_pdf)
       Compliance.convert!(converted, :pdf_a_2b)
       editor = Editor.from_binary!(Editor.to_binary!(converted))
       on_exit(fn -> Editor.close(editor) end)
@@ -248,7 +237,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "converts to another level once the declaration is removed" do
-      converted = open(@sample_pdf)
+      converted = open_editor(@sample_pdf)
       Compliance.convert!(converted, :pdf_a_2b)
       editor = Editor.from_binary!(Editor.to_binary!(converted))
       on_exit(fn -> Editor.close(editor) end)
@@ -264,9 +253,12 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "removes JavaScript unless told not to" do
-      assert :removed_javascript in types(Compliance.convert!(open(@sanitize_pdf), :pdf_a_2b))
+      assert :removed_javascript in types(
+               Compliance.convert!(open_editor(@sanitize_pdf), :pdf_a_2b)
+             )
 
-      conversion = Compliance.convert!(open(@sanitize_pdf), :pdf_a_2b, remove_javascript: false)
+      conversion =
+        Compliance.convert!(open_editor(@sanitize_pdf), :pdf_a_2b, remove_javascript: false)
 
       refute :removed_javascript in types(conversion)
       assert [%Failure{code: "CONTENT-002"}] = conversion.failures
@@ -274,22 +266,22 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "removes attached files where the level forbids them" do
-      editor = open(@sanitize_pdf)
+      editor = open_editor(@sanitize_pdf)
       assert :removed_embedded_files in types(Compliance.convert!(editor, :pdf_a_2b))
       assert Editor.embedded_files!(editor) == []
 
-      kept = open(@sanitize_pdf)
+      kept = open_editor(@sanitize_pdf)
       refute :removed_embedded_files in types(Compliance.convert!(kept, :pdf_a_3b))
       assert [_] = Editor.embedded_files!(kept)
 
       conversion =
-        Compliance.convert!(open(@sanitize_pdf), :pdf_a_2b, remove_embedded_files: false)
+        Compliance.convert!(open_editor(@sanitize_pdf), :pdf_a_2b, remove_embedded_files: false)
 
       assert "FILE-001" in codes(conversion.failures)
     end
 
     test "leaves fonts unembedded by default" do
-      conversion = Compliance.convert!(open(@fonts_pdf), :pdf_a_2b)
+      conversion = Compliance.convert!(open_editor(@fonts_pdf), :pdf_a_2b)
 
       refute conversion.report.compliant?
       assert [%Failure{code: "FONT-001"}] = conversion.failures
@@ -297,7 +289,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "reports an unembedded Symbol font as the validation of the output does" do
-      editor = open(@symbol_font_pdf)
+      editor = open_editor(@symbol_font_pdf)
       report = Compliance.convert!(editor, :pdf_a_2b).report
 
       refute report.compliant?
@@ -307,7 +299,7 @@ defmodule PdfElixide.ComplianceConversionTest do
 
     # What the machine has installed decides between the two outcomes.
     test "embeds each missing font or says why not" do
-      conversion = Compliance.convert!(open(@fonts_pdf), :pdf_a_2b, embed_fonts: true)
+      conversion = Compliance.convert!(open_editor(@fonts_pdf), :pdf_a_2b, embed_fonts: true)
 
       assert [_ | _] =
                Enum.filter(conversion.actions, &(&1.type == :embedded_font)) ++
@@ -315,7 +307,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "embeds a public-domain sRGB profile when given none" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
 
       profile =
         File.read!(
@@ -338,7 +330,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "embeds the ICC profile it is given" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       profile = :binary.copy("PROFILE!", 16)
 
       Compliance.convert!(editor, :pdf_a_2b, icc_profile: profile)
@@ -347,7 +339,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "refuses a profile the document's existing output intent would displace" do
-      converted = open(@sample_pdf)
+      converted = open_editor(@sample_pdf)
       Compliance.convert!(converted, :pdf_a_2b)
       editor = Editor.from_binary!(Editor.to_binary!(converted))
       on_exit(fn -> Editor.close(editor) end)
@@ -362,7 +354,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "sets a language for a level a target and adds no structure" do
-      conversion = Compliance.convert!(open(@sample_pdf), :pdf_a_2a)
+      conversion = Compliance.convert!(open_editor(@sample_pdf), :pdf_a_2a)
 
       assert :added_language in types(conversion)
       refute :added_structure in types(conversion)
@@ -370,14 +362,14 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "converts an editor opened with a password and writes it unencrypted" do
-      editor = open(@encrypted_pdf, password: @password)
+      editor = open_editor(@encrypted_pdf, password: @password)
 
       assert {:ok, %Conversion{}} = Compliance.convert(editor, :pdf_a_2b)
       refute Document.encrypted?(written(editor))
     end
 
     test "refuses a pending redaction and leaves the editor unchanged" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       Editor.add_redaction!(editor, 0, %Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0})
 
       assert {:error, %Error{reason: :unsupported, message: message}} =
@@ -388,7 +380,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "refuses an editor with no pages" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
       for _ <- 1..3, do: Editor.delete_page!(editor, 0)
 
       assert {:error, %Error{reason: :unsupported}} = Compliance.convert(editor, :pdf_a_2b)
@@ -402,7 +394,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "raises ArgumentError for a standard that is not PDF/A" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
 
       for standard <- [:pdf_ua_1, :pdf_x_4, :pdf_a_4] do
         assert_raise ArgumentError, ~r/#{inspect(standard)}/, fn ->
@@ -412,7 +404,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "raises FunctionClauseError for a standard that is not an atom" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
 
       assert_raise FunctionClauseError, fn ->
         Compliance.convert(editor, untyped("pdf_a_2b"))
@@ -420,7 +412,7 @@ defmodule PdfElixide.ComplianceConversionTest do
     end
 
     test "raises ArgumentError naming an option of the wrong type" do
-      editor = open(@sample_pdf)
+      editor = open_editor(@sample_pdf)
 
       assert_raise ArgumentError, ~r/:icc_profile/, fn ->
         Compliance.convert(editor, :pdf_a_2b, icc_profile: 1)

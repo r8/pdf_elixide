@@ -3,6 +3,8 @@ defmodule PdfElixide.BuilderTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+  import PdfElixide.TestHelpers
   import PdfElixide.Untyped
 
   alias PdfElixide.Builder
@@ -18,12 +20,6 @@ defmodule PdfElixide.BuilderTest do
   @ascent 718
   @descent -207
 
-  defp written(%Builder{} = builder) do
-    doc = builder |> Builder.to_binary!() |> Document.from_binary!()
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
-
   defp baselines(doc, page) do
     doc
     |> Document.chars!(page)
@@ -36,8 +32,6 @@ defmodule PdfElixide.BuilderTest do
     half_leading = (size * line_height - (@ascent - @descent) * size / 1000) / 2
     top - half_leading - @ascent * size / 1000
   end
-
-  defp lines(count), do: Enum.map_join(1..count, "\n", &"line #{&1}")
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
 

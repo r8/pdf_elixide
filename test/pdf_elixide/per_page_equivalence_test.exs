@@ -2,6 +2,8 @@ defmodule PdfElixide.PerPageEquivalenceTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+
   alias PdfElixide.Document
   alias PdfElixide.Document.Page
 
@@ -14,7 +16,7 @@ defmodule PdfElixide.PerPageEquivalenceTest do
   # Each returned struct carries a handle; compare with :ref dropped.
   @handled [:fonts, :images, :tables]
 
-  defp open!(name), do: Document.open!(Path.join(@fixtures_dir, name))
+  defp open!(name), do: open(Path.join(@fixtures_dir, name))
 
   defp whole(doc, extractor), do: apply(Document, :"#{extractor}!", [doc])
 

@@ -3,6 +3,7 @@ defmodule PdfElixide.SignatureTest do
 
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
   import PdfElixide.Untyped
 
   alias PdfElixide.Document
@@ -122,12 +123,6 @@ defmodule PdfElixide.SignatureTest do
                      "7420545341"
                  )
 
-  defp open!(path) do
-    doc = Document.open!(path)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
-
   # Flip a byte of the imprint the authority signed over. The token keeps its
   # length and still parses, so only the signature across it can report this.
   defp tamper(%Timestamp{token: token, message_imprint: imprint}) do
@@ -210,7 +205,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "list/1" do
     test "reports the signature dictionary a signed field points at" do
-      assert {:ok, [signature]} = Signature.list(open!(@signature_pdf))
+      assert {:ok, [signature]} = Signature.list(open(@signature_pdf))
 
       assert signature.field_name == "signature"
       assert signature.sub_filter == :pkcs7_detached
@@ -220,7 +215,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "decodes text entries as PDF text strings, not as UTF-8" do
-      assert {:ok, [signature]} = Signature.list(open!(@utf16_pdf))
+      assert {:ok, [signature]} = Signature.list(open(@utf16_pdf))
 
       assert signature.signer_name == "Анна Петрова"
       assert signature.reason == "Проверка подписи"
@@ -229,7 +224,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "reports one signature per dictionary, however many fields reach it" do
-      assert {:ok, signatures} = Signature.list(open!(@values_pdf))
+      assert {:ok, signatures} = Signature.list(open(@values_pdf))
 
       assert Enum.map(signatures, & &1.contents) == [
                <<0xBA, 0xAD, 0xF0, 0x0D>>,
@@ -240,34 +235,34 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "refuses a field it cannot read, where reading fields tolerates it" do
-      doc = open!(@unreadable_pdf)
+      doc = open(@unreadable_pdf)
 
       assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(doc)
       assert {:ok, []} = PdfElixide.Form.fields(doc)
     end
 
     test "refuses a /V that is not a signature dictionary" do
-      doc = open!(@bad_value_pdf)
+      doc = open(@bad_value_pdf)
 
       assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(doc)
       assert {:ok, [%{name: "signer_name"}]} = PdfElixide.Form.fields(doc)
     end
 
     test "refuses a /V naming an object the file does not contain" do
-      doc = open!(@dangling_value_pdf)
+      doc = open(@dangling_value_pdf)
 
       assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(doc)
       assert {:ok, [%{name: "signer_name"}]} = PdfElixide.Form.fields(doc)
     end
 
     test "skips a field whose /V is null and lists the signed one" do
-      assert {:ok, [signature]} = Signature.list(open!(@null_value_pdf))
+      assert {:ok, [signature]} = Signature.list(open(@null_value_pdf))
 
       assert signature.contents == @coffee
     end
 
     test "answers nil for a signature on a field the document does not name" do
-      assert {:ok, [named, unnamed]} = Signature.list(open!(@unnamed_pdf))
+      assert {:ok, [named, unnamed]} = Signature.list(open(@unnamed_pdf))
 
       assert named.field_name == "signature"
       assert unnamed.field_name == nil
@@ -275,22 +270,22 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "finds a signature whose /FT is typed on an ancestor" do
-      assert {:ok, [signature]} = Signature.list(open!(@signature_edge_pdf))
+      assert {:ok, [signature]} = Signature.list(open(@signature_edge_pdf))
 
       assert signature.contents == @cafebabe
       assert signature.field_name == "inherited.leaf"
     end
 
     test "answers [] for a form with only fillable fields" do
-      assert {:ok, []} = Signature.list(open!(@form_pdf))
+      assert {:ok, []} = Signature.list(open(@form_pdf))
     end
 
     test "answers [] for a document with no AcroForm" do
-      assert {:ok, []} = Signature.list(open!(@no_form_pdf))
+      assert {:ok, []} = Signature.list(open(@no_form_pdf))
     end
 
     test "refuses a cyclic field tree instead of walking it" do
-      assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(open!(@cyclic_pdf))
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(open(@cyclic_pdf))
     end
 
     test "reports a closed document" do
@@ -304,19 +299,19 @@ defmodule PdfElixide.SignatureTest do
       editor = Editor.open!(@signature_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      assert Signature.list(editor) == Signature.list(open!(@signature_pdf))
+      assert Signature.list(editor) == Signature.list(open(@signature_pdf))
     end
   end
 
   describe "unsigned_fields/1" do
     test "reports the places left to sign, however the field is shaped" do
-      doc = open!(@unsigned_pdf)
+      doc = open(@unsigned_pdf)
 
       assert {:ok, ["countersign", "witness", "group.slot"]} = Signature.unsigned_fields(doc)
     end
 
     test "does not report a field whose kids are fields of their own" do
-      doc = open!(@unsigned_pdf)
+      doc = open(@unsigned_pdf)
 
       assert {:ok, unsigned} = Signature.unsigned_fields(doc)
       assert "group.slot" in unsigned
@@ -326,13 +321,13 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "does not report a field the document does not name" do
-      doc = open!(@unnamed_pdf)
+      doc = open(@unnamed_pdf)
 
       assert {:ok, ["countersign"]} = Signature.unsigned_fields(doc)
     end
 
     test "partitions a form's signature fields with list/1" do
-      doc = open!(@unsigned_pdf)
+      doc = open(@unsigned_pdf)
 
       assert {:ok, [signature]} = Signature.list(doc)
       assert signature.field_name == "signature"
@@ -341,34 +336,34 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "reports a field whose value was cleared" do
-      doc = open!(@null_value_pdf)
+      doc = open(@null_value_pdf)
 
       assert {:ok, ["unsigned"]} = Signature.unsigned_fields(doc)
       assert {:ok, [%{field_name: "signature"}]} = Signature.list(doc)
     end
 
     test "does not report a grouping field whose kid is signed" do
-      doc = open!(@signature_edge_pdf)
+      doc = open(@signature_edge_pdf)
 
       assert {:ok, []} = Signature.unsigned_fields(doc)
       assert {:ok, [%{field_name: "inherited.leaf"}]} = Signature.list(doc)
     end
 
     test "does not report a field whose widgets merely share its signature" do
-      assert {:ok, []} = Signature.unsigned_fields(open!(@values_pdf))
+      assert {:ok, []} = Signature.unsigned_fields(open(@values_pdf))
     end
 
     test "answers [] for a form with only fillable fields" do
-      assert {:ok, []} = Signature.unsigned_fields(open!(@form_pdf))
+      assert {:ok, []} = Signature.unsigned_fields(open(@form_pdf))
     end
 
     test "answers [] for a document with no AcroForm" do
-      assert {:ok, []} = Signature.unsigned_fields(open!(@no_form_pdf))
+      assert {:ok, []} = Signature.unsigned_fields(open(@no_form_pdf))
     end
 
     test "counts a field carrying an unreadable value as signed, where list/1 refuses" do
       for path <- [@bad_value_pdf, @dangling_value_pdf] do
-        doc = open!(path)
+        doc = open(path)
 
         assert {:ok, []} = Signature.unsigned_fields(doc)
         assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(doc)
@@ -377,12 +372,12 @@ defmodule PdfElixide.SignatureTest do
 
     test "refuses a field it cannot read" do
       assert {:error, %Error{reason: :invalid_pdf}} =
-               Signature.unsigned_fields(open!(@unreadable_pdf))
+               Signature.unsigned_fields(open(@unreadable_pdf))
     end
 
     test "refuses a cyclic field tree instead of walking it" do
       assert {:error, %Error{reason: :invalid_pdf}} =
-               Signature.unsigned_fields(open!(@cyclic_pdf))
+               Signature.unsigned_fields(open(@cyclic_pdf))
     end
 
     test "reports a closed document" do
@@ -396,28 +391,28 @@ defmodule PdfElixide.SignatureTest do
       editor = Editor.open!(@unsigned_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      assert Signature.unsigned_fields(editor) == Signature.unsigned_fields(open!(@unsigned_pdf))
+      assert Signature.unsigned_fields(editor) == Signature.unsigned_fields(open(@unsigned_pdf))
     end
   end
 
   describe "unsigned_fields!/1" do
     test "returns the field names" do
       assert ["countersign", "witness", "group.slot"] =
-               Signature.unsigned_fields!(open!(@unsigned_pdf))
+               Signature.unsigned_fields!(open(@unsigned_pdf))
     end
 
     test "raises on a cyclic field tree" do
-      assert_raise Error, fn -> Signature.unsigned_fields!(open!(@cyclic_pdf)) end
+      assert_raise Error, fn -> Signature.unsigned_fields!(open(@cyclic_pdf)) end
     end
   end
 
   describe "list!/1" do
     test "returns the signatures" do
-      assert [%Signature{}] = Signature.list!(open!(@signature_pdf))
+      assert [%Signature{}] = Signature.list!(open(@signature_pdf))
     end
 
     test "raises on a cyclic field tree" do
-      doc = open!(@cyclic_pdf)
+      doc = open(@cyclic_pdf)
 
       assert_raise Error, fn -> Signature.list!(doc) end
     end
@@ -425,7 +420,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "a genuinely signed document" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
       %{signature: signature}
     end
 
@@ -454,20 +449,20 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "reports the same claims for a document altered after signing", %{signature: signature} do
-      assert {:ok, [tampered]} = Signature.list(open!(@cms_tampered_pdf))
+      assert {:ok, [tampered]} = Signature.list(open(@cms_tampered_pdf))
       assert tampered == signature
 
       # The altered byte is a form value inside the signed range, so what the
       # signature claims is unmoved while what it covers is not.
-      assert {:ok, [%{value: "Alice"}]} = PdfElixide.Form.fields(open!(@cms_pdf))
-      assert {:ok, [%{value: "Alicf"}]} = PdfElixide.Form.fields(open!(@cms_tampered_pdf))
+      assert {:ok, [%{value: "Alice"}]} = PdfElixide.Form.fields(open(@cms_pdf))
+      assert {:ok, [%{value: "Alicf"}]} = PdfElixide.Form.fields(open(@cms_tampered_pdf))
     end
   end
 
   describe "verify/2 and verify_signer/1" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
-      {:ok, [tampered]} = Signature.list(open!(@cms_tampered_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
+      {:ok, [tampered]} = Signature.list(open(@cms_tampered_pdf))
 
       %{
         signature: signature,
@@ -531,7 +526,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "refuses a marker fixture's contents", %{bytes: bytes} do
-      {:ok, [signature]} = Signature.list(open!(@signature_pdf))
+      {:ok, [signature]} = Signature.list(open(@signature_pdf))
       assert signature.contents == @deadbeef
 
       assert {:error, %Error{reason: :invalid_pdf}} = Signature.verify_signer(signature)
@@ -626,7 +621,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "verify/2 on adbe.pkcs7.sha1" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@pkcs7_sha1_pdf))
+      {:ok, [signature]} = Signature.list(open(@pkcs7_sha1_pdf))
 
       %{signature: signature, bytes: File.read!(@pkcs7_sha1_pdf)}
     end
@@ -707,7 +702,7 @@ defmodule PdfElixide.SignatureTest do
             {@ecdsa_p521_pdf, "ecdsa_p521", [@oid_ecdsa_sha512, @oid_p521], []}
           ],
           fn {path, field, present, absent} ->
-            {:ok, [signature]} = Signature.list(open!(path))
+            {:ok, [signature]} = Signature.list(open(path))
 
             {field, {signature, File.read!(path), {present, absent}}}
           end
@@ -836,7 +831,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "certificate/1" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
       %{signature: signature}
     end
 
@@ -856,8 +851,8 @@ defmodule PdfElixide.SignatureTest do
 
     # Encoding order varies, so assert membership rather than identity.
     test "reads one certificate out of a blob carrying a chain", %{signature: signature} do
-      {:ok, [chained]} = Signature.list(open!(@chain_pdf))
-      {:ok, [%Signature{} = b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [chained]} = Signature.list(open(@chain_pdf))
+      {:ok, [%Signature{} = b_t]} = Signature.list(open(@pades_t_pdf))
       {:ok, timestamp} = Signature.timestamp(b_t)
 
       signer = Signature.certificate!(signature)
@@ -871,7 +866,7 @@ defmodule PdfElixide.SignatureTest do
     test "reads the same certificate out of a document altered after signing", %{
       signature: signature
     } do
-      {:ok, [tampered]} = Signature.list(open!(@cms_tampered_pdf))
+      {:ok, [tampered]} = Signature.list(open(@cms_tampered_pdf))
 
       assert Signature.certificate(tampered) == Signature.certificate(signature)
     end
@@ -900,7 +895,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "refuses a marker fixture's contents" do
-      {:ok, [signature]} = Signature.list(open!(@signature_pdf))
+      {:ok, [signature]} = Signature.list(open(@signature_pdf))
       assert signature.contents == @deadbeef
 
       assert {:error, %Error{reason: :invalid_pdf}} = Signature.certificate(signature)
@@ -919,7 +914,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "Certificate.parse/1" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
       {:ok, certificate} = Signature.certificate(signature)
       %{certificate: certificate}
     end
@@ -929,7 +924,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "reads a certificate out of a document security store" do
-      {:ok, dss} = Signature.dss(open!(@pades_lt_pdf))
+      {:ok, dss} = Signature.dss(open(@pades_lt_pdf))
       assert [der] = dss.certificates
 
       assert {:ok, certificate} = Certificate.parse(der)
@@ -957,7 +952,7 @@ defmodule PdfElixide.SignatureTest do
     test "refuses a signature blob rather than reading the certificate inside it", %{
       certificate: certificate
     } do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
 
       assert {:error, %Error{reason: :invalid_pdf}} = Certificate.parse(signature.contents)
       assert {:ok, ^certificate} = Signature.certificate(signature)
@@ -1118,7 +1113,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "Certificate.valid_at?/2" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
       {:ok, certificate} = Signature.certificate(signature)
       %{certificate: certificate}
     end
@@ -1145,7 +1140,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "inspecting a certificate" do
     test "renders the common name and the serial" do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
       {:ok, certificate} = Signature.certificate(signature)
 
       rendered = inspect(certificate)
@@ -1159,8 +1154,8 @@ defmodule PdfElixide.SignatureTest do
 
   describe "pades_level/1" do
     setup do
-      {:ok, [b_b]} = Signature.list(open!(@pades_pdf))
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [b_b]} = Signature.list(open(@pades_pdf))
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
       %{b_b: b_b, b_t: b_t}
     end
 
@@ -1180,7 +1175,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "answers nil for a signature the levels do not describe" do
-      {:ok, [pkcs7]} = Signature.list(open!(@cms_pdf))
+      {:ok, [pkcs7]} = Signature.list(open(@cms_pdf))
       assert pkcs7.sub_filter == :pkcs7_detached
 
       assert Signature.pades_level(pkcs7) == {:ok, nil}
@@ -1188,7 +1183,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "reads the declaration rather than the blob", %{b_b: b_b} do
-      {:ok, [pkcs7]} = Signature.list(open!(@cms_pdf))
+      {:ok, [pkcs7]} = Signature.list(open(@cms_pdf))
 
       assert Signature.pades_level(%{pkcs7 | sub_filter: :cades_detached}) == {:ok, :b_b}
       assert Signature.pades_level(%{b_b | sub_filter: :rfc3161}) == {:ok, nil}
@@ -1206,7 +1201,7 @@ defmodule PdfElixide.SignatureTest do
     test "reports the floor for contents it cannot read", %{b_b: b_b} do
       assert Signature.pades_level(%{b_b | contents: <<0, 1, 2>>}) == {:ok, :b_b}
 
-      {:ok, [marker]} = Signature.list(open!(@signature_pdf))
+      {:ok, [marker]} = Signature.list(open(@signature_pdf))
       assert marker.contents == @deadbeef
       assert Signature.pades_level(%{marker | sub_filter: :cades_detached}) == {:ok, :b_b}
     end
@@ -1240,11 +1235,11 @@ defmodule PdfElixide.SignatureTest do
 
   describe "pades_level/2" do
     setup do
-      doc = open!(@pades_lt_pdf)
+      doc = open(@pades_lt_pdf)
       {:ok, [b_lt]} = Signature.list(doc)
       {:ok, dss} = Signature.dss(doc)
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
-      %{b_lt: b_lt, b_t: b_t, dss: dss, other_dss: Signature.dss!(open!(@dss_pdf))}
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
+      %{b_lt: b_lt, b_t: b_t, dss: dss, other_dss: Signature.dss!(open(@dss_pdf))}
     end
 
     test "reaches :b_lt only with the store that names the signature", %{b_lt: b_lt, dss: dss} do
@@ -1280,7 +1275,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "a store cannot raise a signature the levels do not describe", %{dss: dss} do
-      {:ok, [pkcs7]} = Signature.list(open!(@cms_pdf))
+      {:ok, [pkcs7]} = Signature.list(open(@cms_pdf))
 
       assert Signature.pades_level(pkcs7, dss) == {:ok, nil}
       assert Signature.pades_level(%{pkcs7 | sub_filter: nil}, dss) == {:ok, nil}
@@ -1314,7 +1309,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "pades_level/3" do
     setup do
-      doc = open!(@pades_lta_pdf)
+      doc = open(@pades_lta_pdf)
       {:ok, [signature]} = Signature.list(doc)
       {:ok, dss} = Signature.dss(doc)
 
@@ -1331,7 +1326,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "a signature that does not reach :b_lt cannot reach :b_lta", ctx do
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
 
       assert Signature.pades_level(b_t, ctx.dss, ctx.bytes) == {:ok, :b_t}
     end
@@ -1357,7 +1352,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "the bytes cannot raise a signature the levels do not describe", ctx do
-      {:ok, [pkcs7]} = Signature.list(open!(@cms_pdf))
+      {:ok, [pkcs7]} = Signature.list(open(@cms_pdf))
 
       assert Signature.pades_level(pkcs7, ctx.dss, ctx.bytes) == {:ok, nil}
     end
@@ -1441,7 +1436,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "does not come from the signatures the document lists" do
-      doc = open!(@pades_lta_pdf)
+      doc = open(@pades_lta_pdf)
 
       assert {:ok, [signature]} = Signature.list(doc)
       assert signature.sub_filter == :cades_detached
@@ -1496,7 +1491,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "signing_time_utc/1" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@cms_pdf))
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
 
       %{signature: signature}
     end
@@ -1583,7 +1578,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "dss/1" do
     test "reads every list a store carries" do
-      assert {:ok, dss} = Signature.dss(open!(@dss_pdf))
+      assert {:ok, dss} = Signature.dss(open(@dss_pdf))
 
       assert dss.certificates == ["DOC-CERT"]
       assert dss.crls == ["DOC-CRL"]
@@ -1599,15 +1594,15 @@ defmodule PdfElixide.SignatureTest do
     # carries a /Type key that is not an entry. Both are stepped over rather than
     # failing the read, which is what makes a store readable at all.
     test "steps over an entry it cannot read" do
-      assert {:ok, dss} = Signature.dss(open!(@dss_pdf))
+      assert {:ok, dss} = Signature.dss(open(@dss_pdf))
 
       assert length(dss.certificates) == 1
       assert length(dss.vri) == 1
     end
 
     test "reads a store a signer wrote" do
-      assert {:ok, dss} = Signature.dss(open!(@pades_lt_pdf))
-      {:ok, [signature]} = Signature.list(open!(@pades_lt_pdf))
+      assert {:ok, dss} = Signature.dss(open(@pades_lt_pdf))
+      {:ok, [signature]} = Signature.list(open(@pades_lt_pdf))
 
       assert [der] = dss.certificates
       assert {:OTPCertificate, _, _, _} = :public_key.pkix_decode_cert(der, :otp)
@@ -1615,21 +1610,21 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "answers nil for a document carrying no store" do
-      assert Signature.dss(open!(@no_form_pdf)) == {:ok, nil}
-      assert Signature.dss(open!(@pades_t_pdf)) == {:ok, nil}
+      assert Signature.dss(open(@no_form_pdf)) == {:ok, nil}
+      assert Signature.dss(open(@pades_t_pdf)) == {:ok, nil}
     end
 
     # A /DSS that is present but yields nothing is indistinguishable from an
     # absent one here; dss/1 documents that rather than inventing a difference.
     test "answers nil for a store nothing could be read out of" do
-      assert Signature.dss(open!(@dss_empty_pdf)) == {:ok, nil}
+      assert Signature.dss(open(@dss_empty_pdf)) == {:ok, nil}
     end
 
     test "an editor reads the document it was opened from" do
       editor = Editor.open!(@dss_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      assert Signature.dss(editor) == Signature.dss(open!(@dss_pdf))
+      assert Signature.dss(editor) == Signature.dss(open(@dss_pdf))
     end
 
     test "reports a closed handle" do
@@ -1640,8 +1635,8 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "dss!/1 unwraps or raises" do
-      assert %DSS{} = Signature.dss!(open!(@dss_pdf))
-      assert Signature.dss!(open!(@no_form_pdf)) == nil
+      assert %DSS{} = Signature.dss!(open(@dss_pdf))
+      assert Signature.dss!(open(@no_form_pdf)) == nil
 
       doc = Document.open!(@dss_pdf)
       :ok = Document.close(doc)
@@ -1651,14 +1646,14 @@ defmodule PdfElixide.SignatureTest do
 
   describe "DSS.vri_for/2" do
     setup do
-      %{dss: Signature.dss!(open!(@dss_pdf))}
+      %{dss: Signature.dss!(open(@dss_pdf))}
     end
 
     # The fixture's key is the SHA-1 of form_signature.pdf's <DEADBEEF> marker,
     # so the lookup can be shown comparing digests and nothing else: the store
     # and the signature come from different documents.
     test "finds the entry filed under the signature's digest", %{dss: dss} do
-      {:ok, [marker]} = Signature.list(open!(@signature_pdf))
+      {:ok, [marker]} = Signature.list(open(@signature_pdf))
       assert marker.contents == @deadbeef
 
       assert %DSS.VRI{} = entry = DSS.vri_for(dss, marker)
@@ -1666,13 +1661,13 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "answers nil for a signature the store does not name", %{dss: dss} do
-      {:ok, [other]} = Signature.list(open!(@cms_pdf))
+      {:ok, [other]} = Signature.list(open(@cms_pdf))
 
       assert DSS.vri_for(dss, other) == nil
     end
 
     test "answers nil for a signature with no contents", %{dss: dss} do
-      {:ok, [marker]} = Signature.list(open!(@signature_pdf))
+      {:ok, [marker]} = Signature.list(open(@signature_pdf))
 
       assert DSS.vri_for(dss, %{marker | contents: nil}) == nil
     end
@@ -1680,8 +1675,8 @@ defmodule PdfElixide.SignatureTest do
     # The digest is over the padded /Contents, so a caller who trimmed the blob
     # themselves would look under a key no document writes.
     test "keys on the raw contents rather than the DER value inside them", %{dss: dss} do
-      {:ok, [signature]} = Signature.list(open!(@pades_lt_pdf))
-      lt = Signature.dss!(open!(@pades_lt_pdf))
+      {:ok, [signature]} = Signature.list(open(@pades_lt_pdf))
+      lt = Signature.dss!(open(@pades_lt_pdf))
 
       assert DSS.vri_for(lt, signature)
 
@@ -1694,7 +1689,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "inspecting a /VRI entry" do
     setup do
-      %{dss: Signature.dss!(open!(@dss_pdf))}
+      %{dss: Signature.dss!(open(@dss_pdf))}
     end
 
     test "shows the digest it was filed under", %{dss: dss} do
@@ -1727,8 +1722,8 @@ defmodule PdfElixide.SignatureTest do
 
   describe "timestamp/1" do
     setup do
-      {:ok, [b_b]} = Signature.list(open!(@pades_pdf))
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [b_b]} = Signature.list(open(@pades_pdf))
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
 
       %{b_b: b_b, b_t: b_t}
     end
@@ -1747,14 +1742,14 @@ defmodule PdfElixide.SignatureTest do
     test "answers nil for a signature carrying no timestamp", %{b_b: b_b} do
       assert Signature.timestamp(b_b) == {:ok, nil}
 
-      {:ok, [pkcs7]} = Signature.list(open!(@cms_pdf))
+      {:ok, [pkcs7]} = Signature.list(open(@cms_pdf))
       assert Signature.timestamp(pkcs7) == {:ok, nil}
     end
 
     # A damaged signature must not answer as an intact one carrying nothing, and
     # the same bytes must not mean two things depending on the way in.
     test "refuses a marker fixture's contents" do
-      {:ok, [signature]} = Signature.list(open!(@signature_pdf))
+      {:ok, [signature]} = Signature.list(open(@signature_pdf))
       assert signature.contents == @deadbeef
 
       assert {:error, %Error{reason: :invalid_pdf}} = Signature.timestamp(signature)
@@ -1767,13 +1762,13 @@ defmodule PdfElixide.SignatureTest do
     # The B-LT fixture's attribute holds upstream's mock token rather than a real
     # one, which is the shape this must not report as "no timestamp".
     test "refuses an attribute holding something that is not a token" do
-      {:ok, [b_lt]} = Signature.list(open!(@pades_lt_pdf))
+      {:ok, [b_lt]} = Signature.list(open(@pades_lt_pdf))
 
       assert {:error, %Error{reason: :invalid_pdf}} = Signature.timestamp(b_lt)
     end
 
     test "reads a document timestamp's contents as the token itself" do
-      {:ok, [signature]} = Signature.list(open!(@doctimestamp_pdf))
+      {:ok, [signature]} = Signature.list(open(@doctimestamp_pdf))
 
       assert signature.sub_filter == :rfc3161
       assert {:ok, %Timestamp{} = timestamp} = Signature.timestamp(signature)
@@ -1810,9 +1805,9 @@ defmodule PdfElixide.SignatureTest do
   describe "verify_timestamp/2" do
     setup do
       %{
-        signature: fn path -> open!(path) |> Signature.list!() |> hd() end,
+        signature: fn path -> open(path) |> Signature.list!() |> hd() end,
         verify: fn path ->
-          Signature.verify_timestamp(open!(path) |> Signature.list!() |> hd(), File.read!(path))
+          Signature.verify_timestamp(open(path) |> Signature.list!() |> hd(), File.read!(path))
         end
       }
     end
@@ -1893,7 +1888,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "Timestamp.parse/1" do
     setup do
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
       {:ok, timestamp} = Signature.timestamp(b_t)
 
       %{timestamp: timestamp}
@@ -1913,7 +1908,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "tolerates the padding a token stored in a PDF carries" do
-      {:ok, [signature]} = Signature.list(open!(@doctimestamp_pdf))
+      {:ok, [signature]} = Signature.list(open(@doctimestamp_pdf))
 
       assert {:ok, parsed} = Timestamp.parse(signature.contents)
       assert byte_size(parsed.token) < byte_size(signature.contents)
@@ -1941,7 +1936,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "Timestamp.verify/1" do
     setup do
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
       {:ok, timestamp} = Signature.timestamp(b_t)
 
       %{timestamp: timestamp}
@@ -1973,7 +1968,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "inspecting a timestamp" do
     test "shows the time and the serial" do
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
       {:ok, timestamp} = Signature.timestamp(b_t)
 
       assert inspect(timestamp) ==
@@ -1984,7 +1979,7 @@ defmodule PdfElixide.SignatureTest do
     # The serial is hex from the document, so nothing should be able to write a
     # terminal escape into a log line through it.
     test "escapes a serial the document controls" do
-      {:ok, [b_t]} = Signature.list(open!(@pades_t_pdf))
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
       {:ok, timestamp} = Signature.timestamp(b_t)
 
       rendered = inspect(%{timestamp | serial: "SAFE\nINJECTED\e[31m"})
@@ -1997,7 +1992,7 @@ defmodule PdfElixide.SignatureTest do
 
   describe "covers_whole_document?/2" do
     setup do
-      {:ok, [signature]} = Signature.list(open!(@signature_pdf))
+      {:ok, [signature]} = Signature.list(open(@signature_pdf))
       %{signature: signature}
     end
 
@@ -2046,8 +2041,8 @@ defmodule PdfElixide.SignatureTest do
 
   describe "count/1" do
     test "counts the signatures" do
-      assert {:ok, 1} = Signature.count(open!(@signature_pdf))
-      assert {:ok, 0} = Signature.count(open!(@form_pdf))
+      assert {:ok, 1} = Signature.count(open(@signature_pdf))
+      assert {:ok, 0} = Signature.count(open(@form_pdf))
     end
 
     test "counts exactly what list/1 lists" do
@@ -2061,7 +2056,7 @@ defmodule PdfElixide.SignatureTest do
             @form_pdf,
             @no_form_pdf
           ] do
-        doc = open!(path)
+        doc = open(path)
 
         assert {:ok, signatures} = Signature.list(doc)
         assert Signature.count(doc) == {:ok, length(signatures)}
@@ -2070,7 +2065,7 @@ defmodule PdfElixide.SignatureTest do
 
     test "refuses what list/1 refuses" do
       for path <- [@cyclic_pdf, @unreadable_pdf, @bad_value_pdf, @dangling_value_pdf] do
-        doc = open!(path)
+        doc = open(path)
 
         assert {:error, %Error{reason: :invalid_pdf}} = Signature.count(doc)
         assert {:error, %Error{reason: :invalid_pdf}} = Signature.list(doc)
@@ -2092,7 +2087,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     test "count!/1 returns the bare count" do
-      assert Signature.count!(open!(@signature_pdf)) == 1
+      assert Signature.count!(open(@signature_pdf)) == 1
     end
   end
 end

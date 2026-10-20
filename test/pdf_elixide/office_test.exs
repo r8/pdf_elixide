@@ -2,6 +2,7 @@ defmodule PdfElixide.OfficeTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
   import PdfElixide.Untyped
 
   alias PdfElixide.Document
@@ -21,12 +22,6 @@ defmodule PdfElixide.OfficeTest do
     to_xlsx: "xl/workbook.xml"
   ]
   @modes [:auto, :layout, :flow]
-
-  defp open(path, opts \\ []) do
-    doc = Document.open!(path, opts)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
 
   defp parts(package) do
     {:ok, files} = :zip.unzip(package, [:memory])

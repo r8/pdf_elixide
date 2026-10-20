@@ -2,6 +2,7 @@ defmodule PdfElixide.ComplianceTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
   import PdfElixide.Untyped
 
   alias PdfElixide.Compliance
@@ -41,12 +42,6 @@ defmodule PdfElixide.ComplianceTest do
     :pdf_x_5pg,
     :pdf_x_6
   ]
-
-  defp open(path, opts \\ []) do
-    doc = Document.open!(path, opts)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
 
   defp codes(issues), do: Enum.map(issues, & &1.code)
 

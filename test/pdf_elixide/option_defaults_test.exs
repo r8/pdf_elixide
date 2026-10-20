@@ -2,6 +2,8 @@ defmodule PdfElixide.OptionDefaultsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+
   alias PdfElixide.Builder
   alias PdfElixide.Compliance
   alias PdfElixide.Document
@@ -33,12 +35,6 @@ defmodule PdfElixide.OptionDefaultsTest do
     v_split_gap: nil,
     text_fallback: nil
   }
-
-  defp open(path) do
-    doc = Document.open!(path)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
 
   defp texts_of_tables(tables), do: Enum.map(tables, & &1.rows)
 

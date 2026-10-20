@@ -2,6 +2,9 @@ defmodule PdfElixide.UpstreamDriftTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
+  import PdfElixide.Handles
+  import PdfElixide.TestHelpers
+
   @moduletag :upstream_drift
 
   alias PdfElixide.Builder
@@ -112,11 +115,6 @@ defmodule PdfElixide.UpstreamDriftTest do
   @rotate_180 1
   @rotate_0 3
 
-  defp pixel(rendered, col, row) do
-    <<r, g, b, a>> = binary_part(rendered.data, (row * rendered.width + col) * 4, 4)
-    {r, g, b, a}
-  end
-
   # The redaction block's default fill is opaque black, so a block the page
   # clips away leaves the sheet's own white showing through instead.
   @white {255, 255, 255, 255}
@@ -134,14 +132,6 @@ defmodule PdfElixide.UpstreamDriftTest do
 
     for row <- y0..y1, col <- x0..x1, do: pixel(rendered, col, row)
   end
-
-  defp open(path) do
-    doc = Document.open!(path)
-    on_exit(fn -> Document.close(doc) end)
-    doc
-  end
-
-  defp texts(items), do: Enum.map(items, & &1.text)
 
   defp origin(%{bbox: %{x: x, y: y}}), do: {x, y}
   defp origins(items), do: Enum.map(items, &origin/1)
@@ -497,7 +487,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test "answers true once authenticated too, for the ordinary reason" do
-      doc = Document.open!(@encrypted_pdf, password: "secret")
+      doc = open(@encrypted_pdf, password: "secret")
 
       assert {:ok, true} = Page.has_text_layer(Document.page!(doc, 0))
       assert {:ok, text} = Document.text(doc, 0)
@@ -1129,8 +1119,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       Editor.set_title!(editor, "Updated")
       Editor.save!(editor, path, incremental: true)
 
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(path)
 
       assert %Document.Metadata{title: "Updated", author: "Jane Doe", trapped: nil} =
                Document.metadata!(doc),
@@ -1147,8 +1136,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       Editor.save!(editor, path, encryption: [user_password: "secret"])
 
-      doc = Document.open!(path)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(path)
 
       assert Document.encrypted?(doc),
              "the rewrite is not encrypted"
@@ -1174,8 +1162,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   describe "how a cleartext object reads back from an encrypted file" do
     test "a string reads back as its own value, a stream as empty text" do
-      doc = Document.open!(@encrypted_cleartext_pdf, password: "secret")
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@encrypted_cleartext_pdf, password: "secret")
 
       assert Document.encrypted?(doc)
       assert String.trim(Document.text!(doc, 0)) == "Page One"
@@ -1189,8 +1176,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   describe "what upstream does to a field's value on write" do
     test "a /Sig field is still classified as one, so it stays out of fields/1" do
-      doc = Document.open!(@signature_pdf)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@signature_pdf)
 
       assert {:ok, [%PdfElixide.Form.Field.Text{name: "signer_name"}]} = Form.fields(doc)
     end
@@ -1262,8 +1248,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   describe "how a check box on-state survives a read and an export" do
     test "an /On box and a /Yes box are the same value once read" do
-      doc = Document.open!(@button_states_pdf)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@button_states_pdf)
 
       fields = Form.fields!(doc)
       values = Map.new(fields, &{&1.name, &1.value})
@@ -1280,8 +1265,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test "an /On box exports as the /Yes it is not" do
-      doc = Document.open!(@button_states_pdf)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@button_states_pdf)
 
       fdf = Form.export!(doc, :fdf)
 
@@ -1293,8 +1277,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test "XFDF loses it the same way" do
-      doc = Document.open!(@button_states_pdf)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@button_states_pdf)
 
       xfdf = Form.export!(doc, :xfdf)
 
@@ -1305,8 +1288,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
   describe "how an archival timestamp is found" do
     test "the archival timestamp it finds is not one the listing reports" do
-      doc = Document.open!(@pades_lta_pdf)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@pades_lta_pdf)
 
       assert [signature] = Signature.list!(doc)
       assert signature.sub_filter == :cades_detached
@@ -1317,8 +1299,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   describe "which signature algorithms upstream verifies" do
     # P-521/SHA-512 enters upstream's ECDSA dispatch but has no curve verifier.
     test "a curve it has no verifier for is unknown rather than invalid" do
-      doc = Document.open!(@ecdsa_p521_pdf)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@ecdsa_p521_pdf)
 
       assert [signature] = Signature.list!(doc)
       assert Signature.verify(signature, File.read!(@ecdsa_p521_pdf)) == {:ok, :unknown}
@@ -1412,8 +1393,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
 
     test "a redaction annotation still loses its quadrilaterals" do
-      doc = Document.open!(@redact_pdf)
-      on_exit(fn -> Document.close(doc) end)
+      doc = open(@redact_pdf)
 
       quadded = doc |> Document.annotations!(0) |> Enum.at(1)
 
