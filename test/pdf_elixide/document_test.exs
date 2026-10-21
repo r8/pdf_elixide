@@ -1896,7 +1896,13 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       assert length(Document.search!(doc, "Page", max_results: 2)) == 2
       # 0 means unlimited, not "none".
-      assert length(Document.search!(doc, "Page", max_results: 0)) == 3
+      assert length(Document.search!(doc, "Page", max_results: nil)) == 3
+
+      for bad <- [0, -1, 1.5] do
+        assert_raise ArgumentError, ~r/:max_results/, fn ->
+          Document.search(doc, "Page", max_results: bad)
+        end
+      end
     end
 
     test "returns {:ok, []} for a pattern that does not occur" do

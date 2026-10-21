@@ -1472,7 +1472,7 @@ mod tests {
             case_insensitive: false,
             literal: false,
             whole_word: true,
-            max_results: 0,
+            max_results: None,
         }
         .into_request("cat|Report".into());
         assert_eq!(

@@ -3403,10 +3403,11 @@ defmodule PdfElixide.Document do
       a word character on the inside, so a pattern that begins or ends in
       punctuation or whitespace — `"(a)"` on either path — matches only where
       the text has a word character right against it.
-    * `:max_results` — stop after this many matches, counted across pages.
-      Defaults to `0`, meaning no limit. This bounds the work as well as the
-      list: searching the whole document stops at the page that reaches the
-      limit, leaving the ones after it unread and unindexed.
+    * `:max_results` — stop after this many matches, counted across pages: a
+      positive integer, or `nil` for no limit. Defaults to `nil`. This bounds
+      the work as well as the list: searching the whole document stops at the
+      page that reaches the limit, leaving the ones after it unread and
+      unindexed.
 
   There is no `:page_range`: searching one page is what `search/3` and
   `search/4` are for.
@@ -3415,7 +3416,7 @@ defmodule PdfElixide.Document do
           literal: boolean(),
           case_insensitive: boolean(),
           whole_word: boolean(),
-          max_results: non_neg_integer()
+          max_results: pos_integer() | nil
         ]
 
   @search_opts_keys [:literal, :case_insensitive, :whole_word, :max_results]
@@ -3527,8 +3528,16 @@ defmodule PdfElixide.Document do
       literal: Keyword.get(opts, :literal, true),
       case_insensitive: Keyword.get(opts, :case_insensitive, false),
       whole_word: Keyword.get(opts, :whole_word, false),
-      max_results: Keyword.get(opts, :max_results, 0)
+      max_results: max_results!(Keyword.get(opts, :max_results))
     }
+  end
+
+  defp max_results!(nil), do: nil
+  defp max_results!(limit) when is_integer(limit) and limit > 0, do: limit
+
+  defp max_results!(other) do
+    raise ArgumentError,
+          "invalid :max_results, expected a positive integer or nil: #{inspect(other)}"
   end
 
   @doc group: "Search"

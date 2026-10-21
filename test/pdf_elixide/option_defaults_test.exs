@@ -230,7 +230,7 @@ defmodule PdfElixide.OptionDefaultsTest do
                literal: true,
                case_insensitive: false,
                whole_word: false,
-               max_results: 0
+               max_results: nil
              }
     end
 

@@ -605,7 +605,7 @@ pub struct SearchOptionsNif {
     pub case_insensitive: bool,
     pub literal: bool,
     pub whole_word: bool,
-    pub max_results: usize,
+    pub max_results: Option<usize>,
 }
 
 impl From<SearchOptionsNif> for SearchOptions {
@@ -614,7 +614,8 @@ impl From<SearchOptionsNif> for SearchOptions {
             .with_case_insensitive(o.case_insensitive)
             .with_literal(o.literal)
             .with_whole_word(o.whole_word)
-            .with_max_results(o.max_results)
+            // Upstream reads a limit of 0 as no limit.
+            .with_max_results(o.max_results.unwrap_or(0))
     }
 }
 
@@ -714,7 +715,7 @@ mod tests {
             case_insensitive: true,
             literal,
             whole_word,
-            max_results: 7,
+            max_results: Some(7),
         }
     }
 
