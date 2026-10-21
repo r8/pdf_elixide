@@ -473,7 +473,7 @@ defmodule PdfElixide.Builder do
   """
   @spec space(t(), number()) :: t()
   def space(%__MODULE__{} = builder, points) when is_number(points) do
-    %{builder | ops: [{:space, margin!(:points, points)} | builder.ops]}
+    %{builder | ops: [{:space, non_negative!(:points, points)} | builder.ops]}
   end
 
   @doc """
@@ -969,7 +969,7 @@ defmodule PdfElixide.Builder do
 
     margins =
       Map.new([:margin_top, :margin_bottom, :margin_left, :margin_right], fn key ->
-        {key, margin!(key, Keyword.get(opts, key, 72))}
+        {key, non_negative!(key, Keyword.get(opts, key, 72))}
       end)
 
     Map.merge(margins, %{
@@ -1052,7 +1052,7 @@ defmodule PdfElixide.Builder do
       |> Map.merge(%{
         stroke_color:
           color!(:stroke_color, Keyword.get(opts, :stroke_color, %RGB{r: 0.0, g: 0.0, b: 0.0})),
-        stroke_width: margin!(:stroke_width, Keyword.get(opts, :stroke_width, 1)),
+        stroke_width: non_negative!(:stroke_width, Keyword.get(opts, :stroke_width, 1)),
         dash_pattern: dash_pattern!(Keyword.get(opts, :dash_pattern))
       })
 
@@ -1072,7 +1072,7 @@ defmodule PdfElixide.Builder do
   defp dash_pattern!(nil), do: nil
 
   defp dash_pattern!({[_ | _] = lengths, phase}) do
-    {Enum.map(lengths, &positive!(:dash_pattern, &1)), margin!(:dash_pattern, phase)}
+    {Enum.map(lengths, &positive!(:dash_pattern, &1)), non_negative!(:dash_pattern, phase)}
   end
 
   defp dash_pattern!(other) do
@@ -1154,9 +1154,10 @@ defmodule PdfElixide.Builder do
     raise ArgumentError, "invalid #{inspect(key)}, expected a positive number: #{inspect(value)}"
   end
 
-  defp margin!(key, value) when is_number(value), do: LayoutOptions.margin!(key, value)
+  defp non_negative!(key, value) when is_number(value),
+    do: LayoutOptions.non_negative!(key, value)
 
-  defp margin!(key, value) do
+  defp non_negative!(key, value) do
     raise ArgumentError,
           "invalid #{inspect(key)}, expected a non-negative number: #{inspect(value)}"
   end

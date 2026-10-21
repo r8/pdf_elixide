@@ -79,7 +79,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec media_box(t()) :: {:ok, Rect.t()} | {:error, Error.t()}
   def media_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
-    Wrap.call(fn -> Native.document_get_page_media_box(ref, index) end)
+    Wrap.call(fn -> Native.document_page_media_box(ref, index) end)
   end
 
   @doc group: "Page properties"
@@ -110,7 +110,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec crop_box(t()) :: {:ok, Rect.t() | nil} | {:error, Error.t()}
   def crop_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
-    Wrap.call(fn -> Native.document_get_page_crop_box(ref, index) end)
+    Wrap.call(fn -> Native.document_page_crop_box(ref, index) end)
   end
 
   @doc group: "Page properties"
@@ -143,7 +143,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec visible_box(t()) :: {:ok, Rect.t()} | {:error, Error.t()}
   def visible_box(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
-    Wrap.call(fn -> Native.document_get_page_visible_box(ref, index) end)
+    Wrap.call(fn -> Native.document_page_visible_box(ref, index) end)
   end
 
   @doc group: "Page properties"
@@ -229,7 +229,7 @@ defmodule PdfElixide.Document.Page do
   """
   @spec rotation(t()) :: {:ok, rotation()} | {:error, Error.t()}
   def rotation(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
-    Wrap.call(fn -> Native.document_get_page_rotation(ref, index) end)
+    Wrap.call(fn -> Native.document_page_rotation(ref, index) end)
   end
 
   @doc group: "Page properties"

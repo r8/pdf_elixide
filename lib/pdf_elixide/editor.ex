@@ -2471,7 +2471,7 @@ defmodule PdfElixide.Editor do
   defp build_crop_margins(opts) do
     opts = Keyword.validate!(opts, Enum.map(@crop_margins_keys, &{&1, 0}))
 
-    Map.new(opts, fn {key, value} -> {key, LayoutOptions.margin!(key, value)} end)
+    Map.new(opts, fn {key, value} -> {key, LayoutOptions.non_negative!(key, value)} end)
   end
 
   # See `__option_defaults__/1` for why every key is emitted.
@@ -2501,7 +2501,7 @@ defmodule PdfElixide.Editor do
 
     margins =
       Map.new([:margin_top, :margin_bottom, :margin_left, :margin_right], fn key ->
-        {key, LayoutOptions.margin!(key, Keyword.get(opts, key, 72))}
+        {key, LayoutOptions.non_negative!(key, Keyword.get(opts, key, 72))}
       end)
 
     validate_image_area_fits!(Map.get(LayoutOptions.paper_sizes(), page_size, page_size), margins)
@@ -2555,7 +2555,7 @@ defmodule PdfElixide.Editor do
 
     margins =
       Map.new([:margin_top, :margin_bottom, :margin_left], fn key ->
-        {key, LayoutOptions.margin!(key, Keyword.get(opts, key, 72))}
+        {key, LayoutOptions.non_negative!(key, Keyword.get(opts, key, 72))}
       end)
 
     validate_layout_fits!(page_size, margins, {font_size, scales, line_height})
@@ -2568,7 +2568,7 @@ defmodule PdfElixide.Editor do
     })
   end
 
-  # Range only, as `LayoutOptions.margin!/2`: anything not recognised here is left to
+  # Range only, as `LayoutOptions.non_negative!/2`: anything not recognised here is left to
   # the NIF's field decoder, which names `:page_size`.
   defp validate_page_size!({width, height}) when is_number(width) and is_number(height) do
     {LayoutOptions.positive!(:page_size, width), LayoutOptions.positive!(:page_size, height)}
@@ -2754,7 +2754,7 @@ defmodule PdfElixide.Editor do
 
   # Upstream substitutes its own default for a negative padding rather than
   # reporting one, so accepting it would ignore the caller silently.
-  defp validate_edge_padding!(value), do: LayoutOptions.margin!(:edge_padding, value)
+  defp validate_edge_padding!(value), do: LayoutOptions.non_negative!(:edge_padding, value)
 
   # Every key is emitted for the reason given on
   # `PdfElixide.Document.__option_defaults__/1`.

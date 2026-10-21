@@ -1223,7 +1223,7 @@ fn document_all_tables(
 // Normalize raw corners so the Elixir rectangle and derived page dimensions
 // always have a bottom-left origin and non-negative dimensions.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_get_page_media_box(
+fn document_page_media_box(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<RectNif> {
@@ -1272,7 +1272,7 @@ pub(crate) fn read_crop_box(doc: &PdfDocument, page_index: usize) -> Result<Opti
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_get_page_crop_box(
+fn document_page_crop_box(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<Option<RectNif>> {
@@ -1289,7 +1289,7 @@ fn document_get_page_crop_box(
 // fills a missing or non-numeric one, so `rendering::render_box` must not be
 // simplified into a call to this.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_get_page_visible_box(
+fn document_page_visible_box(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<RectNif> {
@@ -1304,7 +1304,7 @@ fn document_get_page_visible_box(
 
 // `get_page_rotation` already resolves inheritance and normalizes the value.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn document_get_page_rotation(
+fn document_page_rotation(
     resource: ResourceArc<DocumentResource>,
     page_index: usize,
 ) -> NifResult<i32> {

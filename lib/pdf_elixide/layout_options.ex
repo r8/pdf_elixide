@@ -20,15 +20,15 @@ defmodule PdfElixide.LayoutOptions do
   @type label :: atom() | String.t()
 
   # Range only; a value that is not a number is left to the caller.
-  @spec margin!(label(), term()) :: term()
-  def margin!(label, value) when is_number(value) and (value < 0 or value > @max_f32) do
+  @spec non_negative!(label(), term()) :: term()
+  def non_negative!(label, value) when is_number(value) and (value < 0 or value > @max_f32) do
     raise ArgumentError,
           "invalid #{label(label)}, expected a non-negative number that fits a " <>
             "32-bit float: #{inspect(value)}"
   end
 
-  def margin!(_label, value) when is_number(value), do: value * 1.0
-  def margin!(_label, value), do: value
+  def non_negative!(_label, value) when is_number(value), do: value * 1.0
+  def non_negative!(_label, value), do: value
 
   # Below the smallest normal f32 a positive value reaches the layout as zero.
   @spec positive!(label(), term()) :: term()
