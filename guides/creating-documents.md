@@ -21,7 +21,7 @@ supply, describe the document with `PdfElixide.Builder` instead; see
 
 ## Markdown
 
-Markdown creation recognises `#` to `####` headings, paragraphs, `-` and `*`
+Markdown creation recognizes `#` to `####` headings, paragraphs, `-` and `*`
 bullets, `>` quotes, fenced code blocks, pipe tables, and `**bold**`,
 `*italic*` and `` `code` `` spans. Block constructs must start at the beginning
 of an unindented line. Numbered lists, links, deeper headings and indented
@@ -33,7 +33,7 @@ Collapse repeated blank lines in Markdown and HTML input.
 
 ## HTML
 
-HTML creation accepts fragments rather than complete web pages. It recognises
+HTML creation accepts fragments rather than complete web pages. It recognizes
 lower-case, attribute-free `<h1>` to `<h4>`, `<p>`, `<br>`, `<b>`, `<strong>`,
 `<i>`, `<em>`, `<code>`, `<pre>`, `<ul>`, `<ol>` and `<li>` tags. Ordered and
 unordered list items both become bullets.
@@ -41,7 +41,7 @@ unordered list items both become bullets.
 Pass body content with each block on its own unindented line. Source line
 breaks and indentation are preserved, so pretty-printed or inline block tags
 may appear as literal Markdown markers instead of receiving their intended
-formatting. Tags with attributes or upper-case names are not recognised.
+formatting. Tags with attributes or upper-case names are not recognized.
 
 Other tags are removed but their contents remain. This includes `title`,
 `style` and `script` content, so do not pass a complete HTML document. `<h5>`
@@ -85,7 +85,7 @@ page, in list order:
 
 Every page has the size given by `:page_size`. Each image is scaled, up or
 down and keeping its proportions, until it fills the area inside the four
-margins in one direction, and is centred in that area. With the defaults, a
+margins in one direction, and is centered in that area. With the defaults, a
 landscape photo therefore lies across the middle of a Letter page with an
 inch of white on either side and more above and below.
 
@@ -111,7 +111,7 @@ combine them with `PdfElixide.Editor.merge_binary/2` if they must.
 A JPEG is embedded without re-encoding, so it keeps its quality and size. A
 PNG is decoded and its pixels stored losslessly, so an 8-bit PNG keeps every
 pixel exactly. Transparency is kept, 16-bit channels are reduced to 8 bits,
-and colour profiles and gamma are ignored. GIF, WebP, TIFF, HEIC and other
+and color profiles and gamma are ignored. GIF, WebP, TIFF, HEIC and other
 formats are refused, and so are damaged and very large images;
 `PdfElixide.Editor.from_images/2` lists the errors and size limits.
 
@@ -121,8 +121,8 @@ its rotation in that tag, so such a photo comes out sideways, upside down or
 mirrored, and is laid out by its stored shape. Rotate the pixels first with a
 tool that applies the tag, such as `magick photo.jpg -auto-orient upright.jpg`.
 
-CMYK JPEGs are embedded without colour correction, so most of them, including
-those from Photoshop and ImageMagick, come out with inverted colours. Convert
+CMYK JPEGs are embedded without color correction, so most of them, including
+those from Photoshop and ImageMagick, come out with inverted colors. Convert
 them to RGB first.
 
 ## Page layout

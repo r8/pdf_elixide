@@ -140,7 +140,7 @@ defmodule PdfElixide.OfficeTest do
       end
     end
 
-    test "converts a DOCX this library did not write, honouring its page break" do
+    test "converts a DOCX this library did not write, honoring its page break" do
       {pages, text} = pdf_text(Office.to_pdf!(File.read!(Path.join(@fixtures, "hello.docx"))))
 
       assert pages == 2
@@ -220,7 +220,7 @@ defmodule PdfElixide.OfficeTest do
       assert_raise Error, fn -> Office.to_pdf!("") end
     end
 
-    test "reports a recognised package it cannot convert as :other" do
+    test "reports a recognized package it cannot convert as :other" do
       docx =
         rezip(File.read!(Path.join(@fixtures, "hello.docx")), fn
           {~c"word/document.xml", _} -> {~c"word/document.xml", "<w:document"}

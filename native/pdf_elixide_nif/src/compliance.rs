@@ -436,7 +436,7 @@ impl From<ConvertError> for rustler::Error {
                     None => format!(
                         "The conversion could not declare :{requested:?} in the document's \
                          XMP metadata, or the document declares a level this library does \
-                         not recognise, so the result would not identify itself as \
+                         not recognize, so the result would not identify itself as \
                          :{requested:?}. Nothing has been converted. Remove the document's \
                          metadata first with sanitize/2; see PdfElixide.Compliance.convert/3."
                     ),

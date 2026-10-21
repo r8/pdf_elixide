@@ -30,7 +30,7 @@ defmodule PdfElixide.Office do
   file holding something else, a truncated or corrupted zip, or a
   password-protected Office file — return
   `{:error, %PdfElixide.Error{reason: :unsupported}}`. A package that is
-  recognised but cannot be converted returns `{:error, %PdfElixide.Error{}}`
+  recognized but cannot be converted returns `{:error, %PdfElixide.Error{}}`
   with reason `:other`.
 
   A DOCX exported with `mode: :layout`, or with the default `:auto` on a short

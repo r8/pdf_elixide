@@ -210,7 +210,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `list/1`, but raises `PdfElixide.Error` on failure.
+  Lists the signatures in the given PDF document or editor, raising an error
+  if it fails.
   """
   @spec list!(source()) :: [t()]
   def list!(source), do: source |> list() |> Wrap.unwrap!()
@@ -244,7 +245,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `unsigned_fields/1`, but raises `PdfElixide.Error` on failure.
+  Lists the signature fields that carry no signature, raising an error if it
+  fails.
   """
   @spec unsigned_fields!(source()) :: [String.t()]
   def unsigned_fields!(source), do: source |> unsigned_fields() |> Wrap.unwrap!()
@@ -285,7 +287,7 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `dss/1`, but raises `PdfElixide.Error` on failure.
+  Reads the document security store, raising an error if it fails.
   """
   @spec dss!(source()) :: DSS.t() | nil
   def dss!(source), do: source |> dss() |> Wrap.unwrap!()
@@ -341,7 +343,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `verify/2`, but raises `PdfElixide.Error` on failure.
+  Verifies the signature against the bytes it covers, raising an error if it
+  fails.
   """
   @spec verify!(t(), binary()) :: verdict()
   def verify!(signature, pdf_bytes), do: signature |> verify(pdf_bytes) |> Wrap.unwrap!()
@@ -366,7 +369,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `verify_signer/1`, but raises `PdfElixide.Error` on failure.
+  Verifies the signature blob on its own, without the document, raising an
+  error if it fails.
   """
   @spec verify_signer!(t()) :: verdict()
   def verify_signer!(signature), do: signature |> verify_signer() |> Wrap.unwrap!()
@@ -403,7 +407,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `certificate/1`, but raises `PdfElixide.Error` on failure.
+  Returns the certificate the signature names as its signer, raising an error
+  if it fails.
   """
   @spec certificate!(t()) :: Certificate.t()
   def certificate!(signature), do: signature |> certificate() |> Wrap.unwrap!()
@@ -449,7 +454,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `timestamp/1`, but raises `PdfElixide.Error` on failure.
+  Returns the RFC 3161 timestamp the signature carries, or `nil` when it
+  carries none, raising an error if it fails.
   """
   @spec timestamp!(t()) :: Timestamp.t() | nil
   def timestamp!(signature), do: signature |> timestamp() |> Wrap.unwrap!()
@@ -503,7 +509,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `verify_timestamp/2`, but raises `PdfElixide.Error` on failure.
+  Verifies that the signature's timestamp was made over that signature,
+  raising an error if it fails.
   """
   @spec verify_timestamp!(t(), binary()) :: verdict()
   def verify_timestamp!(signature, pdf_bytes),
@@ -525,7 +532,8 @@ defmodule PdfElixide.Signature do
   def pades_level(%__MODULE__{} = signature), do: pades_level(signature, nil)
 
   @doc """
-  Same as `pades_level/1`, but raises `PdfElixide.Error` on failure.
+  Returns the PAdES baseline level the signature reaches, judged from the
+  signature alone, raising an error if it fails.
   """
   @spec pades_level!(t()) :: pades_level()
   def pades_level!(signature), do: signature |> pades_level() |> Wrap.unwrap!()
@@ -572,7 +580,8 @@ defmodule PdfElixide.Signature do
   def pades_level(%__MODULE__{}, dss) when is_nil(dss) or is_struct(dss, DSS), do: {:ok, nil}
 
   @doc """
-  Same as `pades_level/2`, but raises `PdfElixide.Error` on failure.
+  Returns the PAdES baseline level the signature reaches, given the document's
+  security store, raising an error if it fails.
   """
   @spec pades_level!(t(), DSS.t() | nil) :: pades_level()
   def pades_level!(signature, dss), do: signature |> pades_level(dss) |> Wrap.unwrap!()
@@ -602,7 +611,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `pades_level/3`, but raises `PdfElixide.Error` on failure.
+  Returns the PAdES baseline level the signature reaches, given the document's
+  security store and the document's own bytes, raising an error if it fails.
   """
   @spec pades_level!(t(), DSS.t() | nil, binary()) :: pades_level()
   def pades_level!(signature, dss, pdf_bytes),
@@ -675,7 +685,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `document_timestamp/1`, but raises `PdfElixide.Error` on failure.
+  Returns the archival timestamp the document carries over the whole file,
+  raising an error if it fails.
   """
   @spec document_timestamp!(binary()) :: Timestamp.t() | nil
   def document_timestamp!(pdf_bytes), do: pdf_bytes |> document_timestamp() |> Wrap.unwrap!()
@@ -738,7 +749,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `signing_time_utc/1`, but raises `PdfElixide.Error` on failure.
+  Returns the claimed signing time as a `DateTime`, or `nil` when there is
+  none to read, raising an error if it fails.
   """
   @spec signing_time_utc!(t()) :: DateTime.t() | nil
   def signing_time_utc!(signature), do: signature |> signing_time_utc() |> Wrap.unwrap!()
@@ -760,7 +772,8 @@ defmodule PdfElixide.Signature do
   end
 
   @doc """
-  Same as `count/1`, but raises `PdfElixide.Error` on failure.
+  Counts the signatures in the given PDF document or editor, raising an error
+  if it fails.
   """
   @spec count!(source()) :: non_neg_integer()
   def count!(source), do: source |> count() |> Wrap.unwrap!()

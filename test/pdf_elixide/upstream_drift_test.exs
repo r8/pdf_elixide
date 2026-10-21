@@ -163,7 +163,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   defp refute_same(left, right),
     do: refute(same?(left, right), "#{inspect(left)} == #{inspect(right)}")
 
-  # The fill colours page 0 paints, read back off an uncompressed write. A
+  # The fill colors page 0 paints, read back off an uncompressed write. A
   # whiteout is white and a redaction block carries its annotation's `/IC`.
   defp page0_fills(editor) do
     doc = editor |> Editor.to_binary!(compress: false) |> Document.from_binary!()
@@ -861,7 +861,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   end
 
   describe "inks the deep walk deliberately skips" do
-    test "a /Pattern colour space's underlying Separation is surfaced" do
+    test "a /Pattern color space's underlying Separation is surfaced" do
       doc = open(@layers_and_inks_pdf)
       assert Document.inks!(doc, @patterns, deep: true) == ["UnderlyingInk"]
     end
@@ -2057,7 +2057,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert "<ol><li>one</li></ol>" |> Editor.from_html!() |> created_text() =~ "• one"
     end
 
-    test "HTML recognises a block tag only at the start of an unindented line" do
+    test "HTML recognizes a block tag only at the start of an unindented line" do
       text =
         "<ul>\n  <li>item</li>\n</ul>\n<p>lead<h2>Title</h2></p>"
         |> Editor.from_html!()
@@ -2168,7 +2168,7 @@ defmodule PdfElixide.UpstreamDriftTest do
              ] = @mixed |> Editor.from_images!() |> created() |> image_boxes()
     end
 
-    test "fits each image inside all four margins and centres it there" do
+    test "fits each image inside all four margins and centers it there" do
       page = %Rect{x: 0.0, y: 0.0, width: 300.0, height: 500.0}
 
       doc =

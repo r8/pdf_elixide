@@ -84,7 +84,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `media_box/1` but raises an error if it fails.
+  Returns the page's `/MediaBox`, raising an error if it fails.
   """
   @spec media_box!(t()) :: Rect.t()
   def media_box!(page) do
@@ -115,7 +115,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `crop_box/1` but raises an error if it fails.
+  Returns the page's `/CropBox`, raising an error if it fails.
   """
   @spec crop_box!(t()) :: Rect.t() | nil
   def crop_box!(page) do
@@ -148,7 +148,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `visible_box/1` but raises an error if it fails.
+  Returns the page's visible region, raising an error if it fails.
   """
   @spec visible_box!(t()) :: Rect.t()
   def visible_box!(page) do
@@ -175,7 +175,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `width/1` but raises an error if it fails.
+  Returns the page's width in points, raising an error if it fails.
   """
   @spec width!(t()) :: float()
   def width!(page) do
@@ -199,7 +199,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `height/1` but raises an error if it fails.
+  Returns the page's height in points, raising an error if it fails.
   """
   @spec height!(t()) :: float()
   def height!(page) do
@@ -234,7 +234,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `rotation/1` but raises an error if it fails.
+  Returns the page's `/Rotate`, raising an error if it fails.
   """
   @spec rotation!(t()) :: rotation()
   def rotation!(page) do
@@ -306,7 +306,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `label/1` but raises an error if it fails.
+  Returns the page's logical page label, raising an error if it fails.
   """
   @spec label!(t()) :: String.t()
   def label!(page) do
@@ -330,7 +330,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `text/2` but raises an error if it fails.
+  Extracts the text content of the page, raising an error if it fails.
   """
   @spec text!(t(), Document.page_text_opts()) :: String.t()
   def text!(page, opts \\ []) when is_list(opts) do
@@ -351,7 +351,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Conversion"
   @doc """
-  Same as `to_markdown/2` but raises an error if it fails.
+  Converts the page to Markdown, raising an error if it fails.
   """
   @spec to_markdown!(t(), Document.markdown_opts()) :: String.t()
   def to_markdown!(page, opts \\ []) when is_list(opts) do
@@ -372,7 +372,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Conversion"
   @doc """
-  Same as `to_html/2` but raises an error if it fails.
+  Converts the page to an HTML fragment, raising an error if it fails.
   """
   @spec to_html!(t(), Document.html_opts()) :: String.t()
   def to_html!(page, opts \\ []) when is_list(opts) do
@@ -395,7 +395,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `to_plain_text/2` but raises an error if it fails.
+  Converts the page to plain text, raising an error if it fails.
   """
   @spec to_plain_text!(t(), Document.plain_text_opts()) :: String.t()
   def to_plain_text!(page, opts \\ []) when is_list(opts) do
@@ -415,7 +415,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `words/2` but raises an error if it fails.
+  Extracts the words of the page, raising an error if it fails.
   """
   @spec words!(t(), Document.words_opts()) :: [Word.t()]
   def words!(page, opts \\ []) when is_list(opts) do
@@ -436,7 +436,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `text_lines/2` but raises an error if it fails.
+  Extracts the text lines of the page, raising an error if it fails.
   """
   @spec text_lines!(t(), Document.text_lines_opts()) :: [TextLine.t()]
   def text_lines!(page, opts \\ []) when is_list(opts) do
@@ -457,7 +457,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `chars/2` but raises an error if it fails.
+  Extracts the characters of the page, raising an error if it fails.
   """
   @spec chars!(t(), Document.chars_opts()) :: [Char.t()]
   def chars!(page, opts \\ []) when is_list(opts) do
@@ -477,7 +477,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `spans/2` but raises an error if it fails.
+  Extracts the spans of the page, raising an error if it fails.
   """
   @spec spans!(t(), Document.spans_opts()) :: [Span.t()]
   def spans!(page, opts \\ []) when is_list(opts) do
@@ -499,7 +499,8 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `structured/2` but raises an error if it fails.
+  Reads the page as a `PdfElixide.Document.StructuredPage`, raising an error
+  if it fails.
   """
   @spec structured!(t(), Document.structured_opts()) :: StructuredPage.t()
   def structured!(page, opts \\ []) when is_list(opts) do
@@ -520,7 +521,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Text extraction"
   @doc """
-  Same as `tables/2` but raises an error if it fails.
+  Detects the tables of the page, raising an error if it fails.
   """
   @spec tables!(t(), Document.tables_opts()) :: [Table.t()]
   def tables!(page, opts \\ []) when is_list(opts) do
@@ -540,7 +541,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Graphics, images and annotations"
   @doc """
-  Same as `paths/1` but raises an error if it fails.
+  Extracts the vector paths of the page, raising an error if it fails.
   """
   @spec paths!(t()) :: [PdfElixide.Document.Path.t()]
   def paths!(page) do
@@ -562,7 +563,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Graphics, images and annotations"
   @doc """
-  Same as `rects/1` but raises an error if it fails.
+  Extracts the rectangles of the page, raising an error if it fails.
   """
   @spec rects!(t()) :: [PdfElixide.Document.Path.t()]
   def rects!(page) do
@@ -585,7 +586,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Graphics, images and annotations"
   @doc """
-  Same as `lines/1` but raises an error if it fails.
+  Extracts the straight lines of the page, raising an error if it fails.
   """
   @spec lines!(t()) :: [PdfElixide.Document.Path.t()]
   def lines!(page) do
@@ -608,7 +609,8 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Search"
   @doc """
-  Same as `search/3` but raises an error if it fails.
+  Finds every occurrence of `pattern` on the page, raising an error if it
+  fails.
   """
   @spec search!(t(), String.t(), Document.search_opts()) :: [SearchMatch.t()]
   def search!(page, pattern, opts \\ []) when is_binary(pattern) and is_list(opts) do
@@ -630,7 +632,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Graphics, images and annotations"
   @doc """
-  Same as `images/1` but raises an error if it fails.
+  Extracts the raster images of the page, raising an error if it fails.
   """
   @spec images!(t()) :: [Image.t()]
   def images!(page) do
@@ -657,7 +659,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Rendering"
   @doc """
-  Same as `render/2` but raises an error if it fails.
+  Renders the page to a raster image, raising an error if it fails.
   """
   @spec render!(t(), Document.render_opts()) :: RenderedPage.t()
   def render!(page, opts \\ []) when is_list(opts) do
@@ -680,7 +682,8 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Rendering"
   @doc """
-  Same as `separations/2` but raises an error if it fails.
+  Renders one grayscale plate per ink on the page, raising an error if it
+  fails.
   """
   @spec separations!(t(), Document.dpi_opts()) :: [SeparationPlate.t()]
   def separations!(page, opts \\ []) when is_list(opts) do
@@ -703,7 +706,8 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Rendering"
   @doc """
-  Same as `separation/3` but raises an error if it fails.
+  Renders a single named ink's plate for the page, raising an error if it
+  fails.
   """
   @spec separation!(t(), String.t(), Document.dpi_opts()) :: SeparationPlate.t()
   def separation!(page, ink, opts \\ []) when is_binary(ink) and is_list(opts) do
@@ -725,7 +729,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Graphics, images and annotations"
   @doc """
-  Same as `fonts/1` but raises an error if it fails.
+  Extracts the fonts referenced by the page, raising an error if it fails.
   """
   @spec fonts!(t()) :: [Font.t()]
   def fonts!(page) do
@@ -747,7 +751,8 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Page properties"
   @doc """
-  Same as `inks/2` but raises an error if it fails.
+  Lists the Separation and DeviceN ink names the page declares, raising an
+  error if it fails.
   """
   @spec inks!(t(), Document.inks_opts()) :: [String.t()]
   def inks!(page, opts \\ []) do
@@ -767,7 +772,7 @@ defmodule PdfElixide.Document.Page do
 
   @doc group: "Graphics, images and annotations"
   @doc """
-  Same as `annotations/1` but raises an error if it fails.
+  Reads the annotations on the page, raising an error if it fails.
   """
   @spec annotations!(t()) :: [Annotation.t()]
   def annotations!(page) do

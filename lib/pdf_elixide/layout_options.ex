@@ -63,13 +63,14 @@ defmodule PdfElixide.LayoutOptions do
       when is_number(x) and is_number(y) and is_number(width) and is_number(height) do
     if Enum.any?([x, y, x + width, y + height], &(abs(&1) > @max_f32)) do
       raise ArgumentError,
-            "invalid #{label(label)} #{inspect(rect)}: its corners must fit a 32-bit float"
+            "invalid #{label(label)}, expected corners that fit a 32-bit float: " <>
+              inspect(rect)
     end
 
     if Enum.any?([width, height], &(abs(&1) > @max_f32)) do
       raise ArgumentError,
-            "invalid #{label(label)} #{inspect(rect)}: its width and height must fit a " <>
-              "32-bit float"
+            "invalid #{label(label)}, expected a width and height that fit a " <>
+              "32-bit float: #{inspect(rect)}"
     end
 
     %Rect{x: x * 1.0, y: y * 1.0, width: width * 1.0, height: height * 1.0}
@@ -83,8 +84,7 @@ defmodule PdfElixide.LayoutOptions do
   def rgb!(label, %RGB{r: r, g: g, b: b} = color) do
     unless Enum.all?([r, g, b], &(is_number(&1) and &1 >= 0 and &1 <= 1)) do
       raise ArgumentError,
-            "invalid #{label(label)} #{inspect(color)}: each component must be a number " <>
-              "between 0.0 and 1.0"
+            "invalid #{label(label)}, expected components from 0.0 to 1.0: #{inspect(color)}"
     end
 
     color

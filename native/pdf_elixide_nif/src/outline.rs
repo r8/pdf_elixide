@@ -4,7 +4,7 @@ use rustler::{NifMap, NifResult, NifTaggedEnum};
 use crate::{atoms, error::tagged_err};
 
 // Bounds this recursion, the recursive NifMap encoder and upstream's
-// `flatten_outline` in the bookmark split; defence in depth, since the outline
+// `flatten_outline` in the bookmark split; defense in depth, since the outline
 // is parsed before it gets here.
 const MAX_OUTLINE_DEPTH: usize = 256;
 

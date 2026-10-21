@@ -84,7 +84,7 @@ pub fn ensure_fill_in_range(fill: [f32; 3], label: &str) -> NifResult<()> {
     if fill.iter().any(|c| !(0.0..=1.0).contains(c)) {
         return Err(tagged_err(
             atoms::other(),
-            format!("Invalid {label} {fill:?}: each component must be between 0.0 and 1.0"),
+            format!("invalid {label}, expected components from 0.0 to 1.0: {fill:?}"),
         ));
     }
 

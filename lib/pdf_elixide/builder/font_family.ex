@@ -67,8 +67,12 @@ defmodule PdfElixide.Builder.FontFamily do
 
     regular =
       case Keyword.get(opts, :regular) do
-        nil -> raise ArgumentError, "missing :regular, a font family needs a regular face"
-        face -> face!(:regular, face)
+        nil ->
+          raise ArgumentError,
+                "invalid :regular, a font family needs a regular face, so it cannot be missing"
+
+        face ->
+          face!(:regular, face)
       end
 
     %__MODULE__{

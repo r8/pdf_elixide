@@ -254,7 +254,7 @@ defmodule PdfElixide.Builder do
   @max_list_number 2_147_483_647
 
   # Positions are written as 32-bit floats; past this many steps across a page
-  # their rounding could merge neighbouring lines or runs.
+  # their rounding could merge neighboring lines or runs.
   @precision_steps 131_072
 
   @typedoc """
@@ -477,7 +477,7 @@ defmodule PdfElixide.Builder do
   end
 
   @doc """
-  Adds a thin grey line across the page between the margins.
+  Adds a thin gray line across the page between the margins.
 
   The line sits in the middle of a box as tall as the document's
   `:font_size`.
@@ -587,7 +587,7 @@ defmodule PdfElixide.Builder do
     radius = LayoutOptions.positive!("radius", radius)
     operations = ellipse_operations(center, radius, radius)
 
-    reach!(operations, "radius #{inspect(radius)} around center #{inspect(center)}")
+    reach!(operations, "radius", radius, center)
     shape(builder, operations, build_shape_options(opts))
   end
 
@@ -607,7 +607,7 @@ defmodule PdfElixide.Builder do
     radii = {LayoutOptions.positive!("radii", rx), LayoutOptions.positive!("radii", ry)}
     operations = ellipse_operations(center, elem(radii, 0), elem(radii, 1))
 
-    reach!(operations, "radii #{inspect(radii)} around center #{inspect(center)}")
+    reach!(operations, "radii", radii, center)
     shape(builder, operations, build_shape_options(opts))
   end
 
@@ -624,7 +624,7 @@ defmodule PdfElixide.Builder do
   def polygon(%__MODULE__{} = builder, points, opts \\ [])
       when is_list(points) and is_list(opts) do
     if not match?([_, _, _ | _], points) do
-      raise ArgumentError, "invalid points, a polygon needs at least three: #{inspect(points)}"
+      raise ArgumentError, "invalid points, expected at least three points: #{inspect(points)}"
     end
 
     [first | rest] = Enum.map(points, &polygon_point!/1)
@@ -668,7 +668,7 @@ defmodule PdfElixide.Builder do
 
     operations = arc_operations(center, radius, from, sweep)
 
-    reach!(operations, "radius #{inspect(radius)} around center #{inspect(center)}")
+    reach!(operations, "radius", radius, center)
     shape(builder, operations, build_line_options(opts))
   end
 
@@ -825,17 +825,19 @@ defmodule PdfElixide.Builder do
 
     if not Enum.all?(values, &LayoutOptions.fits_f32?/1) do
       raise ArgumentError,
-            "invalid operation #{inspect(op)}: its coordinates must fit a 32-bit float"
+            "invalid operation, expected coordinates that fit a 32-bit float: #{inspect(op)}"
     end
   end
 
   # Arguments that fit can still reach past the range once the curve is laid
   # around them.
-  defp reach!(operations, what) do
+  defp reach!(operations, label, value, center) do
     values = for op <- operations, op != :close_path, value <- tl(Tuple.to_list(op)), do: value
 
     if not Enum.all?(values, &LayoutOptions.fits_f32?/1) do
-      raise ArgumentError, "invalid #{what}: the shape reaches past the 32-bit float range"
+      raise ArgumentError,
+            "invalid #{label}, the shape around center #{inspect(center)} reaches past " <>
+              "the 32-bit float range: #{inspect(value)}"
     end
   end
 

@@ -272,7 +272,7 @@ fn ensure_pixel_budget(index: usize, width: u32, height: u32) -> NifResult<()> {
 }
 
 // The decode reserves its whole buffer against this limit before reading a
-// pixel, so this keeps a 16-bit colour PNG under the pixel cap `:unsupported`.
+// pixel, so this keeps a 16-bit color PNG under the pixel cap `:unsupported`.
 fn ensure_png_buffer(index: usize, width: u32, height: u32, total_bytes: u64) -> NifResult<()> {
     let max_alloc = Limits::default().max_alloc.unwrap_or(u64::MAX);
 
@@ -316,7 +316,7 @@ fn ensure_jpeg_readable(index: usize, image: &ImageData) -> NifResult<()> {
 }
 
 // Dispatching on the signature here, rather than through `from_bytes`, keeps an
-// unrecognised format apart from a damaged image: the two share an error type
+// unrecognized format apart from a damaged image: the two share an error type
 // the crate does not export.
 fn decoded(index: usize, bytes: &[u8]) -> NifResult<ImageData> {
     let image = if bytes.starts_with(&[0xFF, 0xD8]) {

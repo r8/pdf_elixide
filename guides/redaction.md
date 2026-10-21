@@ -65,8 +65,8 @@ unmarked; see [Saving edits](editing.md#saving-edits).
 refusal — and `PdfElixide.Editor.marked_for_redaction?/2` reports it.
 
 **A mark is cosmetic.** Covered content remains extractable. Use
-`PdfElixide.Editor.apply_redactions/1,2` for text removal, subject to the
-[content limitations](#it-removes-text-and-only-the-text-the-page-draws-itself).
+`PdfElixide.Editor.apply_redactions/1,2` for text removal, subject to the limits in
+[It removes text, and only the text the page draws itself](#it-removes-text-and-only-the-text-the-page-draws-itself).
 
 ## Removing content
 

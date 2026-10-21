@@ -30,7 +30,7 @@ defmodule PdfElixide.Document.EmbeddedFile do
       writes it alongside the data rather than from it, so it can disagree with
       `byte_size(data)`; compare the two if that matters.
     * `:checksum` — the raw MD5 digest of the file contents the entry declares,
-      or `nil`. Unverified, and MD5 is not a defence against deliberate
+      or `nil`. Unverified, and MD5 is not a defense against deliberate
       tampering.
     * `:created`, `:modified` — the entry's declared timestamps, as raw PDF date
       strings (`"D:20260101120000+00'00'"`), or `nil`.

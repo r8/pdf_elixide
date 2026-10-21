@@ -30,7 +30,7 @@ defmodule PdfElixide.Editor do
   `from_markdown/2`, `from_html/2` and `from_plain_text/2` lay text out on new
   pages and return an editor holding them. They are simple typesetters rather
   than round-trip conversions: lines are not wrapped, and only a limited
-  Markdown or HTML vocabulary is recognised. `from_images/2` places one JPEG or
+  Markdown or HTML vocabulary is recognized. `from_images/2` places one JPEG or
   PNG image on each new page. See the
   [Creating documents](guides/creating-documents.md) guide for examples,
   supported input and character limitations.
@@ -332,7 +332,7 @@ defmodule PdfElixide.Editor do
       |> PdfElixide.Editor.from_markdown!(title: "Report")
       |> PdfElixide.Editor.save!("report.pdf")
 
-  Only part of Markdown is recognised, and lines are not wrapped; see
+  Only part of Markdown is recognized, and lines are not wrapped; see
   [Creating documents](guides/creating-documents.md).
   """
   @spec from_markdown(String.t(), create_opts()) :: {:ok, t()} | {:error, Error.t()}
@@ -359,7 +359,7 @@ defmodule PdfElixide.Editor do
   @doc """
   Creates a new document from HTML and opens it for editing.
 
-  Only a small set of bare tags is recognised, and it is not a browser: see
+  Only a small set of bare tags is recognized, and it is not a browser: see
   [Creating documents](guides/creating-documents.md) for what is kept and what
   appears as it was written.
 
@@ -464,13 +464,13 @@ defmodule PdfElixide.Editor do
 
   Each binary in `images` becomes one page, in list order. Every page has the
   same size, and each image is scaled, keeping its proportions, to fill the
-  area inside the margins and is centred there. Pages are not sized to their
+  area inside the margins and is centered there. Pages are not sized to their
   images.
 
   A JPEG is embedded without re-encoding. A PNG's pixels are stored losslessly,
   with transparency kept and 16-bit channels reduced to 8 bits. An EXIF
   orientation tag is not applied, and most CMYK JPEGs come out with inverted
-  colours. See [Images](guides/creating-documents.md#images) for these, and
+  colors. See [Images](guides/creating-documents.md#images) for these, and
   for making a page that matches one image.
 
       jpeg = File.read!("scan.jpg")
@@ -484,7 +484,7 @@ defmodule PdfElixide.Editor do
 
     * an image that is neither JPEG nor PNG;
     * an image over 128 million pixels, or 32 million on a 32-bit system, or a
-      16-bit colour PNG over about 89 million (67 million with transparency).
+      16-bit color PNG over about 89 million (67 million with transparency).
       Scale it down first.
 
   An image that cannot be decoded, including a 12-bit, arithmetic-coded or
@@ -531,8 +531,7 @@ defmodule PdfElixide.Editor do
       |> PdfElixide.Editor.set_keywords!("quarterly")
       |> PdfElixide.Editor.save!("report.pdf")
 
-  See [Builder errors](PdfElixide.Builder.html#module-errors) for what is
-  refused.
+  See [Errors](guides/building-documents.md#errors) for what is refused.
   """
   @spec from_builder(Builder.t()) :: {:ok, t()} | {:error, Error.t()}
   def from_builder(%Builder{} = builder) do
@@ -834,7 +833,7 @@ defmodule PdfElixide.Editor do
 
   @doc group: "Saving"
   @doc """
-  Serialises all in-memory changes into a PDF binary.
+  Serializes all in-memory changes into a PDF binary.
 
   The result is a fully self-contained PDF that can be written to disk,
   stored in a database, or streamed over HTTP.
@@ -852,7 +851,7 @@ defmodule PdfElixide.Editor do
 
   A source that stores its XMP metadata unencrypted is refused, as in `save/3`.
 
-  The whole document is serialised in native memory before being copied
+  The whole document is serialized in native memory before being copied
   into the returned binary, so peak usage is roughly twice the output
   size (on top of the editor itself). For very large documents prefer
   `save/3`, which streams to the file without that second buffer.
@@ -865,7 +864,7 @@ defmodule PdfElixide.Editor do
 
   @doc group: "Saving"
   @doc """
-  Serialises all in-memory changes into a PDF binary, raising an error if it fails.
+  Serializes all in-memory changes into a PDF binary, raising an error if it fails.
   """
   @spec to_binary!(t(), save_opts()) :: binary()
   def to_binary!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
@@ -1028,7 +1027,7 @@ defmodule PdfElixide.Editor do
   @spec extract_page_ranges(t(), [Range.t(), ...]) :: {:ok, [binary()]} | {:error, Error.t()}
   def extract_page_ranges(%__MODULE__{ref: ref}, ranges) when is_list(ranges) do
     if ranges == [] do
-      raise ArgumentError, "extract_page_ranges/2 needs at least one range, got []"
+      raise ArgumentError, "invalid ranges, expected at least one range: []"
     end
 
     spans = Enum.map(ranges, &inclusive!/1)
@@ -1122,7 +1121,7 @@ defmodule PdfElixide.Editor do
   end
 
   defp validate_page_list!([]) do
-    raise ArgumentError, "expected at least one page index, got []"
+    raise ArgumentError, "invalid pages, expected at least one page index: []"
   end
 
   defp validate_page_list!(pages), do: distinct_pages!(pages, %{})
@@ -1131,22 +1130,22 @@ defmodule PdfElixide.Editor do
 
   defp distinct_pages!([page | rest], seen) when is_integer(page) and page >= 0 do
     if Map.has_key?(seen, page) do
-      raise ArgumentError, "page index #{page} is given more than once"
+      raise ArgumentError, "invalid pages, page index #{page} is given more than once"
     end
 
     distinct_pages!(rest, Map.put(seen, page, true))
   end
 
   defp distinct_pages!([page | _rest], _seen) do
-    raise ArgumentError, "expected a non-negative page index, got #{inspect(page)}"
+    raise ArgumentError, "invalid pages, expected a non-negative page index: #{inspect(page)}"
   end
 
   defp inclusive!(first..last//1) when first >= 0 and last >= first, do: {first, last}
 
   defp inclusive!(range) do
     raise ArgumentError,
-          "expected a non-empty range of non-negative page indices with step 1, got " <>
-            inspect(range)
+          "invalid ranges, expected a non-empty range of non-negative page indices " <>
+            "with step 1: #{inspect(range)}"
   end
 
   @doc group: "Merging and splitting"
@@ -1387,7 +1386,7 @@ defmodule PdfElixide.Editor do
     # An empty list must not reach the NIF: upstream records it, and its writer
     # then references an overlay stream it never emits.
     if rects == [] do
-      raise ArgumentError, "erase_regions/3 needs at least one region, got []"
+      raise ArgumentError, "invalid rects, expected at least one region: []"
     end
 
     rects = Enum.map(rects, &LayoutOptions.rect!("region", &1))
@@ -1471,7 +1470,7 @@ defmodule PdfElixide.Editor do
   editor.
 
   **This is not redaction.** The annotation's rectangle is filled with its
-  `/IC` colour, or black if it declares none, over the existing page content —
+  `/IC` color, or black if it declares none, over the existing page content —
   the covered text and images remain in the written file and
   `PdfElixide.Document.text/1` still returns the covered words. Use
   `apply_redactions/1,2` to remove covered page text.
@@ -1612,7 +1611,7 @@ defmodule PdfElixide.Editor do
   Queues `rect` on the page at the given zero-based index for removal by
   `apply_redactions/1,2`, and returns the editor.
 
-  `fill` is the colour of the block drawn over the cleared area, each component
+  `fill` is the color of the block drawn over the cleared area, each component
   between `0.0` and `1.0`; `nil` uses the `:default_fill` given to
   `apply_redactions/2`.
 
@@ -1695,9 +1694,9 @@ defmodule PdfElixide.Editor do
   Mark and queue after deletions, or reopen the source.
 
   Rewritten pages lose all annotations, whose objects remain recoverable; see
-  [Annotation removal](guides/redaction.md#redacting-a-page-removes-every-annotation-on-it).
+  [Redacting a page removes every annotation on it](guides/redaction.md#redacting-a-page-removes-every-annotation-on-it).
   They also lose pending erase and annotation-flatten overlays; see
-  [Pending overlays](guides/redaction.md#it-discards-other-pending-overlays-on-the-page).
+  [It discards other pending overlays on the page](guides/redaction.md#it-discards-other-pending-overlays-on-the-page).
 
   Incremental saves are refused afterwards: the update would leave the removed
   content readable. Metadata, JavaScript and embedded files require a separate
@@ -1718,7 +1717,7 @@ defmodule PdfElixide.Editor do
     * `:default_fill` — the `PdfElixide.Color.RGB` drawn over a region queued
       with `add_redaction/3,4` and given no `fill`. Each component must be
       between `0.0` and `1.0`. Defaults to black. It never reaches a region
-      taken from a `/Redact` annotation: that carries a colour of its own,
+      taken from a `/Redact` annotation: that carries a color of its own,
       its `/IC` or black where it declares none.
     * `:draw_default_overlay` — draw `:default_fill` over such a region at all.
       `false` leaves the cleared area blank. The same scope: an annotation's
@@ -1765,7 +1764,7 @@ defmodule PdfElixide.Editor do
   With `:scrub_metadata`, an indirect `/Info` value returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` without changes. Use
   `scrub_metadata: false` to strip the rest, or rewrite the metadata first.
-  See [Sanitization refusals](guides/redaction.md#refused-by-sanitize-1-2).
+  See [Refused by `sanitize/1,2`](guides/redaction.md#refused-by-sanitize-1-2).
 
   ## Options
 
@@ -2534,7 +2533,8 @@ defmodule PdfElixide.Editor do
 
   defp validate_image_area_fits!(_page_size, _margins), do: :ok
 
-  defp validate_images!([]), do: raise(ArgumentError, "expected at least one image, got []")
+  defp validate_images!([]),
+    do: raise(ArgumentError, "invalid images, expected at least one image: []")
 
   defp validate_images!(images) do
     images
@@ -2545,7 +2545,7 @@ defmodule PdfElixide.Editor do
 
       {image, index} ->
         raise ArgumentError,
-              "expected every image to be a binary, got #{inspect(image)} at index #{index}"
+              "invalid image, expected a binary at index #{index}: #{inspect(image)}"
     end)
   end
 
@@ -2568,7 +2568,7 @@ defmodule PdfElixide.Editor do
     })
   end
 
-  # Range only, as `LayoutOptions.non_negative!/2`: anything not recognised here is left to
+  # Range only, as `LayoutOptions.non_negative!/2`: anything not recognized here is left to
   # the NIF's field decoder, which names `:page_size`.
   defp validate_page_size!({width, height}) when is_number(width) and is_number(height) do
     {LayoutOptions.positive!(:page_size, width), LayoutOptions.positive!(:page_size, height)}
@@ -2696,13 +2696,12 @@ defmodule PdfElixide.Editor do
     case Keyword.get(opts, :algorithm, :aes128) do
       :aes256 ->
         raise ArgumentError,
-              "invalid :algorithm :aes256 — AES-256 output is not interoperable " <>
-                "with all supported readers, " <>
-                "expected one of #{inspect(@algorithms)}"
+              "invalid :algorithm, :aes256 output is not interoperable with all " <>
+                "supported readers; expected one of #{inspect(@algorithms)}"
 
       :rc4_40 ->
         raise ArgumentError,
-              "invalid :algorithm :rc4_40 — it cannot express the permission flags, " <>
+              "invalid :algorithm, :rc4_40 cannot express the permission flags; " <>
                 "expected one of #{inspect(@algorithms)}"
 
       algorithm ->

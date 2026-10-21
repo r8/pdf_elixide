@@ -456,7 +456,7 @@ defmodule PdfElixide.ExtractionOptionsTest do
         message = Exception.message(error)
 
         assert message =~ ":region_mode"
-        assert message =~ "between 0.0 and 1.0"
+        assert message =~ "from 0.0 to 1.0"
         # The ratio echoes back in the float form it was passed, not as an
         # integer-looking `-1`.
         assert message =~ inspect(ratio)
@@ -633,12 +633,14 @@ defmodule PdfElixide.ExtractionOptionsTest do
       # Both corners fit; the distance between them does not.
       wide = %Rect{x: -3.0e38, y: 0.0, width: 6.0e38, height: 1.0}
 
-      assert_raise ArgumentError, ~r/^invalid :region .* width and height must fit/, fn ->
-        Document.words(doc, 0, region: wide)
-      end
+      assert_raise ArgumentError,
+                   ~r/^invalid :region, expected a width and height that fit/,
+                   fn ->
+                     Document.words(doc, 0, region: wide)
+                   end
 
       assert_raise ArgumentError,
-                   ~r/^invalid :exclude_regions .* width and height must fit/,
+                   ~r/^invalid :exclude_regions, expected a width and height that fit/,
                    fn ->
                      Document.text(doc, 0, exclude_regions: [wide])
                    end

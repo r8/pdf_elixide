@@ -30,7 +30,7 @@ defmodule PdfElixide.Form do
   fields return `{:error, %PdfElixide.Error{reason: :not_found}}`.
   `PdfElixide.Signature` reads signatures separately. Check a button field's
   `:on_states` before writing it back; see
-  [Button limitations](guides/forms.md#check-boxes-and-radio-groups).
+  [Check boxes and radio groups](guides/forms.md#check-boxes-and-radio-groups).
 
   Operations that read the field hierarchy reject cycles and excessive depth
   or size. Deferred `flatten/1,2` marks do not validate that hierarchy; see
@@ -132,7 +132,8 @@ defmodule PdfElixide.Form do
   end
 
   @doc """
-  Same as `field/2` but raises an error if it fails.
+  Returns the single form field carrying the given name, raising an error if
+  it fails.
   """
   @spec field!(source(), String.t()) :: Field.t()
   def field!(source, name) when is_binary(name) do
@@ -158,7 +159,8 @@ defmodule PdfElixide.Form do
   end
 
   @doc """
-  Same as `value/2` but raises an error if it fails.
+  Returns the value of the single form field carrying the given name, raising
+  an error if it fails.
   """
   @spec value!(source(), String.t()) :: Field.value()
   def value!(source, name) when is_binary(name) do
@@ -196,7 +198,8 @@ defmodule PdfElixide.Form do
   end
 
   @doc """
-  Same as `export/3` but returns the bytes directly, raising on error.
+  Exports the form's field data as FDF or XFDF bytes, raising an error if it
+  fails.
   """
   @spec export!(source(), export_format(), export_opts()) :: binary()
   def export!(source, format, opts \\ []) when is_list(opts) do
@@ -395,16 +398,18 @@ defmodule PdfElixide.Form do
     if valid_value?(value) do
       :ok
     else
-      raise ArgumentError, "invalid value for form field #{inspect(name)}: #{inspect(value)}"
+      raise ArgumentError,
+            "invalid value for field #{inspect(name)}, expected a string, a boolean, " <>
+              "a list of strings or nil: #{inspect(value)}"
     end
   end
 
   defp validate_pair!({name, _value}) do
-    raise ArgumentError, "form field name must be a string, got: #{inspect(name)}"
+    raise ArgumentError, "invalid name, expected a string: #{inspect(name)}"
   end
 
   defp validate_pair!(other) do
-    raise ArgumentError, "expected a {name, value} pair, got: #{inspect(other)}"
+    raise ArgumentError, "invalid values, expected a {name, value} pair: #{inspect(other)}"
   end
 
   defp valid_value?(value) when is_binary(value) or is_boolean(value) or is_nil(value), do: true
@@ -419,8 +424,11 @@ defmodule PdfElixide.Form do
     |> Enum.frequencies_by(fn {name, _value} -> name end)
     |> Enum.find(fn {_name, count} -> count > 1 end)
     |> case do
-      nil -> :ok
-      {name, _count} -> raise ArgumentError, "duplicate form field name: #{inspect(name)}"
+      nil ->
+        :ok
+
+      {name, _count} ->
+        raise ArgumentError, "invalid values, field #{inspect(name)} is given more than once"
     end
   end
 
@@ -445,7 +453,7 @@ defmodule PdfElixide.Form do
 
   defp validate_export_format!(other) do
     raise ArgumentError,
-          "unsupported form data format #{inspect(other)}, expected :fdf or :xfdf"
+          "invalid format, expected :fdf or :xfdf: #{inspect(other)}"
   end
 
   defp validate_file_spec!(nil), do: nil

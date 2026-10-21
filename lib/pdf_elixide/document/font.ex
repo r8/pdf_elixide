@@ -104,7 +104,8 @@ defmodule PdfElixide.Document.Font do
   end
 
   @doc """
-  Same as `data/1` but returns the bytes directly, raising on error.
+  Returns the font's raw embedded font-program bytes, raising an error if it
+  fails.
   """
   @spec data!(t()) :: binary() | nil
   def data!(%__MODULE__{} = font) do

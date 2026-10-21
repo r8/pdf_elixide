@@ -149,7 +149,7 @@ defmodule PdfElixide.ComplianceTest do
       doc = open(@sample_pdf)
 
       for standard <- [:pdf_ua_2, :pdf_a] do
-        assert_raise ArgumentError, ~r/unsupported compliance standard/, fn ->
+        assert_raise ArgumentError, ~r/^invalid standard, expected one of/, fn ->
           Compliance.validate(doc, standard)
         end
       end

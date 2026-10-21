@@ -106,7 +106,7 @@ defmodule PdfElixide.EditorCreateTest do
   end
 
   describe "from_html/2" do
-    test "lays out the recognised tags as text" do
+    test "lays out the recognized tags as text" do
       text =
         "<h1>Title</h1><p>Some <b>bold</b> and <em>italic</em>.</p><ul><li>item</li></ul>"
         |> Editor.from_html!()
@@ -321,7 +321,7 @@ defmodule PdfElixide.EditorCreateTest do
       end
     end
 
-    test "refuses a 16-bit colour PNG whose decoded pixels exceed the allocation limit" do
+    test "refuses a 16-bit color PNG whose decoded pixels exceed the allocation limit" do
       # Under the 64-bit pixel limit but over 512 MiB decoded; 32-bit refuses on pixels.
       limit = if :erlang.system_info(:wordsize) == 8, do: "byte limit", else: "pixel limit"
 
@@ -545,7 +545,7 @@ defmodule PdfElixide.EditorCreateTest do
     end
 
     test "an empty image list raises" do
-      assert_raise ArgumentError, "expected at least one image, got []", fn ->
+      assert_raise ArgumentError, ~r/^invalid images, expected at least one image/, fn ->
         Editor.from_images([])
       end
     end

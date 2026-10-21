@@ -309,7 +309,7 @@ defmodule PdfElixide.FormTest do
       assert Form.export!(doc, :xfdf, file_spec: "form.pdf") =~ ~s(<f href="form.pdf"/>)
     end
 
-    test "raises for an unrecognised format" do
+    test "raises for an unrecognized format" do
       doc = Document.open!(@form_pdf)
 
       assert_raise ArgumentError, ~r/:pdf/, fn -> Form.export(doc, :pdf) end
@@ -954,7 +954,7 @@ defmodule PdfElixide.FormTest do
       editor = Editor.open!(@form_pdf)
 
       for bad <- [42, :yes, ["a", 5], {:name, 5}, {:name, "Export1"}, {:nope, "x"}] do
-        assert_raise ArgumentError, ~r/invalid value for form field "full_name"/, fn ->
+        assert_raise ArgumentError, ~r/invalid value for field "full_name"/, fn ->
           Form.put_value(editor, "full_name", bad)
         end
       end
@@ -964,7 +964,7 @@ defmodule PdfElixide.FormTest do
       editor = Editor.open!(@form_pdf)
 
       for value <- [{:text, "x"}, {:boolean, true}, {:array, ["a"]}] do
-        assert_raise ArgumentError, ~r/invalid value for form field "full_name"/, fn ->
+        assert_raise ArgumentError, ~r/invalid value for field "full_name"/, fn ->
           Form.put_value(editor, "full_name", value)
         end
       end
@@ -1084,9 +1084,11 @@ defmodule PdfElixide.FormTest do
     test "raises ArgumentError for a duplicated name, and writes nothing" do
       editor = Editor.open!(@form_pdf)
 
-      assert_raise ArgumentError, ~r/duplicate form field name: "full_name"/, fn ->
-        Form.put_values(editor, [{"full_name", "First"}, {"full_name", "Second"}])
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid values, field "full_name" is given more than once/,
+                   fn ->
+                     Form.put_values(editor, [{"full_name", "First"}, {"full_name", "Second"}])
+                   end
 
       refute Editor.modified?(editor)
     end
@@ -1094,7 +1096,7 @@ defmodule PdfElixide.FormTest do
     test "raises ArgumentError for a name that is not a string" do
       editor = Editor.open!(@form_pdf)
 
-      assert_raise ArgumentError, ~r/form field name must be a string/, fn ->
+      assert_raise ArgumentError, ~r/invalid name, expected a string/, fn ->
         Form.put_values(editor, [{:full_name, "Jane Doe"}])
       end
 
@@ -1115,7 +1117,7 @@ defmodule PdfElixide.FormTest do
       # The same set `put_value/3` rejects at the NIF boundary, refused here in
       # Elixir instead so that nothing has been written by the time it raises.
       for bad <- [42, :yes, ["a", 5], {:text, "x"}, {:name, "Export1"}, %{}] do
-        assert_raise ArgumentError, ~r/invalid value for form field "full_name"/, fn ->
+        assert_raise ArgumentError, ~r/invalid value for field "full_name"/, fn ->
           Form.put_values(editor, [{"full_name", bad}])
         end
       end
@@ -1208,7 +1210,7 @@ defmodule PdfElixide.FormTest do
     test "raises ArgumentError when the fun returns a shape that cannot be written" do
       editor = Editor.open!(@form_pdf)
 
-      assert_raise ArgumentError, ~r/invalid value for form field "full_name": 42/, fn ->
+      assert_raise ArgumentError, ~r/invalid value for field "full_name", expected .*: 42$/, fn ->
         Form.update_value(editor, "full_name", fn _ -> 42 end)
       end
     end

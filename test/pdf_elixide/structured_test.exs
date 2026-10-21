@@ -201,7 +201,7 @@ defmodule PdfElixide.StructuredTest do
   end
 
   describe "inspect/1" do
-    test "summarises the page and the region" do
+    test "summarizes the page and the region" do
       page = Document.structured!(open(@structured_pdf), @columns)
 
       assert inspect(page) == "#PdfElixide.Document.StructuredPage<p0 612.0x792.0 7 regions>"

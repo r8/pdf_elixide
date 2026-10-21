@@ -33,7 +33,7 @@ impl SplitOptionsNif {
         if self.depth == Some(0) {
             return Err(tagged_err(
                 atoms::other(),
-                "Invalid :depth 0: the depth must be a positive integer or :all",
+                "invalid :depth, expected a positive integer or :all: 0",
             ));
         }
 

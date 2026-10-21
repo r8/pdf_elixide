@@ -13,8 +13,8 @@ defmodule PdfElixide.Document do
   `PdfElixide.Compliance.validate/2` on a document that needs a password, and
   `rasterize/2` serializes against itself across the node. The
   [Concurrency](guides/concurrency.md) guide has the rest, including contention
-  inside the PDF reader and the tagged-PDF hazard that makes fanning out *by
-  page* the shape to prefer.
+  inside the PDF reader and [The `/ActualText` hazard](guides/concurrency.md#the-actualtext-hazard)
+  that makes fanning out *by page* the shape to prefer.
 
   ## Whole-document extraction and memory
 
@@ -95,7 +95,7 @@ defmodule PdfElixide.Document do
   `text/1` reads a page as it is laid out, inferring word breaks from where
   glyphs sit, so runs separated by only a narrow gap can still be joined.
 
-  `:extract_tables`, which defaults to `true`, controls how a recognised table
+  `:extract_tables`, which defaults to `true`, controls how a recognized table
   is laid out, not whether its values are returned. With it on, detected cells
   are rendered as column-aligned rows; with it off, their values appear as
   ordinary flow text. A table aligned only by whitespace is flow text either
@@ -464,7 +464,7 @@ defmodule PdfElixide.Document do
   end
 
   # Validate the semantic range here so it raises the same `ArgumentError` as
-  # other bad option values; the NIF keeps the same check as defence in depth.
+  # other bad option values; the NIF keeps the same check as defense in depth.
   # A region is decoded as 32-bit floats and compared through its corners; see
   # `PdfElixide.LayoutOptions.rect!/2`. Anything but a rect is left to the decoder.
   defp region!(opts), do: LayoutOptions.rect!(:region, Keyword.get(opts, :region))
@@ -483,8 +483,8 @@ defmodule PdfElixide.Document do
     case Keyword.get(opts, key, :intersects) do
       {:min_overlap, ratio} when is_number(ratio) and (ratio < 0.0 or ratio > 1.0) ->
         raise ArgumentError,
-              "invalid :#{key} {:min_overlap, #{inspect(ratio)}}: " <>
-                "the ratio must be between 0.0 and 1.0"
+              "invalid :#{key}, expected a :min_overlap ratio from 0.0 to 1.0: " <>
+                "{:min_overlap, #{inspect(ratio)}}"
 
       mode ->
         mode
@@ -527,7 +527,8 @@ defmodule PdfElixide.Document do
 
   @doc group: "Opening and lifecycle"
   @doc """
-  Same as `authenticate/2` but raises on error.
+  Authenticates against the document's encryption with the given password,
+  raising an error if it fails.
 
   Still returns `false` (does not raise) for a wrong password.
   """
@@ -790,11 +791,11 @@ defmodule PdfElixide.Document do
   Only the page's own `/Resources` is read unless `t:inks_opts/0`'s `:deep` is
   set, which is where that trade-off is explained.
 
-  Some names never appear: `All` and `None`, DeviceN colorants the colour space
+  Some names never appear: `All` and `None`, DeviceN colorants the color space
   declares to be process components, and colorants declared only inside a pattern
   object's own resources or an annotation's appearance stream.
 
-  Returns `{:ok, []}` for a page that declares no colour spaces. There is no
+  Returns `{:ok, []}` for a page that declares no color spaces. There is no
   whole-document arity — take the union yourself:
 
       doc |> Enum.flat_map(&PdfElixide.Document.Page.inks!(&1, deep: true)) |> Enum.uniq()
@@ -896,7 +897,7 @@ defmodule PdfElixide.Document do
   Renders the page's CropBox intersected with its MediaBox, falling back to the
   MediaBox or, when unreadable, US Letter. A `:region` render instead returns
   `:invalid_pdf` for an unreadable MediaBox.
-  Default layer visibility is honoured and output depends on available fonts.
+  Default layer visibility is honored and output depends on available fonts.
 
   Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` when the requested
   size exceeds the pixel limit. Lower `:dpi`, use a smaller `:fit` box, or set
@@ -1087,13 +1088,13 @@ defmodule PdfElixide.Document do
 
     cond do
       fit? and region? ->
-        raise ArgumentError, ":fit and :region cannot be given together"
+        raise ArgumentError, ":fit cannot be combined with :region"
 
       fit? and given?(opts, :dpi) ->
         raise ArgumentError, ":dpi has no effect with :fit; give one or the other"
 
       region? and Keyword.get(opts, :format, :png) == :rgba8 ->
-        raise ArgumentError, ":region cannot be given with format: :rgba8"
+        raise ArgumentError, ":region cannot be combined with format: :rgba8"
 
       true ->
         :ok
@@ -1137,7 +1138,7 @@ defmodule PdfElixide.Document do
         dpi
 
       other ->
-        raise ArgumentError, ":dpi must be a positive integer, got: #{inspect(other)}"
+        raise ArgumentError, "invalid :dpi, expected a positive integer: #{inspect(other)}"
     end
   end
 
@@ -1148,7 +1149,7 @@ defmodule PdfElixide.Document do
 
       other ->
         raise ArgumentError,
-              ":max_output_pixels must be a positive integer, got: #{inspect(other)}"
+              "invalid :max_output_pixels, expected a positive integer or nil: #{inspect(other)}"
     end
   end
 
@@ -1158,7 +1159,8 @@ defmodule PdfElixide.Document do
         quality
 
       other ->
-        raise ArgumentError, ":jpeg_quality must be an integer in 1..100, got: #{inspect(other)}"
+        raise ArgumentError,
+              "invalid :jpeg_quality, expected an integer in 1..100: #{inspect(other)}"
     end
   end
 
@@ -1173,7 +1175,8 @@ defmodule PdfElixide.Document do
 
       other ->
         raise ArgumentError,
-              ":background must be a PdfElixide.Color.RGB struct or nil, got: #{inspect(other)}"
+              "invalid :background, expected a PdfElixide.Color.RGB struct or nil: " <>
+                inspect(other)
     end
   end
 
@@ -1188,7 +1191,8 @@ defmodule PdfElixide.Document do
 
       other ->
         raise ArgumentError,
-              ":fit must be a {width, height} tuple of positive integers, got: #{inspect(other)}"
+              "invalid :fit, expected a {width, height} tuple of positive integers: " <>
+                inspect(other)
     end
   end
 
@@ -1222,7 +1226,7 @@ defmodule PdfElixide.Document do
 
     * `:extract_tables` — detect tables and render them inline as
       space-padded, column-aligned rows, the padding collapsed to single
-      spaces. Defaults to `true`; with it off, a recognised table's values
+      spaces. Defaults to `true`; with it off, a recognized table's values
       come back as ordinary flow text. See "Tables inside a text result" in
       the [Text extraction](guides/text-extraction.md) guide.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
@@ -1656,7 +1660,7 @@ defmodule PdfElixide.Document do
     * `:preserve_layout` — emit one absolutely positioned `<div>` per text
       span, carrying that span's coordinates and font size in inline CSS
       (`pt` units), in place of the semantic flow of `<p>`/`<h1>`/`<ul>`
-      elements. Colour is written only for non-black text. This mode emits
+      elements. Color is written only for non-black text. This mode emits
       *only* those positioned spans: headings, lists and tables are not
       produced, so `:detect_headings` and `:extract_tables` have no effect
       under it. Defaults to `false`.
@@ -2755,7 +2759,7 @@ defmodule PdfElixide.Document do
   @typedoc """
   Options accepted by the `structured` and `structured!` functions.
 
-    * `:column_mode` — how a two-column body is recognised. `:auto` splits only
+    * `:column_mode` — how a two-column body is recognized. `:auto` splits only
       when a clear vertical gutter separates two columns of body text; `:two`
       always splits, at the detected gutter or else at the page's horizontal
       midpoint; `:single` never splits, so every region's `:column` is `nil`.
@@ -2942,8 +2946,7 @@ defmodule PdfElixide.Document do
     case Keyword.get(opts, :threshold, 0.8) do
       threshold when is_number(threshold) and (threshold < 0.0 or threshold > 1.0) ->
         raise ArgumentError,
-              "invalid :threshold #{inspect(threshold)}: " <>
-                "the threshold must be between 0.0 and 1.0"
+              "invalid :threshold, expected a number from 0.0 to 1.0: #{inspect(threshold)}"
 
       threshold ->
         threshold
@@ -3457,7 +3460,7 @@ defmodule PdfElixide.Document do
   def search(doc, pattern, page_index_or_opts \\ [])
 
   # `pattern != ""` is a guard rather than an `%Error{}` because `:max_results`
-  # is no defence: it bounds the page walk as well as the list, so a capped call
+  # is no defense: it bounds the page walk as well as the list, so a capped call
   # still returns a cap's worth of zero-width matches at offset 0.
   def search(%__MODULE__{ref: ref}, pattern, opts)
       when is_binary(pattern) and pattern != "" and is_list(opts) do
@@ -3776,7 +3779,7 @@ defmodule PdfElixide.Document do
 
   defp depth_option(depth) when is_nil(depth) or (is_integer(depth) and depth < 1) do
     raise ArgumentError,
-          "invalid :depth #{inspect(depth)}: the depth must be a positive integer or :all"
+          "invalid :depth, expected a positive integer or :all: #{inspect(depth)}"
   end
 
   # Every depth past the outline's nesting limit reaches every level, so an
@@ -3927,7 +3930,8 @@ defmodule PdfElixide.Document do
 
   @doc group: "Opening and lifecycle"
   @doc """
-  Same as `pages/1` but raises an error if it fails.
+  Returns a `PdfElixide.Document.Page` handle for every page in the document,
+  raising an error if it fails.
   """
   @spec pages!(t()) :: [Page.t()]
   def pages!(%__MODULE__{} = doc) do
@@ -3963,7 +3967,8 @@ defmodule PdfElixide.Document do
 
   @doc group: "Opening and lifecycle"
   @doc """
-  Same as `page/2` but raises an error if it fails.
+  Returns a `PdfElixide.Document.Page` handle for the page at the given
+  zero-based index, raising an error if it fails.
   """
   @spec page!(t(), non_neg_integer()) :: Page.t()
   def page!(doc, index) when is_integer(index) and index >= 0 do

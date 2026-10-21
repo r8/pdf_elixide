@@ -247,13 +247,14 @@ defmodule PdfElixide.Compliance do
   defp validate_standard!(standard) when standard in @standards, do: standard
 
   defp validate_standard!(other) do
-    raise ArgumentError, "unsupported compliance standard #{inspect(other)}"
+    raise ArgumentError,
+          "invalid standard, expected one of #{inspect(@standards)}: #{inspect(other)}"
   end
 
   defp validate_pdf_a!(standard) when standard in @pdf_a, do: standard
 
   defp validate_pdf_a!(other) do
-    raise ArgumentError, "cannot convert to #{inspect(other)}, expected a PDF/A level"
+    raise ArgumentError, "invalid standard, expected a PDF/A level: #{inspect(other)}"
   end
 
   # Option contract: see `__option_defaults__/1`.

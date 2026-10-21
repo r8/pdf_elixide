@@ -1267,7 +1267,7 @@ mod tests {
                 .data
         };
 
-        assert_eq!(render(1), render(100), "upstream now honours jpeg_quality");
+        assert_eq!(render(1), render(100), "upstream now honors jpeg_quality");
         let raw = render_page(&doc, 0, &RenderOptions::with_dpi(72).as_raw()).expect("render");
         assert_ne!(
             encode_jpeg(&raw, 1).expect("encode"),

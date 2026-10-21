@@ -88,7 +88,7 @@ defmodule PdfElixide.Logging do
 
   def set_level(level) do
     raise ArgumentError,
-          "invalid log level #{inspect(level)}, expected one of #{inspect(@levels)}"
+          "invalid level, expected one of #{inspect(@levels)}: #{inspect(level)}"
   end
 
   @doc """

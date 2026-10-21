@@ -1461,7 +1461,7 @@ pub fn redaction_corners(rect: RectNif) -> NifResult<[f32; 4]> {
 fn unrepresentable(rect: RectNif) -> rustler::Error {
     tagged_err(
         atoms::other(),
-        format!("invalid region {rect:?}: its corners must fit a 32-bit float"),
+        format!("invalid region, expected corners that fit a 32-bit float: {rect:?}"),
     )
 }
 
@@ -3174,7 +3174,7 @@ mod tests {
         assert_eq!(
             names,
             ["full_name", "comments"],
-            "upstream now honours the flatten marks in an incremental update"
+            "upstream now honors the flatten marks in an incremental update"
         );
         assert!(editor.flatten_warnings().is_empty());
     }

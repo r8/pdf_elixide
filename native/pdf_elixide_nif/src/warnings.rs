@@ -48,7 +48,7 @@ impl From<WarningCategory> for WarningCategoryNif {
             WarningCategory::GlyphDropped => Self::GlyphDropped,
             WarningCategory::NoTextLayer => Self::NoTextLayer,
             WarningCategory::ImageSuppressed => Self::ImageSuppressed,
-            // `#[non_exhaustive]` upstream: an unmodelled category reaches a
+            // `#[non_exhaustive]` upstream: an unmodeled category reaches a
             // caller as `:unknown` rather than as one it is not.
             _ => Self::Unknown,
         }

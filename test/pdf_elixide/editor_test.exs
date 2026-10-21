@@ -2909,15 +2909,15 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      assert_raise ArgumentError, ~r/corners must fit a 32-bit float/, fn ->
+      assert_raise ArgumentError, ~r/expected corners that fit a 32-bit float/, fn ->
         Editor.erase_regions(editor, 0, [%Rect{x: 2.0e38, y: 0.0, width: 2.0e38, height: 10.0}])
       end
 
-      assert_raise ArgumentError, ~r/corners must fit a 32-bit float/, fn ->
+      assert_raise ArgumentError, ~r/expected corners that fit a 32-bit float/, fn ->
         Editor.erase_region(editor, 0, %Rect{x: 0.0, y: -2.0e38, width: 10.0, height: -2.0e38})
       end
 
-      assert_raise ArgumentError, ~r/corners must fit a 32-bit float/, fn ->
+      assert_raise ArgumentError, ~r/expected corners that fit a 32-bit float/, fn ->
         Editor.erase_regions(editor, 0, [%Rect{x: 1.0e300, y: 0.0, width: 10.0, height: 10.0}])
       end
 
@@ -2937,11 +2937,11 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      assert_raise ArgumentError, ~r/width and height must fit a 32-bit float/, fn ->
+      assert_raise ArgumentError, ~r/expected a width and height that fit a 32-bit float/, fn ->
         Editor.erase_region(editor, 0, %Rect{x: -3.0e38, y: 0.0, width: 6.0e38, height: 10.0})
       end
 
-      assert_raise ArgumentError, ~r/width and height must fit a 32-bit float/, fn ->
+      assert_raise ArgumentError, ~r/expected a width and height that fit a 32-bit float/, fn ->
         Editor.set_crop_box(editor, 0, %Rect{x: 0.0, y: 3.0e38, width: 10.0, height: -6.0e38})
       end
 
@@ -3528,7 +3528,7 @@ defmodule PdfElixide.EditorTest do
       Document.close(doc)
     end
 
-    test "draws :default_fill over a region that declares no colour" do
+    test "draws :default_fill over a region that declares no color" do
       editor = Editor.open!(@redact_pdf)
       on_exit(fn -> Editor.close(editor) end)
 

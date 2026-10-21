@@ -62,7 +62,7 @@ defmodule PdfElixide.LoggingTest do
     end
 
     test "rejects an unknown level by name" do
-      assert_raise ArgumentError, ~r/invalid log level :verbose/, fn ->
+      assert_raise ArgumentError, ~r/invalid level, .*: :verbose$/, fn ->
         Logging.set_level(:verbose)
       end
     end

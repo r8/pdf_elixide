@@ -37,7 +37,7 @@ impl From<RectFilterModeNif> for RectFilterMode {
     }
 }
 
-// Defence in depth for callers bypassing Elixir's identical semantic check;
+// Defense in depth for callers bypassing Elixir's identical semantic check;
 // the inclusive range also rejects NaN and infinities.
 fn validate_mode(field: &str, mode: &RectFilterModeNif) -> NifResult<()> {
     if let RectFilterModeNif::MinOverlap(ratio) = mode {
@@ -47,8 +47,8 @@ fn validate_mode(field: &str, mode: &RectFilterModeNif) -> NifResult<()> {
                 // `{:?}` rather than `{}` so the value echoes back in the
                 // float form the caller passed: `Display` renders -1.0 as -1.
                 format!(
-                    "Invalid :{field} {{:min_overlap, {ratio:?}}}: \
-                     the ratio must be between 0.0 and 1.0"
+                    "invalid :{field}, expected a :min_overlap ratio from 0.0 to 1.0: \
+                     {{:min_overlap, {ratio:?}}}"
                 ),
             ));
         }

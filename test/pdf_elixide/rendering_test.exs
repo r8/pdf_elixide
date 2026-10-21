@@ -91,7 +91,7 @@ defmodule PdfElixide.RenderingTest do
       assert {_, _, _, 0} = pixel(transparent, 0, 0)
     end
 
-    test "a background colour is painted under the page", %{doc: doc} do
+    test "a background color is painted under the page", %{doc: doc} do
       blue = %Color.RGB{r: 0.0, g: 0.0, b: 1.0}
       rendered = Document.render!(doc, 0, format: :rgba8, dpi: 20, background: blue)
 
@@ -128,7 +128,7 @@ defmodule PdfElixide.RenderingTest do
     end
 
     test ":region is checked as 32-bit floats", %{doc: doc} do
-      assert_raise ArgumentError, ~r/^invalid :region .* corners must fit/, fn ->
+      assert_raise ArgumentError, ~r/^invalid :region, expected corners that fit/, fn ->
         Document.render(doc, 0, region: %Rect{x: 0.0, y: 0.0, width: 10.0, height: 1.0e39})
       end
     end
@@ -403,7 +403,7 @@ defmodule PdfElixide.RenderingTest do
     test ":fit and :region cannot be combined", %{doc: doc} do
       region = %Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0}
 
-      assert_raise ArgumentError, ~r/:fit and :region/, fn ->
+      assert_raise ArgumentError, ~r/:fit cannot be combined with :region/, fn ->
         Document.render(doc, 0, fit: {10, 10}, region: region)
       end
     end
@@ -417,7 +417,7 @@ defmodule PdfElixide.RenderingTest do
     test ":region cannot be combined with the :rgba8 format", %{doc: doc} do
       region = %Rect{x: 0.0, y: 0.0, width: 10.0, height: 10.0}
 
-      assert_raise ArgumentError, ~r/:region cannot be given with format: :rgba8/, fn ->
+      assert_raise ArgumentError, ~r/:region cannot be combined with format: :rgba8/, fn ->
         Document.render(doc, 0, region: region, format: :rgba8)
       end
     end
@@ -425,7 +425,7 @@ defmodule PdfElixide.RenderingTest do
     test "an explicit nil for either is not a combination", %{doc: doc} do
       assert %RenderedPage{} = Document.render!(doc, 0, dpi: 20, fit: nil, region: nil)
 
-      assert_raise ArgumentError, ~r/:dpi must be a positive integer/, fn ->
+      assert_raise ArgumentError, ~r/invalid :dpi, expected a positive integer/, fn ->
         Document.render(doc, 0, fit: {32, 32}, dpi: nil)
       end
     end
@@ -508,7 +508,7 @@ defmodule PdfElixide.RenderingTest do
         Map.new(plates, fn plate -> {plate.ink, Enum.max(:binary.bin_to_list(plate.data))} end)
 
       # The fixture's page 0 paints with all three spot inks, one of them through
-      # a nested Form XObject, and uses no process colour at all.
+      # a nested Form XObject, and uses no process color at all.
       assert coverage["PageInk"] > 0
       assert coverage["NestedInk"] > 0
       assert coverage["Black"] == 0

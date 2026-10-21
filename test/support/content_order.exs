@@ -22,8 +22,8 @@ defmodule PdfElixide.ContentOrder do
     body
   end
 
-  # Require a filled rectangle after the three-decimal colour to avoid matching
-  # a colour change alone. This helper reads only cosmetic overlay stream arrays.
+  # Require a filled rectangle after the three-decimal color to avoid matching
+  # a color change alone. This helper reads only cosmetic overlay stream arrays.
   @redaction_fill ~r/\d\.\d{3} \d\.\d{3} \d\.\d{3} rg\s+[\d.]+ [\d.]+ [\d.]+ [\d.]+ re f/
 
   defp classify(body) do

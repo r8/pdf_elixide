@@ -975,7 +975,7 @@ defmodule PdfElixide.Document.PageTest do
       assert {:ok, ["FormInk", "NestedInk", "PageInk"]} = Page.inks(page, deep: true)
     end
 
-    test "returns {:ok, []} for a page that declares no colour spaces" do
+    test "returns {:ok, []} for a page that declares no color spaces" do
       doc = Document.open!(@valid_pdf)
       assert {:ok, []} = Page.inks(Document.page!(doc, 0))
     end

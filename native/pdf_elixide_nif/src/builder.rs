@@ -857,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_stream_that_ends_at_its_length_is_relabelled() {
+    fn only_a_stream_that_ends_at_its_length_is_relabeled() {
         let stream = |length: usize| {
             format!("<</Length {length}/Subtype /CIDFontType0C>>\nstream\nOTTOdata\nendstream")
                 .into_bytes()

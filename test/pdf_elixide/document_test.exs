@@ -791,7 +791,7 @@ defmodule PdfElixide.DocumentTest do
     @tag :tmp_dir
     # Skipped on Windows because `"` is not a legal filename character there, so
     # the directory cannot be created and the test never reaches its assertion.
-    # That is a limit on expressing the case, not a difference in behaviour.
+    # That is a limit on expressing the case, not a difference in behavior.
     @tag skip: match?({:win32, _}, :os.type()) and "a Windows filename cannot contain a quote"
     test "an image_output_dir is not attribute-escaped in src", %{tmp_dir: tmp_dir} do
       doc = Document.open!(@markdown_pdf)
@@ -2470,7 +2470,7 @@ defmodule PdfElixide.DocumentTest do
     end
 
     # The XObject's /ColorSpace decides how many of a JPEG 2000 codestream's
-    # decoded components are colour, whenever its own count fits. All three
+    # decoded components are color, whenever its own count fits. All three
     # pages declare one agreeing with their codestream, so these also pin that
     # the samples are decoded rather than passed through as the codestream.
     test "returns three-component pixels for a JPEG 2000 RGB image" do
@@ -2487,10 +2487,10 @@ defmodule PdfElixide.DocumentTest do
 
     # Page 2 carries a four-component RGB-plus-alpha codestream under
     # /ColorSpace /DeviceRGB and /SMaskInData 1. The declared three components
-    # are the colour ones and the trailing opacity channel is dropped, so the
+    # are the color ones and the trailing opacity channel is dropped, so the
     # struct and its pixels agree; /SMaskInData is never read, so the image
     # comes back opaque rather than masked.
-    test "drops a JPEG 2000 image's opacity channel and keeps its declared colour" do
+    test "drops a JPEG 2000 image's opacity channel and keeps its declared color" do
       [image] = Document.open!(@image_jpx_pdf) |> Document.images!(2)
 
       assert image.color_space == :device_rgb
@@ -4232,7 +4232,7 @@ defmodule PdfElixide.DocumentTest do
       assert Document.inks!(extraction, 2, deep: true) == ["SpotRed"]
     end
 
-    test "returns an empty list for a page with no colour spaces" do
+    test "returns an empty list for a page with no color spaces" do
       doc = Document.open!(@valid_pdf)
       assert {:ok, []} = Document.inks(doc, 0)
       assert {:ok, []} = Document.inks(doc, 0, deep: true)

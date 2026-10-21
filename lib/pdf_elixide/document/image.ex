@@ -43,9 +43,9 @@ defmodule PdfElixide.Document.Image do
   it is under 8 pixels wide or tall, or when its stored encoding cannot be
   decoded. Flate, LZW, run-length, CCITT fax, JPEG and JPEG 2000
   (`/JPXDecode`) decode; JBIG2 does not, nor does a JPEG 2000 codestream that
-  resolves to anything but 1, 3 or 4 colour components. A JPEG 2000 image
-  arrives as `:raw` pixels, and the colour space the PDF declares decides how
-  many of the decoded components are colour whenever its own count fits the
+  resolves to anything but 1, 3 or 4 color components. A JPEG 2000 image
+  arrives as `:raw` pixels, and the color space the PDF declares decides how
+  many of the decoded components are color whenever its own count fits the
   decode; an `:indexed` one is expanded to `:rgb` pixels from its palette.
 
   `PdfElixide.Document.images/1` and `PdfElixide.Document.images/2` return
@@ -59,7 +59,7 @@ defmodule PdfElixide.Document.Image do
   `{:error, %PdfElixide.Error{reason: :invalid_pdf}}` for it. A stream that
   ends early decodes, with the rows it lost left white.
 
-  **A JPEG 2000 image comes back opaque.** Channels the declared colour space
+  **A JPEG 2000 image comes back opaque.** Channels the declared color space
   does not account for are dropped, so a four-component codestream carrying
   RGB plus alpha is reported as `:device_rgb` with its opacity channel
   discarded. `/SMaskInData` is not read at all, so an image asking for its
@@ -218,7 +218,7 @@ defmodule PdfElixide.Document.Image do
   end
 
   @doc """
-  Same as `data/1` but returns the raw data directly, raising on error.
+  Returns the image's raw stored bytes, raising an error if it fails.
   """
   @spec data!(t()) :: raw_data()
   def data!(%__MODULE__{} = image) do
@@ -247,7 +247,8 @@ defmodule PdfElixide.Document.Image do
   end
 
   @doc """
-  Same as `to_binary/2` but returns the binary directly, raising on error.
+  Encodes the image to a binary in the requested format, raising an error if
+  it fails.
 
   Returns the bytes rather than writing them, so no path is involved; use
   `save!/3` to write a file.
@@ -279,7 +280,7 @@ defmodule PdfElixide.Document.Image do
   end
 
   @doc """
-  Same as `save/3` but raises on error.
+  Writes the image to a file at the given path, raising an error if it fails.
 
   The path is handed to the operating system unchanged — see the "File paths"
   section of `PdfElixide`.
@@ -322,7 +323,7 @@ defmodule PdfElixide.Document.Image do
   defp validate_format!(format) when format in [:png, :jpeg], do: format
 
   defp validate_format!(other) do
-    raise ArgumentError, "unsupported image format #{inspect(other)}, expected :png or :jpeg"
+    raise ArgumentError, "invalid :format, expected :png or :jpeg: #{inspect(other)}"
   end
 
   defp save_format!(opts, path) do
@@ -342,7 +343,8 @@ defmodule PdfElixide.Document.Image do
 
       other ->
         raise ArgumentError,
-              "cannot infer image format from #{inspect(other)}; pass format: :png | :jpeg"
+              "invalid path, cannot infer the image format from #{inspect(other)}; " <>
+                "pass format: :png | :jpeg"
     end
   end
 

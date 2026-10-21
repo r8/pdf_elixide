@@ -48,7 +48,7 @@ impl RunningRegionsOptionsNif {
             return Err(tagged_err(
                 atoms::other(),
                 format!(
-                    "Invalid :threshold {:?}: the threshold must be between 0.0 and 1.0",
+                    "invalid :threshold, expected a number from 0.0 to 1.0: {:?}",
                     self.threshold
                 ),
             ));

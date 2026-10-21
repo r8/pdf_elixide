@@ -64,7 +64,7 @@ The margins apply to every page.
 ## Flowing text
 
 Paragraphs, headings and lists flow from the top margin down. Each line takes
-a box `font_size × line_height` points tall, with the text centred in it, and
+a box `font_size × line_height` points tall, with the text centered in it, and
 lines wrap at the right margin. A line that would cross the bottom margin
 starts a new page of the same size; nothing is drawn over the margins. A word
 wider than the whole line is split between characters, and `\n` starts a new
@@ -90,7 +90,7 @@ An item that wraps continues under its own text rather than under its marker,
 and numbers are right-aligned so the items line up. Numbering carries on
 across pages, and `:style` and `:start` choose the numerals.
 
-`Builder.rule/1` draws a thin grey line between the margins.
+`Builder.rule/1` draws a thin gray line between the margins.
 
 ## Text at a position
 
@@ -118,10 +118,10 @@ bottom-left corner:
 alias PdfElixide.Color.RGB
 alias PdfElixide.Geometry.Rect
 
-grey = %RGB{r: 0.9, g: 0.9, b: 0.9}
+gray = %RGB{r: 0.9, g: 0.9, b: 0.9}
 
 Builder.new()
-|> Builder.rect(%Rect{x: 72.0, y: 640.0, width: 468.0, height: 80.0}, fill_color: grey, stroke_color: nil)
+|> Builder.rect(%Rect{x: 72.0, y: 640.0, width: 468.0, height: 80.0}, fill_color: gray, stroke_color: nil)
 |> Builder.line({72, 620}, {540, 620}, dash_pattern: {[3, 2], 0})
 |> Builder.circle({306, 400}, 50, stroke_width: 2)
 |> Builder.arc({306, 250}, 50, 0, 180)

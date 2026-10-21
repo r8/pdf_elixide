@@ -1488,7 +1488,7 @@ mod tests {
         let doc = PdfDocument::open(fixture("table.pdf")).expect("fixture opens");
         let plain = doc.extract_text(0).expect("plain text");
 
-        // Precondition: the compared option changes the output when honoured.
+        // Precondition: the compared option changes the output when honored.
         let without_tables = ConversionOptions {
             extract_tables: false,
             ..Default::default()

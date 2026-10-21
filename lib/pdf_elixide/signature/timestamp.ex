@@ -148,7 +148,7 @@ defmodule PdfElixide.Signature.Timestamp do
   end
 
   @doc """
-  Same as `parse/1`, but raises `PdfElixide.Error` on failure.
+  Parses a DER-encoded RFC 3161 timestamp token, raising an error if it fails.
   """
   @spec parse!(binary()) :: t()
   def parse!(token), do: token |> parse() |> Wrap.unwrap!()
@@ -174,7 +174,8 @@ defmodule PdfElixide.Signature.Timestamp do
   end
 
   @doc """
-  Same as `verify/1`, but raises `PdfElixide.Error` on failure.
+  Verifies the timestamp authority's signature over the token, raising an
+  error if it fails.
   """
   @spec verify!(t()) :: verdict()
   def verify!(timestamp), do: timestamp |> verify() |> Wrap.unwrap!()

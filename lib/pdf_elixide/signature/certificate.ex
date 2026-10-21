@@ -107,7 +107,7 @@ defmodule PdfElixide.Signature.Certificate do
   end
 
   @doc """
-  Same as `parse/1`, but raises `PdfElixide.Error` on failure.
+  Parses a DER-encoded X.509 certificate, raising an error if it fails.
   """
   @spec parse!(binary()) :: t()
   def parse!(der), do: der |> parse() |> Wrap.unwrap!()
@@ -134,7 +134,8 @@ defmodule PdfElixide.Signature.Certificate do
   end
 
   @doc """
-  Same as `parse_pem/1`, but raises `PdfElixide.Error` on failure.
+  Parses every certificate in PEM text, in file order, raising an error if it
+  fails.
   """
   @spec parse_pem!(binary()) :: [t(), ...]
   def parse_pem!(pem), do: pem |> parse_pem() |> Wrap.unwrap!()
@@ -170,7 +171,8 @@ defmodule PdfElixide.Signature.Certificate do
   end
 
   @doc """
-  Same as `parse_pkcs12/2`, but raises `PdfElixide.Error` on failure.
+  Reads the certificates out of a PKCS#12 (`.p12` / `.pfx`) file, raising an
+  error if it fails.
   """
   @spec parse_pkcs12!(binary(), String.t()) :: [t(), ...]
   def parse_pkcs12!(data, password), do: data |> parse_pkcs12(password) |> Wrap.unwrap!()

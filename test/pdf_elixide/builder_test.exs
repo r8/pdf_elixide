@@ -398,7 +398,7 @@ defmodule PdfElixide.BuilderTest do
       assert fonts["П"] =~ "FixtureTrueType-Regular"
     end
 
-    # The title spells the old subtype to show that only the font is relabelled.
+    # The title spells the old subtype to show that only the font is relabeled.
     test "a CFF face is embedded as the OpenType font it is" do
       title = "/Subtype /CIDFontType0C"
 
@@ -433,7 +433,7 @@ defmodule PdfElixide.BuilderTest do
       assert Enum.all?(chars, &(&1.bbox.x + &1.bbox.width <= 612 - 72 + 0.01))
     end
 
-    test "a run's colour is drawn" do
+    test "a run's color is drawn" do
       red = %RGB{r: 1.0, g: 0.0, b: 0.0}
       doc = Builder.new() |> Builder.paragraph(["a", {"b", color: red}]) |> written()
       colors = doc |> Document.chars!(0) |> Map.new(&{&1.text, &1.color})
@@ -442,7 +442,7 @@ defmodule PdfElixide.BuilderTest do
       assert colors["a"] == %RGB{r: 0.0, g: 0.0, b: 0.0}
     end
 
-    test "an integer colour component is as good as a float" do
+    test "an integer color component is as good as a float" do
       doc =
         Builder.new() |> Builder.paragraph([{"b", color: %RGB{r: 1, g: 0, b: 0}}]) |> written()
 
@@ -758,7 +758,7 @@ defmodule PdfElixide.BuilderTest do
       assert_in_delta hd(baselines(doc, 1)), baseline(792 - 72, 12), 0.001
     end
 
-    test "a rule is a thin grey line across the content width, in a box of the text size" do
+    test "a rule is a thin gray line across the content width, in a box of the text size" do
       doc =
         Builder.new()
         |> Builder.paragraph("a")
@@ -894,7 +894,7 @@ defmodule PdfElixide.BuilderTest do
   end
 
   describe "drawing" do
-    @grey %RGB{r: 0.5, g: 0.5, b: 0.5}
+    @gray %RGB{r: 0.5, g: 0.5, b: 0.5}
     @black %RGB{r: 0.0, g: 0.0, b: 0.0}
     @red %RGB{r: 1.0, g: 0.0, b: 0.0}
 
@@ -913,11 +913,11 @@ defmodule PdfElixide.BuilderTest do
           ] do
         assert [path] =
                  Builder.new()
-                 |> Builder.rect(rect, fill_color: @grey, stroke_color: nil)
+                 |> Builder.rect(rect, fill_color: @gray, stroke_color: nil)
                  |> drawn()
 
         assert path.operations == [{:rectangle, 72.0, 600.0, 100.0, 50.0}]
-        assert path.fill_color == @grey
+        assert path.fill_color == @gray
         assert path.stroke_color == nil
       end
     end
@@ -1095,7 +1095,7 @@ defmodule PdfElixide.BuilderTest do
       assert first_drawn.(rect_first) == :rect
     end
 
-    test "text after a filled shape keeps its own colour" do
+    test "text after a filled shape keeps its own color" do
       doc =
         Builder.new()
         |> Builder.rect(%Rect{x: 72, y: 700, width: 100, height: 30}, fill_color: @red)
@@ -1128,7 +1128,7 @@ defmodule PdfElixide.BuilderTest do
       assert [path] =
                Builder.new()
                |> Builder.rect(%Rect{x: -10, y: -10, width: 700, height: 900},
-                 fill_color: @grey,
+                 fill_color: @gray,
                  stroke_color: nil
                )
                |> Builder.circle({612, 792}, 100)
@@ -1156,7 +1156,7 @@ defmodule PdfElixide.BuilderTest do
                      fn ->
                        Builder.rect(builder, rect, [
                          {key, value},
-                         fill_color: @grey,
+                         fill_color: @gray,
                          stroke_color: nil
                        ])
                      end
@@ -1164,7 +1164,7 @@ defmodule PdfElixide.BuilderTest do
 
       assert %Builder{} =
                Builder.rect(builder, rect,
-                 fill_color: @grey,
+                 fill_color: @gray,
                  stroke_color: nil,
                  stroke_width: 1,
                  dash_pattern: nil
@@ -1257,11 +1257,13 @@ defmodule PdfElixide.BuilderTest do
       end
 
       # The message names the arguments, not the control point that overflowed.
-      assert_raise ArgumentError, ~r/^invalid radius 1.0e38 around center \{3.0e38, 0.0\}/, fn ->
-        Builder.circle(builder, {3.0e38, 0}, 1.0e38)
-      end
+      assert_raise ArgumentError,
+                   ~r/^invalid radius, .* center \{3.0e38, 0.0\} .*: 1.0e38$/,
+                   fn ->
+                     Builder.circle(builder, {3.0e38, 0}, 1.0e38)
+                   end
 
-      assert_raise ArgumentError, ~r/^invalid radius .* around center/, fn ->
+      assert_raise ArgumentError, ~r/^invalid radius, .* around center/, fn ->
         Builder.arc(builder, {3.0e38, 0}, 1.0e38, 0, 90)
       end
 
@@ -1275,11 +1277,11 @@ defmodule PdfElixide.BuilderTest do
       end
 
       for operation <- [{:rectangle, 3.0e38, 0, 1.0e38, 1}, {:rectangle, -3.0e38, 0, 6.0e38, 1}] do
-        message = "invalid operation #{inspect(operation)}"
-
-        assert_raise ArgumentError, ~r/^#{Regex.escape(message)}:/, fn ->
-          Builder.path(builder, [operation])
-        end
+        assert_raise ArgumentError,
+                     ~r/^invalid operation, .*: #{Regex.escape(inspect(operation))}$/,
+                     fn ->
+                       Builder.path(builder, [operation])
+                     end
       end
     end
   end
@@ -1501,7 +1503,10 @@ defmodule PdfElixide.BuilderTest do
     end
 
     test "a FontFamily without a regular face, or with a face that is not a binary" do
-      assert_raise ArgumentError, ~r/missing :regular/, fn -> FontFamily.new(bold: "b") end
+      assert_raise ArgumentError, ~r/invalid :regular, .* cannot be missing/, fn ->
+        FontFamily.new(bold: "b")
+      end
+
       assert_raise ArgumentError, ~r/:italic/, fn -> FontFamily.new(regular: "r", italic: 1) end
     end
 

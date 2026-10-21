@@ -169,8 +169,7 @@ defmodule PdfElixide.Document.Table do
   end
 
   @doc """
-  Same as `to_markdown/2`, but returns the Markdown directly and raises
-  `PdfElixide.Error` on failure.
+  Renders the table as a Markdown table, raising an error if it fails.
   """
   @spec to_markdown!(t(), markdown_opts()) :: String.t()
   def to_markdown!(%__MODULE__{} = table, opts \\ []) do
@@ -206,8 +205,8 @@ defmodule PdfElixide.Document.Table do
   end
 
   @doc """
-  Same as `to_html/1`, but returns the HTML directly and raises
-  `PdfElixide.Error` on failure.
+  Renders the table as an HTML `<table>` fragment, raising an error if it
+  fails.
   """
   @spec to_html!(t()) :: String.t()
   def to_html!(%__MODULE__{} = table) do
@@ -230,8 +229,7 @@ defmodule PdfElixide.Document.Table do
   end
 
   @doc """
-  Same as `to_text/1`, but returns the text directly and raises
-  `PdfElixide.Error` on failure.
+  Renders the table as plain text, raising an error if it fails.
   """
   @spec to_text!(t()) :: String.t()
   def to_text!(%__MODULE__{} = table) do

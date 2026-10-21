@@ -221,7 +221,7 @@ mod tests {
                 PathOpNif::ClosePath,
             ]
         );
-        let stroke = nif.stroke_color.expect("stroke colour kept");
+        let stroke = nif.stroke_color.expect("stroke color kept");
         assert_eq!((stroke.r, stroke.g, stroke.b), (max, min, 0.0));
         assert_eq!(nif.stroke_width, max);
         assert_eq!(nif.dash_pattern, Some((vec![max, 0.0, min], max)));
