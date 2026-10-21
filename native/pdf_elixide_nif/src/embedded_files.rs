@@ -12,8 +12,8 @@ use crate::{
     atoms,
     binary::binary_term,
     error::{tagged_err, to_nif_err},
-    metadata::decode_pdf_text_string,
-    DocumentResource,
+    resource::DocumentResource,
+    text_string::decode_pdf_text_string,
 };
 
 // PDF 2.0 associated-file relationships (ISO 32000-2 table 43).

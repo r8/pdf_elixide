@@ -1,12 +1,17 @@
 use std::{
     ops::{Deref, DerefMut},
     panic::{catch_unwind, AssertUnwindSafe},
-    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
+use pdf_oxide::{extractors::PdfImage, fonts::FontInfo, structure::table_extractor::Table};
 use rustler::NifResult;
 
-use crate::error::{closed_err, contain_panic, lock_err};
+use crate::{
+    error::{closed_err, contain_panic, lock_err},
+    open_document::OpenDocument,
+    open_editor::OpenEditor,
+};
 
 // A BEAM resource with shared reads, exclusive mutation and explicit release.
 // Access goes through closures so no lock guard can escape panic containment.
@@ -122,6 +127,44 @@ impl<T> Deref for SharedGuard<'_, T> {
         self.0.as_ref().expect("guard implies an open resource")
     }
 }
+
+// Every resource wraps its value in a `Closable`, which owns the locking and
+// supports releasing the value early (see the `*_close` NIFs).
+
+pub(crate) struct DocumentResource {
+    pub(crate) doc: Closable<OpenDocument>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for DocumentResource {}
+
+pub(crate) struct EditorResource {
+    pub(crate) editor: Closable<OpenEditor>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for EditorResource {}
+
+pub(crate) struct ImageResource {
+    pub(crate) image: Closable<PdfImage>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for ImageResource {}
+
+pub(crate) struct FontResource {
+    pub(crate) font: Closable<Arc<FontInfo>>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for FontResource {}
+
+pub(crate) struct TableResource {
+    pub(crate) table: Closable<Table>,
+}
+
+#[rustler::resource_impl]
+impl rustler::Resource for TableResource {}
 
 #[cfg(test)]
 mod tests {

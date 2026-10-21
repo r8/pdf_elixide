@@ -8,7 +8,7 @@ use pdf_oxide::{
 };
 use rustler::{NifMap, NifResult, ResourceArc};
 
-use crate::{document::ensure_page_in_range, error::to_nif_err, DocumentResource};
+use crate::{error::to_nif_err, pages::ensure_page_in_range, resource::DocumentResource};
 
 // Use the filter's PDF text decoder so every listed layer name can also be
 // matched by `:exclude_layers`.

@@ -17,8 +17,7 @@ use crate::{
     error::{tagged_err, to_nif_err},
     fs_path::path_arg,
     geometry::{finite, rect_to_nif, RectNif},
-    resource::Closable,
-    ImageResource,
+    resource::{Closable, ImageResource},
 };
 
 #[derive(NifMap)]

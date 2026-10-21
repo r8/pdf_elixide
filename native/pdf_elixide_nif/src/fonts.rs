@@ -8,7 +8,11 @@ use pdf_oxide::{
 };
 use rustler::{Encoder, Env, NifMap, NifResult, ResourceArc, Term};
 
-use crate::{atoms, binary::binary_term, resource::Closable, FontResource};
+use crate::{
+    atoms,
+    binary::binary_term,
+    resource::{Closable, FontResource},
+};
 
 #[derive(NifMap)]
 #[rustler(encode)]

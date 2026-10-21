@@ -13,13 +13,13 @@ use pdf_oxide::{
 use rustler::NifResult;
 
 use crate::{
-    document::read_crop_box,
     form_tree::{self, Resolved},
     merge::{
         declares_structure, on_import_stack, root_declares_resources, Incoming, MergeError,
         PageAttrs,
     },
     metadata::{has_info_text, read_metadata, to_document_info, MetadataNif},
+    pages::read_crop_box,
 };
 
 // Upstream's editor plus the mirrors that compensate for what it keeps private

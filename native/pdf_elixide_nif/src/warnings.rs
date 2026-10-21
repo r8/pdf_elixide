@@ -1,20 +1,15 @@
 // Bounded per-document and process-wide structured warning buffers.
 
 use std::{
-    io,
-    ops::{Deref, DerefMut},
-    panic,
+    io, panic,
     sync::{Mutex, MutexGuard},
     thread,
 };
 
-use pdf_oxide::{
-    extractors::warnings::{drain_global_warnings, Warning, WarningCategory},
-    PdfDocument,
-};
+use pdf_oxide::extractors::warnings::{drain_global_warnings, Warning, WarningCategory};
 use rustler::{NifMap, NifResult, NifUnitEnum};
 
-use crate::{error::contain_panic, ring::Ring, search::SearchRuns};
+use crate::{error::contain_panic, ring::Ring};
 
 #[derive(NifUnitEnum, Debug)]
 enum WarningCategoryNif {
@@ -117,62 +112,6 @@ impl Buffer {
     }
 }
 
-// The warning mirror shares the document lifetime and is filled after each access.
-pub(crate) struct OpenDocument {
-    pub(crate) doc: PdfDocument,
-    pub(crate) warnings: Buffer,
-    pub(crate) search_runs: SearchRuns,
-}
-
-impl OpenDocument {
-    pub(crate) fn new(doc: PdfDocument) -> Self {
-        Self {
-            doc,
-            warnings: Buffer::new(),
-            search_runs: SearchRuns::new(),
-        }
-    }
-
-    // Every per-document read below claims the process-wide sink first, because
-    // upstream's take drains that sink into whichever document is asked. The
-    // claim stays outside `Buffer::absorb`, which holds the mirror's lock while
-    // `fetch` runs.
-    pub(crate) fn drain(&self) {
-        collect_global();
-        self.warnings.absorb(|| self.doc.take_structured_warnings());
-    }
-
-    // Listing: claims first, per `drain` above.
-    pub(crate) fn collect(&self) -> (Vec<Warning>, usize) {
-        collect_global();
-
-        self.warnings
-            .collect(|| self.doc.take_structured_warnings())
-    }
-
-    // Re-authentication: claims first, per `drain` above. Old sink then the
-    // re-parse's, so the mirror keeps the order they were raised in.
-    pub(crate) fn absorb_reparse(&self, fresh: &PdfDocument) {
-        collect_global();
-        self.warnings.absorb(|| self.doc.take_structured_warnings());
-        self.warnings.absorb(|| fresh.take_structured_warnings());
-    }
-}
-
-impl Deref for OpenDocument {
-    type Target = PdfDocument;
-
-    fn deref(&self) -> &Self::Target {
-        &self.doc
-    }
-}
-
-impl DerefMut for OpenDocument {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.doc
-    }
-}
-
 static GLOBAL: Buffer = Buffer::new();
 
 // Drain after every `Closable` access, even when warnings are never listed.
@@ -229,10 +168,10 @@ fn warnings_take() -> (Vec<WarningNif>, usize) {
 
 #[cfg(test)]
 mod tests {
-    use pdf_oxide::extractors::warnings::push_global_warning;
+    use pdf_oxide::{extractors::warnings::push_global_warning, PdfDocument};
 
     use super::*;
-    use crate::ring::MAX_BUFFERED;
+    use crate::{open_document::OpenDocument, ring::MAX_BUFFERED};
 
     fn warning(message: &str) -> Warning {
         Warning {

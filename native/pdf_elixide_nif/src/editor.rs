@@ -1,12 +1,8 @@
 use std::collections::HashMap;
 
 use pdf_oxide::{
-    annotation_types::AnnotationSubtype,
     compliance::PdfAPart,
-    editor::{
-        DocumentEditor, EditableDocument, EncryptionAlgorithm, EncryptionConfig, Permissions,
-        SaveOptions,
-    },
+    editor::{DocumentEditor, EditableDocument},
     object::Object,
     writer::EmbeddedFile,
     Error as PdfError, PdfDocument,
@@ -16,7 +12,6 @@ use rustler::{Atom, Binary, Env, NifMap, NifResult, NifUnitEnum, OwnedBinary, Re
 use crate::{
     atoms,
     binary::{binary_term, owned_binary},
-    document::OpenOptionsNif,
     embedded_files::{
         embedded_file, ensure_no_name_tree, pending_to_nif, read_embedded_files, EmbeddedFileNif,
         RelationshipNif,
@@ -31,100 +26,21 @@ use crate::{
     geometry::{rect_from_f32_corners, rect_from_nif, RectNif},
     merge::{self, MergeError},
     metadata::{normalize_text, read_metadata, MetadataNif},
+    open_document::OpenOptionsNif,
     open_editor::{Marked, OpenEditor, OutOfRange, PageError, Rebuild},
-    resource::Closable,
+    redaction::draws_redactions,
+    resource::{Closable, EditorResource},
+    save::{
+        ensure_edits_survive_save, ensure_incremental_has_a_source,
+        ensure_incremental_has_no_rebuild, ensure_incremental_is_not_encrypted,
+        ensure_metadata_survives_save, ensure_redaction_survives_save,
+        ensure_rewrite_keeps_metadata, ensure_scrub_survives_save, ensure_write_keeps_conversion,
+        SaveOptionsNif,
+    },
     signatures::well_formed_pdf_date_len,
     split::{self, BookmarkSegmentNif, SplitOptionsNif},
-    warnings, EditorResource,
+    warnings,
 };
-
-// Variant spelling determines the public atom: `Rc4_128` yields `:rc4_128`.
-#[allow(non_camel_case_types)]
-#[derive(NifUnitEnum, Debug)]
-pub enum EncryptionAlgorithmNif {
-    Rc4_128,
-    Aes128,
-}
-
-impl From<EncryptionAlgorithmNif> for EncryptionAlgorithm {
-    fn from(a: EncryptionAlgorithmNif) -> Self {
-        match a {
-            EncryptionAlgorithmNif::Rc4_128 => EncryptionAlgorithm::Rc4_128,
-            EncryptionAlgorithmNif::Aes128 => EncryptionAlgorithm::Aes128,
-        }
-    }
-}
-
-// The two print fields are renamed: upstream's bare `print` is the low-res bit,
-// which the public names say and its own do not.
-#[derive(NifMap, Debug)]
-pub struct PermissionFlagsNif {
-    pub print_low_res: bool,
-    pub print_high_res: bool,
-    pub modify: bool,
-    pub copy: bool,
-    pub annotate: bool,
-    pub fill_forms: bool,
-    pub accessibility: bool,
-    pub assemble: bool,
-}
-
-impl From<PermissionFlagsNif> for Permissions {
-    fn from(p: PermissionFlagsNif) -> Self {
-        Permissions {
-            print: p.print_low_res,
-            print_high_quality: p.print_high_res,
-            modify: p.modify,
-            copy: p.copy,
-            annotate: p.annotate,
-            fill_forms: p.fill_forms,
-            accessibility: p.accessibility,
-            assemble: p.assemble,
-        }
-    }
-}
-
-// Do not derive `Debug` for this or containing types: they hold passwords.
-#[derive(NifMap)]
-pub struct EncryptionNif {
-    pub user_password: String,
-    pub owner_password: String,
-    pub algorithm: EncryptionAlgorithmNif,
-    pub permissions: PermissionFlagsNif,
-}
-
-impl From<EncryptionNif> for EncryptionConfig {
-    fn from(e: EncryptionNif) -> Self {
-        EncryptionConfig {
-            user_password: e.user_password,
-            owner_password: e.owner_password,
-            algorithm: e.algorithm.into(),
-            permissions: e.permissions.into(),
-        }
-    }
-}
-
-// No `Debug`: this is a containing type in the sense of `EncryptionNif` above.
-#[derive(NifMap)]
-pub struct SaveOptionsNif {
-    pub incremental: bool,
-    pub compress: bool,
-    pub garbage_collect: bool,
-    pub encryption: Option<EncryptionNif>,
-}
-
-impl From<SaveOptionsNif> for SaveOptions {
-    fn from(o: SaveOptionsNif) -> Self {
-        SaveOptions {
-            incremental: o.incremental,
-            compress: o.compress,
-            // Upstream reads this nowhere; spelled out so the literal stays exhaustive.
-            linearize: false,
-            garbage_collect: o.garbage_collect,
-            encryption: o.encryption.map(Into::into),
-        }
-    }
-}
 
 // Return the handle and its cached version atomically.
 pub(crate) type OpenedEditor = (ResourceArc<EditorResource>, (u8, u8));
@@ -360,236 +276,6 @@ fn editor_to_bytes(
     })
 }
 
-// Incremental output copies the original bytes, retaining removed content.
-fn ensure_redaction_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
-    if options.incremental && editor.redacted() {
-        return Err(tagged_err(
-            atoms::unsupported(),
-            "This editor has applied a destructive redaction or sanitization, which an \
-             incremental save does not carry: the update would append to the original \
-             bytes and leave the removed content readable. Save a full rewrite instead.",
-        ));
-    }
-
-    Ok(())
-}
-
-// Refuse a rewrite that would drop cleartext XMP and leave a dangling catalog entry.
-fn carries_unencryptable_metadata(editor: &OpenEditor) -> bool {
-    if !editor.source().is_encrypted() || editor.xmp_scrubbed() {
-        return false;
-    }
-
-    if !declares_cleartext_metadata(editor.source()) {
-        return false;
-    }
-
-    carries_metadata_stream(editor.source())
-}
-
-// `/Metadata null` is absent (ISO 32000 §7.3.9), so the entry is resolved rather
-// than counted: only a stream reaches the writer's decrypt-on-copy and is dropped.
-fn carries_metadata_stream(doc: &PdfDocument) -> bool {
-    let Ok(catalog) = doc.catalog() else {
-        return false;
-    };
-
-    let Some(entry) = catalog.as_dict().and_then(|dict| dict.get("Metadata")) else {
-        return false;
-    };
-
-    match doc.resolve_object(entry) {
-        Ok(resolved) => matches!(resolved, Object::Stream { .. }),
-        // An entry the reader cannot load is the loss this refusal is for.
-        Err(_) => true,
-    }
-}
-
-// An absent or unreadable `/EncryptMetadata` takes its default value, `true`.
-// Either spelling may be indirect; treating that shape as absent would lose XMP.
-fn declares_cleartext_metadata(doc: &PdfDocument) -> bool {
-    let Some(encrypt) = doc.trailer().as_dict().and_then(|dict| dict.get("Encrypt")) else {
-        return false;
-    };
-
-    let Ok(encrypt) = doc.resolve_object(encrypt) else {
-        return false;
-    };
-
-    let flag = encrypt
-        .as_dict()
-        .and_then(|dict| dict.get("EncryptMetadata"))
-        .and_then(|flag| doc.resolve_object(flag).ok());
-
-    matches!(flag, Some(Object::Boolean(false)))
-}
-
-fn ensure_metadata_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
-    // An incremental update appends rather than copying, so it never reaches the
-    // decrypt-on-copy that drops the stream: nothing is lost, and this refusal
-    // would otherwise name a rewrite the caller did not ask for and recommend a
-    // sanitize that leaves the save refused anyway. Encryption owns that refusal
-    // instead - `ensure_incremental_is_not_encrypted` on a save, upstream's own
-    // check on `editor_to_bytes`.
-    if options.incremental {
-        return Ok(());
-    }
-
-    ensure_rewrite_keeps_metadata(editor)
-}
-
-pub(crate) fn ensure_rewrite_keeps_metadata(editor: &OpenEditor) -> NifResult<()> {
-    if !carries_unencryptable_metadata(editor) {
-        return Ok(());
-    }
-
-    Err(tagged_err(
-        atoms::unsupported(),
-        "This encrypted source stores its XMP metadata unencrypted, which cannot \
-         be preserved by a rewrite. Nothing has been written. Remove the metadata \
-         with sanitize(editor, scrub_metadata: true, remove_javascript: false, \
-         remove_embedded_files: false), then retry.",
-    ))
-}
-
-// GC must drop orphaned /ObjStm containers or their scrubbed values survive.
-fn ensure_scrub_survives_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
-    if !options.garbage_collect && editor.sanitized() {
-        return Err(tagged_err(
-            atoms::unsupported(),
-            "This editor has sanitized the document, which a write with \
-             garbage_collect: false does not carry: every object the source holds \
-             is copied out, including the object stream that carried the scrubbed \
-             /Info, JavaScript or embedded file. Write with garbage collection \
-             instead.",
-        ));
-    }
-
-    Ok(())
-}
-
-// Keep this before source and pending-edit checks so encryption owns the reason.
-fn ensure_incremental_is_not_encrypted(
-    editor: &DocumentEditor,
-    options: &SaveOptionsNif,
-) -> NifResult<()> {
-    if options.incremental && editor.source().is_encrypted() {
-        return Err(tagged_err(
-            atoms::unsupported(),
-            "This encrypted source cannot be saved incrementally. Nothing has been \
-             written. Save a full rewrite instead.",
-        ));
-    }
-
-    Ok(())
-}
-
-// Unreachable for an encrypted source only because the encryption guard runs
-// first: `editor_open`'s `EncryptedPdf` route builds through `from_document`,
-// which clears the source path while Elixir keeps it, so this message would
-// contradict `Editor.source_path/1` on that handle.
-fn ensure_incremental_has_a_source(
-    editor: &DocumentEditor,
-    options: &SaveOptionsNif,
-) -> NifResult<()> {
-    if options.incremental && editor.source_path().is_empty() {
-        return Err(tagged_err(
-            atoms::unsupported(),
-            "This editor was built from a binary, which an incremental save cannot \
-             append to: the update is written after a verbatim copy of the file the \
-             editor was opened from, and this editor has no such file. Nothing has \
-             been written. Save a full rewrite instead.",
-        ));
-    }
-
-    Ok(())
-}
-
-// Before `ensure_incremental_has_a_source`, whose message would otherwise call a
-// path-opened editor binary-built: a merge or conversion rebuilds it from bytes.
-fn ensure_incremental_has_no_rebuild(
-    editor: &OpenEditor,
-    options: &SaveOptionsNif,
-) -> NifResult<()> {
-    if !options.incremental {
-        return Ok(());
-    }
-
-    let done = match editor.rebuilt() {
-        None => return Ok(()),
-        Some(Rebuild::Merge) => "merged another document",
-        Some(Rebuild::Conversion(_)) => "been converted to PDF/A",
-    };
-
-    Err(tagged_err(
-        atoms::unsupported(),
-        format!(
-            "This editor has {done}, which an incremental save cannot carry: the \
-             update is appended to a verbatim copy of the original file. Nothing has \
-             been written. Save a full rewrite instead."
-        ),
-    ))
-}
-
-// Preserve the constraints declared by conversion unless XMP was scrubbed.
-fn ensure_write_keeps_conversion(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
-    let Some(level) = editor.pdf_a() else {
-        return Ok(());
-    };
-
-    if options.encryption.is_some() {
-        return Err(tagged_err(
-            atoms::unsupported(),
-            "This editor has been converted to PDF/A, which forbids encryption: the \
-             written file would declare PDF/A and fail it. Nothing has been written. \
-             Write without :encryption.",
-        ));
-    }
-
-    // PDF/A-1 metadata streams must remain unfiltered.
-    if options.compress && !options.incremental && level.part() == PdfAPart::Part1 {
-        return Err(tagged_err(
-            atoms::unsupported(),
-            "This editor has been converted to PDF/A-1, which forbids compressing the \
-             document's XMP metadata: the written file would declare PDF/A-1 and fail \
-             it. Nothing has been written. Write with compress: false.",
-        ));
-    }
-
-    Ok(())
-}
-
-// The incremental writer silently omits changes outside field values and /Info.
-fn ensure_edits_survive_save(editor: &OpenEditor, options: &SaveOptionsNif) -> NifResult<()> {
-    if !options.incremental {
-        return Ok(());
-    }
-
-    let dropped = editor.dropped_by_an_incremental_save();
-    if dropped.is_empty() {
-        return Ok(());
-    }
-
-    Err(tagged_err(
-        atoms::unsupported(),
-        format!(
-            "This editor holds {}, which an incremental save does not carry: the \
-             update is appended to a verbatim copy of the original file, and only \
-             form field values and document information reach it. Nothing has been \
-             written. Save a full rewrite instead.",
-            spell_out(&dropped)
-        ),
-    ))
-}
-
-fn spell_out(categories: &[&str]) -> String {
-    match categories {
-        [] => String::new(),
-        [only] => (*only).to_string(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    }
-}
-
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_save(
     resource: ResourceArc<EditorResource>,
@@ -817,7 +503,10 @@ pub fn ensure_editor_page_in_range(editor: &DocumentEditor, page_index: usize) -
 // The object a source page's `/Contents` reference resolves to, or `None` when
 // the entry is absent or already direct. Use the mirror to reach the source page
 // after moves or deletions.
-fn indirect_contents_target(editor: &OpenEditor, page_index: usize) -> NifResult<Option<Object>> {
+pub(crate) fn indirect_contents_target(
+    editor: &OpenEditor,
+    page_index: usize,
+) -> NifResult<Option<Object>> {
     let source = editor.source_page(page_index)?;
 
     let page = editor.source().get_page(source).map_err(to_nif_err)?;
@@ -858,31 +547,6 @@ fn ensure_contents_spliceable(editor: &OpenEditor, page_index: usize) -> NifResu
     Ok(())
 }
 
-// How a source page's `/Contents` is unusable to a redaction, or `None` when it
-// is absent, direct, or an indirect stream. Wider than the erase splice's
-// array-only test: a destructive pass decodes the *unresolved* `/Contents`, so
-// every indirect non-stream object fails.
-fn unusable_contents_shape(
-    editor: &OpenEditor,
-    page_index: usize,
-) -> NifResult<Option<&'static str>> {
-    let Some(target) = indirect_contents_target(editor, page_index)? else {
-        return Ok(None);
-    };
-
-    if matches!(target, Object::Stream { .. }) {
-        return Ok(None);
-    }
-
-    // Name the array where it is one: it is the shape a producer actually emits,
-    // and the only one the erase splice refuses.
-    Ok(Some(if target.as_array().is_some() {
-        "an indirect array"
-    } else {
-        "an indirect object that is not a content stream"
-    }))
-}
-
 // Authentication does not decrypt streams consumed by edit-time readers.
 pub fn ensure_source_is_not_encrypted(editor: &OpenEditor, operation: &str) -> NifResult<()> {
     if !editor.source().is_encrypted() {
@@ -896,113 +560,6 @@ pub fn ensure_source_is_not_encrypted(editor: &OpenEditor, operation: &str) -> N
              changed. Write a full rewrite, reopen it, and retry."
         ),
     ))
-}
-
-// The refusal for a *queued* region, and unconditional where the mark's is not:
-// a region only ever reaches the destructive pass, and cannot be withdrawn once
-// added, so accepting one the pass could never apply strands the editor.
-pub fn ensure_contents_redactable(editor: &OpenEditor, page_index: usize) -> NifResult<()> {
-    let Some(shape) = unusable_contents_shape(editor, page_index)? else {
-        return Ok(());
-    };
-
-    Err(tagged_err(
-        atoms::unsupported(),
-        format!(
-            "Page {page_index} stores its content streams as {shape}, \
-             which a destructive redaction cannot read, so a region queued here \
-             could never be applied. The page can still be saved unchanged."
-        ),
-    ))
-}
-
-// Whether a source page contributes any region of its own to a redaction: a
-// `/Redact` annotation carrying a `/Rect`, the condition upstream filters on.
-// It is the difference between a page a mark puts in the destructive set and a
-// page that set actually rewrites.
-pub fn draws_redactions(editor: &DocumentEditor, source: usize) -> NifResult<bool> {
-    let annotations = editor
-        .source()
-        .get_annotations(source)
-        .map_err(to_nif_err)?;
-
-    Ok(annotations
-        .iter()
-        .any(|a| a.subtype_enum == AnnotationSubtype::Redact && a.rect.is_some()))
-}
-
-// The same refusal for a redaction mark, but only where the mark has an effect:
-// with no region of its own a page produces no overlay and rewrites nothing, so
-// marking it is harmless whatever its `/Contents`.
-pub fn ensure_redaction_spliceable(editor: &OpenEditor, page_index: usize) -> NifResult<()> {
-    // The annotation check first: reading a page's `/Contents` clones the whole
-    // stream while `get_annotations` is cheap, and `editor_mark_all_redactions`
-    // runs this over every page.
-    let source = editor.source_page(page_index)?;
-
-    if !draws_redactions(editor, source)? {
-        return Ok(());
-    }
-
-    let Some(shape) = unusable_contents_shape(editor, page_index)? else {
-        return Ok(());
-    };
-
-    Err(tagged_err(
-        atoms::unsupported(),
-        format!(
-            "Page {page_index} stores its content streams as {shape}, which a \
-             redaction overlay cannot be appended to without corrupting the page, \
-             and which a destructive redaction cannot read. The page can still be \
-             saved unchanged."
-        ),
-    ))
-}
-
-// Does `obj` reach an indirect object, at any depth within its own structure?
-fn holds_reference(obj: &Object) -> bool {
-    match obj {
-        Object::Reference(_) => true,
-        Object::Array(a) => a.iter().any(holds_reference),
-        Object::Dictionary(d) => d.values().any(holds_reference),
-        Object::Stream { dict, .. } => dict.values().any(holds_reference),
-        _ => false,
-    }
-}
-
-// A scrub drops the `/Info` dictionary's own object id and not its children, so
-// an indirect value is written out with the secret intact. Nothing public can
-// orphan it in turn, so the structure is refused rather than reported scrubbed.
-pub fn ensure_info_is_direct(editor: &DocumentEditor) -> NifResult<()> {
-    let source = editor.source();
-    let Some(info_ref) = source
-        .trailer()
-        .as_dict()
-        .and_then(|d| d.get("Info"))
-        .and_then(|v| v.as_reference())
-    else {
-        return Ok(());
-    };
-    // An `/Info` that cannot be read or is not a dictionary carries nothing to
-    // leave behind, so it is allowed through rather than refused.
-    let Ok(info) = source.load_object(info_ref) else {
-        return Ok(());
-    };
-    let Some(dict) = info.as_dict() else {
-        return Ok(());
-    };
-
-    if dict.values().any(holds_reference) {
-        return Err(tagged_err(
-            atoms::unsupported(),
-            "This document stores an /Info value as an indirect object, which a \
-             scrub replaces without removing: the value keeps its own object and \
-             is written out. Sanitize with scrub_metadata: false to strip the rest, \
-             or rewrite the document's metadata before sanitizing.",
-        ));
-    }
-
-    Ok(())
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -1711,7 +1268,10 @@ fn editor_flatten_warnings(resource: ResourceArc<EditorResource>) -> NifResult<V
 #[cfg(test)]
 mod tests {
     use pdf_oxide::{
-        editor::{form_fields::FormFieldValue, DocumentInfo},
+        editor::{
+            form_fields::FormFieldValue, DocumentInfo, EncryptionAlgorithm, EncryptionConfig,
+            SaveOptions,
+        },
         encryption::{Algorithm, EncryptionWriteHandler},
         extractors::FormExtractor,
         object::ObjectRef,
@@ -1719,7 +1279,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::document::read_crop_box;
+    use crate::pages::read_crop_box;
 
     #[test]
     fn writable_pdf_date_holds_the_shared_grammar_to_the_whole_input() {
@@ -3177,10 +2737,5 @@ mod tests {
             "upstream now honors the flatten marks in an incremental update"
         );
         assert!(editor.flatten_warnings().is_empty());
-    }
-
-    #[test]
-    fn spell_out_of_nothing_is_empty() {
-        assert_eq!(spell_out(&[]), "");
     }
 }

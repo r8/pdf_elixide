@@ -14,10 +14,11 @@ use rustler::{Binary, NifMap, NifResult, NifUnitEnum, ResourceArc};
 
 use crate::{
     atoms,
-    editor::{ensure_rebuild_keeps_redactions, ensure_rewrite_keeps_metadata},
+    editor::ensure_rebuild_keeps_redactions,
     error::{tagged_err, to_nif_err},
     open_editor::Rebuild,
-    DocumentResource, EditorResource,
+    resource::{DocumentResource, EditorResource},
+    save::ensure_rewrite_keeps_metadata,
 };
 
 // Variant names are the atoms, spelled so `NifUnitEnum`'s snake-casing leaves

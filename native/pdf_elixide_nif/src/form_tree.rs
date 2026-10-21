@@ -14,14 +14,22 @@ use pdf_oxide::{
     object::{Object, ObjectRef},
     PdfDocument,
 };
-use rustler::NifResult;
+use rustler::{NifResult, NifUntaggedEnum};
 
 use crate::{
     atoms,
     error::{tagged_err, to_nif_err},
-    form::ChoiceOptionNif,
-    metadata::decode_pdf_text_string,
+    text_string::decode_pdf_text_string,
 };
+
+// One `/Opt` entry (Table 231): a bare export value, or an `[export, display]`
+// pair whose second element is what a viewer shows. Untagged so a bare entry
+// encodes as a string and a pair as a two-tuple, with no wrapping tag.
+#[derive(NifUntaggedEnum, Clone, Debug, PartialEq)]
+pub enum ChoiceOptionNif {
+    Pair((String, String)),
+    Export(String),
+}
 
 // Bound the native recursion before handing the tree to the uncapped extractor.
 const MAX_FIELD_DEPTH: usize = 256;

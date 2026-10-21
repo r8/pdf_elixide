@@ -10,9 +10,8 @@ use crate::{
     document::BoldMarkersNif,
     error::to_nif_err,
     geometry::{rect_to_nif, RectNif},
-    resource::Closable,
+    resource::{Closable, TableResource},
     span::{span_ref_to_nif, SpanNif},
-    TableResource,
 };
 
 #[derive(NifMap)]

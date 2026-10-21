@@ -8,7 +8,7 @@ use pdf_oxide::{
     Error as PdfError, PdfDocument,
 };
 
-use crate::{document::read_crop_box, open_editor::PageError, warnings};
+use crate::{open_editor::PageError, pages::read_crop_box, warnings};
 
 // Merged pages lose everything they inherited, their `/Parent` being stripped,
 // so the pages' effective values are read here and re-applied after the merge.

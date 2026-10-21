@@ -1,19 +1,23 @@
-use pdf_oxide::redaction::{OcgPolicy, RedactionOptions, RedactionReport};
+use pdf_oxide::{
+    annotation_types::AnnotationSubtype,
+    editor::DocumentEditor,
+    object::Object,
+    redaction::{OcgPolicy, RedactionOptions, RedactionReport},
+};
 use rustler::{Atom, NifMap, NifResult, NifUnitEnum, ResourceArc};
 
 use crate::{
     atoms,
     color::RgbNif,
     editor::{
-        draws_redactions, ensure_contents_redactable, ensure_editor_page_in_range,
-        ensure_info_is_direct, ensure_redaction_spliceable, ensure_source_is_not_encrypted,
+        ensure_editor_page_in_range, ensure_source_is_not_encrypted, indirect_contents_target,
         redaction_corners,
     },
     error::{tagged_err, to_nif_err},
     geometry::RectNif,
     open_editor::{Marked, OpenEditor},
+    resource::EditorResource,
     text_state::measures_restored_text_state,
-    EditorResource,
 };
 
 #[derive(NifUnitEnum, Clone, Copy, Debug)]
@@ -80,11 +84,143 @@ impl RedactionOptionsNif {
 }
 
 // Upstream clamps invalid components instead of rejecting them.
-pub fn ensure_fill_in_range(fill: [f32; 3], label: &str) -> NifResult<()> {
+fn ensure_fill_in_range(fill: [f32; 3], label: &str) -> NifResult<()> {
     if fill.iter().any(|c| !(0.0..=1.0).contains(c)) {
         return Err(tagged_err(
             atoms::other(),
             format!("invalid {label}, expected components from 0.0 to 1.0: {fill:?}"),
+        ));
+    }
+
+    Ok(())
+}
+
+// How a source page's `/Contents` is unusable to a redaction, or `None` when it
+// is absent, direct, or an indirect stream. Wider than the erase splice's
+// array-only test: a destructive pass decodes the *unresolved* `/Contents`, so
+// every indirect non-stream object fails.
+fn unusable_contents_shape(
+    editor: &OpenEditor,
+    page_index: usize,
+) -> NifResult<Option<&'static str>> {
+    let Some(target) = indirect_contents_target(editor, page_index)? else {
+        return Ok(None);
+    };
+
+    if matches!(target, Object::Stream { .. }) {
+        return Ok(None);
+    }
+
+    // Name the array where it is one: it is the shape a producer actually emits,
+    // and the only one the erase splice refuses.
+    Ok(Some(if target.as_array().is_some() {
+        "an indirect array"
+    } else {
+        "an indirect object that is not a content stream"
+    }))
+}
+
+// The refusal for a *queued* region, and unconditional where the mark's is not:
+// a region only ever reaches the destructive pass, and cannot be withdrawn once
+// added, so accepting one the pass could never apply strands the editor.
+pub(crate) fn ensure_contents_redactable(editor: &OpenEditor, page_index: usize) -> NifResult<()> {
+    let Some(shape) = unusable_contents_shape(editor, page_index)? else {
+        return Ok(());
+    };
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "Page {page_index} stores its content streams as {shape}, \
+             which a destructive redaction cannot read, so a region queued here \
+             could never be applied. The page can still be saved unchanged."
+        ),
+    ))
+}
+
+// Whether a source page contributes any region of its own to a redaction: a
+// `/Redact` annotation carrying a `/Rect`, the condition upstream filters on.
+// It is the difference between a page a mark puts in the destructive set and a
+// page that set actually rewrites.
+pub(crate) fn draws_redactions(editor: &DocumentEditor, source: usize) -> NifResult<bool> {
+    let annotations = editor
+        .source()
+        .get_annotations(source)
+        .map_err(to_nif_err)?;
+
+    Ok(annotations
+        .iter()
+        .any(|a| a.subtype_enum == AnnotationSubtype::Redact && a.rect.is_some()))
+}
+
+// The same refusal for a redaction mark, but only where the mark has an effect:
+// with no region of its own a page produces no overlay and rewrites nothing, so
+// marking it is harmless whatever its `/Contents`.
+pub(crate) fn ensure_redaction_spliceable(editor: &OpenEditor, page_index: usize) -> NifResult<()> {
+    // The annotation check first: reading a page's `/Contents` clones the whole
+    // stream while `get_annotations` is cheap, and `editor_mark_all_redactions`
+    // runs this over every page.
+    let source = editor.source_page(page_index)?;
+
+    if !draws_redactions(editor, source)? {
+        return Ok(());
+    }
+
+    let Some(shape) = unusable_contents_shape(editor, page_index)? else {
+        return Ok(());
+    };
+
+    Err(tagged_err(
+        atoms::unsupported(),
+        format!(
+            "Page {page_index} stores its content streams as {shape}, which a \
+             redaction overlay cannot be appended to without corrupting the page, \
+             and which a destructive redaction cannot read. The page can still be \
+             saved unchanged."
+        ),
+    ))
+}
+
+// Does `obj` reach an indirect object, at any depth within its own structure?
+fn holds_reference(obj: &Object) -> bool {
+    match obj {
+        Object::Reference(_) => true,
+        Object::Array(a) => a.iter().any(holds_reference),
+        Object::Dictionary(d) => d.values().any(holds_reference),
+        Object::Stream { dict, .. } => dict.values().any(holds_reference),
+        _ => false,
+    }
+}
+
+// A scrub drops the `/Info` dictionary's own object id and not its children, so
+// an indirect value is written out with the secret intact. Nothing public can
+// orphan it in turn, so the structure is refused rather than reported scrubbed.
+pub(crate) fn ensure_info_is_direct(editor: &DocumentEditor) -> NifResult<()> {
+    let source = editor.source();
+    let Some(info_ref) = source
+        .trailer()
+        .as_dict()
+        .and_then(|d| d.get("Info"))
+        .and_then(|v| v.as_reference())
+    else {
+        return Ok(());
+    };
+    // An `/Info` that cannot be read or is not a dictionary carries nothing to
+    // leave behind, so it is allowed through rather than refused.
+    let Ok(info) = source.load_object(info_ref) else {
+        return Ok(());
+    };
+    let Some(dict) = info.as_dict() else {
+        return Ok(());
+    };
+
+    if dict.values().any(holds_reference) {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This document stores an /Info value as an indirect object, which a \
+             scrub replaces without removing: the value keeps its own object and \
+             is written out. Sanitize with scrub_metadata: false to strip the rest, \
+             or rewrite the document's metadata before sanitizing.",
         ));
     }
 

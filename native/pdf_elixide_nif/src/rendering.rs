@@ -16,10 +16,10 @@ use rustler::{Binary, Env, NifMap, NifResult, NifTuple, NifUnitEnum, OwnedBinary
 use crate::{
     atoms,
     binary::owned_binary,
-    document::ensure_page_in_range,
     error::{tagged_err, to_nif_err},
     geometry::{rect_from_nif, RectNif},
-    DocumentResource,
+    pages::ensure_page_in_range,
+    resource::DocumentResource,
 };
 
 // Allocation failure aborts the node and cannot be caught by `contain_panic`;

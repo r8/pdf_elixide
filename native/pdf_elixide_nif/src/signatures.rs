@@ -39,8 +39,9 @@ use crate::{
     certificate_files::{pem_certificates, pkcs12_certificates, CertificateRefusal},
     error::{contain_panic, tagged_err, to_nif_err},
     form_tree,
-    metadata::decode_pdf_text_string,
-    warnings, DocumentResource, EditorResource,
+    resource::{DocumentResource, EditorResource},
+    text_string::decode_pdf_text_string,
+    warnings,
 };
 
 #[derive(NifUnitEnum, Debug, PartialEq)]

@@ -10,7 +10,7 @@ use rustler::{NifResult, NifStruct, NifUnitEnum, NifUntaggedEnum};
 
 use crate::{
     error::to_nif_err,
-    form_tree::{Resolved, ResolvedAttrs},
+    form_tree::{ChoiceOptionNif, Resolved, ResolvedAttrs},
     geometry::{rect_from_corners, RectNif},
 };
 
@@ -27,15 +27,6 @@ pub enum FieldValueNif {
     Boolean(bool),
     Text(String),
     List(Vec<String>),
-}
-
-// One `/Opt` entry (Table 231): a bare export value, or an `[export, display]`
-// pair whose second element is what a viewer shows. Untagged so a bare entry
-// encodes as a string and a pair as a two-tuple, with no wrapping tag.
-#[derive(NifUntaggedEnum, Clone, Debug, PartialEq)]
-pub enum ChoiceOptionNif {
-    Pair((String, String)),
-    Export(String),
 }
 
 // `/Q` (Table 222). A value outside 0-2 names no alignment the specification

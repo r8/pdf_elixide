@@ -5,12 +5,12 @@ use pdf_oxide::{
 use rustler::{NifMap, NifResult, NifTaggedEnum, ResourceArc};
 
 use crate::{
-    document::ensure_page_in_range,
     error::{to_nif_err, to_nif_page_err},
     extract_options::StructuredOptionsNif,
     geometry::{finite, rect_to_nif, RectNif},
+    pages::ensure_page_in_range,
+    resource::DocumentResource,
     span::{span_to_nif, SpanNif},
-    DocumentResource,
 };
 
 #[derive(NifTaggedEnum, Debug)]

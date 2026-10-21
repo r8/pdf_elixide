@@ -12,7 +12,8 @@ use crate::{
     atoms,
     binary::owned_binary,
     error::{panic_err, tagged_err, to_nif_err},
-    warnings, DocumentResource,
+    resource::DocumentResource,
+    warnings,
 };
 
 #[derive(NifUnitEnum, Debug, Clone, Copy, PartialEq, Eq)]

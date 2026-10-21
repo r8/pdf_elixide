@@ -1,9 +1,3 @@
-use std::sync::Arc;
-
-use pdf_oxide::{extractors::PdfImage, fonts::FontInfo, structure::table_extractor::Table};
-
-use crate::{open_editor::OpenEditor, resource::Closable, warnings::OpenDocument};
-
 mod annotations;
 mod base14;
 mod binary;
@@ -29,15 +23,18 @@ mod logging;
 mod merge;
 mod metadata;
 mod office;
+mod open_document;
 mod open_editor;
 mod optional_content;
 mod outline;
+mod pages;
 mod paths;
 mod redaction;
 mod rendering;
 mod resource;
 mod ring;
 mod running_regions;
+mod save;
 mod search;
 mod signatures;
 mod span;
@@ -46,6 +43,7 @@ mod structured;
 mod table;
 mod text_line;
 mod text_state;
+mod text_string;
 mod warnings;
 mod word;
 
@@ -72,43 +70,5 @@ pub(crate) mod atoms {
         not_found, out_of_range, io, lock_poisoned, panic, closed, other
     }
 }
-
-// Every resource wraps its value in a `Closable`, which owns the locking and
-// supports releasing the value early (see resource.rs and the `*_close` NIFs).
-
-struct DocumentResource {
-    doc: Closable<OpenDocument>,
-}
-
-#[rustler::resource_impl]
-impl rustler::Resource for DocumentResource {}
-
-struct EditorResource {
-    editor: Closable<OpenEditor>,
-}
-
-#[rustler::resource_impl]
-impl rustler::Resource for EditorResource {}
-
-struct ImageResource {
-    image: Closable<PdfImage>,
-}
-
-#[rustler::resource_impl]
-impl rustler::Resource for ImageResource {}
-
-struct FontResource {
-    font: Closable<Arc<FontInfo>>,
-}
-
-#[rustler::resource_impl]
-impl rustler::Resource for FontResource {}
-
-struct TableResource {
-    table: Closable<Table>,
-}
-
-#[rustler::resource_impl]
-impl rustler::Resource for TableResource {}
 
 rustler::init!("Elixir.PdfElixide.Native");

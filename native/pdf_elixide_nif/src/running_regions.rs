@@ -13,8 +13,8 @@ use rustler::{NifMap, NifResult, NifUnitEnum, ResourceArc};
 use crate::{
     atoms,
     error::{tagged_err, to_nif_err},
+    resource::DocumentResource,
     span::{span_to_nif, SpanNif},
-    DocumentResource,
 };
 
 #[derive(NifUnitEnum, Debug, Clone, Copy)]

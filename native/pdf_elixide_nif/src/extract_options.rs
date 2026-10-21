@@ -8,7 +8,6 @@ use pdf_oxide::{
     extractors::{AdaptiveThresholdConfig, SpanMergingConfig},
     geometry::Rect,
     layout::RectFilterMode,
-    search::SearchOptions,
     structure::spatial_table_detector::{TableDetectionConfig, TableStrategy},
     structured::ColumnMode,
 };
@@ -599,60 +598,6 @@ impl From<TablesOptionsNif> for TablesOptions {
     }
 }
 
-// Options for `PdfElixide.Document.search/3,4`.
-#[derive(NifMap, Debug)]
-pub struct SearchOptionsNif {
-    pub case_insensitive: bool,
-    pub literal: bool,
-    pub whole_word: bool,
-    pub max_results: Option<usize>,
-}
-
-impl From<SearchOptionsNif> for SearchOptions {
-    fn from(o: SearchOptionsNif) -> Self {
-        SearchOptions::new()
-            .with_case_insensitive(o.case_insensitive)
-            .with_literal(o.literal)
-            .with_whole_word(o.whole_word)
-            // Upstream reads a limit of 0 as no limit.
-            .with_max_results(o.max_results.unwrap_or(0))
-    }
-}
-
-// What `TextSearcher::search` is handed for one search call.
-pub struct SearchRequest {
-    pub pattern: String,
-    pub options: SearchOptions,
-    // The caller's pattern when `pattern` was grouped, so a compile error can
-    // be reported against what they wrote rather than the grouped form.
-    pub raw_pattern: Option<String>,
-}
-
-impl SearchOptionsNif {
-    // Upstream wraps a `whole_word` pattern as `\b{pattern}\b` with no group,
-    // so a top-level alternation binds as `(\bcat)|(dog\b)`. The escaped
-    // literal path has nothing to misbind; the regex path is grouped here and
-    // sent upstream with `whole_word` off.
-    pub fn into_request(self, pattern: String) -> SearchRequest {
-        let grouped = !self.literal && self.whole_word;
-        let options = SearchOptions::from(self);
-
-        if grouped {
-            SearchRequest {
-                pattern: format!(r"\b(?:{pattern})\b"),
-                options: options.with_whole_word(false),
-                raw_pattern: Some(pattern),
-            }
-        } else {
-            SearchRequest {
-                pattern,
-                options,
-                raw_pattern: None,
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -708,46 +653,6 @@ mod tests {
 
     fn span_preset(preset: SpanPresetNif) -> SpanMergingConfig {
         preset.into()
-    }
-
-    fn search_options(literal: bool, whole_word: bool) -> SearchOptionsNif {
-        SearchOptionsNif {
-            case_insensitive: true,
-            literal,
-            whole_word,
-            max_results: Some(7),
-        }
-    }
-
-    #[test]
-    fn a_whole_word_regex_is_grouped_and_sent_upstream_ungrouped() {
-        let request = search_options(false, true).into_request("cat|dog".into());
-
-        assert_eq!(request.pattern, r"\b(?:cat|dog)\b");
-        assert_eq!(request.raw_pattern.as_deref(), Some("cat|dog"));
-        assert!(!request.options.whole_word);
-        assert!(!request.options.literal);
-        assert!(request.options.case_insensitive);
-        assert_eq!(request.options.max_results, 7);
-    }
-
-    #[test]
-    fn a_whole_word_literal_passes_through_for_upstream_to_escape_and_wrap() {
-        let request = search_options(true, true).into_request("cat|dog".into());
-
-        assert_eq!(request.pattern, "cat|dog");
-        assert_eq!(request.raw_pattern, None);
-        assert!(request.options.whole_word);
-        assert!(request.options.literal);
-    }
-
-    #[test]
-    fn a_regex_without_whole_word_passes_through() {
-        let request = search_options(false, false).into_request("cat|dog".into());
-
-        assert_eq!(request.pattern, "cat|dog");
-        assert_eq!(request.raw_pattern, None);
-        assert!(!request.options.whole_word);
     }
 
     macro_rules! assert_table_override {
