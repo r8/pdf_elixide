@@ -979,9 +979,9 @@ defmodule PdfElixide.UpstreamDriftTest do
   end
 
   describe "how a render matches a font the page does not embed" do
-    test "bold Helvetica still renders in the same face as bold Times" do
-      [helvetica, times] =
-        for font <- [:helvetica, :times] do
+    test "bold Helvetica still renders in the same face as bold Courier" do
+      [helvetica, courier] =
+        for font <- [:helvetica, :courier] do
           pdf =
             Builder.new(font: font)
             |> Builder.text_at({72, 600}, [{"R", bold: true}], font_size: 48)
@@ -994,7 +994,7 @@ defmodule PdfElixide.UpstreamDriftTest do
 
       # A single glyph at one origin, so the two fonts' widths cannot move it.
       assert helvetica.data =~ <<0, 0, 0, 255>>
-      assert helvetica.data == times.data
+      assert helvetica.data == courier.data
     end
   end
 

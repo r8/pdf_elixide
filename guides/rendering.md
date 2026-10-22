@@ -244,12 +244,16 @@ byte-identical output across machines matters, install a known font set, or
 check that your documents embed their fonts.
 
 A font the page does not embed is matched to an installed font by family name.
-A font named with a style suffix renders in the host's default serif face, in
-the requested weight and slant. That includes the bold and oblique standard
-fonts, such as `Helvetica-Bold` and `Courier-Oblique`, and names like
-`Arial-BoldMT`. On a host with no font named exactly `Helvetica` or `Courier`,
-the regular faces render in that serif face too. Text extraction and the font
-names it reports are unaffected. To render text in its intended face, embed the
+A font named with a style suffix is not matched to its own family: it renders
+in a substitute face, in the requested weight and slant. That includes the bold
+and oblique standard fonts, such as `Helvetica-Bold` and `Courier-Oblique`, and
+names like `Arial-BoldMT`. On a host with no font named exactly `Helvetica` or
+`Courier`, the regular faces are substituted too. Which face substitutes
+depends on the host's font configuration: the default serif face where one is
+configured and installed, otherwise a serif face for `Times` names and a
+sans-serif face for the rest. Either way, bold Courier renders in the same
+proportional face as bold Helvetica. Text extraction and the font names it
+reports are unaffected. To render text in its intended face, embed the
 font; for documents you build, see
 [Fonts](building-documents.md#fonts).
 
