@@ -308,6 +308,8 @@ each paragraph, heading, list and positioned line can set its own `:font` and
 - `:helvetica`, `:times` or `:courier`, the built-in families. They are not
   embedded, so they add almost nothing to the file, but they draw only
   Windows-1252 characters: Western European letters and common punctuation.
+  Rendered pages draw them with the host's installed fonts; see
+  [Fonts](rendering.md#fonts) in the rendering guide.
 - `:dejavu_sans`, bundled with the library and embedded when used. It covers
   Latin, Greek, Cyrillic and many symbols. It has regular and bold faces only.
 - A `PdfElixide.Builder.FontFamily` built from font files you supply.

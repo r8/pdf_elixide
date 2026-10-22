@@ -978,6 +978,26 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
+  describe "how a render matches a font the page does not embed" do
+    test "bold Helvetica still renders in the same face as bold Times" do
+      [helvetica, times] =
+        for font <- [:helvetica, :times] do
+          pdf =
+            Builder.new(font: font)
+            |> Builder.text_at({72, 600}, [{"R", bold: true}], font_size: 48)
+            |> Builder.to_binary!()
+
+          doc = Document.from_binary!(pdf)
+          on_exit(fn -> Document.close(doc) end)
+          Document.render!(doc, 0, dpi: 72, format: :rgba8)
+        end
+
+      # A single glyph at one origin, so the two fonts' widths cannot move it.
+      assert helvetica.data =~ <<0, 0, 0, 255>>
+      assert helvetica.data == times.data
+    end
+  end
+
   describe "which writes clear the editor's modified flag" do
     setup do
       path =

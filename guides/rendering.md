@@ -243,6 +243,16 @@ can come out substituted or missing while the rest of the page is unaffected. If
 byte-identical output across machines matters, install a known font set, or
 check that your documents embed their fonts.
 
+A font the page does not embed is matched to an installed font by family name.
+A font named with a style suffix renders in the host's default serif face, in
+the requested weight and slant. That includes the bold and oblique standard
+fonts, such as `Helvetica-Bold` and `Courier-Oblique`, and names like
+`Arial-BoldMT`. On a host with no font named exactly `Helvetica` or `Courier`,
+the regular faces render in that serif face too. Text extraction and the font
+names it reports are unaffected. To render text in its intended face, embed the
+font; for documents you build, see
+[Fonts](building-documents.md#fonts).
+
 The first render in an OS process is measurably slower than the ones after it.
 Later renders do not repeat that cost, so time a warm render rather than a cold
 one when you benchmark.
