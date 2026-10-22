@@ -104,8 +104,37 @@ Builder.new()
 ```
 
 Positioned text can sit in the margins; flowing text does not make room for
-it. It does not wrap, and text containing `\n` raises. At build time, the
-whole line must fit on the page, including accents and italic overhangs.
+it. It does not wrap, and text containing `\n` raises; for text that wraps,
+see [Text in a box](#text-in-a-box). At build time, the whole line must fit on
+the page, including accents and italic overhangs.
+
+## Text in a box
+
+`Builder.text_in_rect/4` wraps text within a `PdfElixide.Geometry.Rect` on the
+current page, outside the flow like `text_at/4`:
+
+```elixir
+alias PdfElixide.Geometry.Rect
+
+box = %Rect{x: 340, y: 600, width: 200, height: 60}
+
+Builder.new()
+|> Builder.rect(box, stroke_width: 0.5)
+|> Builder.text_in_rect(box, ["Total for the year\n", {"12%", bold: true}], align: :right)
+```
+
+The first line starts at the box's top edge, and each line takes a box
+`font_size × line_height` points tall, as in a paragraph. Lines wrap at the
+box's width, `\n` starts a new line, and `:align` places each line at the
+box's left edge, its center or its right edge. The box is not drawn; draw it
+with `Builder.rect/3` if it should show.
+
+Text needing more lines than the box holds is refused when the document is
+built, with a message giving the height it needs. Nothing is cut off. Enlarge
+the box, reduce the text size or the document's `:line_height`, or shorten the
+text. Accents and italic overhangs may reach past the box, as flowing text may
+reach into the margins, but not past the edge of the page. The box itself may
+extend off the page as long as its text does not.
 
 ## Drawing shapes
 
@@ -240,8 +269,9 @@ The builder refuses content it cannot draw faithfully:
 - **Right-to-left text**, such as Hebrew or Arabic, and **scripts that need
   shaping**, whose letters join, reorder or combine, such as Devanagari,
   Tibetan and Khmer. These are unsupported in every font.
-- **A character wider than the line**, which no amount of wrapping can fit.
-  Reduce the text size or the side margins.
+- **A character wider than the line or box**, which no amount of wrapping can
+  fit. Reduce the text size or the side margins, or widen the box.
+- **Text taller than its box**; see [Text in a box](#text-in-a-box).
 - **A glyph that would extend past the edge of the page**, such as an
   italic `j` with no left margin or an accented capital with no top margin.
   Widen the margins, or for flowing text increase the line height; move

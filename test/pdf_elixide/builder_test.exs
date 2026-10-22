@@ -864,6 +864,18 @@ defmodule PdfElixide.BuilderTest do
       end
     end
 
+    test "text that draws nothing needs no face but still starts the first page" do
+      regular_only = FontFamily.new(regular: font("font_truetype.ttf"))
+
+      doc =
+        Builder.new()
+        |> Builder.text_at({72, 72}, [{" ", italic: true}], font: regular_only)
+        |> Builder.page({300, 300})
+        |> written()
+
+      assert Document.page_count!(doc) == 2
+    end
+
     test "a character its font cannot draw is refused" do
       message = Builder.new() |> Builder.text_at({72, 72}, "Звіт", font: :helvetica) |> refusal()
 
@@ -890,6 +902,209 @@ defmodule PdfElixide.BuilderTest do
       end
 
       assert_raise FunctionClauseError, fn -> Builder.text_at(builder, untyped(72), "a") end
+    end
+  end
+
+  describe "text_in_rect/4" do
+    @box %Rect{x: 100.0, y: 500.0, width: 150.0, height: 90.0}
+    @sentence "The quick brown fox jumps over the lazy dog again"
+
+    defp boxed(text, opts \\ []) do
+      Builder.new() |> Builder.text_in_rect(@box, text, opts) |> written()
+    end
+
+    defp right_edge(char), do: char.bbox.x + char.bbox.width
+
+    test "wraps within the box, its first line at the top edge" do
+      doc = boxed(@sentence)
+      lines = chars_by_line(doc, 0)
+
+      assert length(lines) == 2
+      assert_in_delta hd(hd(lines)).bbox.x, 100, 0.001
+
+      for char <- List.flatten(lines) do
+        assert char.bbox.x >= 100 - 0.001
+        assert right_edge(char) <= 250 + 0.001
+      end
+
+      assert baselines(doc, 0) == Enum.map([590, 572], &Float.round(baseline(&1, 12), 3))
+    end
+
+    test "aligns each line left, center or right" do
+      for align <- [:left, :center, :right],
+          line <- chars_by_line(boxed(@sentence, align: align), 0) do
+        left = hd(line).bbox.x - 100
+        right = 250 - right_edge(List.last(line))
+
+        case align do
+          :left -> assert_in_delta left, 0, 0.001
+          :center -> assert_in_delta left, right, 0.001
+          :right -> assert_in_delta right, 0, 0.001
+        end
+      end
+    end
+
+    test "breaks lines at \\n and takes runs, a font and a size" do
+      doc =
+        Builder.new()
+        |> Builder.text_in_rect(@box, ["a\n", {"b", bold: true}], font: :times, font_size: 20)
+        |> written()
+
+      fonts = fonts_by_text(doc)
+
+      assert length(chars_by_line(doc, 0)) == 2
+      assert fonts["a"] == "Times-Roman"
+      assert fonts["b"] == "Times-Bold"
+      assert_in_delta hd(Document.chars!(doc, 0)).font_size, 20, 0.001
+    end
+
+    test "counts for :auto" do
+      [char | _] = "Звіт" |> boxed() |> Document.chars!(0)
+
+      assert char.font =~ "DejaVuSans"
+    end
+
+    test "stays outside the flow" do
+      doc =
+        Builder.new()
+        |> Builder.text_in_rect(%Rect{@box | y: 100.0}, "boxed")
+        |> Builder.paragraph("flowing")
+        |> written()
+
+      assert_in_delta Enum.max(baselines(doc, 0)), baseline(792 - 72, 12), 0.001
+    end
+
+    test "normalizes reversed corners" do
+      reversed = %Rect{x: 250.0, y: 590.0, width: -150.0, height: -90.0}
+      bboxes = fn doc -> doc |> Document.chars!(0) |> Enum.map(& &1.bbox) end
+      doc = Builder.new() |> Builder.text_in_rect(reversed, @sentence) |> written()
+
+      assert bboxes.(doc) == bboxes.(boxed(@sentence))
+    end
+
+    test "text the box cannot hold is refused, and text that just fits is not" do
+      fits = %Rect{x: 72.0, y: 600.0, width: 200.0, height: 3 * 18.0}
+      short = %Rect{fits | height: 3 * 18.0 - 0.1}
+      text = "one\ntwo\nthree"
+
+      assert {:ok, _} = Builder.new() |> Builder.text_in_rect(fits, text) |> Builder.to_binary()
+
+      message = Builder.new() |> Builder.text_in_rect(short, text) |> refusal()
+      assert message =~ "takes 3 lines, 54 points, more than the 53.9-point box"
+    end
+
+    # Nine Courier advances of 7.2 sum a hair above 64.8.
+    test "text exactly as wide as the box stays on one line" do
+      box = %Rect{x: 72.0, y: 600.0, width: 64.8, height: 18.0}
+
+      for text <- ["a a a a a", ["a a ", {"a", bold: true}, " a a"], "aaaaaaaaa"] do
+        builder = Builder.new() |> Builder.text_in_rect(box, text, font: :courier)
+
+        assert {:ok, _} = Builder.to_binary(builder)
+      end
+    end
+
+    # 8.8 × 1.5 and 12.8 × 1.5 round a hair above 13.2 and 19.2.
+    test "a fractional size fits a box exactly one line tall" do
+      for {size, height} <- [{8.8, 13.2}, {12.8, 19.2}] do
+        box = %Rect{x: 72.0, y: 600.0, width: 200.0, height: height}
+        builder = Builder.new() |> Builder.text_in_rect(box, "a", font_size: size)
+
+        assert {:ok, _} = Builder.to_binary(builder)
+      end
+    end
+
+    test "a character wider than the box is refused" do
+      narrow = %Rect{x: 72.0, y: 600.0, width: 5.0, height: 18.0}
+      message = Builder.new() |> Builder.text_in_rect(narrow, "W") |> refusal()
+
+      assert message =~ "wider than the 5-point box; reduce the font size or widen the box"
+    end
+
+    test "a character its font cannot draw is refused" do
+      message = Builder.new() |> Builder.text_in_rect(@box, "Звіт", font: :helvetica) |> refusal()
+
+      assert message =~ "Helvetica cannot draw"
+    end
+
+    # Summed advances land a hair past the right edge.
+    test "a right-aligned line may end at the edge of the page" do
+      edge = %Rect{x: 0.0, y: 600.0, width: 612.0, height: 54.0}
+      builder = Builder.new() |> Builder.text_in_rect(edge, "abcdefg", align: :right)
+
+      assert {:ok, _} = Builder.to_binary(builder)
+    end
+
+    test "centers a line in a box far wider than it" do
+      wide = %Rect{x: -1.0e18 + 256.0, y: 600.0, width: 2.0e18, height: 54.0}
+      doc = Builder.new() |> Builder.text_in_rect(wide, "Hello", align: :center) |> written()
+      [word] = Document.words!(doc, 0)
+
+      assert_in_delta word.bbox.x + word.bbox.width / 2, 256, 0.01
+    end
+
+    test "only the text, not the box, must be on the page" do
+      below = %Rect{x: 72.0, y: -100.0, width: 200.0, height: 300.0}
+      above = %Rect{x: 72.0, y: 700.0, width: 200.0, height: 300.0}
+
+      assert {:ok, _} = Builder.new() |> Builder.text_in_rect(below, "a") |> Builder.to_binary()
+      assert {:ok, _} = Builder.new() |> Builder.text_in_rect(above, "") |> Builder.to_binary()
+
+      message = Builder.new() |> Builder.text_in_rect(above, "a") |> refusal()
+      assert message =~ "past the edge of the page"
+    end
+
+    test "text that draws nothing is accepted" do
+      doc = boxed(" \n ")
+
+      assert Document.page_count!(doc) == 1
+      assert Document.chars!(doc, 0) == []
+    end
+
+    test "text that draws nothing needs no face but still starts the first page" do
+      regular_only = FontFamily.new(regular: font("font_truetype.ttf"))
+
+      doc =
+        Builder.new()
+        |> Builder.text_in_rect(@box, [{" ", italic: true}], font: regular_only)
+        |> Builder.page({300, 300})
+        |> written()
+
+      assert Document.page_count!(doc) == 2
+    end
+
+    test "malformed arguments raise" do
+      builder = Builder.new()
+
+      assert_raise ArgumentError, ~r/unknown keys \[:valign\]/, fn ->
+        Builder.text_in_rect(builder, @box, "a", valign: :top)
+      end
+
+      assert_raise ArgumentError, ~r/invalid :align, expected one of/, fn ->
+        Builder.text_in_rect(builder, @box, "a", align: :justify)
+      end
+
+      for rect <- [%Rect{@box | width: 0}, %Rect{@box | height: 0}] do
+        assert_raise ArgumentError, ~r/invalid rect, expected a positive number/, fn ->
+          Builder.text_in_rect(builder, rect, "a")
+        end
+      end
+
+      assert_raise ArgumentError, ~r/does not fit the 10.0-point box/, fn ->
+        Builder.text_in_rect(builder, %Rect{@box | height: 10}, "a")
+      end
+
+      assert_raise ArgumentError, ~r/invalid rect/, fn ->
+        Builder.text_in_rect(builder, %Rect{@box | x: untyped("0")}, "a")
+      end
+
+      assert_raise ArgumentError, ~r/too large/, fn ->
+        Builder.new(page_size: {612, 1.0e9}) |> Builder.text_in_rect(@box, "a")
+      end
+
+      assert_raise FunctionClauseError, fn ->
+        Builder.text_in_rect(builder, untyped({72, 72}), "a")
+      end
     end
   end
 

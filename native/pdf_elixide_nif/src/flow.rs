@@ -9,8 +9,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::base14::Base14;
 
 // A fit test on accumulated f64 positions must not lose a line that fits
-// exactly, so a box may cross the bottom margin, and flowing ink the page
-// edge, by this much.
+// exactly, so a box may cross the bottom margin, a line its width, and ink
+// the page edge, by this much.
 const FIT_TOLERANCE: f64 = 1.0e-6;
 
 // Limit coordinate rounding so distinct lines and runs cannot merge on emission.
@@ -141,6 +141,9 @@ impl Run {
 pub enum Op {
     // A block that draws nothing, kept so later ops keep their numbers.
     Empty,
+    // Positioned text that draws nothing. It needs no face, but starts the
+    // first page as drawn text would.
+    Blank,
     Page {
         width: f64,
         height: f64,
@@ -170,8 +173,27 @@ pub enum Op {
         x: f64,
         y: f64,
     },
+    // Lines wrapped within a box whose bottom-left corner is at a point,
+    // outside the flow.
+    TextInRect {
+        runs: Vec<Run>,
+        face: usize,
+        size: f64,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        align: Align,
+    },
     // A path drawn as given, outside the flow.
     Path(Shape),
+}
+
+#[derive(Clone, Copy)]
+pub enum Align {
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Clone, Copy)]
@@ -287,6 +309,14 @@ pub enum Refused {
         cluster: String,
         width: f64,
         room: f64,
+        boxed: bool,
+    },
+    Overflow {
+        op: usize,
+        page: usize,
+        lines: usize,
+        needed: f64,
+        room: f64,
     },
     Imprecise {
         op: usize,
@@ -389,6 +419,7 @@ pub fn lay_out(
     for (index, op) in ops.iter().enumerate() {
         match op {
             Op::Empty => {}
+            Op::Blank => layout.ensure_page(),
             Op::Page { width, height } => layout.new_page(*width, *height),
             Op::Paragraph {
                 runs,
@@ -411,6 +442,18 @@ pub fn lay_out(
             Op::Space(points) => layout.space(*points),
             Op::Rule { size } => layout.rule(*size),
             Op::TextAt { runs, size, x, y } => layout.text_at(index, runs, *size, *x, *y)?,
+            Op::TextInRect {
+                runs,
+                face,
+                size,
+                x,
+                y,
+                width,
+                height,
+                align,
+            } => {
+                layout.text_in_rect(index, runs, *face, *size, [*x, *y, *width, *height], *align)?
+            }
             Op::Path(shape) => layout.path(shape),
         }
     }
@@ -425,6 +468,9 @@ struct Block {
     above_baseline: f64,
     page: usize,
 }
+
+// A line's segments with the left end of its baseline.
+type PositionedLine = (f64, f64, Vec<Segment>);
 
 struct Layout<'a> {
     fonts: &'a Fonts<'a>,
@@ -500,25 +546,30 @@ impl Layout<'_> {
             });
         }
 
-        if page.width.max(page.height) > size.min(line) * PRECISION_STEPS {
-            return Err(Refused::Imprecise {
-                op,
-                page: page_index,
-                size,
-            });
-        }
-
+        self.precise(op, page_index, size, size.min(line))?;
         self.drawable(op, page_index, texts, extra)?;
-
-        let (ascent, descent) = self.fonts.ascent_descent(face);
-        let half_leading = (line - (ascent - descent) * size / 1000.0) / 2.0;
 
         Ok(Block {
             op,
             line,
-            above_baseline: half_leading + ascent * size / 1000.0,
+            above_baseline: self.above_baseline(face, size, line),
             page: page_index,
         })
+    }
+
+    fn above_baseline(&self, face: usize, size: f64, line: f64) -> f64 {
+        let (ascent, descent) = self.fonts.ascent_descent(face);
+        let half_leading = (line - (ascent - descent) * size / 1000.0) / 2.0;
+        half_leading + ascent * size / 1000.0
+    }
+
+    // Spelled as the Elixir checks spell it, so both refuse the same text.
+    fn precise(&self, op: usize, page: usize, size: f64, step: f64) -> Result<(), Refused> {
+        let (width, height) = (self.page().width, self.page().height);
+        if width.max(height) > step * PRECISION_STEPS {
+            return Err(Refused::Imprecise { op, page, size });
+        }
+        Ok(())
     }
 
     fn drawable(
@@ -593,6 +644,7 @@ impl Layout<'_> {
                 cluster,
                 width: cluster_width,
                 room: width,
+                boxed: false,
             }
         })
     }
@@ -648,7 +700,7 @@ impl Layout<'_> {
                 }
                 Op::Rule { size } => return total + gap + size,
                 Op::Page { .. } => return total,
-                Op::TextAt { .. } | Op::Path(_) => {}
+                Op::Blank | Op::TextAt { .. } | Op::TextInRect { .. } | Op::Path(_) => {}
             }
         }
         total
@@ -726,58 +778,136 @@ impl Layout<'_> {
     ) -> Result<(), Refused> {
         self.ensure_page();
         let page_index = self.pages.len() - 1;
-        let (width, height) = (self.page().width, self.page().height);
-
-        // Spelled as the Elixir check spells it.
-        if width.max(height) > size * PRECISION_STEPS {
-            return Err(Refused::Imprecise {
-                op,
-                page: page_index,
-                size,
-            });
-        }
+        self.precise(op, page_index, size, size)?;
         self.drawable(op, page_index, &[runs], &[])?;
 
-        let off_page = || Refused::OffPage {
-            op,
-            page: page_index,
-            flowing: false,
-        };
         let segments = wrap(self.fonts, runs, size, f64::INFINITY)
-            .map_err(|_| off_page())?
+            .map_err(|_| Refused::OffPage {
+                op,
+                page: page_index,
+                flowing: false,
+            })?
             .into_iter()
             .next()
             .unwrap_or_default();
 
-        // Neither the line's box nor any glyph's ink, which can overhang its
-        // advance or rise above the ascent, may cross the edge.
-        let mut extent = [x, y, x, y];
-        let mut pen = x;
-        for segment in &segments {
-            let (ascent, descent) = self.fonts.ascent_descent(segment.face);
-            extent[1] = extent[1].min(y + descent * size / 1000.0);
-            extent[3] = extent[3].max(y + ascent * size / 1000.0);
-            pen = self.add_ink(&mut extent, segment, pen, y, size);
-        }
-        extent[2] = extent[2].max(pen);
+        self.place_positioned(op, vec![(x, y, segments)], size, [x, y, x, y])
+    }
 
-        if extent[0] < 0.0 || extent[1] < 0.0 || extent[2] > width || extent[3] > height {
-            return Err(off_page());
+    fn text_in_rect(
+        &mut self,
+        op: usize,
+        runs: &[Run],
+        face: usize,
+        size: f64,
+        [x, y, width, height]: [f64; 4],
+        align: Align,
+    ) -> Result<(), Refused> {
+        self.ensure_page();
+        let page_index = self.pages.len() - 1;
+        let line = size * self.line_height;
+        self.precise(op, page_index, size, size.min(line))?;
+        self.drawable(op, page_index, &[runs], &[])?;
+
+        let lines = wrap(self.fonts, runs, size, width).map_err(|(cluster, cluster_width)| {
+            Refused::ClusterTooWide {
+                op,
+                page: page_index,
+                cluster,
+                width: cluster_width,
+                room: width,
+                boxed: true,
+            }
+        })?;
+
+        let needed = lines.len() as f64 * line;
+        if needed > height + FIT_TOLERANCE {
+            return Err(Refused::Overflow {
+                op,
+                page: page_index,
+                lines: lines.len(),
+                needed,
+                room: height,
+            });
+        }
+
+        let above_baseline = self.above_baseline(face, size, line);
+        let mut top = y + height;
+        let mut placed = Vec::with_capacity(lines.len());
+        for segments in lines {
+            let advance: f64 = segments.iter().map(|segment| segment.width).sum();
+            let left = match align {
+                Align::Left => x,
+                // Halved separately: in a very wide box, `width - advance`
+                // rounds the advance away.
+                Align::Center => x + width / 2.0 - advance / 2.0,
+                Align::Right => x + width - advance,
+            };
+            placed.push((left, top - above_baseline, segments));
+            top -= line;
+        }
+
+        // Only what is drawn must be on the page, not the box itself.
+        let nothing = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        self.place_positioned(op, placed, size, nothing)
+    }
+
+    // Neither a line's box nor any glyph's ink, which can overhang its
+    // advance or rise above the ascent, may cross the page edge.
+    fn place_positioned(
+        &mut self,
+        op: usize,
+        lines: Vec<PositionedLine>,
+        size: f64,
+        mut extent: [f64; 4],
+    ) -> Result<(), Refused> {
+        for (x, baseline, segments) in &lines {
+            let mut pen = *x;
+            for segment in segments {
+                let (ascent, descent) = self.fonts.ascent_descent(segment.face);
+                extent[0] = extent[0].min(pen);
+                extent[1] = extent[1].min(baseline + descent * size / 1000.0);
+                extent[3] = extent[3].max(baseline + ascent * size / 1000.0);
+                pen = self.add_ink(&mut extent, segment, pen, *baseline, size);
+            }
+            if !segments.is_empty() {
+                extent[2] = extent[2].max(pen);
+            }
+        }
+
+        let (width, height) = (self.page().width, self.page().height);
+        if extent[0] < -FIT_TOLERANCE
+            || extent[1] < -FIT_TOLERANCE
+            || extent[2] > width + FIT_TOLERANCE
+            || extent[3] > height + FIT_TOLERANCE
+        {
+            return Err(Refused::OffPage {
+                op,
+                page: self.pages.len() - 1,
+                flowing: false,
+            });
         }
 
         let page = self.page_mut();
-        let mut at = x;
-        for segment in segments {
-            page.items.push(Item::Text(Placed {
-                x: at,
-                baseline: y,
-                width: segment.width,
-                text: segment.text,
-                face: segment.face,
-                size,
-                color: segment.color,
-            }));
-            at += segment.width;
+        for (x, baseline, segments) in lines {
+            let mut at = x;
+            for segment in segments {
+                page.items.push(Item::Text(Placed {
+                    x: at,
+                    baseline,
+                    width: segment.width,
+                    text: segment.text,
+                    face: segment.face,
+                    size,
+                    color: segment.color,
+                }));
+                at += segment.width;
+            }
         }
         Ok(())
     }
@@ -1016,6 +1146,8 @@ fn wrap(
     size: f64,
     max_width: f64,
 ) -> Result<Vec<Vec<Segment>>, TooWide> {
+    // Advances summed one by one can exceed a width they fill exactly.
+    let limit = max_width + FIT_TOLERANCE;
     let mut lines = Vec::new();
     let mut line = Line::default();
     let mut space: Option<Run> = None;
@@ -1044,7 +1176,7 @@ fn wrap(
                     .as_ref()
                     .map_or(0.0, |run| fonts.width(run.face, &run.text, size));
 
-                if !line.pieces.is_empty() && line.width + space_width + width <= max_width {
+                if !line.pieces.is_empty() && line.width + space_width + width <= limit {
                     if let Some(run) = space.take() {
                         line.push(fonts, run, size);
                     }
@@ -1055,12 +1187,12 @@ fn wrap(
                     if !line.pieces.is_empty() {
                         finish(&mut line, &mut lines);
                     }
-                    if width <= max_width {
+                    if width <= limit {
                         for piece in pieces {
                             line.push(fonts, piece, size);
                         }
                     } else {
-                        for chunk in split_word(fonts, pieces, size, max_width)? {
+                        for chunk in split_word(fonts, pieces, size, limit)? {
                             if !line.pieces.is_empty() {
                                 finish(&mut line, &mut lines);
                             }

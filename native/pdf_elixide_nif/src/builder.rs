@@ -15,8 +15,8 @@ use crate::{
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Embedded, Face, Fonts, Item, Margins, Marker, Op, PagePlan, Refused,
-        Run, Shape, Stroke, Unordered,
+        self, embedded_key, Align, Embedded, Face, Fonts, Item, Margins, Marker, Op, PagePlan,
+        Refused, Run, Shape, Stroke, Unordered,
     },
     paths::PathOpNif,
 };
@@ -54,6 +54,7 @@ pub enum OpNif {
     Space(f64),
     Rule(f64),
     TextAt(TextAtNif),
+    TextInRect(TextInRectNif),
     Path(ShapeNif),
 }
 
@@ -87,6 +88,35 @@ pub struct TextAtNif {
     font_size: f64,
     x: f64,
     y: f64,
+}
+
+#[derive(NifMap)]
+pub struct TextInRectNif {
+    runs: Vec<RunNif>,
+    font: FontNif,
+    font_size: f64,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    align: AlignNif,
+}
+
+#[derive(NifUnitEnum, Clone, Copy)]
+pub enum AlignNif {
+    Left,
+    Center,
+    Right,
+}
+
+impl From<AlignNif> for Align {
+    fn from(align: AlignNif) -> Self {
+        match align {
+            AlignNif::Left => Align::Left,
+            AlignNif::Center => Align::Center,
+            AlignNif::Right => Align::Right,
+        }
+    }
 }
 
 #[derive(NifMap)]
@@ -385,6 +415,11 @@ fn auto_family(ops: &[OpNif]) -> Family {
                 font: FontNif::Auto,
                 runs,
                 ..
+            })
+            | OpNif::TextInRect(TextInRectNif {
+                font: FontNif::Auto,
+                runs,
+                ..
             }) => Some(vec![runs]),
             OpNif::List(ListNif {
                 font: FontNif::Auto,
@@ -444,6 +479,12 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
                 Ok(Op::Empty)
             }
             OpNif::List(ListNif { items, .. }) if items.is_empty() => Ok(Op::Empty),
+            OpNif::TextAt(TextAtNif { runs, .. })
+            | OpNif::TextInRect(TextInRectNif { runs, .. })
+                if flow::draws_nothing(runs.iter().map(|run| run.text.as_str())) =>
+            {
+                Ok(Op::Blank)
+            }
             OpNif::Paragraph(paragraph) => Ok(Op::Paragraph {
                 face: faces.face(index, family_of(paragraph.font, auto), Style::Regular)?,
                 runs: runs(index, paragraph.runs, paragraph.font, auto, faces)?,
@@ -476,6 +517,16 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
                 x: text.x,
                 y: text.y,
             }),
+            OpNif::TextInRect(text) => Ok(Op::TextInRect {
+                face: faces.face(index, family_of(text.font, auto), Style::Regular)?,
+                runs: runs(index, text.runs, text.font, auto, faces)?,
+                size: text.font_size,
+                x: text.x,
+                y: text.y,
+                width: text.width,
+                height: text.height,
+                align: text.align.into(),
+            }),
             OpNif::Path(shape) => Ok(Op::Path(shape.into())),
         })
         .collect()
@@ -502,9 +553,32 @@ fn refused(refusal: Refused) -> rustler::Error {
             cluster,
             width,
             room,
+            boxed: false,
         } => format!(
             "op {op} starting on page {page}: {cluster:?} is {width} points wide, wider than \
              the {room}-point line; reduce the font size or the left and right margins"
+        ),
+        Refused::ClusterTooWide {
+            op,
+            page,
+            cluster,
+            width,
+            room,
+            boxed: true,
+        } => format!(
+            "op {op} on page {page}: {cluster:?} is {width} points wide, wider than the \
+             {room}-point box; reduce the font size or widen the box"
+        ),
+        Refused::Overflow {
+            op,
+            page,
+            lines,
+            needed,
+            room,
+        } => format!(
+            "op {op} on page {page}: the text takes {lines} lines, {needed} points, more than \
+             the {room}-point box holds; enlarge the box, reduce the font size or the line \
+             height, or shorten the text"
         ),
         Refused::Imprecise { op, page, size } => format!(
             "op {op} on page {page}: the page is too large to place {size}-point text \

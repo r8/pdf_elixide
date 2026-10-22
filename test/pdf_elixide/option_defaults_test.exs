@@ -352,6 +352,14 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Builder.__option_defaults__(:heading) == %{font: nil, font_size: nil}
     end
 
+    test "Builder.text_in_rect/4" do
+      assert Builder.__option_defaults__(:text_in_rect) == %{
+               font: nil,
+               font_size: nil,
+               align: :left
+             }
+    end
+
     test "Builder.numbered_list/3" do
       assert Builder.__option_defaults__(:numbered_list) == %{
                font: nil,

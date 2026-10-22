@@ -18,7 +18,7 @@ defmodule PdfElixide.Builder do
   ## Layout
 
   Paragraphs, headings and lists wrap within the margins and start new pages
-  as needed. `text_at/4` places text outside that flow. See
+  as needed. `text_at/4` and `text_in_rect/4` place text outside that flow. See
   [Flowing text](guides/building-documents.md#flowing-text) for line spacing,
   page breaks and heading placement.
 
@@ -257,6 +257,10 @@ defmodule PdfElixide.Builder do
   # their rounding could merge neighboring lines or runs.
   @precision_steps 131_072
 
+  # A line box computed from a fractional size can exceed a box it fits
+  # exactly by a rounding step; the layout allows this much.
+  @fit_tolerance 1.0e-6
+
   @typedoc """
   Options accepted by `text_at/4`: `:font` and `:font_size`, as for
   `paragraph/3`.
@@ -264,6 +268,25 @@ defmodule PdfElixide.Builder do
   @type text_at_opts :: [font: font() | nil, font_size: number() | nil]
 
   @text_at_opts_keys [:font, :font_size]
+
+  @typedoc """
+  Options accepted by `text_in_rect/4`.
+
+    * `:font`, `:font_size` — as for `paragraph/3`.
+    * `:align` — `:left`, `:center` or `:right`: where each line sits between
+      the box's left and right edges. Defaults to `:left`.
+
+  A size whose line box is taller than the box raises `ArgumentError`.
+  """
+  @type text_in_rect_opts :: [
+          font: font() | nil,
+          font_size: number() | nil,
+          align: :left | :center | :right
+        ]
+
+  @text_in_rect_opts_keys [:font, :font_size, :align]
+
+  @aligns [:left, :center, :right]
 
   @typedoc """
   Options accepted by `rect/3`, `circle/4`, `ellipse/4`, `polygon/3` and
@@ -529,6 +552,53 @@ defmodule PdfElixide.Builder do
   end
 
   @doc """
+  Draws text wrapped within `rect` on the current page.
+
+  `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
+  bottom-left corner, as for `rect/3`; reversed corners are normalized.
+  `text` is a `t:text/0`, placed from the box's top edge outside the flow.
+  If no page has started yet, the first one starts here.
+
+  See [Text in a box](guides/building-documents.md#text-in-a-box) for layout
+  and overflow behavior, and `t:text_in_rect_opts/0` for the options.
+
+      alias PdfElixide.Geometry.Rect
+
+      PdfElixide.Builder.text_in_rect(
+        builder,
+        %Rect{x: 340.0, y: 600.0, width: 200.0, height: 60.0},
+        ["Total ", {"12%", bold: true}],
+        align: :right
+      )
+  """
+  @spec text_in_rect(t(), Rect.t(), text(), text_in_rect_opts()) :: t()
+  def text_in_rect(%__MODULE__{} = builder, %Rect{} = rect, text, opts \\ [])
+      when (is_binary(text) or is_list(text)) and is_list(opts) do
+    %Rect{x: x, y: y, width: width, height: height} = rect |> rect!() |> normalize_rect()
+    width = LayoutOptions.positive!("rect", width)
+    height = LayoutOptions.positive!("rect", height)
+    runs = runs!(text)
+    %{font: font, font_size: font_size, align: align} = build_text_in_rect_options(opts)
+    font_size = font_size || builder.font_size
+    validate_line_fits_box!(builder, font_size, height)
+
+    op =
+      {:text_in_rect,
+       %{
+         runs: runs,
+         font: font || builder.font,
+         font_size: font_size,
+         x: x,
+         y: y,
+         width: width,
+         height: height,
+         align: align
+       }}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
   Draws a rectangle on the current page.
 
   `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
@@ -548,9 +618,7 @@ defmodule PdfElixide.Builder do
   """
   @spec rect(t(), Rect.t(), shape_opts()) :: t()
   def rect(%__MODULE__{} = builder, %Rect{} = rect, opts \\ []) when is_list(opts) do
-    %Rect{x: x, y: y, width: width, height: height} = rect!(rect)
-    {x, width} = if width < 0, do: {x + width, -width}, else: {x, width}
-    {y, height} = if height < 0, do: {y + height, -height}, else: {y, height}
+    %Rect{x: x, y: y, width: width, height: height} = rect |> rect!() |> normalize_rect()
 
     shape(builder, [{:rectangle, x, y, width, height}], build_shape_options(opts))
   end
@@ -850,6 +918,12 @@ defmodule PdfElixide.Builder do
     raise ArgumentError, "invalid rect, expected numbers in every field: #{inspect(rect)}"
   end
 
+  defp normalize_rect(%Rect{x: x, y: y, width: width, height: height} = rect) do
+    {x, width} = if width < 0, do: {x + width, -width}, else: {x, width}
+    {y, height} = if height < 0, do: {y + height, -height}, else: {y, height}
+    %{rect | x: x, y: y, width: width, height: height}
+  end
+
   @doc """
   Lays out the description and returns the PDF as a binary.
 
@@ -956,8 +1030,16 @@ defmodule PdfElixide.Builder do
   defp native_op(op, acc), do: {op, acc}
 
   @doc false
-  @spec __option_defaults__(:new | :paragraph | :heading | :shape | :line | :numbered_list | :run) ::
-          map()
+  @spec __option_defaults__(
+          :new
+          | :paragraph
+          | :heading
+          | :shape
+          | :line
+          | :numbered_list
+          | :run
+          | :text_in_rect
+        ) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
   def __option_defaults__(:heading), do: build_heading_options([])
@@ -965,6 +1047,7 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:line), do: build_line_options([])
   def __option_defaults__(:numbered_list), do: build_numbered_list_options([])
   def __option_defaults__(:run), do: build_run_options([])
+  def __option_defaults__(:text_in_rect), do: build_text_in_rect_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -996,6 +1079,15 @@ defmodule PdfElixide.Builder do
       style: list_style!(Keyword.get(opts, :style, :decimal)),
       start: start!(Keyword.get(opts, :start, 1))
     })
+  end
+
+  defp build_text_in_rect_options(opts) do
+    opts = Keyword.validate!(opts, @text_in_rect_opts_keys)
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.put(:align, align!(Keyword.get(opts, :align, :left)))
   end
 
   defp build_run_options(opts) do
@@ -1105,6 +1197,12 @@ defmodule PdfElixide.Builder do
           "invalid :style, expected one of #{inspect(@list_styles)}: #{inspect(style)}"
   end
 
+  defp align!(align) when align in @aligns, do: align
+
+  defp align!(align) do
+    raise ArgumentError, "invalid :align, expected one of #{inspect(@aligns)}: #{inspect(align)}"
+  end
+
   defp start!(start) when is_integer(start) and start >= 1, do: start
 
   defp start!(start) do
@@ -1201,11 +1299,11 @@ defmodule PdfElixide.Builder do
     if Enum.any?(runs, &String.contains?(&1.text, "\n")) do
       raise ArgumentError,
             "invalid text, text_at/4 draws one line, so it cannot contain \"\\n\"; " <>
-              "use paragraph/3 for text that breaks"
+              "use paragraph/3 or text_in_rect/4 for text that breaks"
     end
   end
 
-  # Spelled as the layout spells it, so both refuse the same text.
+  # Keep these fit and precision checks consistent with the native layout.
   defp validate_precise!(builder, font_size) do
     {width, height} = builder.current_page_size
 
@@ -1216,9 +1314,8 @@ defmodule PdfElixide.Builder do
     end
   end
 
-  # Spelled as the layout spells them, so both refuse the same lines.
   defp validate_line_fits!(builder, font_size) do
-    {width, height} = builder.current_page_size
+    {_width, height} = builder.current_page_size
     line = font_size * builder.line_height
     room = height - builder.margin_top - builder.margin_bottom
 
@@ -1228,6 +1325,26 @@ defmodule PdfElixide.Builder do
               "does not fit the #{room}-point content height; reduce the font size, " <>
               "the line height or the margins"
     end
+
+    validate_line_precise!(builder, font_size)
+  end
+
+  defp validate_line_fits_box!(builder, font_size, room) do
+    line = font_size * builder.line_height
+
+    if line > room + @fit_tolerance do
+      raise ArgumentError,
+            "invalid :font_size, a line #{line} points tall (font size × line height) " <>
+              "does not fit the #{room}-point box; reduce the font size or the line " <>
+              "height, or enlarge the box"
+    end
+
+    validate_line_precise!(builder, font_size)
+  end
+
+  defp validate_line_precise!(builder, font_size) do
+    {width, height} = builder.current_page_size
+    line = font_size * builder.line_height
 
     if max(width, height) > min(font_size, line) * @precision_steps do
       raise ArgumentError,

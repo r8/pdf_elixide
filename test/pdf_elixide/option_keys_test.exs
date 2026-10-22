@@ -439,6 +439,16 @@ defmodule PdfElixide.OptionKeysTest do
       )
 
       accepts_each!(
+        [font: :times, font_size: 20, align: :center],
+        &Builder.text_in_rect(
+          Builder.new(),
+          %PdfElixide.Geometry.Rect{x: 72, y: 72, width: 100, height: 100},
+          "T",
+          &1
+        )
+      )
+
+      accepts_each!(
         [font: :courier, font_size: 10],
         &Builder.bullet_list(Builder.new(), ["a"], &1)
       )
