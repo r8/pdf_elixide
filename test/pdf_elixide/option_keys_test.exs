@@ -449,6 +449,31 @@ defmodule PdfElixide.OptionKeysTest do
       )
 
       accepts_each!(
+        [
+          font: :times,
+          font_size: 20,
+          column_widths: [{:weight, 1}],
+          align: [:right],
+          header_rows: 1,
+          header_fill: %PdfElixide.Color.RGB{r: 0.9, g: 0.9, b: 0.9},
+          padding: 2,
+          stroke_color: %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0},
+          stroke_width: 1
+        ],
+        &Builder.table(Builder.new(), [["T"]], &1)
+      )
+
+      accepts_each!(
+        [
+          colspan: 1,
+          rowspan: 1,
+          align: :center,
+          fill_color: %PdfElixide.Color.RGB{r: 0.9, g: 0.9, b: 0.9}
+        ],
+        &Builder.table(Builder.new(), [[Builder.cell("T", &1)]])
+      )
+
+      accepts_each!(
         [font: :courier, font_size: 10],
         &Builder.bullet_list(Builder.new(), ["a"], &1)
       )
@@ -662,6 +687,16 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.paragraph(Builder.new(), [{"Text", opts}]) end,
         fn opts -> Builder.heading(Builder.new(), 1, "Text", opts) end,
         fn opts -> Builder.text_at(Builder.new(), {72, 72}, "Text", opts) end,
+        fn opts ->
+          Builder.text_in_rect(
+            Builder.new(),
+            %PdfElixide.Geometry.Rect{x: 72, y: 72, width: 100, height: 100},
+            "Text",
+            opts
+          )
+        end,
+        fn opts -> Builder.table(Builder.new(), [["Text"]], opts) end,
+        fn opts -> Builder.cell("Text", opts) end,
         fn opts -> Builder.bullet_list(Builder.new(), ["Text"], opts) end,
         fn opts -> Builder.numbered_list(Builder.new(), ["Text"], opts) end,
         fn opts -> Builder.FontFamily.new([regular: "a"] ++ opts) end,

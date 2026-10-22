@@ -8,6 +8,10 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::base14::Base14;
 
+mod table;
+
+pub use table::{Cell, Table, Width};
+
 // A fit test on accumulated f64 positions must not lose a line that fits
 // exactly, so a box may cross the bottom margin, a line its width, and ink
 // the page edge, by this much.
@@ -187,6 +191,7 @@ pub enum Op {
     },
     // A path drawn as given, outside the flow.
     Path(Shape),
+    Table(Table),
 }
 
 #[derive(Clone, Copy)]
@@ -309,7 +314,26 @@ pub enum Refused {
         cluster: String,
         width: f64,
         room: f64,
-        boxed: bool,
+        within: Within,
+    },
+    // Rows that cannot be split, with the header rows repeated above them,
+    // taller than a page's content height.
+    TableTooTall {
+        op: usize,
+        page: usize,
+        rows: (usize, usize),
+        needed: f64,
+        room: f64,
+    },
+    ColumnsTooWide {
+        op: usize,
+        page: usize,
+        needed: f64,
+        room: f64,
+    },
+    NoRoomForWeights {
+        op: usize,
+        page: usize,
     },
     Overflow {
         op: usize,
@@ -345,6 +369,13 @@ pub enum Refused {
         page: usize,
         flowing: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+pub enum Within {
+    Line,
+    Box,
+    Cell { row: usize, column: usize },
 }
 
 // Text is drawn character by character in logical order, with no bidi
@@ -455,6 +486,7 @@ pub fn lay_out(
                 layout.text_in_rect(index, runs, *face, *size, [*x, *y, *width, *height], *align)?
             }
             Op::Path(shape) => layout.path(shape),
+            Op::Table(table) => layout.table(index, table)?,
         }
     }
 
@@ -644,7 +676,7 @@ impl Layout<'_> {
                 cluster,
                 width: cluster_width,
                 room: width,
-                boxed: false,
+                within: Within::Line,
             }
         })
     }
@@ -699,6 +731,7 @@ impl Layout<'_> {
                     return total + gap + size * self.line_height;
                 }
                 Op::Rule { size } => return total + gap + size,
+                Op::Table(table) => return total + gap + self.table_lead(table),
                 Op::Page { .. } => return total,
                 Op::Blank | Op::TextAt { .. } | Op::TextInRect { .. } | Op::Path(_) => {}
             }
@@ -791,7 +824,7 @@ impl Layout<'_> {
             .next()
             .unwrap_or_default();
 
-        self.place_positioned(op, vec![(x, y, segments)], size, [x, y, x, y])
+        self.place_positioned(op, vec![(x, y, segments)], size, [x, y, x, y], false)
     }
 
     fn text_in_rect(
@@ -816,7 +849,7 @@ impl Layout<'_> {
                 cluster,
                 width: cluster_width,
                 room: width,
-                boxed: true,
+                within: Within::Box,
             }
         })?;
 
@@ -832,29 +865,8 @@ impl Layout<'_> {
         }
 
         let above_baseline = self.above_baseline(face, size, line);
-        let mut top = y + height;
-        let mut placed = Vec::with_capacity(lines.len());
-        for segments in lines {
-            let advance: f64 = segments.iter().map(|segment| segment.width).sum();
-            let left = match align {
-                Align::Left => x,
-                // Halved separately: in a very wide box, `width - advance`
-                // rounds the advance away.
-                Align::Center => x + width / 2.0 - advance / 2.0,
-                Align::Right => x + width - advance,
-            };
-            placed.push((left, top - above_baseline, segments));
-            top -= line;
-        }
-
-        // Only what is drawn must be on the page, not the box itself.
-        let nothing = [
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
-        ];
-        self.place_positioned(op, placed, size, nothing)
+        let placed = boxed_lines(lines, [x, y + height, width], align, above_baseline, line);
+        self.place_positioned(op, placed, size, NO_EXTENT, false)
     }
 
     // Neither a line's box nor any glyph's ink, which can overhang its
@@ -865,6 +877,7 @@ impl Layout<'_> {
         lines: Vec<PositionedLine>,
         size: f64,
         mut extent: [f64; 4],
+        flowing: bool,
     ) -> Result<(), Refused> {
         for (x, baseline, segments) in &lines {
             let mut pen = *x;
@@ -889,7 +902,7 @@ impl Layout<'_> {
             return Err(Refused::OffPage {
                 op,
                 page: self.pages.len() - 1,
-                flowing: false,
+                flowing,
             });
         }
 
@@ -1055,11 +1068,44 @@ impl Layout<'_> {
     }
 }
 
+#[derive(Clone)]
 struct Segment {
     text: String,
     face: usize,
     color: Option<Rgb>,
     width: f64,
+}
+
+// An extent that holds nothing yet, so only what is drawn is measured.
+const NO_EXTENT: [f64; 4] = [
+    f64::INFINITY,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NEG_INFINITY,
+];
+
+fn boxed_lines(
+    lines: Vec<Vec<Segment>>,
+    [x, top, width]: [f64; 3],
+    align: Align,
+    above_baseline: f64,
+    line: f64,
+) -> Vec<PositionedLine> {
+    let mut top = top;
+    let mut placed = Vec::with_capacity(lines.len());
+    for segments in lines {
+        let advance: f64 = segments.iter().map(|segment| segment.width).sum();
+        let left = match align {
+            Align::Left => x,
+            // Halved separately: in a very wide box, `width - advance`
+            // rounds the advance away.
+            Align::Center => x + width / 2.0 - advance / 2.0,
+            Align::Right => x + width - advance,
+        };
+        placed.push((left, top - above_baseline, segments));
+        top -= line;
+    }
+    placed
 }
 
 enum Token {

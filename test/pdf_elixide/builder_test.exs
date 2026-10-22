@@ -1108,6 +1108,338 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "table/3" do
+    @fill %RGB{r: 0.75, g: 0.75, b: 0.75}
+
+    defp tabled(rows, opts \\ []), do: Builder.new() |> Builder.table(rows, opts) |> written()
+
+    defp grid(doc, page \\ 0) do
+      for path <- Document.paths!(doc, page), path.stroke_color != nil, do: path.bbox
+    end
+
+    defp fills(doc, page) do
+      for path <- Document.paths!(doc, page), path.fill_color != nil, do: path.bbox
+    end
+
+    defp page_lines(doc, page) do
+      doc |> chars_by_line(page) |> Enum.map(&Enum.map_join(&1, fn char -> char.text end))
+    end
+
+    defp page_count(doc), do: Document.page_count!(doc)
+
+    defp body_rows(count), do: for(row <- 1..count, do: ["row #{row}"])
+
+    test "lays rows out from the top margin in equal columns across the content width" do
+      doc = tabled([["a", "b"], ["c", "d"]])
+
+      assert grid(doc) == [
+               %Rect{x: 72.0, y: 694.0, width: 234.0, height: 26.0},
+               %Rect{x: 306.0, y: 694.0, width: 234.0, height: 26.0},
+               %Rect{x: 72.0, y: 668.0, width: 234.0, height: 26.0},
+               %Rect{x: 306.0, y: 668.0, width: 234.0, height: 26.0}
+             ]
+
+      [a | _] = Document.chars!(doc, 0)
+      assert_in_delta a.bbox.x, 76, 0.001
+      assert baselines(doc, 0) == Enum.map([716, 690], &Float.round(baseline(&1, 12), 3))
+    end
+
+    test "fixed columns take their points and weighted ones share the rest" do
+      doc = tabled([["a", "b", "c"]], column_widths: [100, {:weight, 1}, {:weight, 3}])
+
+      assert Enum.map(grid(doc), & &1.width) == [100.0, 92.0, 276.0]
+    end
+
+    test "an :auto column is as wide as its widest line, padding included" do
+      doc = tabled([["Quantity", "x"], ["Qty\nItems in stock", "y"]], column_widths: [:auto, 50])
+      line = doc |> chars_by_line(0) |> List.last()
+      [auto, fixed | _] = grid(doc)
+
+      assert Enum.map_join(line, & &1.text) == "Items in stock"
+      assert_in_delta auto.width, right_edge(List.last(line)) - hd(line).bbox.x + 8, 0.01
+      assert fixed.width == 50.0
+    end
+
+    test ":auto columns too wide for the page shrink to fit it" do
+      long = String.duplicate("word ", 60)
+      doc = tabled([[long, long]], column_widths: [:auto, :auto])
+      [first, second] = grid(doc)
+
+      assert_in_delta first.width + second.width, 468, 0.001
+      assert_in_delta first.width, second.width, 0.001
+    end
+
+    test "aligns each column, and a cell's own alignment overrides it" do
+      doc =
+        tabled([["left", "right"], [Builder.cell("centered", align: :center), "right"]],
+          align: [:left, :right]
+        )
+
+      [[left, right], [centered, right2]] =
+        doc
+        |> chars_by_line(0)
+        |> Enum.map(fn chars -> Enum.chunk_by(chars, &(&1.bbox.x < 306)) end)
+
+      assert_in_delta hd(left).bbox.x, 76, 0.001
+      assert_in_delta right_edge(List.last(right)), 536, 0.001
+      assert_in_delta right_edge(List.last(right2)), 536, 0.001
+      assert_in_delta hd(centered).bbox.x - 76, 302 - right_edge(List.last(centered)), 0.001
+    end
+
+    test "header rows are bold, filled, and repeated on every page the table reaches" do
+      doc = tabled([["Header"] | body_rows(40)], header_rows: 1, header_fill: @fill)
+
+      assert page_count(doc) == 2
+
+      for page <- 0..1 do
+        [first | _] = page_lines(doc, page)
+        assert first == "Header"
+        assert fonts_by_text(doc)["H"] == "Helvetica-Bold"
+        assert [%Rect{y: 694.0, height: 26.0}] = fills(doc, page)
+      end
+
+      rows = for page <- 0..1, line <- tl(page_lines(doc, page)), do: line
+      assert rows == Enum.map(1..40, &"row #{&1}")
+    end
+
+    test "fills are painted first and the grid last" do
+      body =
+        Builder.new() |> Builder.table([["a"]], header_rows: 1, header_fill: @fill) |> content()
+
+      [fill, text, grid] =
+        Enum.map(["re\nf\n", "BT\n", "re\nS\n"], &(:binary.match(body, &1) |> elem(0)))
+
+      assert fill < text and text < grid
+    end
+
+    test "stroke_color: nil draws no grid" do
+      assert grid(tabled([["a"]], stroke_color: nil)) == []
+    end
+
+    test "a row taller than the rest of the page continues on the next with no line lost" do
+      doc = tabled([["Header"], [lines(60)]], header_rows: 1)
+      text = for page <- 0..1, line <- tl(page_lines(doc, page)), do: line
+
+      assert page_count(doc) == 2
+      assert text == String.split(lines(60), "\n")
+      assert hd(page_lines(doc, 1)) == "Header"
+
+      # The first part fills the page down to the bottom margin.
+      assert Enum.min_by(grid(doc, 0), & &1.y).y >= 72 - 0.001
+    end
+
+    test "rows with no text break the page like any other" do
+      doc = tabled(List.duplicate([""], 40))
+
+      assert page_count(doc) == 2
+
+      for page <- 0..1, box <- grid(doc, page) do
+        assert box.y >= 72 - 0.001
+      end
+    end
+
+    test "a row that does not fit even one line moves to the next page whole" do
+      doc = tabled(body_rows(25))
+
+      assert length(page_lines(doc, 0)) == 24
+      assert page_lines(doc, 1) == ["row 25"]
+      assert [%Rect{y: 694.0}] = grid(doc, 1)
+    end
+
+    test "a heading before a table stays with the table's first row" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(lines(33))
+        |> Builder.heading(1, "Title")
+        |> Builder.table([["a"]])
+        |> written()
+
+      refute "Title" in page_lines(doc, 0)
+      assert hd(page_lines(doc, 1)) == "Title"
+    end
+
+    test "a paragraph after a table follows its space, dropped at a page break" do
+      doc = Builder.new() |> Builder.table([["a"]]) |> Builder.paragraph("after") |> written()
+      assert Enum.min(baselines(doc, 0)) == Float.round(baseline(694 - 6, 12), 3)
+
+      doc =
+        Builder.new()
+        |> Builder.table(body_rows(23), padding: 5)
+        |> Builder.paragraph("after")
+        |> written()
+
+      assert page_lines(doc, 1) == ["after"]
+      assert baselines(doc, 1) == [Float.round(baseline(720, 12), 3)]
+    end
+
+    test "an empty table adds nothing" do
+      doc = Builder.new() |> Builder.table([]) |> Builder.paragraph("text") |> written()
+
+      assert grid(doc) == []
+      assert baselines(doc, 0) == [Float.round(baseline(720, 12), 3)]
+    end
+
+    test "takes a font and a size, and counts for :auto" do
+      doc = tabled([["a"]], font: :times, font_size: 20)
+      [char] = Document.chars!(doc, 0)
+
+      assert char.font == "Times-Roman"
+      assert_in_delta char.font_size, 20, 0.001
+      assert [%Rect{height: 38.0}] = grid(doc)
+
+      [char | _] = [["Звіт"]] |> tabled() |> Document.chars!(0)
+      assert char.font =~ "DejaVuSans"
+    end
+
+    test "a character wider than its cell is refused, naming the cell" do
+      message =
+        Builder.new() |> Builder.table([["a", "W"]], column_widths: [100, 10]) |> refusal()
+
+      assert message =~ "op 0 on page 0: \"W\""
+      assert message =~ "2-point text width of the cell at row 0, column 1"
+    end
+
+    test "header rows need a bold face" do
+      family = FontFamily.new(regular: font("font_truetype.ttf"))
+      message = Builder.new() |> Builder.table([["H"]], header_rows: 1, font: family) |> refusal()
+
+      assert message =~ "no bold face"
+    end
+
+    test "header rows and a line taller than a page are refused" do
+      message = Builder.new() |> Builder.table([[lines(36)], ["a"]], header_rows: 1) |> refusal()
+
+      assert message =~
+               "needs 682 points to start row 1 below its header rows, more than " <>
+                 "the 648-point content height"
+    end
+
+    test "fixed and :auto columns that cannot fit the content width are refused" do
+      message =
+        Builder.new() |> Builder.table([["a", "Wide"]], column_widths: [460, :auto]) |> refusal()
+
+      assert message =~ "the table's columns need at least"
+      assert message =~ "more than the 468-point content width"
+    end
+
+    test "weighted columns left no room for text are refused" do
+      for widths <- [[460, {:weight, 1}], [:auto, {:weight, 1}]] do
+        message =
+          Builder.new()
+          |> Builder.table([[String.duplicate("word ", 200), "a"]], column_widths: widths)
+          |> refusal()
+
+        assert message =~ "leave its weighted columns no room"
+      end
+    end
+
+    test "malformed arguments raise" do
+      for {rows, opts, message} <- [
+            {[["a", "b"], ["c"]], [], "row 1 covers 1 columns and row 0 covers 2"},
+            {[[Builder.cell("a", rowspan: 2)]], [], "spans 2 rows, past the table's last row"},
+            {[[Builder.cell("a", rowspan: 2), "b"], ["c"]], [header_rows: 1],
+             "spans from the header rows into the body"},
+            {[["a"]], [header_rows: 2], "invalid :header_rows, the table has 1 rows: 2"},
+            {[["a"]], [column_widths: [10, 10]],
+             "expected one for each of the table's 1 columns"},
+            {[["a"]], [align: [:left, :right]], "expected one for each of the table's 1 columns"},
+            {[["a", "b"]], [column_widths: [300, 300]], "fixed columns of 600.0 points exceed"},
+            {[["a"]], [column_widths: [8]], "a 8.0-point column leaves no room"},
+            {[["a"]], [column_widths: [:wide]], "expected a number, {:weight, number} or :auto"},
+            {[["a"]], [header_rows: -1], "invalid :header_rows, expected a non-negative"},
+            {[["a"]], [stroke_color: nil, stroke_width: 2], ":stroke_width has no effect"},
+            {[:a], [], "invalid row, expected a list of cells"},
+            {[[:a]], [], "invalid cell, expected a string"},
+            {[[]], [], "row 0 covers no columns"},
+            {[["a", Builder.cell("b", rowspan: 2)], []], [], "row 1 leaves column 0 empty"}
+          ] do
+        assert_raise ArgumentError, ~r/#{Regex.escape(message)}/, fn ->
+          Builder.table(Builder.new(), untyped(rows), untyped(opts))
+        end
+      end
+    end
+
+    test "a line taller than the page raises" do
+      assert_raise ArgumentError, ~r/does not fit the 648.0-point content height/, fn ->
+        Builder.table(Builder.new(), [["a"]], font_size: 500)
+      end
+    end
+  end
+
+  describe "cell/2" do
+    test "a colspan cell takes the width of the columns it covers" do
+      doc = tabled([[Builder.cell("wide", colspan: 2)], ["a", "b"]])
+
+      assert [%Rect{width: 468.0}, %Rect{width: 234.0}, %Rect{width: 234.0}] = grid(doc)
+    end
+
+    test "a rowspan cell covers its rows, and the last of them grows to hold it" do
+      doc = tabled([[Builder.cell("one\ntwo\nthree", rowspan: 2), "a"], ["b"]])
+
+      assert [
+               %Rect{x: 72.0, y: 658.0, height: 62.0},
+               %Rect{x: 306.0, y: 694.0, height: 26.0},
+               %Rect{x: 306.0, y: 658.0, height: 36.0}
+             ] = grid(doc)
+    end
+
+    test "a cell's fill overrides the header fill" do
+      red = %RGB{r: 1.0, g: 0.0, b: 0.0}
+
+      doc =
+        tabled([[Builder.cell("a", fill_color: red), "b"]], header_rows: 1, header_fill: @fill)
+
+      assert [red, @fill] ==
+               for(path <- Document.paths!(doc, 0), path.fill_color, do: path.fill_color)
+    end
+
+    test "rows a rowspan joins move to the next page together" do
+      rows = for row <- 1..23, do: ["row #{row}", "x"]
+      doc = tabled(rows ++ [[Builder.cell("joined", rowspan: 2), "a"], ["b"]])
+
+      assert length(page_lines(doc, 0)) == 23
+      assert page_lines(doc, 1) == ["joineda", "b"]
+    end
+
+    test "rows a rowspan joins that are taller than a page are refused" do
+      message =
+        Builder.new()
+        |> Builder.table([[Builder.cell(lines(40), rowspan: 2), "a"], ["b"]])
+        |> refusal()
+
+      assert message =~ "to start rows 0 to 1 below its header rows"
+    end
+
+    test "cells after a rowspan fill the columns it leaves free" do
+      doc = tabled([["a", Builder.cell("b", rowspan: 2), "c"], ["d", "e"]])
+      [_a, _b, _c, d, e] = grid(doc)
+
+      assert d.x == 72.0
+      assert e.x == 384.0
+    end
+
+    test "overlapping spans raise" do
+      rows = [["a", Builder.cell("b", rowspan: 2)], [Builder.cell("c", colspan: 2)]]
+
+      assert_raise ArgumentError, ~r/overlaps a cell spanning from an earlier row/, fn ->
+        Builder.table(Builder.new(), rows)
+      end
+    end
+
+    test "malformed options raise" do
+      for {opts, message} <- [
+            {[colspan: 0], "invalid :colspan, expected a positive integer: 0"},
+            {[rowspan: 1.5], "invalid :rowspan, expected a positive integer: 1.5"},
+            {[align: :middle], "invalid :align"},
+            {[fill_color: :red], "invalid :fill_color"}
+          ] do
+        assert_raise ArgumentError, ~r/#{Regex.escape(message)}/, fn ->
+          Builder.cell("a", untyped(opts))
+        end
+      end
+    end
+  end
+
   describe "drawing" do
     @gray %RGB{r: 0.5, g: 0.5, b: 0.5}
     @black %RGB{r: 0.0, g: 0.0, b: 0.0}

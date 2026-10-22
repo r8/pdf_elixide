@@ -360,6 +360,27 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "Builder.table/3 and cell/2" do
+      assert Builder.__option_defaults__(:table) == %{
+               font: nil,
+               font_size: nil,
+               column_widths: nil,
+               align: :left,
+               header_rows: 0,
+               header_fill: nil,
+               padding: 4.0,
+               stroke_color: %PdfElixide.Color.RGB{r: 0.0, g: 0.0, b: 0.0},
+               stroke_width: 0.5
+             }
+
+      assert Builder.__option_defaults__(:cell) == %{
+               colspan: 1,
+               rowspan: 1,
+               align: nil,
+               fill_color: nil
+             }
+    end
+
     test "Builder.numbered_list/3" do
       assert Builder.__option_defaults__(:numbered_list) == %{
                font: nil,

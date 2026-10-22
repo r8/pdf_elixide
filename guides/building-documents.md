@@ -136,6 +136,87 @@ text. Accents and italic overhangs may reach past the box, as flowing text may
 reach into the margins, but not past the edge of the page. The box itself may
 extend off the page as long as its text does not.
 
+## Tables
+
+`Builder.table/3` takes a list of rows, each a list of cells, and flows like a
+paragraph from the cursor down:
+
+```elixir
+alias PdfElixide.Color.RGB
+
+Builder.new()
+|> Builder.table(
+  [
+    ["Item", "Qty", "Notes"],
+    ["Coffee", "2", "Single origin, roasted on the week of delivery"],
+    [Builder.cell("Total", colspan: 2, align: :right), [{"2 items", bold: true}]]
+  ],
+  header_rows: 1,
+  header_fill: %RGB{r: 0.9, g: 0.9, b: 0.9},
+  column_widths: [:auto, 40, {:weight, 1}],
+  align: [:left, :right, :left]
+)
+```
+
+A cell is a text, like a paragraph's, or `Builder.cell/2` for a cell with its
+own span, alignment or background. Each cell's text wraps within its column,
+inside `:padding` points on every side, with lines as tall as a paragraph's.
+A row is as tall as its tallest cell, and a row with no text is one line tall.
+The grid is drawn around every cell unless `stroke_color: nil`.
+
+### Column widths
+
+`:column_widths` gives each column one of:
+
+- a number of points;
+- `:auto`, the width of the column's widest line, padding included. Cells
+  spanning several columns do not count toward it;
+- `{:weight, n}`, a share of the content width the other columns leave, in
+  proportion to `n`.
+
+Without `:column_widths`, the columns share the content width equally. A
+table with no weighted column is as wide as its columns, from the left
+margin. When `:auto` columns would make the table wider than the content
+width, they shrink toward the width of their widest character so that it fits.
+If they still do not fit, or the weighted columns are left no room for text,
+the table is refused when the document is built.
+
+### Spans
+
+`colspan: n` makes a cell cover `n` columns, and `rowspan: n` makes it cover
+`n` rows. A cell is placed in the first column of its row that no cell above
+still covers, so the rows below a rowspan list one cell fewer:
+
+```elixir
+Builder.table(builder, [
+  [Builder.cell("Fruit", rowspan: 2), "Apples"],
+  ["Pears"]
+])
+```
+
+With their spans, every row must cover the same columns; a ragged row, a span
+past the last row or column, or one that overlaps another raises
+`ArgumentError`. When a spanning cell is taller than the rows it covers, the
+last of those rows grows to hold it.
+
+### Across pages
+
+A table continues onto as many pages as it needs. The `:header_rows` first
+rows are set bold, so the font needs a bold face, and are repeated at the top
+of every page the table reaches. A row too tall for the rest of a page is
+split between lines and continues below the header on the next page; each
+part is drawn as a complete row. A row is moved whole when not even one of its
+lines fits. Rows joined by a rowspan stay together and move to the next page
+as one.
+
+The header rows with the first line of any row, or with rows joined by a
+rowspan, must fit within the page's content area; a table needing more is
+refused when the document is built.
+
+A heading before a table stays on the page of the table's header and its
+first line. As with a paragraph, the table is followed by space half its font
+size tall, which is dropped when a page break comes first.
+
 ## Drawing shapes
 
 The builder draws rectangles, lines, circles, ellipses, polygons, arcs, Bézier
@@ -264,14 +345,18 @@ The builder refuses content it cannot draw faithfully:
   DejaVu Sans lacks, such as Chinese or Japanese. Spaces, tabs and other
   whitespace are drawn as a space, so the font needs a space glyph.
 - **A style the family has no face for**, such as italic text in a family
-  without `:italic`. Every heading needs a bold face. Add the face, or drop
-  the style from the text.
+  without `:italic`. Every heading and table header row needs a bold face.
+  Add the face, or drop the style from the text.
 - **Right-to-left text**, such as Hebrew or Arabic, and **scripts that need
   shaping**, whose letters join, reorder or combine, such as Devanagari,
   Tibetan and Khmer. These are unsupported in every font.
-- **A character wider than the line or box**, which no amount of wrapping can
-  fit. Reduce the text size or the side margins, or widen the box.
+- **A character wider than the line, box or table cell**, which no amount of
+  wrapping can fit. Reduce the text size or the side margins, or widen the box
+  or the column.
 - **Text taller than its box**; see [Text in a box](#text-in-a-box).
+- **Table rows that cannot be split and do not fit on a page**, and **columns
+  that do not fit the page**; see [Across pages](#across-pages) and
+  [Column widths](#column-widths).
 - **A glyph that would extend past the edge of the page**, such as an
   italic `j` with no left margin or an accented capital with no top margin.
   Widen the margins, or for flowing text increase the line height; move

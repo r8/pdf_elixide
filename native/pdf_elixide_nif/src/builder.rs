@@ -15,8 +15,8 @@ use crate::{
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Align, Embedded, Face, Fonts, Item, Margins, Marker, Op, PagePlan,
-        Refused, Run, Shape, Stroke, Unordered,
+        self, embedded_key, Align, Cell, Embedded, Face, Fonts, Item, Margins, Marker, Op,
+        PagePlan, Refused, Run, Shape, Stroke, Table, Unordered, Width, Within,
     },
     paths::PathOpNif,
 };
@@ -56,6 +56,47 @@ pub enum OpNif {
     TextAt(TextAtNif),
     TextInRect(TextInRectNif),
     Path(ShapeNif),
+    Table(TableNif),
+}
+
+#[derive(NifMap)]
+pub struct TableNif {
+    rows: Vec<Vec<CellNif>>,
+    font: FontNif,
+    font_size: f64,
+    column_widths: Vec<WidthNif>,
+    header_rows: usize,
+    header_fill: Option<RgbNif>,
+    padding: f64,
+    stroke_color: Option<RgbNif>,
+    stroke_width: f32,
+}
+
+#[derive(NifMap)]
+pub struct CellNif {
+    runs: Vec<RunNif>,
+    column: usize,
+    colspan: usize,
+    rowspan: usize,
+    align: AlignNif,
+    fill_color: Option<RgbNif>,
+}
+
+#[derive(NifTaggedEnum, Clone, Copy)]
+pub enum WidthNif {
+    Points(f64),
+    Weight(f64),
+    Auto,
+}
+
+impl From<WidthNif> for Width {
+    fn from(width: WidthNif) -> Self {
+        match width {
+            WidthNif::Points(points) => Width::Points(points),
+            WidthNif::Weight(weight) => Width::Weight(weight),
+            WidthNif::Auto => Width::Auto,
+        }
+    }
 }
 
 #[derive(NifMap)]
@@ -426,6 +467,11 @@ fn auto_family(ops: &[OpNif]) -> Family {
                 items,
                 ..
             }) => Some(items.iter().collect()),
+            OpNif::Table(TableNif {
+                font: FontNif::Auto,
+                rows,
+                ..
+            }) => Some(rows.iter().flatten().map(|cell| &cell.runs).collect()),
             _ => None,
         })
         .flatten()
@@ -479,6 +525,7 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
                 Ok(Op::Empty)
             }
             OpNif::List(ListNif { items, .. }) if items.is_empty() => Ok(Op::Empty),
+            OpNif::Table(TableNif { rows, .. }) if rows.is_empty() => Ok(Op::Empty),
             OpNif::TextAt(TextAtNif { runs, .. })
             | OpNif::TextInRect(TextInRectNif { runs, .. })
                 if flow::draws_nothing(runs.iter().map(|run| run.text.as_str())) =>
@@ -528,8 +575,52 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
                 align: text.align.into(),
             }),
             OpNif::Path(shape) => Ok(Op::Path(shape.into())),
+            OpNif::Table(table) => table_op(index, table, auto, faces),
         })
         .collect()
+}
+
+fn table_op(
+    index: usize,
+    table: TableNif,
+    auto: Family,
+    faces: &mut Faces<'_, '_>,
+) -> NifResult<Op> {
+    let font = table.font;
+    let rows = table
+        .rows
+        .into_iter()
+        .map(|cells| {
+            cells
+                .into_iter()
+                .map(|cell| {
+                    Ok(Cell {
+                        runs: runs(index, cell.runs, font, auto, faces)?,
+                        column: cell.column,
+                        colspan: cell.colspan,
+                        rowspan: cell.rowspan,
+                        align: cell.align.into(),
+                        fill: cell.fill_color.map(Into::into),
+                    })
+                })
+                .collect::<NifResult<Vec<_>>>()
+        })
+        .collect::<NifResult<Vec<_>>>()?;
+
+    Ok(Op::Table(Table {
+        face: faces.face(index, family_of(font, auto), Style::Regular)?,
+        rows,
+        size: table.font_size,
+        widths: table.column_widths.into_iter().map(Into::into).collect(),
+        header_rows: table.header_rows,
+        header_fill: table.header_fill.map(Into::into),
+        padding: table.padding,
+        stroke: table.stroke_color.map(|color| Stroke {
+            color: color.into(),
+            width: table.stroke_width,
+            dash: None,
+        }),
+    }))
 }
 
 fn refused(refusal: Refused) -> rustler::Error {
@@ -553,7 +644,7 @@ fn refused(refusal: Refused) -> rustler::Error {
             cluster,
             width,
             room,
-            boxed: false,
+            within: Within::Line,
         } => format!(
             "op {op} starting on page {page}: {cluster:?} is {width} points wide, wider than \
              the {room}-point line; reduce the font size or the left and right margins"
@@ -564,10 +655,56 @@ fn refused(refusal: Refused) -> rustler::Error {
             cluster,
             width,
             room,
-            boxed: true,
+            within: Within::Box,
         } => format!(
             "op {op} on page {page}: {cluster:?} is {width} points wide, wider than the \
              {room}-point box; reduce the font size or widen the box"
+        ),
+        Refused::ClusterTooWide {
+            op,
+            page,
+            cluster,
+            width,
+            room,
+            within: Within::Cell { row, column },
+        } => format!(
+            "op {op} on page {page}: {cluster:?} is {width} points wide, wider than the \
+             {room}-point text width of the cell at row {row}, column {column}; reduce the \
+             font size or the padding, or widen the column"
+        ),
+        Refused::TableTooTall {
+            op,
+            page,
+            rows: (first, last),
+            needed,
+            room,
+        } => {
+            let rows = if first == last {
+                format!("row {first}")
+            } else {
+                format!("rows {first} to {last}")
+            };
+            format!(
+                "op {op} on page {page}: the table needs {needed} points to start {rows} \
+                 below its header rows, more than the {room}-point content height; a row \
+                 breaks across pages only between lines, and rows a cell spans stay \
+                 together, so reduce the font size, the padding or the header rows, or \
+                 shorten the text in those rows"
+            )
+        }
+        Refused::ColumnsTooWide {
+            op,
+            page,
+            needed,
+            room,
+        } => format!(
+            "op {op} on page {page}: the table's columns need at least {needed} points, more \
+             than the {room}-point content width; narrow the fixed columns, reduce the font \
+             size or the padding, or widen the margins"
+        ),
+        Refused::NoRoomForWeights { op, page } => format!(
+            "op {op} on page {page}: the table's fixed and :auto columns leave its weighted \
+             columns no room for text; narrow the fixed columns or give the :auto ones points"
         ),
         Refused::Overflow {
             op,
@@ -812,7 +949,10 @@ mod tests {
     use pdf_oxide::{
         elements::{ContentElement, LineCap, LineJoin, PathContent, PathOperation},
         fonts::bundled::DEJAVU_SANS,
-        writer::{DocumentBuilder, EmbeddedFont, FontManager, PageSize, TextLayout},
+        writer::{
+            DocumentBuilder, EmbeddedFont, FontManager, PageSize, StreamingColumn,
+            StreamingTableConfig, Table, TableCell, TextLayout,
+        },
         PdfDocument,
     };
 
@@ -882,6 +1022,51 @@ mod tests {
         };
 
         assert_eq!(width, helvetica);
+    }
+
+    // Each row is 20 points, so 35 rows run from the top margin to below the
+    // bottom one but stay on the page.
+    #[test]
+    fn upstream_still_draws_a_table_past_the_bottom_margin() {
+        let rows = (0..35)
+            .map(|row| vec![TableCell::text(format!("row {row}"))])
+            .collect();
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .table(Table::new(rows))
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let chars = doc.extract_chars(0).expect("extracts");
+
+        assert_eq!(doc.page_count().expect("counts"), 1);
+        assert!(chars.iter().any(|c| c.bbox.y < 72.0));
+    }
+
+    // A row under a span still names every column.
+    #[test]
+    fn upstream_still_finishes_a_short_rowspan_group() {
+        let config = StreamingTableConfig::new()
+            .column(StreamingColumn::new("a"))
+            .column(StreamingColumn::new("b"))
+            .max_rowspan(3);
+        let mut builder = DocumentBuilder::new();
+        let mut table = builder.page(PageSize::Letter).streaming_table(config);
+        table
+            .push_row(|row| {
+                row.span_cell("spanned", 3).cell("one");
+            })
+            .expect("pushes");
+        table
+            .push_row(|row| {
+                row.cell("").cell("two");
+            })
+            .expect("pushes");
+        table.finish().done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let text = doc.extract_text(0).expect("extracts");
+
+        assert!(text.contains("spanned") && text.contains("two"));
     }
 
     #[test]

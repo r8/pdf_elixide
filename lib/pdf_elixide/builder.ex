@@ -17,10 +17,12 @@ defmodule PdfElixide.Builder do
 
   ## Layout
 
-  Paragraphs, headings and lists wrap within the margins and start new pages
-  as needed. `text_at/4` and `text_in_rect/4` place text outside that flow. See
-  [Flowing text](guides/building-documents.md#flowing-text) for line spacing,
-  page breaks and heading placement.
+  Paragraphs, headings, lists and tables wrap within the margins and start new
+  pages as needed. `text_at/4` and `text_in_rect/4` place text outside that
+  flow. See [Flowing text](guides/building-documents.md#flowing-text) for line
+  spacing, page breaks and heading placement, and
+  [Tables](guides/building-documents.md#tables) for columns, spans and header
+  rows.
 
   ## Drawing
 
@@ -287,6 +289,95 @@ defmodule PdfElixide.Builder do
   @text_in_rect_opts_keys [:font, :font_size, :align]
 
   @aligns [:left, :center, :right]
+
+  @typedoc """
+  A cell of `table/3`: a `t:text/0`, or a cell with its own options made by
+  `cell/2`.
+  """
+  @type cell :: text() | cell_spec()
+
+  @typedoc """
+  A cell with options. Make it with `cell/2` rather than constructing it.
+  """
+  @type cell_spec :: {:cell, [map()], map()}
+
+  @typedoc """
+  Options accepted by `cell/2`.
+
+    * `:colspan` — the number of columns the cell covers, a positive integer.
+      Defaults to `1`.
+    * `:rowspan` — the number of rows the cell covers, a positive integer.
+      Defaults to `1`.
+    * `:align` — `:left`, `:center` or `:right`, overriding the column's
+      alignment. Defaults to `nil`, which uses the column's.
+    * `:fill_color` — the cell's background `PdfElixide.Color.RGB`. Defaults
+      to `nil`, no background.
+  """
+  @type cell_opts :: [
+          colspan: pos_integer(),
+          rowspan: pos_integer(),
+          align: :left | :center | :right | nil,
+          fill_color: RGB.t() | nil
+        ]
+
+  @cell_opts_keys [:colspan, :rowspan, :align, :fill_color]
+
+  @typedoc """
+  The width of a column of `table/3`: a number of points, `{:weight, n}` for
+  a share of the room the other columns leave, or `:auto` for the width of the
+  column's widest line.
+  """
+  @type column_width :: number() | {:weight, number()} | :auto
+
+  @typedoc """
+  Options accepted by `table/3`.
+
+    * `:font`, `:font_size` — as for `paragraph/3`.
+    * `:column_widths` — one `t:column_width/0` for each column. Defaults to
+      `nil`, which gives every column an equal share of the content width.
+    * `:align` — `:left`, `:center` or `:right` for every column, or a list
+      with one for each column. Defaults to `:left`.
+    * `:header_rows` — how many of the first rows are header rows, set bold
+      and repeated at the top of every page the table continues onto. Defaults
+      to `0`.
+    * `:header_fill` — the header rows' background `PdfElixide.Color.RGB`.
+      Defaults to `nil`, no background.
+    * `:padding` — space in points between each cell's edges and its text,
+      at least `0`. Defaults to `4`.
+    * `:stroke_color` — the grid's `PdfElixide.Color.RGB`, or `nil` for no
+      grid. Defaults to black.
+    * `:stroke_width` — the grid's line width in points, at least `0`.
+      Defaults to `0.5`.
+
+  `:stroke_width` raises `ArgumentError` with `stroke_color: nil` unless left
+  at its default. See [Tables](guides/building-documents.md#tables) for how
+  widths are shared out and what is refused.
+  """
+  @type table_opts :: [
+          font: font() | nil,
+          font_size: number() | nil,
+          column_widths: [column_width()] | nil,
+          align: :left | :center | :right | [:left | :center | :right],
+          header_rows: non_neg_integer(),
+          header_fill: RGB.t() | nil,
+          padding: number(),
+          stroke_color: RGB.t() | nil,
+          stroke_width: number()
+        ]
+
+  @grid_width 0.5
+
+  @table_opts_keys [
+    :font,
+    :font_size,
+    :column_widths,
+    :align,
+    :header_rows,
+    :header_fill,
+    :padding,
+    :stroke_color,
+    :stroke_width
+  ]
 
   @typedoc """
   Options accepted by `rect/3`, `circle/4`, `ellipse/4`, `polygon/3` and
@@ -596,6 +687,220 @@ defmodule PdfElixide.Builder do
        }}
 
     %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Makes a table cell with its own options, for `table/3`.
+
+  `text` is a `t:text/0`. See `t:cell_opts/0` for the options.
+
+      PdfElixide.Builder.cell("Total", colspan: 2, align: :right)
+  """
+  @spec cell(text(), cell_opts()) :: cell_spec()
+  def cell(text, opts \\ []) when (is_binary(text) or is_list(text)) and is_list(opts) do
+    {:cell, runs!(text), build_cell_options(opts)}
+  end
+
+  @doc """
+  Adds a table, wrapping each cell's text within its column.
+
+  `rows` is a list of rows, each a list of `t:cell/0`.
+
+      PdfElixide.Builder.table(
+        builder,
+        [
+          ["Item", "Amount"],
+          ["Coffee", "4.50"]
+        ],
+        header_rows: 1
+      )
+
+  See [Tables](guides/building-documents.md#tables) for layout and
+  pagination, and `t:table_opts/0` for the options.
+  """
+  @spec table(t(), [[cell()]], table_opts()) :: t()
+  def table(%__MODULE__{} = builder, rows, opts \\ []) when is_list(rows) and is_list(opts) do
+    options = build_table_options(opts)
+    font_size = options.font_size || builder.font_size
+    validate_line_fits!(builder, font_size)
+
+    rows = Enum.map(rows, &table_row!/1)
+
+    if options.header_rows > length(rows) do
+      raise ArgumentError,
+            "invalid :header_rows, the table has #{length(rows)} rows: #{options.header_rows}"
+    end
+
+    {rows, columns} = tile!(rows, options.header_rows)
+    widths = table_widths!(builder, options, columns)
+    aligns = table_aligns!(options.align, columns)
+
+    rows =
+      for {cells, row} <- Enum.with_index(rows) do
+        Enum.map(cells, &resolve_cell(&1, row < options.header_rows, aligns))
+      end
+
+    op =
+      {:table,
+       options
+       |> Map.drop([:align])
+       |> Map.merge(%{
+         rows: rows,
+         font: options.font || builder.font,
+         font_size: font_size,
+         column_widths: widths
+       })}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  defp resolve_cell(cell, header?, aligns) do
+    runs = if header?, do: Enum.map(cell.runs, &%{&1 | bold: true}), else: cell.runs
+    %{cell | runs: runs, align: cell.align || Enum.at(aligns, cell.column)}
+  end
+
+  defp table_row!(cells) when is_list(cells), do: Enum.map(cells, &table_cell!/1)
+
+  defp table_row!(other) do
+    raise ArgumentError, "invalid row, expected a list of cells: #{inspect(other)}"
+  end
+
+  defp table_cell!({:cell, runs, %{colspan: _} = options}) when is_list(runs), do: {runs, options}
+
+  defp table_cell!(text) when is_binary(text) or is_list(text),
+    do: {runs!(text), build_cell_options([])}
+
+  defp table_cell!(other) do
+    raise ArgumentError,
+          "invalid cell, expected a string, a list of runs or a cell from cell/2: " <>
+            inspect(other)
+  end
+
+  # Keep occupancy by row and discard completed rows so validation never
+  # rescans earlier rows.
+  defp tile!(rows, header_rows) do
+    count = length(rows)
+
+    {rows, {_taken, columns}} =
+      rows
+      |> Enum.with_index()
+      |> Enum.map_reduce({%{}, nil}, fn {cells, row}, {taken, columns} ->
+        {own, taken} = Map.pop(taken, row, MapSet.new())
+
+        {cells, {own, taken, _next}} =
+          Enum.map_reduce(cells, {own, taken, 0}, fn {runs, options}, {own, taken, column} ->
+            column = free_column(own, column)
+            {own, taken} = span!(own, taken, row, column, options, count, header_rows)
+            cell = Map.merge(options, %{runs: runs, column: column})
+            {cell, {own, taken, column + options.colspan}}
+          end)
+
+        {cells, {taken, row_columns!(own, row, columns)}}
+      end)
+
+    {rows, columns || 0}
+  end
+
+  defp free_column(own, column) do
+    if MapSet.member?(own, column), do: free_column(own, column + 1), else: column
+  end
+
+  defp span!(own, taken, row, column, options, count, header_rows) do
+    %{colspan: colspan, rowspan: rowspan} = options
+    at = "the cell at row #{row}, column #{column}"
+
+    if row + rowspan > count do
+      raise ArgumentError,
+            "invalid rows, #{at} spans #{rowspan} rows, past the table's last row"
+    end
+
+    if row < header_rows and row + rowspan > header_rows do
+      raise ArgumentError, "invalid rows, #{at} spans from the header rows into the body"
+    end
+
+    span = MapSet.new(column..(column + colspan - 1))
+    below = if rowspan > 1, do: (row + 1)..(row + rowspan - 1), else: []
+
+    overlaps =
+      not MapSet.disjoint?(own, span) or
+        Enum.any?(below, &(not MapSet.disjoint?(Map.get(taken, &1, MapSet.new()), span)))
+
+    if overlaps do
+      raise ArgumentError, "invalid rows, #{at} overlaps a cell spanning from an earlier row"
+    end
+
+    taken =
+      Enum.reduce(below, taken, fn later, taken ->
+        Map.update(taken, later, span, &MapSet.union(&1, span))
+      end)
+
+    {MapSet.union(own, span), taken}
+  end
+
+  defp row_columns!(own, row, columns) do
+    width = MapSet.size(own)
+
+    cond do
+      width == 0 ->
+        raise ArgumentError, "invalid rows, row #{row} covers no columns"
+
+      Enum.max(own) != width - 1 ->
+        empty = Enum.find(0..width, &(not MapSet.member?(own, &1)))
+        raise ArgumentError, "invalid rows, row #{row} leaves column #{empty} empty"
+
+      columns != nil and width != columns ->
+        raise ArgumentError,
+              "invalid rows, row #{row} covers #{width} columns and row 0 covers #{columns}"
+
+      true ->
+        width
+    end
+  end
+
+  defp table_widths!(_builder, %{column_widths: nil}, columns),
+    do: List.duplicate({:weight, 1.0}, columns)
+
+  defp table_widths!(builder, %{column_widths: widths, padding: padding}, columns) do
+    if columns > 0 and length(widths) != columns do
+      raise ArgumentError,
+            "invalid :column_widths, expected one for each of the table's #{columns} " <>
+              "columns: #{inspect(widths)}"
+    end
+
+    fixed = for {:points, points} <- widths, do: points
+
+    case Enum.find(fixed, &(&1 <= 2 * padding)) do
+      nil ->
+        :ok
+
+      narrow ->
+        raise ArgumentError,
+              "invalid :column_widths, a #{narrow}-point column leaves no room for text " <>
+                "inside #{padding} points of padding on each side"
+    end
+
+    {width, _height} = builder.current_page_size
+    room = width - builder.margin_left - builder.margin_right
+
+    if Enum.sum(fixed) > room + @fit_tolerance do
+      raise ArgumentError,
+            "invalid :column_widths, fixed columns of #{Enum.sum(fixed)} points exceed the " <>
+              "#{room}-point content width"
+    end
+
+    widths
+  end
+
+  defp table_aligns!(align, columns) when is_atom(align), do: List.duplicate(align, columns)
+
+  defp table_aligns!(aligns, columns) do
+    if columns > 0 and length(aligns) != columns do
+      raise ArgumentError,
+            "invalid :align, expected one for each of the table's #{columns} columns: " <>
+              inspect(aligns)
+    end
+
+    aligns
   end
 
   @doc """
@@ -1039,6 +1344,8 @@ defmodule PdfElixide.Builder do
           | :numbered_list
           | :run
           | :text_in_rect
+          | :table
+          | :cell
         ) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
@@ -1048,6 +1355,8 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:numbered_list), do: build_numbered_list_options([])
   def __option_defaults__(:run), do: build_run_options([])
   def __option_defaults__(:text_in_rect), do: build_text_in_rect_options([])
+  def __option_defaults__(:table), do: build_table_options([])
+  def __option_defaults__(:cell), do: build_cell_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -1088,6 +1397,52 @@ defmodule PdfElixide.Builder do
     |> Keyword.take([:font, :font_size])
     |> build_paragraph_options()
     |> Map.put(:align, align!(Keyword.get(opts, :align, :left)))
+  end
+
+  defp build_table_options(opts) do
+    opts = Keyword.validate!(opts, @table_opts_keys)
+
+    stroke_color =
+      color!(:stroke_color, Keyword.get(opts, :stroke_color, %RGB{r: 0.0, g: 0.0, b: 0.0}))
+
+    stroke_width =
+      non_negative!(:stroke_width, Keyword.get(opts, :stroke_width, @grid_width))
+
+    # The grid's width would be dropped with the grid.
+    if stroke_color == nil and stroke_width != @grid_width do
+      raise ArgumentError,
+            ":stroke_width has no effect with stroke_color: nil; give one or the other"
+    end
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.merge(%{
+      stroke_color: stroke_color,
+      stroke_width: stroke_width,
+      column_widths: column_widths!(Keyword.get(opts, :column_widths)),
+      align: table_align!(Keyword.get(opts, :align, :left)),
+      header_rows: header_rows!(Keyword.get(opts, :header_rows, 0)),
+      header_fill: color!(:header_fill, Keyword.get(opts, :header_fill)),
+      padding: non_negative!(:padding, Keyword.get(opts, :padding, 4))
+    })
+  end
+
+  defp build_cell_options(opts) do
+    opts = Keyword.validate!(opts, @cell_opts_keys)
+
+    align =
+      case Keyword.get(opts, :align) do
+        nil -> nil
+        align -> align!(align)
+      end
+
+    %{
+      colspan: span_count!(:colspan, Keyword.get(opts, :colspan, 1)),
+      rowspan: span_count!(:rowspan, Keyword.get(opts, :rowspan, 1)),
+      align: align,
+      fill_color: color!(:fill_color, Keyword.get(opts, :fill_color))
+    }
   end
 
   defp build_run_options(opts) do
@@ -1207,6 +1562,44 @@ defmodule PdfElixide.Builder do
 
   defp start!(start) do
     raise ArgumentError, "invalid :start, expected a positive integer: #{inspect(start)}"
+  end
+
+  defp span_count!(_key, count) when is_integer(count) and count >= 1, do: count
+
+  defp span_count!(key, count) do
+    raise ArgumentError, "invalid #{inspect(key)}, expected a positive integer: #{inspect(count)}"
+  end
+
+  defp header_rows!(count) when is_integer(count) and count >= 0, do: count
+
+  defp header_rows!(count) do
+    raise ArgumentError,
+          "invalid :header_rows, expected a non-negative integer: #{inspect(count)}"
+  end
+
+  defp table_align!(aligns) when is_list(aligns), do: Enum.map(aligns, &align!/1)
+  defp table_align!(align), do: align!(align)
+
+  defp column_widths!(nil), do: nil
+  defp column_widths!(widths) when is_list(widths), do: Enum.map(widths, &column_width!/1)
+
+  defp column_widths!(other) do
+    raise ArgumentError,
+          "invalid :column_widths, expected a list of column widths or nil: #{inspect(other)}"
+  end
+
+  defp column_width!(:auto), do: :auto
+
+  defp column_width!(points) when is_number(points),
+    do: {:points, positive!(:column_widths, points)}
+
+  defp column_width!({:weight, weight}) when is_number(weight),
+    do: {:weight, positive!(:column_widths, weight)}
+
+  defp column_width!(other) do
+    raise ArgumentError,
+          "invalid :column_widths, expected a number, {:weight, number} or :auto: " <>
+            inspect(other)
   end
 
   defp runs!(text) when is_binary(text), do: [run!(text)]
