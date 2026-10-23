@@ -4,19 +4,20 @@ use pdf_oxide::{
     elements::{ContentElement, FontSpec, PathContent, TextContent, TextStyle},
     fonts::bundled::{DEJAVU_SANS, DEJAVU_SANS_BOLD},
     geometry::Rect,
-    writer::{DocumentBuilder, EmbeddedFont, PageSize},
+    writer::{DocumentBuilder, EmbeddedFont, ImageData, PageSize},
 };
 use rustler::{Binary, NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
 
 use crate::{
     atoms, base14,
     color::{color_from_components, RgbNif},
-    create::create_from_bytes,
+    create::{create_from_bytes, decoded, keep_apart},
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Align, Cell, Embedded, Face, Fonts, Item, Margins, Marker, Op,
-        PagePlan, Refused, Run, Shape, Stroke, Table, Unordered, Width, Within,
+        self, embedded_key, Align, Cell, Embedded, Face, Fit, FlowImage, Fonts, Item, Margins,
+        Marker, Op, PagePlan, Picture, Refused, Run, Shape, Stroke, Table, Unordered, Width,
+        Within,
     },
     paths::PathOpNif,
 };
@@ -34,6 +35,7 @@ pub struct BuildNif<'a> {
     margin_right: f64,
     line_height: f64,
     families: Vec<FamilyNif<'a>>,
+    images: Vec<Binary<'a>>,
     ops: Vec<OpNif>,
 }
 
@@ -57,6 +59,62 @@ pub enum OpNif {
     TextInRect(TextInRectNif),
     Path(ShapeNif),
     Table(TableNif),
+    Image(ImageNif),
+    ImageInRect(ImageInRectNif),
+}
+
+#[derive(NifMap)]
+pub struct ImageNif {
+    image: usize,
+    width: Option<f64>,
+    height: Option<f64>,
+    fit: FitNif,
+    align: AlignNif,
+    font_size: f64,
+}
+
+#[derive(NifMap)]
+pub struct ImageInRectNif {
+    image: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    fit: FitNif,
+}
+
+#[derive(NifUnitEnum, Clone, Copy)]
+pub enum FitNif {
+    Contain,
+    Fill,
+}
+
+impl From<FitNif> for Fit {
+    fn from(fit: FitNif) -> Self {
+        match fit {
+            FitNif::Contain => Fit::Contain,
+            FitNif::Fill => Fit::Fill,
+        }
+    }
+}
+
+// Each distinct image arrives once and is decoded where an op first uses it,
+// so a decoding error names that op.
+struct Pictures<'s, 'b> {
+    sources: &'s [Binary<'b>],
+    decoded: Vec<Option<ImageData>>,
+}
+
+impl Pictures<'_, '_> {
+    fn pixels(&mut self, op: usize, image: usize) -> NifResult<(f64, f64)> {
+        let source = self.sources.get(image).ok_or(rustler::Error::BadArg)?;
+        if self.decoded[image].is_none() {
+            let data = decoded(&format!("the image of op {op}"), source.as_slice())?;
+            self.decoded[image] = Some(data);
+        }
+        let data = self.decoded[image].as_ref().expect("decoded above");
+        Ok((f64::from(data.width), f64::from(data.height)))
+    }
 }
 
 #[derive(NifMap)]
@@ -510,7 +568,11 @@ fn runs(
         .collect()
 }
 
-fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
+fn ops(
+    ops: Vec<OpNif>,
+    faces: &mut Faces<'_, '_>,
+    pictures: &mut Pictures<'_, '_>,
+) -> NifResult<Vec<Op>> {
     let auto = auto_family(&ops);
 
     ops.into_iter()
@@ -576,6 +638,21 @@ fn ops(ops: Vec<OpNif>, faces: &mut Faces<'_, '_>) -> NifResult<Vec<Op>> {
             }),
             OpNif::Path(shape) => Ok(Op::Path(shape.into())),
             OpNif::Table(table) => table_op(index, table, auto, faces),
+            OpNif::Image(image) => Ok(Op::Image(FlowImage {
+                pixels: pictures.pixels(index, image.image)?,
+                image: image.image,
+                width: image.width,
+                height: image.height,
+                fit: image.fit.into(),
+                align: image.align.into(),
+                size: image.font_size,
+            })),
+            OpNif::ImageInRect(image) => Ok(Op::ImageInRect {
+                pixels: pictures.pixels(index, image.image)?,
+                image: image.image,
+                rect: [image.x, image.y, image.width, image.height],
+                fit: image.fit.into(),
+            }),
         })
         .collect()
 }
@@ -784,6 +861,16 @@ fn refused(refusal: Refused) -> rustler::Error {
         Refused::CounterOverflow { op, page } => {
             format!("op {op} on page {page}: the list's numbering overflows; use a smaller :start")
         }
+        Refused::ImageTooLarge {
+            op,
+            page,
+            needed: (width, height),
+            room: (room_width, room_height),
+        } => format!(
+            "op {op} on page {page}: an image {width} × {height} points does not fit the \
+             {room_width} × {room_height}-point content area; give a smaller :width or \
+             :height, or reduce the margins"
+        ),
     };
 
     unsupported(message)
@@ -793,6 +880,7 @@ fn emit(
     meta: Meta,
     fonts: &Fonts,
     sources: &[(usize, &[u8])],
+    images: &[Option<ImageData>],
     plan: Vec<PagePlan>,
 ) -> NifResult<Vec<u8>> {
     let mut doc = DocumentBuilder::new();
@@ -840,6 +928,21 @@ fn emit(
                     builder.element(ContentElement::Text(text))
                 }
                 Item::Path(shape) => builder.element(ContentElement::Path(path_content(shape))),
+                Item::Image(Picture {
+                    image,
+                    x,
+                    y,
+                    width,
+                    height,
+                }) => {
+                    let data = images[image]
+                        .clone()
+                        .expect("an image is decoded where an op uses it");
+                    builder.image_with(
+                        data,
+                        Rect::new(x as f32, y as f32, width as f32, height as f32),
+                    )
+                }
             };
         }
         builder.done();
@@ -926,6 +1029,7 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
     let page_size = build.page_size;
     let line_height = build.line_height;
     let families = &build.families;
+    let images = &build.images;
     let op_nifs = build.ops;
 
     // Fonts are parsed inside, so a panic in the font parser is contained too.
@@ -936,19 +1040,29 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
             sources: Vec::new(),
             index: HashMap::new(),
         };
-        let ops = ops(op_nifs, &mut faces)?;
+        let mut pictures = Pictures {
+            sources: images,
+            decoded: vec![None; images.len()],
+        };
+        let ops = ops(op_nifs, &mut faces, &mut pictures)?;
+        keep_apart(pictures.decoded.iter_mut().flatten());
         let plan =
             flow::lay_out(&faces.fonts, &margins, line_height, page_size, &ops).map_err(refused)?;
 
-        emit(meta, &faces.fonts, &faces.sources, plan)
+        emit(meta, &faces.fonts, &faces.sources, &pictures.decoded, plan)
     })
 }
 
 #[cfg(test)]
 mod tests {
     use pdf_oxide::{
-        elements::{ContentElement, LineCap, LineJoin, PathContent, PathOperation},
+        elements::{
+            ContentElement, FontSpec, LineCap, LineJoin, PathContent, PathOperation,
+            StructureElement, TextContent, TextStyle,
+        },
         fonts::bundled::DEJAVU_SANS,
+        geometry::Rect,
+        object::Object,
         writer::{
             DocumentBuilder, EmbeddedFont, FontManager, PageSize, StreamingColumn,
             StreamingTableConfig, Table, TableCell, TextLayout,
@@ -961,6 +1075,74 @@ mod tests {
     fn fixture(name: &str) -> Vec<u8> {
         let path = format!("{}/../../test/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         std::fs::read(path).expect("fixture exists")
+    }
+
+    fn text_element(text: &str, font: &str, y: f32) -> ContentElement {
+        ContentElement::Text(TextContent::new(
+            text,
+            Rect::new(72.0, y, 200.0, 12.0),
+            FontSpec {
+                name: font.into(),
+                size: 12.0,
+            },
+            TextStyle::default(),
+        ))
+    }
+
+    fn structure(kind: &str, children: Vec<ContentElement>) -> ContentElement {
+        ContentElement::Structure(StructureElement {
+            structure_type: kind.into(),
+            children,
+            ..StructureElement::default()
+        })
+    }
+
+    #[test]
+    fn upstream_still_draws_tagged_embedded_text_on_the_base14_path() {
+        let font = EmbeddedFont::from_data(None, DEJAVU_SANS.to_vec()).expect("parses");
+        let mut builder = DocumentBuilder::new()
+            .tagged_pdf_ua1()
+            .register_embedded_font("F", font);
+        builder
+            .page(PageSize::Letter)
+            .element(text_element("Привет top", "F", 700.0))
+            .element(structure(
+                "P",
+                vec![text_element("Привет tagged", "F", 680.0)],
+            ))
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let text = doc.extract_text(0).expect("extracts");
+
+        assert!(text.contains("Привет top"));
+        assert!(!text.contains("Привет tagged"));
+    }
+
+    #[test]
+    fn upstream_still_lists_only_top_level_structure_in_the_parent_tree() {
+        let mut builder = DocumentBuilder::new().tagged_pdf_ua1();
+        builder
+            .page(PageSize::Letter)
+            .element(structure(
+                "L",
+                vec![
+                    structure("LI", vec![text_element("one", "Helvetica", 700.0)]),
+                    structure("LI", vec![text_element("two", "Helvetica", 680.0)]),
+                ],
+            ))
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let entry = |dict: &Object, key: &str| {
+            let value = dict.as_dict().and_then(|dict| dict.get(key)).expect(key);
+            doc.resolve_references(value, 1).expect("resolves")
+        };
+        let root = entry(&doc.catalog().expect("has a catalog"), "StructTreeRoot");
+        let nums = entry(&entry(&root, "ParentTree"), "Nums");
+        let nums = nums.as_array().expect("is an array");
+
+        // Three marked-content IDs on page 0, one entry for them.
+        assert_eq!(nums.len(), 2);
+        assert_eq!(nums[1].as_array().map(Vec::len), Some(1));
     }
 
     #[test]

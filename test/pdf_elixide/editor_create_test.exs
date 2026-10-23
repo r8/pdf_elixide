@@ -254,6 +254,26 @@ defmodule PdfElixide.EditorCreateTest do
       end
     end
 
+    # The pairs share their compressed samples, which is all the writer compares.
+    test "keeps images with the same samples apart when their transparency differs" do
+      bytes =
+        [Png.solid(8, 8, :rgb), Png.solid(8, 8, :rgba)]
+        |> Editor.from_images!()
+        |> Editor.to_binary!(compress: false)
+
+      assert bytes |> :binary.matches("/Subtype /Image") |> length() == 3
+      assert bytes |> :binary.matches("/SMask") |> length() == 1
+    end
+
+    test "keeps images with the same samples apart when their shape differs" do
+      editor = Editor.from_images!([Png.solid(24, 8, :gray), Png.solid(8, 8, :rgb)])
+      doc = editor |> Editor.to_binary!() |> Document.from_binary!()
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [%Image{width: 24, height: 8}] = Document.images!(doc, 0)
+      assert [%Image{width: 8, height: 8}] = Document.images!(doc, 1)
+    end
+
     test "refuses an image that is neither JPEG nor PNG, naming its position" do
       assert {:error, %Error{reason: :unsupported, message: "image 1 is neither JPEG nor PNG"}} =
                Editor.from_images([jpeg(), "GIF89a"])

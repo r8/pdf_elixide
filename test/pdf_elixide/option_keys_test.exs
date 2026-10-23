@@ -515,6 +515,22 @@ defmodule PdfElixide.OptionKeysTest do
       end
     end
 
+    # Images are decoded when the document is built, so any bytes are accepted
+    # here. `fit: :fill` alone raises, so the list keeps the default.
+    test "the Builder image operations" do
+      rect = %PdfElixide.Geometry.Rect{x: 72, y: 72, width: 10, height: 10}
+
+      accepts_each!(
+        [width: 100, height: 50, fit: :contain, align: :center],
+        &Builder.image(Builder.new(), "image", &1)
+      )
+
+      assert %Builder{} =
+               Builder.image(Builder.new(), "image", width: 100, height: 50, fit: :fill)
+
+      accepts_each!([fit: :fill], &Builder.image_in_rect(Builder.new(), rect, "image", &1))
+    end
+
     test "Editor.save/3 and to_binary/2" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)

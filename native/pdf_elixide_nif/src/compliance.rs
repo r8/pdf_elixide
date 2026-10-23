@@ -628,6 +628,37 @@ mod tests {
     }
 
     #[test]
+    fn upstream_still_reports_untagged_content_as_pdf_ua() {
+        use pdf_oxide::{
+            elements::{ContentElement, FontSpec, TextContent, TextStyle},
+            geometry::Rect,
+            writer::{DocumentBuilder, PageSize},
+        };
+
+        let mut builder = DocumentBuilder::new()
+            .title("Title")
+            .tagged_pdf_ua1()
+            .language("en-US");
+        builder
+            .page(PageSize::Letter)
+            .element(ContentElement::Text(TextContent::new(
+                "Untagged body",
+                Rect::new(72.0, 700.0, 200.0, 12.0),
+                FontSpec {
+                    name: "Helvetica".into(),
+                    size: 12.0,
+                },
+                TextStyle::default(),
+            )))
+            .done();
+        let mut doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let report = validate_pdf_ua(&mut doc, PdfUaLevel::Ua1).unwrap();
+
+        assert!(report.is_compliant);
+        assert!(report.errors.is_empty());
+    }
+
+    #[test]
     fn upstream_still_validates_ua2_as_ua1() {
         for name in ["sample.pdf", "tagged.pdf"] {
             let mut doc = fixture(name);

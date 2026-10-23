@@ -30,6 +30,11 @@ defmodule PdfElixide.Builder do
   [Drawing shapes](guides/building-documents.md#drawing-shapes) for positioning,
   paint options and redrawing an extracted path.
 
+  ## Images
+
+  `image/3` adds a JPEG or PNG image to the flow and `image_in_rect/4` places
+  one outside it. See [Images](guides/building-documents.md#images).
+
   ## Fonts
 
   Use a built-in family, bundled DejaVu Sans or a
@@ -289,6 +294,44 @@ defmodule PdfElixide.Builder do
   @text_in_rect_opts_keys [:font, :font_size, :align]
 
   @aligns [:left, :center, :right]
+
+  @typedoc """
+  Options accepted by `image/3`.
+
+    * `:width`, `:height` — the image's size in points. Defaults to `nil`.
+      With neither, the image is drawn one point per pixel, scaled down to fit
+      the content area if it is larger. With one, the other follows from the
+      image's proportions. With both, see `:fit`.
+    * `:fit` — with both `:width` and `:height`, `:contain` scales the image
+      to fit within them keeping its proportions, and `:fill` stretches it to
+      them. Defaults to `:contain`.
+    * `:align` — `:left`, `:center` or `:right`: where the image sits between
+      the margins. Defaults to `:left`.
+
+  A `:width` or `:height` larger than the page's content area raises
+  `ArgumentError`, and so does a `:fit` other than the default without both.
+  """
+  @type image_opts :: [
+          width: number() | nil,
+          height: number() | nil,
+          fit: :contain | :fill,
+          align: :left | :center | :right
+        ]
+
+  @image_opts_keys [:width, :height, :fit, :align]
+
+  @typedoc """
+  Options accepted by `image_in_rect/4`.
+
+    * `:fit` — `:contain` scales the image to fit within the rect keeping its
+      proportions, centered, and `:fill` stretches it to the rect. Defaults to
+      `:contain`.
+  """
+  @type image_in_rect_opts :: [fit: :contain | :fill]
+
+  @image_in_rect_opts_keys [:fit]
+
+  @fits [:contain, :fill]
 
   @typedoc """
   A cell of `table/3`: a `t:text/0`, or a cell with its own options made by
@@ -904,6 +947,67 @@ defmodule PdfElixide.Builder do
   end
 
   @doc """
+  Adds a JPEG or PNG image to the flow, between the margins.
+
+  `image` is the image file's bytes. See `t:image_opts/0` for sizing and
+  alignment, and [Images](guides/building-documents.md#images) for page breaks
+  and spacing.
+
+      logo = File.read!("logo.png")
+      PdfElixide.Builder.image(builder, logo, width: 120, align: :center)
+  """
+  @spec image(t(), binary(), image_opts()) :: t()
+  def image(%__MODULE__{} = builder, image, opts \\ [])
+      when is_binary(image) and is_list(opts) do
+    %{width: width, height: height, fit: fit, align: align} = build_image_options(opts)
+    {page_width, page_height} = builder.current_page_size
+    validate_image_fits!(:width, width, page_width - builder.margin_left - builder.margin_right)
+
+    validate_image_fits!(
+      :height,
+      height,
+      page_height - builder.margin_top - builder.margin_bottom
+    )
+
+    op =
+      {:image,
+       %{
+         image: image,
+         width: width,
+         height: height,
+         fit: fit,
+         align: align,
+         font_size: builder.font_size
+       }}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Draws a JPEG or PNG image within `rect` on the current page.
+
+  `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
+  bottom-left corner, as for `rect/3`; reversed corners are normalized.
+  `image` is the image file's bytes. The image is placed outside the flow and
+  may extend past the page's edges. If no page has started yet, the first one
+  starts here. See [Images](guides/building-documents.md#images) and
+  `t:image_in_rect_opts/0` for the options.
+  """
+  @spec image_in_rect(t(), Rect.t(), binary(), image_in_rect_opts()) :: t()
+  def image_in_rect(%__MODULE__{} = builder, %Rect{} = rect, image, opts \\ [])
+      when is_binary(image) and is_list(opts) do
+    %Rect{x: x, y: y, width: width, height: height} = rect |> rect!() |> normalize_rect()
+    width = LayoutOptions.positive!("rect", width)
+    height = LayoutOptions.positive!("rect", height)
+    %{fit: fit} = build_image_in_rect_options(opts)
+
+    op =
+      {:image_in_rect, %{image: image, x: x, y: y, width: width, height: height, fit: fit}}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
   Draws a rectangle on the current page.
 
   `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
@@ -1293,14 +1397,15 @@ defmodule PdfElixide.Builder do
   end
 
   # Each family's bytes cross to the native side once, however many paragraphs
-  # use it; a paragraph names it by its position in `:families`.
+  # use it, and so does each distinct image; an op names either by its position
+  # in `:families` or `:images`.
   @doc false
   @spec __native__(t()) :: map()
   def __native__(%__MODULE__{} = builder) do
-    {ops, {families, _index}} =
+    {ops, %{families: {families, _}, images: {images, _}}} =
       builder.ops
       |> Enum.reverse()
-      |> Enum.map_reduce({[], %{}}, &native_op/2)
+      |> Enum.map_reduce(%{families: {[], %{}}, images: {[], %{}}}, &native_op/2)
 
     faces = fn family -> Map.take(family, [:regular, :bold, :italic, :bold_italic]) end
 
@@ -1317,22 +1422,33 @@ defmodule PdfElixide.Builder do
       :margin_right,
       :line_height
     ])
-    |> Map.merge(%{ops: ops, families: families |> Enum.reverse() |> Enum.map(faces)})
+    |> Map.merge(%{
+      ops: ops,
+      families: families |> Enum.reverse() |> Enum.map(faces),
+      images: Enum.reverse(images)
+    })
   end
 
   defp native_op({tag, %{font: %FontFamily{id: id} = family} = block}, acc) do
-    {families, index} = acc
+    {position, families} = position(acc.families, id, family)
 
-    {position, acc} =
-      case Map.fetch(index, id) do
-        {:ok, position} -> {position, acc}
-        :error -> {map_size(index), {[family | families], Map.put(index, id, map_size(index))}}
-      end
+    {{tag, %{block | font: {:family, position}}}, %{acc | families: families}}
+  end
 
-    {{tag, %{block | font: {:family, position}}}, acc}
+  defp native_op({tag, %{image: image} = block}, acc) when tag in [:image, :image_in_rect] do
+    {position, images} = position(acc.images, image, image)
+
+    {{tag, %{block | image: position}}, %{acc | images: images}}
   end
 
   defp native_op(op, acc), do: {op, acc}
+
+  defp position({values, index} = seen, key, value) do
+    case Map.fetch(index, key) do
+      {:ok, position} -> {position, seen}
+      :error -> {map_size(index), {[value | values], Map.put(index, key, map_size(index))}}
+    end
+  end
 
   @doc false
   @spec __option_defaults__(
@@ -1346,6 +1462,8 @@ defmodule PdfElixide.Builder do
           | :text_in_rect
           | :table
           | :cell
+          | :image
+          | :image_in_rect
         ) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
@@ -1357,6 +1475,8 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:text_in_rect), do: build_text_in_rect_options([])
   def __option_defaults__(:table), do: build_table_options([])
   def __option_defaults__(:cell), do: build_cell_options([])
+  def __option_defaults__(:image), do: build_image_options([])
+  def __option_defaults__(:image_in_rect), do: build_image_in_rect_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -1443,6 +1563,26 @@ defmodule PdfElixide.Builder do
       align: align,
       fill_color: color!(:fill_color, Keyword.get(opts, :fill_color))
     }
+  end
+
+  defp build_image_options(opts) do
+    opts = Keyword.validate!(opts, @image_opts_keys)
+    width = optional_positive!(:width, Keyword.get(opts, :width))
+    height = optional_positive!(:height, Keyword.get(opts, :height))
+    fit = fit!(Keyword.get(opts, :fit, :contain))
+
+    if fit != :contain and (width == nil or height == nil) do
+      raise ArgumentError,
+            "invalid :fit, it has no effect unless both :width and :height are given"
+    end
+
+    %{width: width, height: height, fit: fit, align: align!(Keyword.get(opts, :align, :left))}
+  end
+
+  defp build_image_in_rect_options(opts) do
+    opts = Keyword.validate!(opts, @image_in_rect_opts_keys)
+
+    %{fit: fit!(Keyword.get(opts, :fit, :contain))}
   end
 
   defp build_run_options(opts) do
@@ -1556,6 +1696,12 @@ defmodule PdfElixide.Builder do
 
   defp align!(align) do
     raise ArgumentError, "invalid :align, expected one of #{inspect(@aligns)}: #{inspect(align)}"
+  end
+
+  defp fit!(fit) when fit in @fits, do: fit
+
+  defp fit!(fit) do
+    raise ArgumentError, "invalid :fit, expected one of #{inspect(@fits)}: #{inspect(fit)}"
   end
 
   defp start!(start) when is_integer(start) and start >= 1, do: start
@@ -1697,6 +1843,16 @@ defmodule PdfElixide.Builder do
   end
 
   # Keep these fit and precision checks consistent with the native layout.
+  defp validate_image_fits!(_key, nil, _room), do: :ok
+
+  defp validate_image_fits!(key, size, room) do
+    if size > room + @fit_tolerance do
+      raise ArgumentError,
+            "invalid #{inspect(key)}, a #{size}-point image does not fit the " <>
+              "#{room}-point content #{key}"
+    end
+  end
+
   defp validate_precise!(builder, font_size) do
     {width, height} = builder.current_page_size
 

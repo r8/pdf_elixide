@@ -192,6 +192,34 @@ pub enum Op {
     // A path drawn as given, outside the flow.
     Path(Shape),
     Table(Table),
+    Image(FlowImage),
+    ImageInRect {
+        image: usize,
+        pixels: (f64, f64),
+        rect: [f64; 4],
+        fit: Fit,
+    },
+}
+
+pub struct FlowImage {
+    pub image: usize,
+    pub pixels: (f64, f64),
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    pub fit: Fit,
+    pub align: Align,
+    pub size: f64,
+}
+
+#[derive(Clone, Copy)]
+pub enum Fit {
+    Contain,
+    Fill,
+}
+
+fn contained((pixel_width, pixel_height): (f64, f64), width: f64, height: f64) -> (f64, f64) {
+    let scale = (width / pixel_width).min(height / pixel_height);
+    (pixel_width * scale, pixel_height * scale)
 }
 
 #[derive(Clone, Copy)]
@@ -278,6 +306,15 @@ pub struct PagePlan {
 pub enum Item {
     Text(Placed),
     Path(Shape),
+    Image(Picture),
+}
+
+pub struct Picture {
+    pub image: usize,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Clone)]
@@ -368,6 +405,12 @@ pub enum Refused {
         op: usize,
         page: usize,
         flowing: bool,
+    },
+    ImageTooLarge {
+        op: usize,
+        page: usize,
+        needed: (f64, f64),
+        room: (f64, f64),
     },
 }
 
@@ -487,6 +530,13 @@ pub fn lay_out(
             }
             Op::Path(shape) => layout.path(shape),
             Op::Table(table) => layout.table(index, table)?,
+            Op::Image(image) => layout.image(index, image)?,
+            Op::ImageInRect {
+                image,
+                pixels,
+                rect,
+                fit,
+            } => layout.image_in_rect(*image, *pixels, *rect, *fit),
         }
     }
 
@@ -732,8 +782,13 @@ impl Layout<'_> {
                 }
                 Op::Rule { size } => return total + gap + size,
                 Op::Table(table) => return total + gap + self.table_lead(table),
+                Op::Image(image) => return total + gap + self.image_size(image).1,
                 Op::Page { .. } => return total,
-                Op::Blank | Op::TextAt { .. } | Op::TextInRect { .. } | Op::Path(_) => {}
+                Op::Blank
+                | Op::TextAt { .. }
+                | Op::TextInRect { .. }
+                | Op::Path(_)
+                | Op::ImageInRect { .. } => {}
             }
         }
         total
@@ -949,6 +1004,101 @@ impl Layout<'_> {
         self.ensure_page();
         let page = self.page_mut();
         page.items.push(Item::Path(shape.clone()));
+    }
+
+    fn content_area(&self) -> (f64, f64) {
+        let page = self.page();
+        (
+            page.width - self.margins.left - self.margins.right,
+            page.height - self.margins.top - self.margins.bottom,
+        )
+    }
+
+    fn image_size(&self, image: &FlowImage) -> (f64, f64) {
+        let (pixel_width, pixel_height) = image.pixels;
+        match (image.width, image.height, image.fit) {
+            (None, None, _) => {
+                let (room_width, room_height) = self.content_area();
+                if pixel_width <= room_width && pixel_height <= room_height {
+                    image.pixels
+                } else {
+                    contained(image.pixels, room_width, room_height)
+                }
+            }
+            (Some(width), None, _) => (width, width * pixel_height / pixel_width),
+            (None, Some(height), _) => (height * pixel_width / pixel_height, height),
+            (Some(width), Some(height), Fit::Fill) => (width, height),
+            (Some(width), Some(height), Fit::Contain) => contained(image.pixels, width, height),
+        }
+    }
+
+    fn image(&mut self, op: usize, image: &FlowImage) -> Result<(), Refused> {
+        self.ensure_page();
+        let page = self.pages.len() - 1;
+        let room = self.content_width(op, page, self.margins.left)?;
+        let (width, height) = self.image_size(image);
+        let (_, room_height) = self.content_area();
+        if width > room + FIT_TOLERANCE || height > room_height + FIT_TOLERANCE {
+            return Err(Refused::ImageTooLarge {
+                op,
+                page,
+                needed: (width, height),
+                room: (room, room_height),
+            });
+        }
+
+        if !self.fresh {
+            let spaced = self.cursor - self.pending_space;
+            if self.fits(spaced, height) {
+                self.cursor = spaced;
+            } else {
+                self.break_page();
+            }
+        }
+
+        let left = self.margins.left;
+        let x = match image.align {
+            Align::Left => left,
+            Align::Center => left + room / 2.0 - width / 2.0,
+            Align::Right => left + room - width,
+        };
+        self.cursor -= height;
+        let y = self.cursor;
+        self.page_mut().items.push(Item::Image(Picture {
+            image: image.image,
+            x,
+            y,
+            width,
+            height,
+        }));
+        self.fresh = false;
+        self.pending_space = 0.5 * image.size;
+        Ok(())
+    }
+
+    fn image_in_rect(&mut self, image: usize, pixels: (f64, f64), rect: [f64; 4], fit: Fit) {
+        self.ensure_page();
+        let [x, y, width, height] = rect;
+        let picture = match fit {
+            Fit::Fill => Picture {
+                image,
+                x,
+                y,
+                width,
+                height,
+            },
+            Fit::Contain => {
+                let (drawn_width, drawn_height) = contained(pixels, width, height);
+                Picture {
+                    image,
+                    x: x + width / 2.0 - drawn_width / 2.0,
+                    y: y + height / 2.0 - drawn_height / 2.0,
+                    width: drawn_width,
+                    height: drawn_height,
+                }
+            }
+        };
+        self.page_mut().items.push(Item::Image(picture));
     }
 
     fn space(&mut self, points: f64) {

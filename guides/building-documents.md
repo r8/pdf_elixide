@@ -281,6 +281,39 @@ convert it first; see
 [Page boxes and the coordinate origin](page-geometry.md#page-boxes-and-the-coordinate-origin)
 and [Rotated pages and extracted geometry](page-geometry.md#rotated-pages-and-extracted-geometry).
 
+## Images
+
+The builder draws JPEG and PNG images, given as the file's bytes. `image/3`
+adds one to the flow, between the margins and below the content before it;
+`image_in_rect/4` places one within a `PdfElixide.Geometry.Rect` on the current
+page, outside the flow like `text_in_rect/4`:
+
+```elixir
+alias PdfElixide.Geometry.Rect
+
+logo = File.read!("logo.png")
+chart = File.read!("chart.png")
+
+Builder.new()
+|> Builder.image_in_rect(%Rect{x: 72.0, y: 700.0, width: 120.0, height: 40.0}, logo)
+|> Builder.heading(1, "Results")
+|> Builder.image(chart, width: 400, align: :center)
+|> Builder.save!("results.pdf")
+```
+
+See `t:PdfElixide.Builder.image_opts/0` for flow sizing and alignment, and
+`t:PdfElixide.Builder.image_in_rect_opts/0` for fitting an image within a rect.
+
+An image that does not fit below the content before it moves to the top of the
+next page. As with a paragraph, it is followed by space half the document's
+font size tall, which is dropped when a page break comes first, and a heading
+before it stays on its page.
+
+An image used more than once, such as a logo on every page, is stored once.
+Images are embedded as `PdfElixide.Editor.from_images/2` embeds them, with the
+same formats, size limits and caveats about photo orientation and CMYK colors;
+see [Images](creating-documents.md#images).
+
 ## Styled text
 
 Wherever the builder takes text, it takes either a string or a list of runs.
@@ -359,6 +392,8 @@ The builder refuses content it cannot draw faithfully:
 - **Table rows that cannot be split and do not fit on a page**, and **columns
   that do not fit the page**; see [Across pages](#across-pages) and
   [Column widths](#column-widths).
+- **An image whose proportions take it past the content area**, such as a
+  tall image given only a `:width`. Give a smaller `:width` or a `:height`.
 - **A glyph that would extend past the edge of the page**, such as an
   italic `j` with no left margin or an accented capital with no top margin.
   Widen the margins, or for flowing text increase the line height; move
@@ -370,8 +405,8 @@ over the letter before it.
 ## Errors
 
 Malformed arguments raise at the call that receives them. Unknown options,
-invalid option values, margins that leave no room and line boxes taller than
-the content area raise `ArgumentError`.
+invalid option values, margins that leave no room, and line boxes or image
+sizes larger than the content area raise `ArgumentError`.
 
 Unsupported content is reported when the description is built, as
 `{:error, %PdfElixide.Error{reason: :unsupported}}` from `to_binary/2`,
@@ -384,5 +419,8 @@ operation and page (both numbered from 0), what was refused and what to change:
   |> Builder.paragraph("Привіт", font: :helvetica)
   |> Builder.to_binary()
 ```
+
+An image that cannot be read is refused when the document is built, naming the
+operation, with the reasons `PdfElixide.Editor.from_images/2` lists.
 
 Bang variants raise instead. No partial document is produced.

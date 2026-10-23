@@ -11,10 +11,12 @@ defmodule PdfElixide.BuilderTest do
   alias PdfElixide.Builder.FontFamily
   alias PdfElixide.Color.RGB
   alias PdfElixide.Document
+  alias PdfElixide.Document.Image
   alias PdfElixide.Document.Page
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
+  alias PdfElixide.Png
 
   # Helvetica's ascent and descent, in thousandths of an em.
   @ascent 718
@@ -1833,6 +1835,237 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "images" do
+    defp jpeg do
+      [image] = @fixtures |> Path.join("image_jpeg.pdf") |> open() |> Document.images!(0)
+      Image.to_binary!(image, format: :jpeg)
+    end
+
+    # `Document.images/2` skips images under 8 × 8, so every image here is larger.
+    defp boxes(doc, page) do
+      for %Image{bbox: box} <- Document.images!(doc, page) do
+        Enum.map([box.x, box.y, box.width, box.height], &Float.round(&1, 3))
+      end
+    end
+
+    defp wide, do: Png.solid(40, 20, :rgb)
+
+    test "image_in_rect/4 fits the image within the rect, centered, or fills it" do
+      doc =
+        Builder.new()
+        |> Builder.image_in_rect(%Rect{x: 72.0, y: 600.0, width: 100.0, height: 100.0}, wide())
+        |> Builder.image_in_rect(
+          %Rect{x: 300.0, y: 600.0, width: 100.0, height: 100.0},
+          wide(),
+          fit: :fill
+        )
+        |> Builder.image_in_rect(
+          %Rect{x: 500.0, y: 300.0, width: -100.0, height: -50.0},
+          wide(),
+          fit: :fill
+        )
+        |> written()
+
+      assert Enum.sort(boxes(doc, 0)) == [
+               [72.0, 625.0, 100.0, 50.0],
+               [300.0, 600.0, 100.0, 100.0],
+               [400.0, 250.0, 100.0, 50.0]
+             ]
+    end
+
+    test "image_in_rect/4 stays outside the flow, on the current page, and may pass the edge" do
+      doc =
+        Builder.new()
+        |> Builder.image_in_rect(%Rect{x: -50.0, y: 700.0, width: 200.0, height: 200.0}, wide())
+        |> Builder.paragraph("first")
+        |> Builder.page()
+        |> Builder.image_in_rect(%Rect{x: 72.0, y: 72.0, width: 40.0, height: 20.0}, wide())
+        |> written()
+
+      assert length(Document.images!(doc, 0)) == 1
+      assert_in_delta Enum.max(baselines(doc, 0)), baseline(792 - 72, 12), 0.001
+      assert boxes(doc, 1) == [[72.0, 72.0, 40.0, 20.0]]
+    end
+
+    test "keeps a JPEG's bytes and a PNG's transparency" do
+      source = jpeg()
+      rect = %Rect{x: 72.0, y: 600.0, width: 100.0, height: 100.0}
+
+      bytes =
+        Builder.new()
+        |> Builder.image_in_rect(rect, source)
+        |> Builder.page()
+        |> Builder.image(Png.solid(8, 8, :rgba))
+        |> Builder.to_binary!(compress: false)
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert [image] = Document.images!(doc, 0)
+      assert Image.data!(image) == {:jpeg, source}
+      assert [%Image{width: 8, height: 8}] = Document.images!(doc, 1)
+      assert bytes |> :binary.matches("/SMask") |> length() == 1
+    end
+
+    test "an image placed more than once is stored once" do
+      rect = %Rect{x: 72.0, y: 600.0, width: 100.0, height: 100.0}
+
+      bytes =
+        Builder.new()
+        |> Builder.image(wide())
+        |> Builder.image_in_rect(rect, wide())
+        |> Builder.page()
+        |> Builder.image(wide())
+        |> Builder.image(jpeg())
+        |> Builder.to_binary!(compress: false)
+
+      assert bytes |> :binary.matches("/Subtype /Image") |> length() == 2
+    end
+
+    # The pairs share their compressed samples, which is all the writer compares.
+    test "images with the same samples but different transparency stay apart" do
+      translucent = fn alpha ->
+        Png.encode(8, 8, :rgba, :binary.copy(<<128, 128, 128, alpha>>, 64))
+      end
+
+      bytes =
+        [Png.solid(8, 8, :rgb), translucent.(128), translucent.(0), translucent.(64)]
+        |> Enum.reduce(Builder.new(), &(&2 |> Builder.page() |> Builder.image(&1)))
+        |> Builder.to_binary!(compress: false)
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert bytes |> :binary.matches("/Subtype /Image") |> length() == 7
+      assert bytes |> :binary.matches("/SMask") |> length() == 3
+
+      for page <- 0..3 do
+        assert [image] = Document.images!(doc, page)
+        assert {:ok, <<0x89, "PNG", _::binary>>} = Image.to_binary(image, format: :png)
+      end
+    end
+
+    test "images with the same samples but a different shape stay apart" do
+      doc =
+        Builder.new()
+        |> Builder.image(Png.solid(24, 8, :gray))
+        |> Builder.image(Png.solid(8, 8, :rgb))
+        |> written()
+
+      assert doc |> Document.images!(0) |> Enum.map(&{&1.width, &1.height}) == [{24, 8}, {8, 8}]
+    end
+
+    test "image/3 draws one point per pixel below the content before it" do
+      doc = Builder.new() |> Builder.paragraph("Hello") |> Builder.image(wide()) |> written()
+
+      assert boxes(doc, 0) == [[72.0, 720.0 - 18 - 6 - 20, 40.0, 20.0]]
+    end
+
+    test "image/3 shrinks an image larger than the content area, keeping its proportions" do
+      doc =
+        Builder.new()
+        |> Builder.image(Png.solid(936, 100, :rgb))
+        |> Builder.page()
+        |> Builder.image(Png.solid(100, 1296, :gray))
+        |> written()
+
+      assert boxes(doc, 0) == [[72.0, 670.0, 468.0, 50.0]]
+      assert boxes(doc, 1) == [[72.0, 72.0, 50.0, 648.0]]
+    end
+
+    test "image/3 follows the image's proportions from a width or a height" do
+      doc =
+        Builder.new()
+        |> Builder.image(wide(), width: 200)
+        |> Builder.image(wide(), height: 50)
+        |> written()
+
+      assert boxes(doc, 0) == [[72.0, 620.0, 200.0, 100.0], [72.0, 564.0, 100.0, 50.0]]
+    end
+
+    test "image/3 fits within a width and height, or fills them" do
+      doc =
+        Builder.new()
+        |> Builder.image(wide(), width: 100, height: 100)
+        |> Builder.image(wide(), width: 100, height: 100, fit: :fill)
+        |> written()
+
+      assert boxes(doc, 0) == [[72.0, 670.0, 100.0, 50.0], [72.0, 564.0, 100.0, 100.0]]
+    end
+
+    test "image/3 aligns between the margins" do
+      doc =
+        Builder.new()
+        |> Builder.image(wide(), width: 100, align: :center)
+        |> Builder.image(wide(), width: 100, align: :right)
+        |> written()
+
+      assert boxes(doc, 0) == [[256.0, 670.0, 100.0, 50.0], [440.0, 614.0, 100.0, 50.0]]
+    end
+
+    test "image/3 leaves a paragraph's space after it" do
+      doc = Builder.new() |> Builder.image(wide()) |> Builder.paragraph("after") |> written()
+
+      assert_in_delta Enum.max(baselines(doc, 0)), baseline(720 - 20 - 6, 12), 0.001
+    end
+
+    test "image/3 moves to the next page when it does not fit, dropping the space before it" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("first")
+        |> Builder.space(600)
+        |> Builder.image(wide(), height: 100)
+        |> written()
+
+      assert boxes(doc, 0) == []
+      assert boxes(doc, 1) == [[72.0, 620.0, 200.0, 100.0]]
+    end
+
+    test "a heading keeps with an image after it" do
+      build = fn block ->
+        Builder.new()
+        |> Builder.paragraph("first")
+        |> Builder.space(500)
+        |> block.()
+        |> Builder.image(wide(), height: 110)
+        |> written()
+      end
+
+      heading = build.(&Builder.heading(&1, 1, "Figure"))
+      paragraph = build.(&Builder.paragraph(&1, "Figure"))
+
+      assert Document.text!(heading, 1) =~ "Figure"
+      assert Document.text!(paragraph, 0) =~ "Figure"
+      assert length(Document.images!(heading, 1)) == 1
+      assert length(Document.images!(paragraph, 1)) == 1
+    end
+
+    test "refuses an image whose proportions take it past the content area" do
+      message = Builder.new() |> Builder.image(Png.solid(10, 100, :rgb), width: 100) |> refusal()
+
+      assert message =~ "op 0 on page 0: an image 100 × 1000 points does not fit"
+      assert message =~ "468 × 648-point content area"
+    end
+
+    test "refuses an image that cannot be read, naming the op" do
+      rect = %Rect{x: 72.0, y: 72.0, width: 10.0, height: 10.0}
+
+      assert {:error,
+              %Error{reason: :unsupported, message: "the image of op 1 is neither JPEG nor PNG"}} =
+               Builder.new()
+               |> Builder.paragraph("x")
+               |> Builder.image_in_rect(rect, "GIF89a")
+               |> Builder.to_binary()
+
+      assert {:error, %Error{reason: :other, message: "the image of op 0: " <> _}} =
+               Builder.new() |> Builder.image(Png.header(8, 8, :rgb)) |> Builder.to_binary()
+
+      assert Builder.new()
+             |> Builder.image(Png.header(20_000, 20_000, :rgba))
+             |> refusal() =~ "the image of op 0 is 20000 × 20000 pixels, over the"
+    end
+  end
+
   describe "font refusals" do
     test "a style the family has no face for" do
       message =
@@ -1964,6 +2197,32 @@ defmodule PdfElixide.BuilderTest do
   end
 
   describe "malformed arguments raise where they are passed" do
+    test "images" do
+      rect = %Rect{x: 72.0, y: 72.0, width: 10.0, height: 10.0}
+
+      assert_raise FunctionClauseError, fn -> Builder.image(Builder.new(), untyped(:logo)) end
+
+      assert_raise ArgumentError, ~r/^invalid :fit, expected one of/, fn ->
+        Builder.image_in_rect(Builder.new(), rect, "image", fit: :cover)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :fit, it has no effect unless both :width/, fn ->
+        Builder.image(Builder.new(), "image", width: 100, fit: :fill)
+      end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :width, a 469.0-point image does not fit the 468.0-point/,
+                   fn -> Builder.image(Builder.new(), "image", width: 469) end
+
+      assert_raise ArgumentError, ~r/^invalid :height, a 57.0-point image/, fn ->
+        Builder.new() |> Builder.page({300, 200}) |> Builder.image("image", height: 57)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid rect, expected a positive number/, fn ->
+        Builder.image_in_rect(Builder.new(), %{rect | width: 0.0}, "image")
+      end
+    end
+
     test "text and metadata that are not UTF-8" do
       for build <- [
             &Builder.paragraph(&1, <<0xFF>>),

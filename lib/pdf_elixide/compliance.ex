@@ -26,6 +26,10 @@ defmodule PdfElixide.Compliance do
   their warnings, under code `"WARN-007"`, so even a report with no errors
   carries warnings.
 
+  A PDF/UA report checks document-level entries such as the structure tree,
+  language and title. It does not check that page content is tagged or that
+  images carry alternate text.
+
   A PDF/A report does not compare the level a document declares with the one
   requested, so a document declaring PDF/A-2b can be reported compliant with
   PDF/A-1b. Compare `report.declared` with the standard where the declaration

@@ -1,4 +1,8 @@
-use std::io::Cursor;
+use std::{
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+    io::Cursor,
+};
 
 use image::{
     codecs::{jpeg::JpegDecoder, png::PngDecoder},
@@ -257,12 +261,12 @@ fn png_header(bytes: &[u8]) -> Option<(u32, u32, u64)> {
         })
 }
 
-fn ensure_pixel_budget(index: usize, width: u32, height: u32) -> NifResult<()> {
+fn ensure_pixel_budget(what: &str, width: u32, height: u32) -> NifResult<()> {
     if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
         return Err(tagged_err(
             atoms::unsupported(),
             format!(
-                "image {index} is {width} × {height} pixels, over the {MAX_IMAGE_PIXELS} \
+                "{what} is {width} × {height} pixels, over the {MAX_IMAGE_PIXELS} \
                  pixel limit; scale it down"
             ),
         ));
@@ -273,14 +277,14 @@ fn ensure_pixel_budget(index: usize, width: u32, height: u32) -> NifResult<()> {
 
 // The decode reserves its whole buffer against this limit before reading a
 // pixel, so this keeps a 16-bit color PNG under the pixel cap `:unsupported`.
-fn ensure_png_buffer(index: usize, width: u32, height: u32, total_bytes: u64) -> NifResult<()> {
+fn ensure_png_buffer(what: &str, width: u32, height: u32, total_bytes: u64) -> NifResult<()> {
     let max_alloc = Limits::default().max_alloc.unwrap_or(u64::MAX);
 
     if total_bytes > max_alloc {
         return Err(tagged_err(
             atoms::unsupported(),
             format!(
-                "image {index} is {width} × {height} pixels, {total_bytes} bytes decoded, \
+                "{what} is {width} × {height} pixels, {total_bytes} bytes decoded, \
                  over the {max_alloc} byte limit; scale it down"
             ),
         ));
@@ -291,11 +295,10 @@ fn ensure_png_buffer(index: usize, width: u32, height: u32, total_bytes: u64) ->
 
 // The writer labels every JPEG 8-bit, and a header parse stops at the first
 // scan, so the whole image is decoded here the way extraction will decode it.
-fn ensure_jpeg_readable(index: usize, image: &ImageData) -> NifResult<()> {
-    let unreadable =
-        |e: &dyn std::fmt::Display| tagged_err(atoms::other(), format!("image {index}: {e}"));
+fn ensure_jpeg_readable(what: &str, image: &ImageData) -> NifResult<()> {
+    let unreadable = |e: &dyn std::fmt::Display| tagged_err(atoms::other(), format!("{what}: {e}"));
 
-    ensure_pixel_budget(index, image.width, image.height)?;
+    ensure_pixel_budget(what, image.width, image.height)?;
     JpegDecoder::new(Cursor::new(&image.data)).map_err(|e| unreadable(&e))?;
 
     let color_space = match image.color_space {
@@ -318,39 +321,132 @@ fn ensure_jpeg_readable(index: usize, image: &ImageData) -> NifResult<()> {
 // Dispatching on the signature here, rather than through `from_bytes`, keeps an
 // unrecognized format apart from a damaged image: the two share an error type
 // the crate does not export.
-fn decoded(index: usize, bytes: &[u8]) -> NifResult<ImageData> {
+pub(crate) fn decoded(what: &str, bytes: &[u8]) -> NifResult<ImageData> {
     let image = if bytes.starts_with(&[0xFF, 0xD8]) {
         ImageData::from_jpeg(bytes.to_vec())
     } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         if let Some((width, height, total_bytes)) = png_header(bytes) {
-            ensure_pixel_budget(index, width, height)?;
-            ensure_png_buffer(index, width, height, total_bytes)?;
+            ensure_pixel_budget(what, width, height)?;
+            ensure_png_buffer(what, width, height, total_bytes)?;
         }
         ImageData::from_png(bytes)
     } else {
         return Err(tagged_err(
             atoms::unsupported(),
-            format!("image {index} is neither JPEG nor PNG"),
+            format!("{what} is neither JPEG nor PNG"),
         ));
     }
-    .map_err(|e| tagged_err(atoms::other(), format!("image {index}: {e}")))?;
+    .map_err(|e| tagged_err(atoms::other(), format!("{what}: {e}")))?;
 
     // A zero dimension makes the page layout divide by zero.
     if image.width == 0 || image.height == 0 {
         return Err(tagged_err(
             atoms::other(),
             format!(
-                "image {index}: has no area ({} × {} pixels)",
+                "{what}: has no area ({} × {} pixels)",
                 image.width, image.height
             ),
         ));
     }
 
     if image.format == ImageFormat::Jpeg {
-        ensure_jpeg_readable(index, &image)?;
+        ensure_jpeg_readable(what, &image)?;
     }
 
     Ok(image)
+}
+
+// The writer merges images whose compressed samples are equal, whatever their
+// size, color space or mask, so each different image sharing an earlier one's
+// samples is numbered in no-op deflate blocks.
+pub(crate) fn keep_apart<'a>(images: impl IntoIterator<Item = &'a mut ImageData>) {
+    let mut numbers: HashMap<(Fingerprint, Shape), usize> = HashMap::new();
+    let mut next: HashMap<Fingerprint, usize> = HashMap::new();
+    let mut taken: HashMap<Fingerprint, (Fingerprint, Shape)> = HashMap::new();
+
+    for image in images {
+        if image.format != ImageFormat::Png || image.data.len() < 2 {
+            continue;
+        }
+        let samples = fingerprint(&image.data);
+        let owner = (samples, Shape::of(image));
+
+        let number = if let Some(&number) = numbers.get(&owner) {
+            number
+        } else {
+            loop {
+                let counter = next.entry(samples).or_insert(0);
+                let number = *counter;
+                *counter += 1;
+                let key = match number {
+                    0 => samples,
+                    _ => fingerprint(&numbered(&image.data, number)),
+                };
+                if taken.get(&key).is_none_or(|holder| *holder == owner) {
+                    taken.insert(key, owner);
+                    numbers.insert(owner, number);
+                    break number;
+                }
+            }
+        };
+        if number > 0 {
+            image.data = numbered(&image.data, number);
+        }
+    }
+}
+
+type Fingerprint = (u64, usize);
+
+fn fingerprint(bytes: &[u8]) -> Fingerprint {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    (hasher.finish(), bytes.len())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Shape {
+    width: u32,
+    height: u32,
+    color_space: u8,
+    bits_per_component: u8,
+    mask: Option<Fingerprint>,
+}
+
+impl Shape {
+    fn of(image: &ImageData) -> Self {
+        Shape {
+            width: image.width,
+            height: image.height,
+            color_space: match image.color_space {
+                ColorSpace::DeviceGray => 0,
+                ColorSpace::DeviceRGB => 1,
+                ColorSpace::DeviceCMYK => 2,
+            },
+            bits_per_component: image.bits_per_component,
+            mask: image.soft_mask.as_deref().map(fingerprint),
+        }
+    }
+}
+
+// A 1 is an empty fixed-Huffman block then an empty stored block, a 0 the
+// stored block alone; both end on a byte boundary and open with different
+// bytes, so each number gives different bytes.
+fn numbered(data: &[u8], number: usize) -> Vec<u8> {
+    const ONE: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0xFF, 0xFF];
+    const ZERO: [u8; 5] = [0x00, 0x00, 0x00, 0xFF, 0xFF];
+
+    let digits = usize::BITS - number.leading_zeros();
+    let mut out = Vec::with_capacity(data.len() + 6 * digits as usize);
+    out.extend_from_slice(&data[..2]);
+    for digit in (0..digits).rev() {
+        if number >> digit & 1 == 1 {
+            out.extend_from_slice(&ONE);
+        } else {
+            out.extend_from_slice(&ZERO);
+        }
+    }
+    out.extend_from_slice(&data[2..]);
+    out
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -359,11 +455,12 @@ fn editor_from_images(
     options: ImageCreateOptionsNif,
 ) -> NifResult<OpenedEditor> {
     create(|| {
-        let images = images
+        let mut images = images
             .iter()
             .enumerate()
-            .map(|(index, bytes)| decoded(index, bytes.as_slice()))
+            .map(|(index, bytes)| decoded(&format!("image {index}"), bytes.as_slice()))
             .collect::<NifResult<Vec<_>>>()?;
+        keep_apart(&mut images);
 
         options
             .builder()
@@ -381,6 +478,84 @@ mod tests {
 
     fn reopened(pdf: Result<Pdf>) -> PdfDocument {
         PdfDocument::from_bytes(pdf.expect("layout succeeds").into_bytes()).expect("output parses")
+    }
+
+    fn solid_png<P: image::PixelWithColorType<Subpixel = u8>>(
+        width: u32,
+        height: u32,
+        pixel: P,
+    ) -> ImageData
+    where
+        [u8]: image::EncodableLayout,
+    {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::ImageBuffer::from_pixel(width, height, pixel)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("png encodes");
+        ImageData::from_png(png.get_ref()).expect("png decodes")
+    }
+
+    fn count(pdf: &[u8], needle: &[u8]) -> usize {
+        pdf.windows(needle.len())
+            .filter(|window| *window == needle)
+            .count()
+    }
+
+    #[test]
+    fn upstream_still_dedups_images_by_their_samples_alone() {
+        let opaque = solid_png(8, 8, image::Rgb([128, 128, 128]));
+        let transparent = solid_png(8, 8, image::Rgba([128, 128, 128, 128]));
+        let pdf = PdfBuilder::new()
+            .from_image_data_multiple(vec![opaque, transparent])
+            .expect("layout succeeds")
+            .into_bytes();
+
+        assert_eq!(count(&pdf, b"/Subtype /Image"), 1);
+        assert_eq!(count(&pdf, b"/SMask"), 0);
+    }
+
+    #[test]
+    fn keep_apart_separates_only_different_images_with_equal_samples() {
+        let opaque = solid_png(8, 8, image::Rgb([128, 128, 128]));
+        let transparent = solid_png(8, 8, image::Rgba([128, 128, 128, 128]));
+        let wide_gray = solid_png(24, 8, image::Luma([128]));
+        let mut images = vec![
+            opaque.clone(),
+            transparent.clone(),
+            opaque.clone(),
+            wide_gray,
+            transparent,
+        ];
+        assert!(images.iter().all(|image| image.data == opaque.data));
+
+        keep_apart(&mut images);
+
+        assert_eq!(images[0].data, opaque.data);
+        assert_eq!(images[2].data, opaque.data);
+        assert_ne!(images[1].data, opaque.data);
+        assert_ne!(images[3].data, opaque.data);
+        assert_ne!(images[3].data, images[1].data);
+        assert_eq!(images[4].data, images[1].data);
+        assert_eq!(images[3].data[..2], opaque.data[..2]);
+    }
+
+    #[test]
+    fn keep_apart_numbers_variants_in_binary() {
+        let base = solid_png(8, 8, image::Rgb([128, 128, 128]));
+        let mut images: Vec<ImageData> = (1..=1024)
+            .map(|width| ImageData {
+                width,
+                ..base.clone()
+            })
+            .collect();
+
+        keep_apart(&mut images);
+
+        let distinct: std::collections::HashSet<&[u8]> =
+            images.iter().map(|image| image.data.as_slice()).collect();
+        let longest = images.iter().map(|image| image.data.len()).max();
+        assert_eq!(distinct.len(), 1024);
+        assert_eq!(longest, Some(base.data.len() + 10 * 6));
     }
 
     #[test]

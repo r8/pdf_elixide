@@ -413,6 +413,17 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "the Builder image operations" do
+      assert Builder.__option_defaults__(:image) == %{
+               width: nil,
+               height: nil,
+               fit: :contain,
+               align: :left
+             }
+
+      assert Builder.__option_defaults__(:image_in_rect) == %{fit: :contain}
+    end
+
     test "Editor.from_images/2" do
       assert Editor.__option_defaults__(:image_create) == %{
                title: nil,
