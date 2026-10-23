@@ -391,7 +391,25 @@ defmodule PdfElixide.OptionDefaultsTest do
     end
 
     test "a Builder text run" do
-      assert Builder.__option_defaults__(:run) == %{bold: false, italic: false, color: nil}
+      assert Builder.__option_defaults__(:run) == %{
+               bold: false,
+               italic: false,
+               color: nil,
+               link: nil
+             }
+    end
+
+    test "Builder.watermark/3" do
+      assert Builder.__option_defaults__(:watermark) == %{
+               pages: :current,
+               center: nil,
+               rotation: 45.0,
+               font: :helvetica,
+               bold: false,
+               font_size: 72.0,
+               color: %PdfElixide.Color.RGB{r: 0.5, g: 0.5, b: 0.5},
+               opacity: 0.3
+             }
     end
 
     test "the Builder drawing operations" do

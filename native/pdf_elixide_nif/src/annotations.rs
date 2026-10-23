@@ -338,6 +338,31 @@ mod tests {
     }
 
     #[test]
+    fn upstream_still_reports_a_destination_page_as_its_object_number() {
+        use pdf_oxide::{
+            geometry::Rect,
+            writer::{DocumentBuilder, LinkAnnotation, PageSize},
+        };
+
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .add_annotation(LinkAnnotation::goto_page(
+                Rect::new(72.0, 700.0, 100.0, 12.0),
+                1,
+            ))
+            .done();
+        builder.page(PageSize::Letter).done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let annotations = doc.get_annotations(0).expect("annotations extract");
+
+        let Some(LinkDestination::Explicit { page, .. }) = &annotations[0].destination else {
+            panic!("a link with an explicit destination");
+        };
+        assert_ne!(*page, 1);
+    }
+
+    #[test]
     fn the_button_trio_is_reclassified_from_the_flags() {
         assert_eq!(
             button_field_type_nif(field_flags::PUSH_BUTTON, Some("Choice1")),

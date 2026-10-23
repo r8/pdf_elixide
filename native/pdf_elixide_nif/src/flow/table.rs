@@ -108,6 +108,7 @@ impl Layout<'_> {
             }
         }
         self.pending_space = 0.0;
+        self.resolve_anchors();
 
         let mut drawn = Drawn::default();
         self.place_rows(&measured, 0..table.header_rows, &mut drawn);

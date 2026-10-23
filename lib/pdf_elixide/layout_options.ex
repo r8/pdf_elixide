@@ -57,6 +57,15 @@ defmodule PdfElixide.LayoutOptions do
   @spec fits_f32?(number()) :: boolean()
   def fits_f32?(value), do: abs(value) <= @max_f32
 
+  # Keep a center plus an extent safely within the readable integer range.
+  @max_written 1.0e18
+
+  @spec max_written() :: float()
+  def max_written, do: @max_written
+
+  @spec writable?(number()) :: boolean()
+  def writable?(value), do: abs(value) <= @max_written
+
   # Dimensions and corners must each fit f32.
   @spec rect!(label(), term()) :: term()
   def rect!(label, %Rect{x: x, y: y, width: width, height: height} = rect)

@@ -281,6 +281,16 @@ defmodule PdfElixide.BuilderTest do
   end
 
   describe "page/2" do
+    test "the largest page size it accepts reads back" do
+      for {width, height} <- [{1.0e18, 792}, {612, 1.0e18}] do
+        doc = written(Builder.new(page_size: {width, height}))
+        box = Page.media_box!(Document.page!(doc, 0))
+
+        assert_in_delta box.width / width, 1.0, 1.0e-6
+        assert_in_delta box.height / height, 1.0, 1.0e-6
+      end
+    end
+
     test "the first content starts a page, so a leading page/2 adds no blank one" do
       doc = Builder.new() |> Builder.page(:a4) |> Builder.paragraph("A4") |> written()
 
@@ -2066,6 +2076,340 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "links" do
+    defp links(doc, page) do
+      for %{subtype: :link} = link <- Document.annotations!(doc, page), do: link
+    end
+
+    test "an area link is clipped to the page" do
+      link = fn rect ->
+        doc = Builder.new() |> Builder.link_in_rect(rect, "https://example.com") |> written()
+        assert [%{rect: rect}] = links(doc, 0)
+        rect
+      end
+
+      assert link.(%Rect{x: -100_000_000.0, y: 72.0, width: 100_000_001.0, height: 20.0}) ==
+               %Rect{x: 0.0, y: 72.0, width: 1.0, height: 20.0}
+
+      assert link.(%Rect{x: -1.0e30, y: -1.0e30, width: 2.0e30, height: 2.0e30}) ==
+               %Rect{x: 0.0, y: 0.0, width: 612.0, height: 792.0}
+
+      assert Builder.new(page_size: {1.0e9, 792})
+             |> Builder.link_in_rect(
+               %Rect{x: 1.0e9 - 1, y: 0, width: 10, height: 10},
+               "https://example.com"
+             )
+             |> refusal() =~ "op 0 on page 0: the page is too large to place the link's area"
+    end
+
+    defp quad_points(bytes) do
+      for [points] <- Regex.scan(~r{/QuadPoints \[([^\]]*)\]}, bytes, capture: :all_but_first) do
+        points
+        |> String.split()
+        |> Enum.map(&String.to_float(&1 <> if(&1 =~ ".", do: "", else: ".0")))
+      end
+    end
+
+    defp link_objects(bytes) do
+      numbers = fn text ->
+        text |> String.split() |> Enum.map(&elem(Float.parse(&1), 0))
+      end
+
+      for [object] <- Regex.scan(~r/obj(.*?)endobj/s, bytes, capture: :all_but_first),
+          object =~ "/QuadPoints" do
+        [rect] = Regex.run(~r{/Rect \[([^\]]*)\]}, object, capture: :all_but_first)
+        [quads] = Regex.run(~r{/QuadPoints \[([^\]]*)\]}, object, capture: :all_but_first)
+        points = quads |> numbers.() |> Enum.chunk_every(2) |> Enum.map(&List.to_tuple/1)
+        {numbers.(rect), points}
+      end
+    end
+
+    # Read the file: annotation extraction returns page object numbers, not indices.
+    defp destinations(bytes) do
+      [[kids]] = Regex.scan(~r{/Kids \[([^\]]*)\]}, bytes, capture: :all_but_first)
+      pages = ~r/(\d+) 0 R/ |> Regex.scan(kids, capture: :all_but_first) |> List.flatten()
+
+      for [object, rest] <-
+            Regex.scan(~r{/Dest \[(\d+) 0 R ([^\]]*)\]}, bytes, capture: :all_but_first) do
+        {Enum.find_index(pages, &(&1 == object)), String.split(rest)}
+      end
+    end
+
+    defp inside?(%Rect{} = rect, %Rect{} = box) do
+      {x, y} = {box.x + box.width / 2, box.y + box.height / 2}
+      x > rect.x and x < rect.x + rect.width and y > rect.y and y < rect.y + rect.height
+    end
+
+    test "a linked run covers its own text and opens its URI" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(["Read ", {"the docs", link: "https://example.com/docs"}, " today."])
+        |> written()
+
+      assert [%{action: {:uri, "https://example.com/docs"}, destination: nil, rect: rect}] =
+               links(doc, 0)
+
+      chars = doc |> Document.chars!(0) |> Enum.reject(&(&1.text == " "))
+      assert Enum.map_join(chars, & &1.text) == "Readthedocstoday."
+      {before, rest} = Enum.split(chars, 4)
+      {linked, rest} = Enum.split(rest, 7)
+
+      assert Enum.all?(linked, &inside?(rect, &1.bbox))
+      refute Enum.any?(before ++ rest, &inside?(rect, &1.bbox))
+    end
+
+    test "a linked run that wraps is one link with a quadrilateral for each line" do
+      text = String.duplicate("linked words ", 12)
+
+      builder =
+        Builder.new(page_size: {300, 400})
+        |> Builder.paragraph([{text, link: "https://example.com"}])
+
+      doc = written(builder)
+      [link] = links(doc, 0)
+      [quads] = builder |> Builder.to_binary!(compress: false) |> quad_points()
+      lines = baselines(doc, 0)
+
+      assert length(lines) > 1
+      assert length(quads) == 8 * length(lines)
+      assert_in_delta link.rect.x, 72, 0.001
+    end
+
+    test "a link's rect contains every quadrilateral as written" do
+      text = "a bb ccc link words wrap here there example docs reference"
+
+      for box_y <- [200.1, 333.3], size <- [12, 11, 9.5] do
+        objects =
+          Builder.new()
+          |> Builder.text_in_rect(
+            %Rect{x: 72, y: box_y, width: 100.3, height: 100.2},
+            [{text, link: "https://example.com"}],
+            font_size: size
+          )
+          |> Builder.to_binary!(compress: false)
+          |> link_objects()
+
+        assert [{[x0, y0, x1, y1], points}] = objects
+        assert length(points) > 4
+
+        for {x, y} <- points do
+          assert x >= x0 and x <= x1 and y >= y0 and y <= y1,
+                 "#{size}-point text at #{box_y}: {#{x}, #{y}} outside #{inspect([x0, y0, x1, y1])}"
+        end
+      end
+    end
+
+    test "a linked run broken by a page is one link on each page" do
+      doc =
+        Builder.new(page_size: {300, 200})
+        |> Builder.paragraph([{String.duplicate("more words ", 30), link: "https://example.com"}])
+        |> written()
+
+      assert Document.page_count!(doc) > 1
+
+      for page <- 0..(Document.page_count!(doc) - 1) do
+        assert [%{action: {:uri, "https://example.com"}}] = links(doc, page)
+      end
+    end
+
+    test "separate runs to one target stay separate, and different targets are not merged" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph([
+          {"one", link: "https://a.example"},
+          " and ",
+          {"two", link: "https://a.example"},
+          {"three", link: "https://b.example"}
+        ])
+        |> written()
+
+      assert Enum.map(links(doc, 0), & &1.action) == [
+               {:uri, "https://a.example"},
+               {:uri, "https://a.example"},
+               {:uri, "https://b.example"}
+             ]
+    end
+
+    test "links work in headings, lists, positioned text, boxes and cells" do
+      link = fn name -> {name, link: "https://example.com/#{name}"} end
+
+      doc =
+        Builder.new()
+        |> Builder.heading(1, [link.("heading")])
+        |> Builder.bullet_list([[link.("item")]])
+        |> Builder.text_at({72, 300}, [link.("at")])
+        |> Builder.text_in_rect(%Rect{x: 72.0, y: 200.0, width: 200.0, height: 40.0}, [
+          link.("box")
+        ])
+        |> Builder.table([[[link.("cell")]]])
+        |> written()
+
+      assert doc |> links(0) |> Enum.map(fn %{action: {:uri, uri}} -> uri end) |> Enum.sort() ==
+               Enum.sort(
+                 for name <- ~w(heading item at box cell), do: "https://example.com/#{name}"
+               )
+    end
+
+    test "link_in_rect/3 makes an area of the current page a link" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("first")
+        |> Builder.page()
+        |> Builder.link_in_rect(
+          %Rect{x: 172.0, y: 120.0, width: -100.0, height: -20.0},
+          "https://example.com"
+        )
+        |> written()
+
+      assert links(doc, 0) == []
+
+      assert [%{action: {:uri, "https://example.com"}, rect: rect}] = links(doc, 1)
+      assert {rect.x, rect.y, rect.width, rect.height} == {72.0, 100.0, 100.0, 20.0}
+    end
+
+    test "a page link fits that page in the window" do
+      bytes =
+        Builder.new()
+        |> Builder.paragraph([{"next", link: {:page, 1}}])
+        |> Builder.page()
+        |> Builder.link_in_rect(%Rect{x: 72.0, y: 72.0, width: 10.0, height: 10.0}, {:page, 0})
+        |> Builder.to_binary!(compress: false)
+
+      assert destinations(bytes) == [{1, ["/Fit"]}, {0, ["/Fit"]}]
+    end
+
+    test "a page past the last one is refused, naming the op" do
+      message =
+        Builder.new()
+        |> Builder.paragraph("first")
+        |> Builder.paragraph([{"nowhere", link: {:page, 1}}])
+        |> refusal()
+
+      assert message =~ "op 1 on page 0"
+      assert message =~ "page 1, but the document has 1 page,"
+    end
+  end
+
+  describe "anchor/2" do
+    test "a link to an anchor goes to the top of the content after it, wherever it lands" do
+      bytes =
+        Builder.new(page_size: {300, 300})
+        |> Builder.paragraph([{"to the end", link: {:anchor, "end"}}])
+        |> Builder.paragraph(Enum.join(1..6, "\n"))
+        |> Builder.anchor("end")
+        |> Builder.heading(2, "End")
+        |> Builder.to_binary!(compress: false)
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.page_count!(doc) == 2
+      assert destinations(bytes) == [{1, ["/XYZ", "null", "228", "null"]}]
+    end
+
+    test "an anchor may come after its links, and one at the end points where the flow ends" do
+      bytes =
+        Builder.new()
+        |> Builder.paragraph([{"later", link: {:anchor, "later"}}])
+        |> Builder.anchor("later")
+        |> Builder.to_binary!(compress: false)
+
+      assert destinations(bytes) == [{0, ["/XYZ", "null", "702", "null"]}]
+    end
+
+    test "an anchor no call names is refused, naming it" do
+      message =
+        Builder.new()
+        |> Builder.anchor("there")
+        |> Builder.paragraph([{"lost", link: {:anchor, "nowhere"}}])
+        |> refusal()
+
+      assert message =~ "op 1 on page 0"
+      assert message =~ ~s(anchor "nowhere")
+    end
+  end
+
+  describe "watermark/3" do
+    defp marks(doc) do
+      for %{subtype: :watermark} = mark <- Document.annotations!(doc), do: mark
+    end
+
+    defp center(%Rect{x: x, y: y, width: width, height: height}),
+      do: {x + width / 2, y + height / 2}
+
+    test "the largest size and the farthest center it accepts still read back" do
+      doc =
+        Builder.new()
+        |> Builder.watermark("W", font_size: 1.0e18 / 6, center: {-1.0e18, 1.0e18})
+        |> written()
+
+      assert [%{rect: %Rect{x: x, y: y}}] = marks(doc)
+      assert x < -1.0e18 and y > 0
+    end
+
+    test ":current marks one page, and :all every page wherever it is called" do
+      doc =
+        Builder.new(page_size: {300, 300})
+        |> Builder.watermark("ONE")
+        |> Builder.paragraph(Enum.join(1..20, "\n"))
+        |> Builder.watermark("ALL", pages: :all)
+        |> written()
+
+      assert Document.page_count!(doc) == 3
+      assert doc |> marks() |> Enum.frequencies_by(& &1.page) == %{0 => 2, 1 => 1, 2 => 1}
+    end
+
+    test "is centered on each page it marks, or on :center" do
+      doc =
+        Builder.new()
+        |> Builder.watermark("ALL", pages: :all)
+        |> Builder.watermark("HERE", pages: :all, center: {100, 100})
+        |> Builder.paragraph("first")
+        |> Builder.page({300, 400})
+        |> written()
+
+      [[all_0, here_0], [all_1, here_1]] =
+        doc
+        |> marks()
+        |> Enum.chunk_by(& &1.page)
+        |> Enum.map(fn marks -> Enum.map(marks, & &1.rect) end)
+
+      # The box is offset from the text's center by an amount that depends on
+      # the text alone, so equal offsets mean equal centering.
+      {x0, y0} = center(all_0)
+      {x1, y1} = center(all_1)
+      assert_in_delta x0 - 306, x1 - 150, 0.001
+      assert_in_delta y0 - 396, y1 - 200, 0.001
+      assert here_0 == here_1
+    end
+
+    test "is a printable, read-only annotation with the opacity given" do
+      builder = Builder.new() |> Builder.watermark("DRAFT", opacity: 0.5)
+
+      assert [%{page: 0, flags: %{print: true, read_only: true}}] =
+               builder |> written() |> marks()
+
+      assert builder |> Builder.to_binary!(compress: false) =~ "/ca 0.5"
+    end
+
+    test "flattening draws it into the page's content" do
+      builder = Builder.new() |> Builder.watermark("DRAFT", opacity: 1.0)
+
+      blank? = fn doc ->
+        %{data: data} =
+          Document.render!(doc, 0, dpi: 18, format: :rgba8, render_annotations: false)
+
+        data == :binary.copy(<<255>>, byte_size(data))
+      end
+
+      flattened = builder |> Editor.from_builder!() |> Editor.flatten_annotations!() |> written()
+
+      assert builder |> written() |> blank?.()
+      assert marks(flattened) == []
+      refute blank?.(flattened)
+    end
+  end
+
   describe "font refusals" do
     test "a style the family has no face for" do
       message =
@@ -2276,6 +2620,15 @@ defmodule PdfElixide.BuilderTest do
 
     test "an unknown paper size, or values of the wrong type" do
       assert_raise ArgumentError, ~r/:page_size/, fn -> Builder.new(page_size: :b5) end
+
+      assert_raise ArgumentError, ~r/^invalid :page_size, expected sides of at most 1.0e18/, fn ->
+        Builder.new(page_size: {1.0e19, 792})
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :page_size, expected sides of at most 1.0e18/, fn ->
+        Builder.page(Builder.new(), {612, 1.0e19})
+      end
+
       assert_raise ArgumentError, ~r/:title/, fn -> Builder.new(title: 1) end
       assert_raise ArgumentError, ~r/:font_size/, fn -> Builder.new(font_size: "12") end
       assert_raise ArgumentError, ~r/:font_size/, fn -> Builder.new(font_size: 0) end
@@ -2288,6 +2641,88 @@ defmodule PdfElixide.BuilderTest do
       assert_raise ArgumentError, ~r/invalid :font/, fn ->
         Builder.paragraph(Builder.new(), "x", font: "Helvetica")
       end
+    end
+
+    test "links" do
+      paragraph = &Builder.paragraph(Builder.new(), [{"x", link: &1}])
+      rect = %Rect{x: 72.0, y: 72.0, width: 10.0, height: 10.0}
+
+      assert_raise ArgumentError, ~r/^invalid :link, expected a URI of printable ASCII/, fn ->
+        paragraph.("https://example.com/ж")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :link, expected a URI/, fn ->
+        paragraph.("https://example.com/a b")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :link, a JavaScript: URI runs a script/, fn ->
+        paragraph.("JavaScript:alert(1)")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :link, expected a URI string, {:page, index}/, fn ->
+        paragraph.({:page, -1})
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :link, an anchor name cannot be empty/, fn ->
+        paragraph.({:anchor, ""})
+      end
+
+      assert_raise ArgumentError, ~r/^invalid run, a linked run needs text other than/, fn ->
+        Builder.paragraph(Builder.new(), ["x", {" ", link: "https://example.com"}])
+      end
+
+      assert_raise ArgumentError, ~r/^invalid rect, it lies outside the 612.0 × 792.0 page/, fn ->
+        Builder.link_in_rect(Builder.new(), %{rect | x: 612.0}, "https://example.com")
+      end
+
+      assert_raise FunctionClauseError, fn ->
+        Builder.link_in_rect(Builder.new(), rect, untyped(nil))
+      end
+    end
+
+    test "anchors" do
+      assert_raise ArgumentError, ~r/^invalid name, an anchor named "a" already exists/, fn ->
+        Builder.new() |> Builder.anchor("a") |> Builder.anchor("a")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid name, an anchor name cannot be empty/, fn ->
+        Builder.anchor(Builder.new(), "")
+      end
+    end
+
+    test "watermarks" do
+      watermark = &Builder.watermark(Builder.new(), &1, &2)
+
+      for text <- ["", "   ", "Отчёт", "two\nlines"] do
+        assert_raise ArgumentError, ~r/^invalid text, expected one line of printable ASCII/, fn ->
+          watermark.(text, [])
+        end
+      end
+
+      for opacity <- [0, 1.5, :half] do
+        assert_raise ArgumentError, ~r/^invalid :opacity/, fn ->
+          watermark.("DRAFT", opacity: opacity)
+        end
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :pages/, fn -> watermark.("DRAFT", pages: 1) end
+      assert_raise ArgumentError, ~r/^invalid :font/, fn -> watermark.("DRAFT", font: :auto) end
+
+      assert_raise ArgumentError, ~r/^invalid :color, a watermark needs one/, fn ->
+        watermark.("DRAFT", color: nil)
+      end
+
+      for font_size <- [1.0e20, 1.0e38] do
+        assert_raise ArgumentError, ~r/^invalid :font_size, .* too wide to place/, fn ->
+          watermark.("W", font_size: font_size)
+        end
+      end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :center, expected coordinates of at most 1.0e18/,
+                   fn ->
+                     watermark.("DRAFT", center: {0, -1.0e19})
+                   end
     end
 
     test "a malformed run" do

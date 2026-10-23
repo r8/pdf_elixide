@@ -427,7 +427,12 @@ defmodule PdfElixide.OptionKeysTest do
       )
 
       accepts_each!(
-        [bold: true, italic: true, color: %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}],
+        [
+          bold: true,
+          italic: true,
+          color: %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0},
+          link: "https://example.com"
+        ],
         &Builder.paragraph(Builder.new(), [{"Text", &1}])
       )
 
@@ -529,6 +534,22 @@ defmodule PdfElixide.OptionKeysTest do
                Builder.image(Builder.new(), "image", width: 100, height: 50, fit: :fill)
 
       accepts_each!([fit: :fill], &Builder.image_in_rect(Builder.new(), rect, "image", &1))
+    end
+
+    test "Builder.watermark/3" do
+      accepts_each!(
+        [
+          pages: :all,
+          center: {100, 100},
+          rotation: 30,
+          font: :times,
+          bold: true,
+          font_size: 40,
+          color: %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0},
+          opacity: 0.5
+        ],
+        &Builder.watermark(Builder.new(), "DRAFT", &1)
+      )
     end
 
     test "Editor.save/3 and to_binary/2" do

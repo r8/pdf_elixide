@@ -35,8 +35,11 @@ defmodule PdfElixide.Document.Annotation do
   Where a link annotation points.
 
     * `{:named, name}` — a named destination (unresolved name string).
-    * `{:explicit, page, fit_type, params}` — a zero-based target page, a fit
-      type (`"XYZ"`, `"Fit"`, `"FitH"`, …), and its numeric parameters.
+    * `{:explicit, page, fit_type, params}` — the target page, a fit type
+      (`"XYZ"`, `"Fit"`, `"FitH"`, …), and its numeric parameters. `page` is a
+      zero-based index when the destination names its page by number, but the
+      page object's number when it names the page by reference, as a link
+      within the same document usually does.
   """
   @type destination ::
           {:named, String.t()}

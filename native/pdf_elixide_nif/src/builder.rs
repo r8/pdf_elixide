@@ -4,20 +4,24 @@ use pdf_oxide::{
     elements::{ContentElement, FontSpec, PathContent, TextContent, TextStyle},
     fonts::bundled::{DEJAVU_SANS, DEJAVU_SANS_BOLD},
     geometry::Rect,
-    writer::{DocumentBuilder, EmbeddedFont, ImageData, PageSize},
+    writer::{
+        Annotation, DocumentBuilder, EmbeddedFont, FitMode, ImageData, LinkAction, LinkAnnotation,
+        PageSize, WatermarkAnnotation,
+    },
 };
 use rustler::{Binary, NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
 
 use crate::{
-    atoms, base14,
+    atoms,
+    base14::{self, Base14},
     color::{color_from_components, RgbNif},
     create::{create_from_bytes, decoded, keep_apart},
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
         self, embedded_key, Align, Cell, Embedded, Face, Fit, FlowImage, Fonts, Item, Margins,
-        Marker, Op, PagePlan, Picture, Refused, Run, Shape, Stroke, Table, Unordered, Width,
-        Within,
+        Marker, Op, Picture, Placed, Plan, Refused, Run, Shape, Stroke, Table, Unordered,
+        Watermark, Width, Within,
     },
     paths::PathOpNif,
 };
@@ -61,6 +65,57 @@ pub enum OpNif {
     Table(TableNif),
     Image(ImageNif),
     ImageInRect(ImageInRectNif),
+    Anchor(String),
+    LinkInRect(LinkInRectNif),
+    Watermark(WatermarkNif),
+}
+
+#[derive(NifTaggedEnum, Clone)]
+pub enum LinkNif {
+    Uri(String),
+    Page(usize),
+    Anchor(String),
+}
+
+#[derive(NifMap)]
+pub struct LinkInRectNif {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    link: LinkNif,
+}
+
+#[derive(NifMap)]
+pub struct WatermarkNif {
+    text: String,
+    pages: PagesNif,
+    center: Option<(f64, f64)>,
+    rotation: f64,
+    font: WatermarkFontNif,
+    bold: bool,
+    font_size: f64,
+    color: RgbNif,
+    opacity: f64,
+}
+
+#[derive(NifUnitEnum, Clone, Copy)]
+pub enum PagesNif {
+    Current,
+    All,
+}
+
+#[derive(NifUnitEnum, Clone, Copy)]
+pub enum WatermarkFontNif {
+    Helvetica,
+    Times,
+    Courier,
+}
+
+// Flow link ids index this table; retain the originating op for refusals.
+struct Link {
+    op: usize,
+    target: LinkNif,
 }
 
 #[derive(NifMap)]
@@ -259,6 +314,7 @@ pub struct RunNif {
     bold: bool,
     italic: bool,
     color: Option<RgbNif>,
+    link: Option<LinkNif>,
 }
 
 #[derive(NifTaggedEnum, Clone, Copy)]
@@ -550,6 +606,7 @@ fn runs(
     font: FontNif,
     auto: Family,
     faces: &mut Faces<'_, '_>,
+    links: &mut Vec<Link>,
 ) -> NifResult<Vec<Run>> {
     let family = family_of(font, auto);
     let from_auto = matches!(font, FontNif::Auto);
@@ -562,16 +619,40 @@ fn runs(
             Ok(Run {
                 face: faces.face(op, family, Style::of(run.bold, italic))?,
                 color: run.color.map(Into::into),
+                link: run.link.map(|target| linked(links, op, target)),
                 text: run.text,
             })
         })
         .collect()
 }
 
+fn linked(links: &mut Vec<Link>, op: usize, target: LinkNif) -> usize {
+    links.push(Link { op, target });
+    links.len() - 1
+}
+
+fn watermark(mark: WatermarkNif) -> Watermark {
+    let family = match mark.font {
+        WatermarkFontNif::Helvetica => Family::Helvetica,
+        WatermarkFontNif::Times => Family::Times,
+        WatermarkFontNif::Courier => Family::Courier,
+    };
+    Watermark {
+        text: mark.text,
+        font: base14_name(family, Style::of(mark.bold, false)).expect("a built-in family"),
+        size: mark.font_size,
+        rotation: mark.rotation,
+        color: mark.color.into(),
+        opacity: mark.opacity,
+        center: mark.center,
+    }
+}
+
 fn ops(
     ops: Vec<OpNif>,
     faces: &mut Faces<'_, '_>,
     pictures: &mut Pictures<'_, '_>,
+    links: &mut Vec<Link>,
 ) -> NifResult<Vec<Op>> {
     let auto = auto_family(&ops);
 
@@ -596,14 +677,14 @@ fn ops(
             }
             OpNif::Paragraph(paragraph) => Ok(Op::Paragraph {
                 face: faces.face(index, family_of(paragraph.font, auto), Style::Regular)?,
-                runs: runs(index, paragraph.runs, paragraph.font, auto, faces)?,
+                runs: runs(index, paragraph.runs, paragraph.font, auto, faces, links)?,
                 size: paragraph.font_size,
                 keep_with_next: false,
             }),
             // A heading's runs arrive bold, and its line box is the bold face's.
             OpNif::Heading(heading) => Ok(Op::Paragraph {
                 face: faces.face(index, family_of(heading.font, auto), Style::Bold)?,
-                runs: runs(index, heading.runs, heading.font, auto, faces)?,
+                runs: runs(index, heading.runs, heading.font, auto, faces, links)?,
                 size: heading.font_size,
                 keep_with_next: true,
             }),
@@ -612,7 +693,7 @@ fn ops(
                 items: list
                     .items
                     .into_iter()
-                    .map(|item| runs(index, item, list.font, auto, faces))
+                    .map(|item| runs(index, item, list.font, auto, faces, links))
                     .collect::<NifResult<_>>()?,
                 size: list.font_size,
                 marker: list.marker.into(),
@@ -621,14 +702,14 @@ fn ops(
             OpNif::Space(points) => Ok(Op::Space(points)),
             OpNif::Rule(size) => Ok(Op::Rule { size }),
             OpNif::TextAt(text) => Ok(Op::TextAt {
-                runs: runs(index, text.runs, text.font, auto, faces)?,
+                runs: runs(index, text.runs, text.font, auto, faces, links)?,
                 size: text.font_size,
                 x: text.x,
                 y: text.y,
             }),
             OpNif::TextInRect(text) => Ok(Op::TextInRect {
                 face: faces.face(index, family_of(text.font, auto), Style::Regular)?,
-                runs: runs(index, text.runs, text.font, auto, faces)?,
+                runs: runs(index, text.runs, text.font, auto, faces, links)?,
                 size: text.font_size,
                 x: text.x,
                 y: text.y,
@@ -637,7 +718,7 @@ fn ops(
                 align: text.align.into(),
             }),
             OpNif::Path(shape) => Ok(Op::Path(shape.into())),
-            OpNif::Table(table) => table_op(index, table, auto, faces),
+            OpNif::Table(table) => table_op(index, table, auto, faces, links),
             OpNif::Image(image) => Ok(Op::Image(FlowImage {
                 pixels: pictures.pixels(index, image.image)?,
                 image: image.image,
@@ -653,6 +734,15 @@ fn ops(
                 rect: [image.x, image.y, image.width, image.height],
                 fit: image.fit.into(),
             }),
+            OpNif::Anchor(name) => Ok(Op::Anchor(name)),
+            OpNif::LinkInRect(area) => Ok(Op::LinkInRect {
+                link: linked(links, index, area.link),
+                rect: [area.x, area.y, area.width, area.height],
+            }),
+            OpNif::Watermark(mark) => Ok(Op::Watermark {
+                every_page: matches!(mark.pages, PagesNif::All),
+                mark: watermark(mark),
+            }),
         })
         .collect()
 }
@@ -662,6 +752,7 @@ fn table_op(
     table: TableNif,
     auto: Family,
     faces: &mut Faces<'_, '_>,
+    links: &mut Vec<Link>,
 ) -> NifResult<Op> {
     let font = table.font;
     let rows = table
@@ -672,7 +763,7 @@ fn table_op(
                 .into_iter()
                 .map(|cell| {
                     Ok(Cell {
-                        runs: runs(index, cell.runs, font, auto, faces)?,
+                        runs: runs(index, cell.runs, font, auto, faces, links)?,
                         column: cell.column,
                         colspan: cell.colspan,
                         rowspan: cell.rowspan,
@@ -798,6 +889,10 @@ fn refused(refusal: Refused) -> rustler::Error {
             "op {op} on page {page}: the page is too large to place {size}-point text \
              precisely; use a smaller page or larger text"
         ),
+        Refused::LinkImprecise { op, page } => format!(
+            "op {op} on page {page}: the page is too large to place the link's area \
+             precisely where it overlaps the page; enlarge the area or use a smaller page"
+        ),
         Refused::Undrawable {
             op,
             page,
@@ -871,6 +966,20 @@ fn refused(refusal: Refused) -> rustler::Error {
              {room_width} × {room_height}-point content area; give a smaller :width or \
              :height, or reduce the margins"
         ),
+        Refused::NoSuchPage {
+            op,
+            page,
+            target,
+            pages,
+        } => format!(
+            "op {op} on page {page}: the link points to page {target}, but the document has \
+             {pages} page{}, numbered from 0; link to a page that exists",
+            if pages == 1 { "" } else { "s" }
+        ),
+        Refused::NoSuchAnchor { op, page, name } => format!(
+            "op {op} on page {page}: the link points to anchor {name:?}, which no anchor/2 \
+             call names; add the anchor or correct the name"
+        ),
     };
 
     unsupported(message)
@@ -881,8 +990,11 @@ fn emit(
     fonts: &Fonts,
     sources: &[(usize, &[u8])],
     images: &[Option<ImageData>],
-    plan: Vec<PagePlan>,
+    plan: Plan,
+    links: &[Link],
 ) -> NifResult<Vec<u8>> {
+    check_targets(&plan, links).map_err(refused)?;
+
     let mut doc = DocumentBuilder::new();
     if let Some(title) = meta.title {
         doc = doc.title(title);
@@ -902,11 +1014,20 @@ fn emit(
         doc = doc.register_embedded_font(embedded_key(face), font);
     }
 
-    for page in plan {
+    let Plan {
+        pages,
+        anchors,
+        watermarks,
+    } = plan;
+    for page in pages {
         let mut builder = doc.page(PageSize::Custom(page.width as f32, page.height as f32));
+        let mut annotations = PageLinks::default();
         for item in page.items {
             builder = match item {
                 Item::Text(placed) => {
+                    if let Some(link) = placed.link {
+                        annotations.text(link, text_box(fonts, &placed));
+                    }
                     let mut style = TextStyle::default();
                     if let Some(color) = placed.color {
                         style.color = color_from_components(color);
@@ -943,12 +1064,256 @@ fn emit(
                         Rect::new(x as f32, y as f32, width as f32, height as f32),
                     )
                 }
+                Item::Link {
+                    link,
+                    rect: [x, y, width, height],
+                } => {
+                    let (left, bottom) = (x as f32, y as f32);
+                    annotations.area(
+                        link,
+                        Rect::new(
+                            left,
+                            bottom,
+                            span(left, (x + width) as f32),
+                            span(bottom, (y + height) as f32),
+                        ),
+                    );
+                    builder
+                }
+                Item::Watermark(mark) => {
+                    annotations.watermark(mark);
+                    builder
+                }
             };
+        }
+        for mark in &watermarks {
+            annotations.watermark(mark.clone());
+        }
+        for annotation in annotations.build(links, &anchors, (page.width, page.height)) {
+            builder = builder.add_annotation(annotation);
         }
         builder.done();
     }
 
     doc.build().map(label_opentype_fonts).map_err(to_nif_err)
+}
+
+// Refuse missing targets before the writer silently drops their destinations.
+fn check_targets(plan: &Plan, links: &[Link]) -> Result<(), Refused> {
+    for (page, plan_page) in plan.pages.iter().enumerate() {
+        for item in &plan_page.items {
+            let link = match item {
+                Item::Text(Placed {
+                    link: Some(link), ..
+                })
+                | Item::Link { link, .. } => *link,
+                _ => continue,
+            };
+            let op = links[link].op;
+            match &links[link].target {
+                &LinkNif::Page(target) if target >= plan.pages.len() => {
+                    return Err(Refused::NoSuchPage {
+                        op,
+                        page,
+                        target,
+                        pages: plan.pages.len(),
+                    });
+                }
+                LinkNif::Anchor(name) if !plan.anchors.contains_key(name) => {
+                    return Err(Refused::NoSuchAnchor {
+                        op,
+                        page,
+                        name: name.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn text_box(fonts: &Fonts, placed: &Placed) -> [f64; 4] {
+    let (ascent, descent) = fonts.ascent_descent(placed.face);
+    [
+        placed.x,
+        placed.baseline + descent * placed.size / 1000.0,
+        placed.x + placed.width,
+        placed.baseline + ascent * placed.size / 1000.0,
+    ]
+}
+
+enum Pending {
+    Text(usize),
+    Area(usize, Rect),
+    Watermark(Watermark),
+}
+
+// Preserve paint order while grouping a run's fragments into one link per page.
+#[derive(Default)]
+struct PageLinks {
+    pending: Vec<Pending>,
+    boxes: HashMap<usize, Vec<[f64; 4]>>,
+}
+
+impl PageLinks {
+    fn text(&mut self, link: usize, frame: [f64; 4]) {
+        let boxes = self.boxes.entry(link).or_default();
+        if boxes.is_empty() {
+            self.pending.push(Pending::Text(link));
+        }
+        boxes.push(frame);
+    }
+
+    fn area(&mut self, link: usize, rect: Rect) {
+        self.pending.push(Pending::Area(link, rect));
+    }
+
+    fn watermark(&mut self, mark: Watermark) {
+        self.pending.push(Pending::Watermark(mark));
+    }
+
+    fn build(
+        mut self,
+        links: &[Link],
+        anchors: &HashMap<String, (usize, f64)>,
+        page: (f64, f64),
+    ) -> Vec<Annotation> {
+        self.pending
+            .into_iter()
+            .map(|pending| match pending {
+                Pending::Text(link) => {
+                    let boxes = self.boxes.remove(&link).unwrap_or_default();
+                    // Quadrilaterals run counterclockwise from the lower left.
+                    let quads: Vec<f32> = boxes
+                        .iter()
+                        .flat_map(|&[l, b, r, t]| [l, b, r, b, r, t, l, t])
+                        .map(|value| value as f32)
+                        .collect();
+                    Annotation::Link(
+                        link_annotation(&links[link].target, enclosing(&quads), anchors)
+                            .with_quad_points(quads),
+                    )
+                }
+                Pending::Area(link, rect) => {
+                    Annotation::Link(link_annotation(&links[link].target, rect, anchors))
+                }
+                Pending::Watermark(mark) => {
+                    Annotation::Watermark(watermark_annotation(&mark, page))
+                }
+            })
+            .collect()
+    }
+}
+
+fn enclosing(points: &[f32]) -> Rect {
+    let (mut left, mut bottom) = (f32::INFINITY, f32::INFINITY);
+    let (mut right, mut top) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for &[x, y] in points.as_chunks::<2>().0 {
+        left = left.min(x);
+        right = right.max(x);
+        bottom = bottom.min(y);
+        top = top.max(y);
+    }
+    Rect::new(left, bottom, span(left, right), span(bottom, top))
+}
+
+fn span(from: f32, to: f32) -> f32 {
+    // Round outward: a quad outside the serialized rect makes readers ignore it.
+    let mut size = to - from;
+    while from + size < to {
+        size = size.next_up();
+    }
+    size
+}
+
+// Targets were checked against the layout, so every page and anchor exists.
+fn link_annotation(
+    target: &LinkNif,
+    rect: Rect,
+    anchors: &HashMap<String, (usize, f64)>,
+) -> LinkAnnotation {
+    match target {
+        LinkNif::Uri(uri) => LinkAnnotation::uri(rect, uri.as_str()),
+        LinkNif::Page(page) => LinkAnnotation::goto_page(rect, *page),
+        LinkNif::Anchor(name) => {
+            let (page, y) = anchors[name];
+            let mut link = LinkAnnotation::goto_page(rect, page);
+            link.action = LinkAction::GoTo {
+                page,
+                fit: Some(FitMode::XYZ {
+                    left: None,
+                    top: Some(y as f32),
+                    zoom: None,
+                }),
+            };
+            link
+        }
+    }
+}
+
+fn watermark_annotation(mark: &Watermark, (width, height): (f64, f64)) -> WatermarkAnnotation {
+    let face = base14::face(mark.font).expect("a watermark font is base-14");
+    let center = mark.center.unwrap_or((width / 2.0, height / 2.0));
+    let [x, y, w, h] = watermark_rect(face, &mark.text, mark.size, mark.rotation, center);
+    let [r, g, b] = mark.color;
+
+    WatermarkAnnotation::new(mark.text.as_str())
+        .with_rect(Rect::new(x as f32, y as f32, w as f32, h as f32))
+        .with_rotation(mark.rotation as f32)
+        .with_opacity(mark.opacity as f32)
+        .with_font(mark.font, mark.size as f32)
+        .with_color(r, g, b)
+}
+
+// Compensate for the appearance's estimated text origin while keeping the
+// rotated ink inside its box and both origin clamps inactive.
+fn watermark_rect(
+    face: &Base14,
+    text: &str,
+    size: f64,
+    rotation: f64,
+    (center_x, center_y): (f64, f64),
+) -> [f64; 4] {
+    // Measure the curly quotes that the watermark actually draws.
+    let drawn = text.chars().map(|c| match c {
+        '\'' => '\u{2019}',
+        '`' => '\u{2018}',
+        c => c,
+    });
+    let mut ink = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    let mut pen = 0.0;
+    for c in drawn {
+        if let Some([left, bottom, right, top]) = face.bounds(c) {
+            ink = [
+                ink[0].min(pen + left),
+                ink[1].min(bottom),
+                ink[2].max(pen + right),
+                ink[3].max(top),
+            ];
+        }
+        pen += f64::from(face.width(c).unwrap_or(0));
+    }
+    let [left, bottom, right, top] = ink.map(|value| value * size / 1000.0);
+
+    let estimate = text.len() as f64 * size / 2.0;
+    // Where the ink's center sits from the box's center before the turn.
+    let dx = (left + right) / 2.0 - estimate / 2.0;
+    let dy = (bottom + top) / 2.0 - size / 2.0;
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    let (ox, oy) = (cos * dx - sin * dy, sin * dx + cos * dy);
+    let (half_width, half_height) = ((right - left) / 2.0, (top - bottom) / 2.0);
+    let reach_x = half_width * cos.abs() + half_height * sin.abs();
+    let reach_y = half_width * sin.abs() + half_height * cos.abs();
+
+    let w = 2.0 * (ox.abs() + reach_x).max(estimate / 2.0);
+    let h = 2.0 * (oy.abs() + reach_y).max(size / 2.0);
+    [center_x - w / 2.0 - ox, center_y - h / 2.0 - oy, w, h]
 }
 
 // Assigned field by field so a field upstream adds keeps its default.
@@ -1044,12 +1409,20 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
             sources: images,
             decoded: vec![None; images.len()],
         };
-        let ops = ops(op_nifs, &mut faces, &mut pictures)?;
+        let mut links = Vec::new();
+        let ops = ops(op_nifs, &mut faces, &mut pictures, &mut links)?;
         keep_apart(pictures.decoded.iter_mut().flatten());
         let plan =
             flow::lay_out(&faces.fonts, &margins, line_height, page_size, &ops).map_err(refused)?;
 
-        emit(meta, &faces.fonts, &faces.sources, &pictures.decoded, plan)
+        emit(
+            meta,
+            &faces.fonts,
+            &faces.sources,
+            &pictures.decoded,
+            plan,
+            &links,
+        )
     })
 }
 
@@ -1064,10 +1437,12 @@ mod tests {
         geometry::Rect,
         object::Object,
         writer::{
-            DocumentBuilder, EmbeddedFont, FontManager, PageSize, StreamingColumn,
-            StreamingTableConfig, Table, TableCell, TextLayout,
+            Annotation, DocumentBuilder, EmbeddedFont, FontManager, FreeTextAnnotation,
+            LinkAnnotation, PageSize, StampAnnotation, StampType, StreamingColumn,
+            StreamingTableConfig, Table, TableCell, TextAnnotation, TextLayout,
+            TextMarkupAnnotation, WatermarkAnnotation,
         },
-        PdfDocument,
+        PdfDocument, TextMarkupType,
     };
 
     use crate::metadata::read_metadata;
@@ -1308,6 +1683,223 @@ mod tests {
             .expect("ascii")
             .contains("/Subtype /OpenType     >>"));
         assert_eq!(super::label_opentype_fonts(stream(9)), stream(9));
+    }
+
+    fn contains(pdf: &[u8], pattern: &[u8]) -> bool {
+        pdf.windows(pattern.len()).any(|window| window == pattern)
+    }
+
+    fn annotated(pages: usize, annotation: impl Into<Annotation>) -> Vec<u8> {
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .add_annotation(annotation)
+            .done();
+        for _ in 1..pages {
+            builder.page(PageSize::Letter).done();
+        }
+        builder.build().expect("builds")
+    }
+
+    fn area() -> Rect {
+        Rect::new(72.0, 700.0, 100.0, 12.0)
+    }
+
+    #[test]
+    fn upstream_still_writes_no_appearance_for_markup_notes_stamps_or_freetext() {
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .add_annotation(TextMarkupAnnotation::from_rect(
+                TextMarkupType::Highlight,
+                area(),
+            ))
+            .add_annotation(TextAnnotation::new(area(), "note"))
+            .add_annotation(StampAnnotation::new(area(), StampType::Approved))
+            .add_annotation(FreeTextAnnotation::new(area(), "free"))
+            .done();
+        let pdf = builder.build().expect("builds");
+
+        assert!(contains(&pdf, b"/Highlight") && contains(&pdf, b"/FreeText"));
+        assert!(!contains(&pdf, b"/AP"));
+    }
+
+    #[test]
+    fn upstream_still_writes_no_named_destinations() {
+        let pdf = annotated(1, LinkAnnotation::goto_named(area(), "there"));
+        let doc = PdfDocument::from_bytes(pdf).expect("parses");
+        let catalog = doc.catalog().expect("has a catalog");
+        let catalog = catalog.as_dict().expect("is a dictionary");
+
+        assert!(!catalog.contains_key("Names") && !catalog.contains_key("Dests"));
+    }
+
+    #[test]
+    fn upstream_still_drops_the_destination_of_a_link_past_the_last_page() {
+        let pdf = annotated(1, LinkAnnotation::goto_page(area(), 1));
+
+        assert!(contains(&pdf, b"/Link"));
+        assert!(!contains(&pdf, b"/Dest") && !contains(&pdf, b"/A "));
+    }
+
+    #[test]
+    fn upstream_still_writes_a_non_ascii_uri_as_utf16() {
+        let pdf = annotated(1, LinkAnnotation::uri(area(), "https://example.com/ж"));
+
+        assert!(contains(&pdf, b"/URI <FEFF"));
+    }
+
+    #[test]
+    fn upstream_still_points_every_watermark_at_the_first_page() {
+        let mut builder = DocumentBuilder::new();
+        builder.page(PageSize::Letter).done();
+        builder
+            .page(PageSize::Letter)
+            .add_annotation(WatermarkAnnotation::new("DRAFT").with_rect(area()))
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let entry = |dict: &Object, key: &str| dict.as_dict().and_then(|d| d.get(key)).cloned();
+        let page_ref = |index: usize| {
+            let root = doc.catalog().expect("has a catalog");
+            let pages = doc
+                .resolve_object(&entry(&root, "Pages").expect("/Pages"))
+                .expect("resolves");
+            let kids = doc
+                .resolve_object(&entry(&pages, "Kids").expect("/Kids"))
+                .expect("resolves");
+            kids.as_array().expect("an array")[index].clone()
+        };
+        let page = doc.resolve_object(&page_ref(1)).expect("resolves");
+        let annots = doc
+            .resolve_object(&entry(&page, "Annots").expect("/Annots"))
+            .expect("resolves");
+        let mark = doc
+            .resolve_object(&annots.as_array().expect("an array")[0])
+            .expect("resolves");
+
+        assert_eq!(entry(&mark, "P"), Some(page_ref(0)));
+    }
+
+    #[test]
+    fn upstream_still_writes_watermark_text_as_raw_bytes() {
+        let pdf = annotated(1, WatermarkAnnotation::new("é").with_rect(area()));
+
+        assert!(contains(&pdf, "(é) Tj".as_bytes()));
+    }
+
+    #[test]
+    fn a_link_rect_reaches_every_point_once_upstream_adds_it() {
+        let mut short = 0;
+        for step in 0..2000 {
+            let near = 1.0 + f64::from(step) * 0.0731;
+            for gap in [0.1, 9.31, 92.917, 100.3, 412.06] {
+                let (from, to) = (near as f32, (near + gap) as f32);
+                short += usize::from(from + (to - from) < to);
+                assert!(from + super::span(from, to) >= to, "{from} to {to}");
+            }
+        }
+        assert!(short > 0, "the grid never needs rounding up");
+
+        let rect = super::enclosing(&[72.3, 200.1, 164.917, 200.1, 164.917, 211.2, 72.3, 211.2]);
+        assert_eq!((rect.x, rect.y), (72.3, 200.1));
+        assert!(rect.x + rect.width >= 164.917 && rect.y + rect.height >= 211.2);
+    }
+
+    #[test]
+    fn a_watermark_box_reaches_no_farther_than_the_bound_watermark_3_checks() {
+        let faces = [
+            "Helvetica",
+            "Helvetica-Bold",
+            "Times-Roman",
+            "Times-Bold",
+            "Courier",
+            "Courier-Bold",
+        ];
+        for name in faces {
+            let face = crate::base14::face(name).expect("base-14");
+            // A text of spaces alone is refused.
+            for c in (0x21u8..=0x7E).map(char::from) {
+                for text in [c.to_string(), c.to_string().repeat(7), format!(" {c}  ")] {
+                    for rotation in [0.0, 30.0, 45.0, 90.0, 135.0, 200.0, -45.0] {
+                        let [x, y, w, h] =
+                            super::watermark_rect(face, &text, 1.0, rotation, (0.0, 0.0));
+                        let reach = (text.len() as f64 + 2.0) * 2.0;
+                        assert!(
+                            [x, y, x + w, y + h].iter().all(|v| v.abs() <= reach),
+                            "{name} {text:?} at {rotation}°"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_watermark_box_holds_its_turned_ink_centered_on_the_point() {
+        let face = crate::base14::face("Helvetica-Bold").expect("base-14");
+        for (text, size, rotation) in [
+            ("CONFIDENTIAL", 72.0, 45.0),
+            ("DRAFT", 120.0, -30.0),
+            ("i", 72.0, 90.0),
+            ("WWWWWWWWWW", 20.0, 200.0),
+        ] {
+            let [x, y, w, h] = super::watermark_rect(face, text, size, rotation, (300.0, 400.0));
+            let origin = (
+                ((w - text.len() as f64 * size / 2.0) / 2.0),
+                ((h - size) / 2.0),
+            );
+            assert!(origin.0 >= 0.0 && origin.1 >= 0.0, "{text}: a clamp acts");
+
+            let mut pen = 0.0;
+            let mut ink = [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ];
+            for c in text.chars() {
+                let [l, b, r, t] = face.bounds(c).expect("draws");
+                ink = [
+                    ink[0].min(pen + l),
+                    ink[1].min(b),
+                    ink[2].max(pen + r),
+                    ink[3].max(t),
+                ];
+                pen += f64::from(face.width(c).expect("has a width"));
+            }
+            let [l, b, r, t] = ink.map(|value| value * size / 1000.0);
+            let corners =
+                [(l, b), (r, b), (r, t), (l, t)].map(|(cx, cy)| (origin.0 + cx, origin.1 + cy));
+            let (sin, cos) = f64::to_radians(rotation).sin_cos();
+            let turned: Vec<(f64, f64)> = corners
+                .iter()
+                .map(|&(px, py)| {
+                    let (dx, dy) = (px - w / 2.0, py - h / 2.0);
+                    (w / 2.0 + cos * dx - sin * dy, h / 2.0 + sin * dx + cos * dy)
+                })
+                .collect();
+            let min_x = turned.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+            let max_x = turned.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+            let min_y = turned.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+            let max_y = turned.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+
+            assert!(
+                min_x >= -1e-9 && max_x <= w + 1e-9,
+                "{text}: ink leaves the box"
+            );
+            assert!(
+                min_y >= -1e-9 && max_y <= h + 1e-9,
+                "{text}: ink leaves the box"
+            );
+            assert!(
+                (x + (min_x + max_x) / 2.0 - 300.0).abs() < 1e-9,
+                "{text}: off center"
+            );
+            assert!(
+                (y + (min_y + max_y) / 2.0 - 400.0).abs() < 1e-9,
+                "{text}: off center"
+            );
+        }
     }
 
     #[test]

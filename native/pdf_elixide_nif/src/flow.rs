@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use pdf_oxide::{elements::PathOperation, writer::EmbeddedFont};
 use unicode_bidi::{bidi_class, BidiClass};
@@ -98,7 +98,7 @@ impl<'f> Fonts<'f> {
         }
     }
 
-    fn ascent_descent(&self, face: usize) -> (f64, f64) {
+    pub fn ascent_descent(&self, face: usize) -> (f64, f64) {
         match &self.faces[face] {
             Face::Base14(base14) => (base14.ascent, base14.descent),
             Face::Embedded(embedded) => (
@@ -126,6 +126,8 @@ pub struct Run {
     pub text: String,
     pub face: usize,
     pub color: Option<Rgb>,
+    // Distinct link ids prevent separate input runs from merging.
+    pub link: Option<usize>,
 }
 
 impl Run {
@@ -134,11 +136,12 @@ impl Run {
             text: text.into(),
             face: self.face,
             color: self.color,
+            link: self.link,
         }
     }
 
     fn same_style(&self, other: &Run) -> bool {
-        self.face == other.face && self.color == other.color
+        self.face == other.face && self.color == other.color && self.link == other.link
     }
 }
 
@@ -199,6 +202,27 @@ pub enum Op {
         rect: [f64; 4],
         fit: Fit,
     },
+    Anchor(String),
+    LinkInRect {
+        link: usize,
+        rect: [f64; 4],
+    },
+    Watermark {
+        mark: Watermark,
+        every_page: bool,
+    },
+}
+
+#[derive(Clone)]
+pub struct Watermark {
+    pub text: String,
+    pub font: &'static str,
+    pub size: f64,
+    pub rotation: f64,
+    pub color: Rgb,
+    pub opacity: f64,
+    // `None` centers it on whichever page it is drawn.
+    pub center: Option<(f64, f64)>,
 }
 
 pub struct FlowImage {
@@ -294,6 +318,15 @@ pub struct Placed {
     pub face: usize,
     pub size: f64,
     pub color: Option<Rgb>,
+    pub link: Option<usize>,
+}
+
+pub struct Plan {
+    pub pages: Vec<PagePlan>,
+    // Each anchor's page and the top of the content it names.
+    pub anchors: HashMap<String, (usize, f64)>,
+    // Watermarks drawn on every page, after the page's own items.
+    pub watermarks: Vec<Watermark>,
 }
 
 pub struct PagePlan {
@@ -307,6 +340,8 @@ pub enum Item {
     Text(Placed),
     Path(Shape),
     Image(Picture),
+    Link { link: usize, rect: [f64; 4] },
+    Watermark(Watermark),
 }
 
 pub struct Picture {
@@ -384,6 +419,10 @@ pub enum Refused {
         page: usize,
         size: f64,
     },
+    LinkImprecise {
+        op: usize,
+        page: usize,
+    },
     Undrawable {
         op: usize,
         page: usize,
@@ -411,6 +450,17 @@ pub enum Refused {
         page: usize,
         needed: (f64, f64),
         room: (f64, f64),
+    },
+    NoSuchPage {
+        op: usize,
+        page: usize,
+        target: usize,
+        pages: usize,
+    },
+    NoSuchAnchor {
+        op: usize,
+        page: usize,
+        name: String,
     },
 }
 
@@ -478,7 +528,7 @@ pub fn lay_out(
     line_height: f64,
     first_page: (f64, f64),
     ops: &[Op],
-) -> Result<Vec<PagePlan>, Refused> {
+) -> Result<Plan, Refused> {
     let mut layout = Layout {
         fonts,
         margins,
@@ -488,6 +538,9 @@ pub fn lay_out(
         cursor: 0.0,
         fresh: true,
         pending_space: 0.0,
+        pending_anchors: Vec::new(),
+        anchors: HashMap::new(),
+        watermarks: Vec::new(),
     };
 
     for (index, op) in ops.iter().enumerate() {
@@ -537,11 +590,30 @@ pub fn lay_out(
                 rect,
                 fit,
             } => layout.image_in_rect(*image, *pixels, *rect, *fit),
+            Op::Anchor(name) => layout.pending_anchors.push(name.clone()),
+            Op::LinkInRect { link, rect } => layout.link_in_rect(index, *link, *rect)?,
+            Op::Watermark {
+                mark,
+                every_page: true,
+            } => layout.watermarks.push(mark.clone()),
+            Op::Watermark {
+                mark,
+                every_page: false,
+            } => {
+                layout.ensure_page();
+                layout.page_mut().items.push(Item::Watermark(mark.clone()));
+            }
         }
     }
 
+    // An anchor with no flow content after it names where the flow ends.
     layout.ensure_page();
-    Ok(layout.pages)
+    layout.resolve_anchors();
+    Ok(Plan {
+        pages: layout.pages,
+        anchors: layout.anchors,
+        watermarks: layout.watermarks,
+    })
 }
 
 struct Block {
@@ -566,6 +638,9 @@ struct Layout<'a> {
     fresh: bool,
     // Space owed after the previous block, dropped if a page break comes first.
     pending_space: f64,
+    pending_anchors: Vec<String>,
+    anchors: HashMap<String, (usize, f64)>,
+    watermarks: Vec<Watermark>,
 }
 
 impl Layout<'_> {
@@ -602,6 +677,14 @@ impl Layout<'_> {
     fn break_page(&mut self) {
         let (width, height) = (self.page().width, self.page().height);
         self.new_page(width, height);
+    }
+
+    // Resolve only after the next flow content's page-break decision.
+    fn resolve_anchors(&mut self) {
+        let at = (self.pages.len() - 1, self.cursor);
+        for name in self.pending_anchors.drain(..) {
+            self.anchors.entry(name).or_insert(at);
+        }
     }
 
     fn block(
@@ -788,7 +871,10 @@ impl Layout<'_> {
                 | Op::TextAt { .. }
                 | Op::TextInRect { .. }
                 | Op::Path(_)
-                | Op::ImageInRect { .. } => {}
+                | Op::ImageInRect { .. }
+                | Op::Anchor(_)
+                | Op::LinkInRect { .. }
+                | Op::Watermark { .. } => {}
             }
         }
         total
@@ -836,6 +922,7 @@ impl Layout<'_> {
                 text: label,
                 face,
                 color: None,
+                link: None,
                 width: label_width,
             };
             let mut lines = self.wrapped(op, block.page, item, size, width)?.into_iter();
@@ -973,6 +1060,7 @@ impl Layout<'_> {
                     face: segment.face,
                     size,
                     color: segment.color,
+                    link: segment.link,
                 }));
                 at += segment.width;
             }
@@ -1055,6 +1143,7 @@ impl Layout<'_> {
                 self.break_page();
             }
         }
+        self.resolve_anchors();
 
         let left = self.margins.left;
         let x = match image.align {
@@ -1101,6 +1190,26 @@ impl Layout<'_> {
         self.page_mut().items.push(Item::Image(picture));
     }
 
+    // Clip before narrowing: a distant origin can round away the visible area.
+    fn link_in_rect(&mut self, op: usize, link: usize, rect: [f64; 4]) -> Result<(), Refused> {
+        self.ensure_page();
+        let [x, y, width, height] = rect;
+        let (page_width, page_height) = (self.page().width, self.page().height);
+        let (left, bottom) = (x.max(0.0), y.max(0.0));
+        let (right, top) = ((x + width).min(page_width), (y + height).min(page_height));
+        if left as f32 >= right as f32 || bottom as f32 >= top as f32 {
+            return Err(Refused::LinkImprecise {
+                op,
+                page: self.pages.len() - 1,
+            });
+        }
+        self.page_mut().items.push(Item::Link {
+            link,
+            rect: [left, bottom, right - left, top - bottom],
+        });
+        Ok(())
+    }
+
     fn space(&mut self, points: f64) {
         if !self.fresh {
             self.pending_space += points;
@@ -1118,6 +1227,7 @@ impl Layout<'_> {
             }
         }
         self.pending_space = 0.0;
+        self.resolve_anchors();
 
         let (left, right) = (self.margins.left, self.margins.right);
         let y = (self.cursor - size / 2.0) as f32;
@@ -1163,6 +1273,7 @@ impl Layout<'_> {
                 self.break_page();
             }
         }
+        self.resolve_anchors();
 
         let baseline = self.cursor - block.above_baseline;
         let mut x = x;
@@ -1209,6 +1320,7 @@ impl Layout<'_> {
                 face: segment.face,
                 size,
                 color: segment.color,
+                link: segment.link,
             }));
         }
 
@@ -1223,6 +1335,7 @@ struct Segment {
     text: String,
     face: usize,
     color: Option<Rgb>,
+    link: Option<usize>,
     width: f64,
 }
 
@@ -1329,6 +1442,7 @@ impl Line {
                 text: piece.text,
                 face: piece.face,
                 color: piece.color,
+                link: piece.link,
             })
             .collect()
     }
@@ -1496,6 +1610,7 @@ mod tests {
                 text: text.to_string(),
                 face: 0,
                 color: None,
+                link: None,
             }],
             face: 0,
             size: 12.0,

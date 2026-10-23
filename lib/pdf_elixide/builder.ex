@@ -35,6 +35,13 @@ defmodule PdfElixide.Builder do
   `image/3` adds a JPEG or PNG image to the flow and `image_in_rect/4` places
   one outside it. See [Images](guides/building-documents.md#images).
 
+  ## Links and watermarks
+
+  A run's `:link` option makes its text clickable, `link_in_rect/3` makes an
+  area clickable, and `anchor/2` names a place to link to. `watermark/3` marks
+  a page, or every page. See [Links](guides/building-documents.md#links) and
+  [Watermarks](guides/building-documents.md#watermarks).
+
   ## Fonts
 
   Use a built-in family, bundled DejaVu Sans or a
@@ -72,6 +79,7 @@ defmodule PdfElixide.Builder do
     :font_size,
     :line_height,
     :current_page_size,
+    :anchors,
     :ops
   ]
   defstruct @enforce_keys
@@ -96,6 +104,7 @@ defmodule PdfElixide.Builder do
           font_size: float(),
           line_height: float(),
           current_page_size: {float(), float()},
+          anchors: MapSet.t(String.t()),
           ops: [tuple()]
         }
 
@@ -119,11 +128,25 @@ defmodule PdfElixide.Builder do
       italic face. Each defaults to `false`.
     * `:color` — a `PdfElixide.Color.RGB` with components from `0.0` to `1.0`.
       Defaults to `nil`, which is black.
+    * `:link` — a `t:link/0` the run's text points to. Defaults to `nil`, no
+      link. A linked run must contain text other than whitespace.
 
   Runs are joined as they are written, so a space between two runs belongs
   in one of them.
   """
   @type text :: String.t() | [String.t() | {String.t(), run_opts()}]
+
+  @typedoc """
+  Where a link points: a URI string, `{:page, index}` for a zero-based page of
+  this document, or `{:anchor, name}` for a place named by `anchor/2`.
+
+  A URI is written as given, so it must be printable ASCII with no spaces:
+  encode other characters first, for example with `URI.encode/1`. A
+  `javascript:` or `vbscript:` URI raises `ArgumentError`. A page past the
+  document's last page, or an anchor no `anchor/2` call names, is refused when
+  the document is built. See [Links](guides/building-documents.md#links).
+  """
+  @type link :: String.t() | {:page, non_neg_integer()} | {:anchor, String.t()}
 
   @typedoc """
   A position `{x, y}` in points from the page's bottom-left corner.
@@ -142,9 +165,14 @@ defmodule PdfElixide.Builder do
           | :close_path
 
   @typedoc "Options styling one run of `t:text/0`."
-  @type run_opts :: [bold: boolean(), italic: boolean(), color: RGB.t() | nil]
+  @type run_opts :: [
+          bold: boolean(),
+          italic: boolean(),
+          color: RGB.t() | nil,
+          link: link() | nil
+        ]
 
-  @run_opts_keys [:bold, :italic, :color]
+  @run_opts_keys [:bold, :italic, :color, :link]
 
   @typedoc """
   Options accepted by `new/1`.
@@ -163,7 +191,8 @@ defmodule PdfElixide.Builder do
     * `:line_height` — line box height as a multiple of the text size.
       Defaults to `1.5`.
 
-  Sizes must be positive and margins non-negative, leaving room on the page.
+  Sizes must be positive, with each page side at most 1.0e18 points, and
+  margins non-negative, leaving room on the page.
   See [Errors](#module-errors) for validation failures.
   """
   @type new_opts :: [
@@ -334,6 +363,54 @@ defmodule PdfElixide.Builder do
   @fits [:contain, :fill]
 
   @typedoc """
+  Options accepted by `watermark/3`.
+
+    * `:pages` — `:current` marks the page the watermark lands on, and `:all`
+      marks every page of the document, wherever the call sits in the
+      pipeline. Defaults to `:current`.
+    * `:center` — the `t:point/0` the text is centered on, each coordinate at
+      most 1.0e18 points. Defaults to `nil`, the center of each page it marks.
+    * `:rotation` — the text's angle in degrees, counterclockwise from
+      horizontal. Defaults to `45`.
+    * `:font` — `:helvetica`, `:times` or `:courier`. Defaults to
+      `:helvetica`.
+    * `:bold` — whether to use the font's bold face. Defaults to `false`.
+    * `:font_size` — text size in points. Defaults to `72`. A size at which
+      the watermark could reach more than 1.0e18 points from its center
+      raises.
+    * `:color` — a `PdfElixide.Color.RGB`. Defaults to 50% gray.
+    * `:opacity` — from above `0` to `1`, where `1` is opaque. Defaults to
+      `0.3`.
+  """
+  @type watermark_opts :: [
+          pages: :current | :all,
+          center: point() | nil,
+          rotation: number(),
+          font: :helvetica | :times | :courier,
+          bold: boolean(),
+          font_size: number(),
+          color: RGB.t(),
+          opacity: number()
+        ]
+
+  @watermark_opts_keys [
+    :pages,
+    :center,
+    :rotation,
+    :font,
+    :bold,
+    :font_size,
+    :color,
+    :opacity
+  ]
+
+  @watermark_fonts [:helvetica, :times, :courier]
+
+  @watermark_pages [:current, :all]
+
+  @script_schemes ["javascript:", "vbscript:"]
+
+  @typedoc """
   A cell of `table/3`: a `t:text/0`, or a cell with its own options made by
   `cell/2`.
   """
@@ -491,15 +568,19 @@ defmodule PdfElixide.Builder do
     options = build_new_options(opts)
     validate_page_fits!(options.page_size, options)
 
-    struct!(__MODULE__, Map.merge(options, %{current_page_size: options.page_size, ops: []}))
+    struct!(
+      __MODULE__,
+      Map.merge(options, %{current_page_size: options.page_size, anchors: MapSet.new(), ops: []})
+    )
   end
 
   @doc """
   Starts a new page, of `page_size` if given and otherwise the size of the
   page before it.
 
-  `page_size` is a `t:PdfElixide.Editor.page_size/0`. The document's margins
-  apply to every page, so they must leave room on this one.
+  `page_size` is a `t:PdfElixide.Editor.page_size/0` with each side at most
+  1.0e18 points. The document's margins apply to every page, so they must
+  leave room on this one.
   """
   @spec page(t(), Editor.page_size() | nil) :: t()
   def page(%__MODULE__{} = builder, page_size \\ nil) do
@@ -1008,6 +1089,94 @@ defmodule PdfElixide.Builder do
   end
 
   @doc """
+  Makes `rect` on the current page a link to `link`.
+
+  `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
+  bottom-left corner, as for `rect/3`; reversed corners are normalized. It
+  must overlap the page, and any part outside the page is dropped. `link` is a
+  `t:link/0`. Use it to make an image or a drawn shape clickable; to link
+  text, give its run a `:link` instead. If no page has started yet, the first
+  one starts here.
+
+      PdfElixide.Builder.link_in_rect(builder, rect, "https://example.com")
+  """
+  @spec link_in_rect(t(), Rect.t(), link()) :: t()
+  def link_in_rect(%__MODULE__{} = builder, %Rect{} = rect, link) when link != nil do
+    %Rect{x: x, y: y, width: width, height: height} = rect |> rect!() |> normalize_rect()
+    width = LayoutOptions.positive!("rect", width)
+    height = LayoutOptions.positive!("rect", height)
+    {page_width, page_height} = builder.current_page_size
+
+    if x >= page_width or y >= page_height or x + width <= 0 or y + height <= 0 do
+      raise ArgumentError,
+            "invalid rect, it lies outside the #{page_width} × #{page_height} page, so " <>
+              "nothing could be clicked"
+    end
+
+    op = {:link_in_rect, %{x: x, y: y, width: width, height: height, link: link!(link)}}
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Names the place where the next flowing content starts, for a
+  `{:anchor, name}` link.
+
+  The anchor points to the top of the next paragraph, heading, list, table,
+  image or rule, on whatever page that content lands. With no flowing content
+  after it, it points to where the flow ends. Each anchor needs its own
+  non-empty `name`.
+
+      PdfElixide.Builder.anchor(builder, "appendix")
+
+  See [Links](guides/building-documents.md#links) for a complete example.
+  """
+  @spec anchor(t(), String.t()) :: t()
+  def anchor(%__MODULE__{} = builder, name) when is_binary(name) do
+    name = anchor_name!("name", name)
+
+    if MapSet.member?(builder.anchors, name) do
+      raise ArgumentError,
+            "invalid name, an anchor named #{inspect(name)} already exists; give each " <>
+              "anchor its own name"
+    end
+
+    %{builder | anchors: MapSet.put(builder.anchors, name), ops: [{:anchor, name} | builder.ops]}
+  end
+
+  @doc """
+  Draws `text` as a translucent watermark on the current page, or on every
+  page.
+
+  `text` is one line of printable ASCII characters. The watermark is drawn
+  over the page's content as an annotation. See
+  [Watermarks](guides/building-documents.md#watermarks) for what that means
+  for extraction, editing and printing, and `t:watermark_opts/0` for the
+  options.
+
+      PdfElixide.Builder.watermark(builder, "CONFIDENTIAL", pages: :all)
+  """
+  @spec watermark(t(), String.t(), watermark_opts()) :: t()
+  def watermark(%__MODULE__{} = builder, text, opts \\ [])
+      when is_binary(text) and is_list(opts) do
+    if not (text =~ ~r/\A[\x20-\x7E]*\z/ and String.trim(text) != "") do
+      raise ArgumentError,
+            "invalid text, expected one line of printable ASCII characters that are not " <>
+              "all spaces: #{inspect(text)}"
+    end
+
+    options = build_watermark_options(opts)
+
+    # Bound the rotated watermark's reach, including its positioning offset.
+    if not LayoutOptions.writable?(options.font_size * (byte_size(text) + 2) * 2) do
+      raise ArgumentError,
+            "invalid :font_size, #{inspect(text)} at #{options.font_size} points is too " <>
+              "wide to place: #{inspect(options.font_size)}"
+    end
+
+    %{builder | ops: [{:watermark, Map.put(options, :text, text)} | builder.ops]}
+  end
+
+  @doc """
   Draws a rectangle on the current page.
 
   `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
@@ -1464,6 +1633,7 @@ defmodule PdfElixide.Builder do
           | :cell
           | :image
           | :image_in_rect
+          | :watermark
         ) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
@@ -1477,6 +1647,7 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:cell), do: build_cell_options([])
   def __option_defaults__(:image), do: build_image_options([])
   def __option_defaults__(:image_in_rect), do: build_image_in_rect_options([])
+  def __option_defaults__(:watermark), do: build_watermark_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -1591,8 +1762,125 @@ defmodule PdfElixide.Builder do
     %{
       bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
       italic: boolean!(:italic, Keyword.get(opts, :italic, false)),
-      color: color!(:color, Keyword.get(opts, :color))
+      color: color!(:color, Keyword.get(opts, :color)),
+      link:
+        case Keyword.get(opts, :link) do
+          nil -> nil
+          link -> link!(link)
+        end
     }
+  end
+
+  defp build_watermark_options(opts) do
+    opts = Keyword.validate!(opts, @watermark_opts_keys)
+
+    center =
+      case Keyword.get(opts, :center) do
+        nil ->
+          nil
+
+        {x, y} = center when is_number(x) and is_number(y) ->
+          if not (LayoutOptions.writable?(x) and LayoutOptions.writable?(y)) do
+            raise ArgumentError,
+                  "invalid :center, expected coordinates of at most " <>
+                    "#{LayoutOptions.max_written()} points: #{inspect(center)}"
+          end
+
+          {x * 1.0, y * 1.0}
+
+        other ->
+          raise ArgumentError, "invalid :center, expected {x, y} or nil: #{inspect(other)}"
+      end
+
+    color =
+      case color!(:color, Keyword.get(opts, :color, %RGB{r: 0.5, g: 0.5, b: 0.5})) do
+        nil -> raise ArgumentError, "invalid :color, a watermark needs one, so it cannot be nil"
+        color -> color
+      end
+
+    %{
+      pages: watermark_pages!(Keyword.get(opts, :pages, :current)),
+      center: center,
+      rotation: rotation!(Keyword.get(opts, :rotation, 45)),
+      font: watermark_font!(Keyword.get(opts, :font, :helvetica)),
+      bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
+      font_size: positive!(:font_size, Keyword.get(opts, :font_size, 72)),
+      color: color,
+      opacity: opacity!(Keyword.get(opts, :opacity, 0.3))
+    }
+  end
+
+  defp watermark_pages!(pages) when pages in @watermark_pages, do: pages
+
+  defp watermark_pages!(pages) do
+    raise ArgumentError,
+          "invalid :pages, expected one of #{inspect(@watermark_pages)}: #{inspect(pages)}"
+  end
+
+  defp watermark_font!(font) when font in @watermark_fonts, do: font
+
+  defp watermark_font!(font) do
+    raise ArgumentError,
+          "invalid :font, expected one of #{inspect(@watermark_fonts)}: #{inspect(font)}"
+  end
+
+  defp rotation!(degrees) when is_number(degrees) do
+    if not LayoutOptions.fits_f32?(degrees) do
+      raise ArgumentError,
+            "invalid :rotation, expected a number that fits a 32-bit float: #{inspect(degrees)}"
+    end
+
+    one_turn(degrees) * 1.0
+  end
+
+  defp rotation!(other) do
+    raise ArgumentError, "invalid :rotation, expected a number of degrees: #{inspect(other)}"
+  end
+
+  defp opacity!(opacity) when is_number(opacity) and opacity > 0 and opacity <= 1,
+    do: opacity * 1.0
+
+  defp opacity!(other) do
+    raise ArgumentError,
+          "invalid :opacity, expected a number greater than 0 and at most 1: #{inspect(other)}"
+  end
+
+  defp link!(uri) when is_binary(uri) do
+    if not (uri =~ ~r/\A[\x21-\x7E]+\z/) do
+      raise ArgumentError,
+            "invalid :link, expected a URI of printable ASCII characters with no spaces; " <>
+              "encode any other character first, for example with URI.encode/1: " <>
+              inspect(uri)
+    end
+
+    if String.starts_with?(String.downcase(uri), @script_schemes) do
+      raise ArgumentError,
+            "invalid :link, a #{uri |> String.split(":") |> hd()}: URI runs a script, " <>
+              "which the builder does not write: #{inspect(uri)}"
+    end
+
+    {:uri, uri}
+  end
+
+  defp link!({:page, page}) when is_integer(page) and page >= 0 and page <= @max_list_number,
+    do: {:page, page}
+
+  defp link!({:anchor, name}) when is_binary(name), do: {:anchor, anchor_name!(":link", name)}
+
+  defp link!(other) do
+    raise ArgumentError,
+          "invalid :link, expected a URI string, {:page, index} with an index from 0 to " <>
+            "#{@max_list_number}, or {:anchor, name}: #{inspect(other)}"
+  end
+
+  defp anchor_name!(label, name) do
+    name = LayoutOptions.utf8!(label, name)
+
+    if name == "" do
+      raise ArgumentError, "invalid #{label}, an anchor name cannot be empty"
+    end
+
+    name
   end
 
   defp build_heading_options(opts) do
@@ -1754,7 +2042,14 @@ defmodule PdfElixide.Builder do
   defp run!(text) when is_binary(text), do: run!({text, []})
 
   defp run!({text, opts}) when is_binary(text) and is_list(opts) do
-    opts |> build_run_options() |> Map.put(:text, LayoutOptions.utf8!("text", text))
+    run = opts |> build_run_options() |> Map.put(:text, LayoutOptions.utf8!("text", text))
+
+    if run.link != nil and String.trim(run.text) == "" do
+      raise ArgumentError,
+            "invalid run, a linked run needs text other than whitespace: #{inspect(text)}"
+    end
+
+    run
   end
 
   defp run!(other) do
@@ -1814,8 +2109,17 @@ defmodule PdfElixide.Builder do
     end
   end
 
-  defp page_size!({width, height}),
-    do: {positive!(:page_size, width), positive!(:page_size, height)}
+  defp page_size!({width, height}) do
+    size = {positive!(:page_size, width), positive!(:page_size, height)}
+
+    if not Enum.all?(Tuple.to_list(size), &(not is_number(&1) or LayoutOptions.writable?(&1))) do
+      raise ArgumentError,
+            "invalid :page_size, expected sides of at most " <>
+              "#{LayoutOptions.max_written()} points: #{inspect({width, height})}"
+    end
+
+    size
+  end
 
   defp page_size!(size) do
     raise ArgumentError,

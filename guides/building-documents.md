@@ -330,7 +330,98 @@ Builder.paragraph(builder, [
 
 `:bold` and `:italic` choose the face of the run's font family, and `:color`
 takes RGB components from `0.0` to `1.0`. Runs are joined exactly as written,
-so the space between two runs belongs inside one of them.
+so the space between two runs belongs inside one of them. A run can also be a
+link; see [Links](#links).
+
+## Links
+
+Give a run a `:link` to make its text clickable:
+
+```elixir
+Builder.new()
+|> Builder.paragraph(["Read ", {"the documentation", link: "https://hexdocs.pm/pdf_elixide"}, "."])
+|> Builder.paragraph([{"Skip to the appendix", link: {:anchor, "appendix"}}])
+|> Builder.page()
+|> Builder.anchor("appendix")
+|> Builder.heading(1, "Appendix")
+|> Builder.save!("report.pdf")
+```
+
+A link points to one of:
+
+- **A URI**, given as a string; see `t:PdfElixide.Builder.link/0` for
+  restrictions.
+- **`{:page, index}`**, a page of this document numbered from 0. Following it
+  shows the whole page.
+- **`{:anchor, name}`**, a place in this document named by
+  `PdfElixide.Builder.anchor/2`. Links may precede their anchors; see that
+  function for how the destination is positioned.
+
+The clickable area follows each line of text. A run that wraps is one link
+per page. Separate runs stay separate links, even with the same target. A
+linked run must contain text other than whitespace.
+
+To make an image or a drawn shape clickable, give its rect to
+`link_in_rect/3`:
+
+```elixir
+alias PdfElixide.Geometry.Rect
+
+logo_box = %Rect{x: 72.0, y: 700.0, width: 120.0, height: 40.0}
+
+builder
+|> Builder.image_in_rect(logo_box, File.read!("logo.png"))
+|> Builder.link_in_rect(logo_box, "https://example.com")
+```
+
+## Watermarks
+
+`watermark/3` draws a line of translucent text across a page:
+
+```elixir
+alias PdfElixide.Color.RGB
+
+Builder.new()
+|> Builder.watermark("CONFIDENTIAL", pages: :all, color: %RGB{r: 0.8, g: 0.0, b: 0.0})
+|> Builder.paragraph("Quarterly figures")
+|> Builder.save!("figures.pdf")
+```
+
+With `pages: :current`, the default, the watermark marks the page it lands
+on, like `text_at/4`. With `pages: :all` it marks every page of the document,
+including pages the flow starts after the call, so where the call sits in the
+pipeline does not matter. See `t:PdfElixide.Builder.watermark_opts/0` for
+positioning, styling and defaults.
+
+The text is one line of printable ASCII characters in one of the built-in
+families. An apostrophe and a grave accent are drawn as curly quotes.
+
+A watermark is an annotation drawn over the page's content, not part of it.
+Viewers show and print it, but any PDF editor can delete it, so it labels a
+document rather than protecting it. Do not rely on text extraction or search to
+find its text. To draw it into the page's content instead, flatten it; see
+[Annotations after building](#annotations-after-building).
+
+## Annotations after building
+
+Links and watermarks are annotations, and an editor treats them as such:
+
+- `PdfElixide.Editor.flatten_annotations/1` draws a watermark into the page's
+  content and removes the page's annotations, **links included**, since a link
+  has nothing to draw:
+
+  ```elixir
+  builder
+  |> Editor.from_builder!()
+  |> Editor.flatten_annotations!()
+  |> Editor.save!("flattened.pdf")
+  ```
+
+- `PdfElixide.Editor.merge/2` refuses a page with annotations; see
+  [When a merge is refused](merging-and-splitting.md#when-a-merge-is-refused).
+
+The builder writes no comment annotations: highlights, underlines, sticky
+notes, stamps and free text.
 
 ## Fonts
 
@@ -398,6 +489,8 @@ The builder refuses content it cannot draw faithfully:
   italic `j` with no left margin or an accented capital with no top margin.
   Widen the margins, or for flowing text increase the line height; move
   positioned text further onto the page.
+- **An invalid link target**, such as a missing page or anchor; see
+  `t:PdfElixide.Builder.link/0`.
 
 A combining accent is drawn where the font places it, which in most fonts is
 over the letter before it.
