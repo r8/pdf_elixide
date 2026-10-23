@@ -2397,6 +2397,7 @@ defmodule PdfElixide.EditorTest do
 
   @letter %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}
   @small_box %Rect{x: +0.0, y: +0.0, width: 100.0, height: 50.0}
+  @widest_box %Rect{x: -1.0e18, y: -1.0e18, width: 2.0e18, height: 2.0e18}
   @all_sides [left: 10, right: 10, top: 10, bottom: 10]
 
   # A malformed crop box reports its reason so the whole document stays listable.
@@ -2406,6 +2407,12 @@ defmodule PdfElixide.EditorTest do
     Document.close(doc)
 
     boxes
+  end
+
+  defp assert_boxes_match(%Rect{} = box, expected) do
+    for field <- [:x, :y, :width, :height] do
+      assert_in_delta Map.fetch!(box, field) / Map.fetch!(expected, field), 1.0, 1.0e-6
+    end
   end
 
   defp saved_crop(page) do
@@ -2578,6 +2585,42 @@ defmodule PdfElixide.EditorTest do
       refute Editor.modified?(editor)
     end
 
+    test "raises for a field of the wrong type, naming it" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/Could not decode field :width/, fn ->
+        Editor.set_media_box(editor, 0, %Rect{x: 0.0, y: 0.0, width: "10", height: 10.0})
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a box with a corner past 1.0e18 points" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for rect <- [
+            %Rect{x: -1.0e20, y: 0, width: 2.0e20, height: 792},
+            %Rect{x: 1.0e18, y: 0, width: 1.0e18, height: 792}
+          ] do
+        assert_raise ArgumentError, ~r/^invalid region, expected corners of at most 1.0e18/, fn ->
+          Editor.set_media_box(editor, 0, rect)
+        end
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "the largest box it accepts reads back" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      Editor.set_media_box!(editor, 0, @widest_box)
+
+      assert_boxes_match(saved_boxes(editor) |> hd() |> elem(0), @widest_box)
+    end
+
     test "raises for a negative page index" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -2638,6 +2681,37 @@ defmodule PdfElixide.EditorTest do
       assert_raise ArgumentError, ~r/32-bit float/, fn ->
         Editor.set_crop_box(editor, 0, %Rect{x: 0.0, y: -2.0e38, width: 10.0, height: -2.0e38})
       end
+    end
+
+    test "raises for a field of the wrong type, naming it" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/Could not decode field :width/, fn ->
+        Editor.set_crop_box(editor, 0, %Rect{x: 0.0, y: 0.0, width: "10", height: 10.0})
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a box with a corner past 1.0e18 points" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/^invalid region, expected corners of at most 1.0e18/, fn ->
+        Editor.set_crop_box(editor, 0, %Rect{x: 0, y: -1.0e20, width: 612, height: 2.0e20})
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "the largest box it accepts reads back" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      editor |> Editor.set_media_box!(0, @widest_box) |> Editor.set_crop_box!(0, @widest_box)
+
+      assert_boxes_match(saved_boxes(editor) |> hd() |> elem(1), @widest_box)
     end
   end
 

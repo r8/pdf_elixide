@@ -1858,8 +1858,8 @@ defmodule PdfElixide.Editor do
   Sets the `/MediaBox` of the page at the given zero-based index to `rect`, and
   returns the editor.
 
-  Reversed corners are normalized. A rectangle whose corners do not fit a
-  32-bit float raises `ArgumentError`.
+  Reversed corners are normalized. Corner coordinates outside ±1.0e18 points
+  raise `ArgumentError`.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
   not exist. See [Page boxes](guides/editing.md#page-boxes).
@@ -1867,7 +1867,7 @@ defmodule PdfElixide.Editor do
   @spec set_media_box(t(), non_neg_integer(), Rect.t()) :: {:ok, t()} | {:error, Error.t()}
   def set_media_box(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect)
       when is_integer(page_index) and page_index >= 0 do
-    rect = LayoutOptions.rect!("region", rect)
+    rect = page_box!(rect)
 
     case Wrap.call(fn -> Native.editor_set_page_media_box(ref, page_index, rect) end) do
       {:ok, _} -> {:ok, editor}
@@ -1891,8 +1891,8 @@ defmodule PdfElixide.Editor do
   Sets the `/CropBox` of the page at the given zero-based index to `rect`, and
   returns the editor.
 
-  Reversed corners are normalized. A rectangle whose corners do not fit a
-  32-bit float raises `ArgumentError`.
+  Reversed corners are normalized. Corner coordinates outside ±1.0e18 points
+  raise `ArgumentError`.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
   not exist. See [Page boxes](guides/editing.md#page-boxes).
@@ -1900,7 +1900,7 @@ defmodule PdfElixide.Editor do
   @spec set_crop_box(t(), non_neg_integer(), Rect.t()) :: {:ok, t()} | {:error, Error.t()}
   def set_crop_box(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect)
       when is_integer(page_index) and page_index >= 0 do
-    rect = LayoutOptions.rect!("region", rect)
+    rect = page_box!(rect)
 
     case Wrap.call(fn -> Native.editor_set_page_crop_box(ref, page_index, rect) end) do
       {:ok, _} -> {:ok, editor}
@@ -1918,6 +1918,25 @@ defmodule PdfElixide.Editor do
       when is_integer(page_index) and page_index >= 0 do
     editor |> set_crop_box(page_index, rect) |> Wrap.unwrap!()
   end
+
+  defp page_box!(rect) do
+    box = LayoutOptions.rect!("region", rect)
+
+    if not writable_box?(box) do
+      raise ArgumentError,
+            "invalid region, expected corners of at most " <>
+              "#{LayoutOptions.max_written()} points: #{inspect(rect)}"
+    end
+
+    box
+  end
+
+  defp writable_box?(%Rect{x: x, y: y, width: width, height: height})
+       when is_number(x) and is_number(y) and is_number(width) and is_number(height) do
+    Enum.all?([x, y, x + width, y + height], &LayoutOptions.writable?/1)
+  end
+
+  defp writable_box?(_box), do: true
 
   @typedoc """
   Margins for `crop_margins/2`, in points.
