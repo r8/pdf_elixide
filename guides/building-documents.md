@@ -315,6 +315,51 @@ Images are embedded as `PdfElixide.Editor.from_images/2` embeds them, with the
 same formats, size limits and caveats about photo orientation and CMYK colors;
 see [Images](creating-documents.md#images).
 
+## Barcodes
+
+The builder draws linear barcodes and QR codes as vector shapes, so they stay
+sharp at any size and print resolution. `barcode/4` and `qr_code/3` add one to
+the flow, between the margins and below the content before it;
+`barcode_in_rect/5` and `qr_code_in_rect/4` place one within a
+`PdfElixide.Geometry.Rect` on the current page, outside the flow:
+
+```elixir
+alias PdfElixide.Geometry.Rect
+
+ticket = %Rect{x: 72.0, y: 640.0, width: 220.0, height: 60.0}
+link = %Rect{x: 468.0, y: 640.0, width: 72.0, height: 72.0}
+
+Builder.new()
+|> Builder.barcode_in_rect(ticket, :code128, "TKT-2026-0412", text: true)
+|> Builder.qr_code_in_rect(link, "https://example.com/t/0412")
+|> Builder.link_in_rect(link, "https://example.com/t/0412")
+|> Builder.heading(1, "Your ticket")
+|> Builder.barcode(:ean13, "590123412345", text: true, align: :center)
+|> Builder.save!("ticket.pdf")
+```
+
+`t:PdfElixide.Builder.symbology/0` lists the linear symbologies and the data
+each one takes. Data a symbology cannot encode raises `ArgumentError` at the
+call. QR codes store `data` as UTF-8; data too long for the chosen error
+correction level also raises at the call.
+
+Positioned symbols use points from the page's bottom-left corner; reversed
+rect corners are normalized. They start the first page if none exists yet.
+A linear barcode fills its rect; a QR code is the largest centered square
+that fits. Both include their quiet zones, so the same rect can be passed to
+`link_in_rect/3`.
+
+See `t:PdfElixide.Builder.barcode_opts/0` and `t:PdfElixide.Builder.qr_code_opts/0`
+for flow sizing, and `t:PdfElixide.Builder.barcode_in_rect_opts/0` and
+`t:PdfElixide.Builder.qr_code_in_rect_opts/0` for captions, colors and quiet zones.
+A caption wider than the symbol is refused when the document is built.
+
+Scanners need clear quiet zones, sufficient module size and good contrast.
+Keep black symbols on a light page, or set `:background` when drawing over a
+color. Reducing a symbol's size also shrinks its modules and quiet zones.
+
+Flowing symbols paginate and use the same spacing as [images](#images).
+
 ## Styled text
 
 Wherever the builder takes text, it takes either a string or a list of runs.
@@ -553,6 +598,12 @@ The builder refuses content it cannot draw faithfully:
   positioned text further onto the page.
 - **An invalid link target**, such as a missing page or anchor; see
   `t:PdfElixide.Builder.link/0`.
+- **A barcode caption wider than its symbol**; see [Barcodes](#barcodes).
+
+The barcode operations draw the symbologies `t:PdfElixide.Builder.symbology/0`
+lists and QR codes. They do not draw GS1-128 function characters, Code 128
+control characters, or two-dimensional symbologies other than QR, such as Data
+Matrix and PDF417.
 
 A combining accent is drawn where the font places it, which in most fonts is
 over the letter before it.
@@ -560,8 +611,9 @@ over the letter before it.
 ## Errors
 
 Malformed arguments raise at the call that receives them. Unknown options,
-invalid option values, margins that leave no room, and line boxes or image
-sizes larger than the content area raise `ArgumentError`.
+invalid option values, margins that leave no room, line boxes or image and
+barcode sizes larger than the content area, and barcode data the symbology
+cannot encode raise `ArgumentError`.
 
 Unsupported content is reported when the description is built, as
 `{:error, %PdfElixide.Error{reason: :unsupported}}` from `to_binary/2`,

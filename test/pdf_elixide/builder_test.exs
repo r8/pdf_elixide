@@ -2076,6 +2076,279 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "barcodes" do
+    @yellow %RGB{r: 1.0, g: 1.0, b: 0.75}
+    @crimson %RGB{r: 0.75, g: 0.0, b: 0.0}
+
+    # Rounded to absorb the 32-bit floats the writer stores.
+    defp rounded(operations) do
+      for {:rectangle, x, y, width, height} <- operations do
+        Enum.map([x, y, width, height], &Float.round(&1, 3))
+      end
+    end
+
+    defp bars(doc, page \\ 0) do
+      assert [%{stroke_color: nil} = path] = Document.paths!(doc, page)
+      rounded(path.operations)
+    end
+
+    defp ean13_rect, do: %Rect{x: 72.0, y: 600.0, width: 230.0, height: 50.0}
+
+    test "barcode_in_rect/5 fills the rect, quiet zones included, with one bar per run" do
+      doc =
+        Builder.new()
+        |> Builder.barcode_in_rect(ean13_rect(), :ean13, "5901234123457")
+        |> written()
+
+      # 95 modules and two 10-module quiet zones across 230 points: 2 points each.
+      bars = bars(doc)
+      assert length(bars) == 30
+      assert hd(bars) == [92.0, 600.0, 2.0, 50.0]
+      assert List.last(bars) == [280.0, 600.0, 2.0, 50.0]
+      assert Enum.all?(bars, fn [_x, y, _width, height] -> {y, height} == {600.0, 50.0} end)
+    end
+
+    test "a caption prints the data with its computed check digit under the bars" do
+      doc =
+        Builder.new()
+        |> Builder.barcode_in_rect(ean13_rect(), :ean13, "590123412345",
+          text: true,
+          color: @crimson
+        )
+        |> written()
+
+      assert Enum.all?(bars(doc), fn [_x, y, _w, h] -> {y, h} == {618.0, 32.0} end)
+      chars = Document.chars!(doc, 0)
+      assert Enum.map_join(chars, & &1.text) == "5901234123457"
+      assert Enum.all?(chars, &(&1.color == @crimson))
+
+      left = chars |> Enum.map(& &1.bbox.x) |> Enum.min()
+      right = chars |> Enum.map(&(&1.bbox.x + &1.bbox.width)) |> Enum.max()
+      assert_in_delta (left + right) / 2, 72 + 230 / 2, 0.5
+    end
+
+    test "a caption keeps every space of the encoded data" do
+      origins = fn data ->
+        Builder.new()
+        |> Builder.barcode_in_rect(ean13_rect(), :code128, data, text: true)
+        |> written()
+        |> Document.chars!(0)
+        |> Enum.reject(&(&1.text == " "))
+        |> Enum.map(fn %{origin: {x, _y}} -> x end)
+      end
+
+      # Helvetica at 12 points: "A" advances 667 units and a space 278.
+      [a, b] = origins.("A  B")
+      assert_in_delta b - a, (667 + 2 * 278) * 12 / 1000, 0.01
+
+      # Centered on x = 187 with the spaces counted.
+      assert_in_delta hd(origins.("A")), 187 - 667 * 12 / 2000, 0.01
+      assert_in_delta hd(origins.("A ")), 187 - (667 + 278) * 12 / 2000, 0.01
+      assert_in_delta hd(origins.(" A")), 187 - (667 + 278) * 12 / 2000 + 278 * 12 / 1000, 0.01
+    end
+
+    test "the background is painted behind the whole symbol, before the bars" do
+      [background, bars] =
+        Builder.new()
+        |> Builder.barcode_in_rect(ean13_rect(), :ean13, "5901234123457",
+          background: @yellow,
+          color: @crimson
+        )
+        |> written()
+        |> Document.paths!(0)
+
+      assert background.operations == [{:rectangle, 72.0, 600.0, 230.0, 50.0}]
+      assert {background.fill_color, background.stroke_color} == {@yellow, nil}
+      assert {bars.fill_color, bars.stroke_color} == {@crimson, nil}
+    end
+
+    test "qr_code_in_rect/4 draws the largest square that fits, centered" do
+      doc =
+        Builder.new()
+        |> Builder.qr_code_in_rect(
+          %Rect{x: 300.0, y: 500.0, width: 200.0, height: 100.0},
+          "hello"
+        )
+        |> written()
+
+      # Version 1 is 21 modules, plus a 4-module quiet zone on each side.
+      module = 100 / 29
+      bars = bars(doc)
+
+      top_left_finder =
+        Enum.map([350 + 4 * module, 600 - 5 * module, 7 * module, module], &Float.round(&1, 3))
+
+      bottom_left_finder =
+        Enum.map([350 + 4 * module, 500 + 4 * module, 7 * module, module], &Float.round(&1, 3))
+
+      assert Enum.any?(bars, &close?(&1, top_left_finder))
+      assert Enum.any?(bars, &close?(&1, bottom_left_finder))
+
+      for [x, y, width, height] <- bars do
+        assert x >= 350 + 4 * module - 0.001 and x + width <= 450 - 4 * module + 0.001
+        assert y >= 500 + 4 * module - 0.001 and y + height <= 600 - 4 * module + 0.001
+      end
+    end
+
+    defp close?(a, b), do: Enum.zip(a, b) |> Enum.all?(fn {p, q} -> abs(p - q) < 0.01 end)
+
+    test "barcode/4 flows below the content before it, one point per module by default" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("Hello")
+        |> Builder.barcode(:ean13, "590123412345")
+        |> Builder.page()
+        |> Builder.barcode(:ean13, "590123412345", align: :center)
+        |> written()
+
+      assert hd(bars(doc, 0)) == [82.0, 720.0 - 18 - 6 - 36, 1.0, 36.0]
+      assert hd(bars(doc, 1)) == [72 + 468 / 2 - 115 / 2 + 10, 720.0 - 36, 1.0, 36.0]
+    end
+
+    test "qr_code/3 flows at two points per module by default" do
+      doc = Builder.new() |> Builder.qr_code("hello") |> written()
+
+      assert [path] = Document.paths!(doc, 0)
+      assert path.bbox == %Rect{x: 80.0, y: 720.0 - 58 + 8, width: 42.0, height: 42.0}
+    end
+
+    test "a flowing barcode that does not fit the rest of the page starts the next one" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("Hello")
+        |> Builder.barcode(:code128, "ABC", height: 640)
+        |> written()
+
+      assert Document.paths!(doc, 0) == []
+      assert [[_x, 80.0, _width, 640.0] | _] = bars(doc, 1)
+    end
+
+    test "every symbology encodes" do
+      for {symbology, data} <- [
+            code128: "Hello, world!",
+            code39: "CODE 39",
+            code93: "CODE-93",
+            code93: "V",
+            ean13: "5901234123457",
+            ean8: "9638507",
+            upc_a: "03600029145",
+            itf: "1234",
+            codabar: "A40156B",
+            codabar: "A12+34B"
+          ] do
+        doc =
+          Builder.new()
+          |> Builder.barcode_in_rect(ean13_rect(), symbology, data, text: true)
+          |> written()
+
+        assert [_ | _] = bars(doc)
+        assert Document.text!(doc, 0) =~ String.slice(data, 0, 5)
+      end
+
+      assert [_ | _] = Builder.new() |> Builder.qr_code("Привіт, світ") |> written() |> bars()
+    end
+
+    test "a caption in a font family takes its faces" do
+      doc =
+        Builder.new()
+        |> Builder.barcode_in_rect(ean13_rect(), :ean13, "590123412345",
+          text: true,
+          font: cff_family()
+        )
+        |> written()
+
+      refute fonts_by_text(doc)["5"] =~ "Helvetica"
+    end
+
+    test "a caption wider than the symbol is refused when the document is built" do
+      builder =
+        Builder.barcode_in_rect(
+          Builder.new(),
+          %Rect{x: 72.0, y: 600.0, width: 20.0, height: 50.0},
+          :ean13,
+          "590123412345",
+          text: true
+        )
+
+      assert refusal(builder) =~ "op 0 on page 0"
+    end
+
+    test "data a symbology cannot encode raises where it is passed" do
+      for {symbology, data, message} <- [
+            {:code128, "café", "Code 128 takes printable ASCII characters"},
+            {:code39, "abc", "Code 39 takes digits, capital letters, spaces and - . $ / + %"},
+            {:code93, "A(B", "Code 93 takes digits, capital letters, spaces and - . $ / + %"},
+            {:ean13, "12345", "EAN-13 takes 12 digits, or 13 with the check digit"},
+            {:ean8, "96385070", "EAN-8's check digit should be 4"},
+            {:upc_a, "036000291450", "UPC-A's check digit should be 2"},
+            {:itf, "123", "ITF takes an even number of digits"},
+            {:codabar, "1234",
+             "Codabar begins and ends with a start or stop character A, B, C or D"},
+            {:code128, "", "Code 128 cannot encode an empty string"},
+            {:code128, String.duplicate("~", 257), "Code 128 takes at most 256 characters"}
+          ] do
+        assert_raise ArgumentError,
+                     "invalid data, #{message}: #{inspect(data, printable_limit: 100)}",
+                     fn ->
+                       Builder.barcode(Builder.new(), symbology, data)
+                     end
+      end
+
+      error =
+        assert_raise ArgumentError,
+                     ~r/^invalid data, 3000 bytes are too many for a QR code at error correction :high: "x+" <> \.\.\.$/,
+                     fn ->
+                       Builder.qr_code(Builder.new(), String.duplicate("x", 3000),
+                         error_correction: :high
+                       )
+                     end
+
+      assert byte_size(error.message) < 200
+    end
+
+    test "malformed arguments raise where they are passed" do
+      rect = ean13_rect()
+
+      assert_raise FunctionClauseError, fn ->
+        Builder.barcode(Builder.new(), :ean13, untyped(590_123_412_345))
+      end
+
+      assert_raise ArgumentError, ~r/^invalid symbology, expected one of \[:code128/, fn ->
+        Builder.barcode_in_rect(Builder.new(), rect, untyped(:pdf417), "data")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :color, a barcode needs one/, fn ->
+        Builder.qr_code(Builder.new(), "data", color: nil)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :error_correction, expected one of/, fn ->
+        Builder.qr_code_in_rect(Builder.new(), rect, "data", error_correction: :max)
+      end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :width, a 500.0-point barcode does not fit the 468.0-point content width/,
+                   fn ->
+                     Builder.barcode(Builder.new(), :code128, "data", width: 500)
+                   end
+
+      assert_raise ArgumentError, ~r/^invalid :height, a 400.0-point QR code does not fit/, fn ->
+        Builder.new() |> Builder.page({800, 500}) |> Builder.qr_code("data", size: 400)
+      end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid height, a 18.0-point barcode leaves no room for bars/,
+                   fn ->
+                     Builder.barcode_in_rect(
+                       Builder.new(),
+                       %{rect | height: 18.0},
+                       :ean13,
+                       "590123412345",
+                       text: true
+                     )
+                   end
+    end
+  end
+
   describe "links" do
     defp links(doc, page) do
       for %{subtype: :link} = link <- Document.annotations!(doc, page), do: link

@@ -12,10 +12,10 @@ those direct dependencies, with the shortest chain that pulls it in.
 
 Crates on the targets the precompiled binaries are built for:
 
-  Direct dependencies:                          20
+  Direct dependencies:                          22
   Reached only through the upstream libraries:  151
   Reached through at least one other:           70
-  Total:                                        241
+  Total:                                        243
 
 Where a crate offers a choice of licences, it is used under the one named
 after "Used under". The Elixir packages this library depends on are not
@@ -143,6 +143,8 @@ asn1-rs-impl 0.2.0 — MIT (of MIT/Apache-2.0) — via pdf_oxide (upstream) — 
   pdf_elixide_nif -> pdf_oxide -> x509-parser -> asn1-rs -> asn1-rs-impl
 atoi_simd 0.18.1 — MIT (of MIT OR Apache-2.0) — via office_oxide (upstream), pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> office_oxide -> atoi_simd
+barcoders 2.0.0 — MIT (of MIT OR Apache-2.0) — direct dependency — [6]
+  pdf_elixide_nif -> barcoders
 base16ct 1.0.0 — MIT (of Apache-2.0 OR MIT) — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> p256 -> elliptic-curve -> base16ct
 base64 0.23.1 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [6]
@@ -407,6 +409,8 @@ pxfm 0.1.29 — Apache-2.0 (of BSD-3-Clause OR Apache-2.0) — via image, pdf_ox
   pdf_elixide_nif -> image -> moxcms -> pxfm
 qcms 0.3.0 — MIT — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> qcms
+qrcode 0.14.1 — MIT (of MIT OR Apache-2.0) — direct dependency — [6]
+  pdf_elixide_nif -> qrcode
 quick-error 2.0.1 — MIT (of MIT/Apache-2.0) — via image, pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> image -> tiff -> quick-error
 quick-xml 0.41.0 — MIT — via office_oxide (upstream), pdf_oxide (upstream) — [6]
@@ -921,6 +925,7 @@ THIS SOFTWARE.
   asn1-rs-derive 0.6.0: Copyright (c) 2017 Pierre Chifflier
   asn1-rs-impl 0.2.0: Copyright (c) Pierre Chifflier <chifflier@wzdftpd.net>
   atoi_simd 0.18.1: Copyright (c) 2022 Dmitry Rodionov
+  barcoders 2.0.0: Copyright (c) 2015 The barcoders Developers
   base16ct 1.0.0: Copyright (c) 2014 Steve "Sc00bz" Thomas (steve at tobtu dot com) / Copyright (c) 2022-2025 The RustCrypto Project Developers
   base64 0.23.1: Copyright (c) 2025 Alice Maz, Marshall Pierce
   base64ct 1.8.3: Copyright (c) 2014 Steve "Sc00bz" Thomas (steve at tobtu dot com) / Copyright (c) 2021-2025 The RustCrypto Project Developers
@@ -1039,6 +1044,7 @@ THIS SOFTWARE.
   primeorder 0.14.0: Copyright (c) 2020-2023 RustCrypto Developers
   proc-macro2 1.0.106
   qcms 0.3.0: Copyright (c) Jeff Muizelaar, Benoit Girard, Andrew Osmond
+  qrcode 0.14.1: Copyright (c) 2016 kennytm
   quick-error 2.0.1: Copyright (c) 2015 The quick-error Developers
   quick-xml 0.41.0: Copyright (c) 2016 Johann Tuffe
   quick-xml 0.42.0: Copyright (c) 2016 Johann Tuffe

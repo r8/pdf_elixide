@@ -20,9 +20,9 @@ use crate::{
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Align, Cell, Embedded, Face, Fit, FlowImage, Fonts, Item, Margins,
-        Marker, Op, Picture, Placed, Plan, Refused, Run, Shape, Stroke, Table, Unordered,
-        Watermark, Width, Within,
+        self, embedded_key, Align, Barcode, Caption, Cell, Embedded, Face, Fit, FlowImage, Fonts,
+        Item, Margins, Marker, Op, Picture, Placed, Plan, Refused, Run, Shape, Stroke, Table,
+        Unordered, Watermark, Width, Within,
     },
     open_editor::OpenEditor,
     paths::PathOpNif,
@@ -42,7 +42,7 @@ pub struct BuildNif<'a> {
     line_height: f64,
     families: Vec<FamilyNif<'a>>,
     images: Vec<Binary<'a>>,
-    ops: Vec<OpNif>,
+    ops: Vec<OpNif<'a>>,
 }
 
 #[derive(NifMap)]
@@ -54,7 +54,7 @@ pub struct FamilyNif<'a> {
 }
 
 #[derive(NifTaggedEnum)]
-pub enum OpNif {
+pub enum OpNif<'a> {
     Page((f64, f64)),
     Paragraph(ParagraphNif),
     Heading(ParagraphNif),
@@ -67,6 +67,8 @@ pub enum OpNif {
     Table(TableNif),
     Image(ImageNif),
     ImageInRect(ImageInRectNif),
+    Barcode(BarcodeNif<'a>),
+    BarcodeInRect(BarcodeInRectNif<'a>),
     Anchor(String),
     LinkInRect(LinkInRectNif),
     Watermark(WatermarkNif),
@@ -181,6 +183,35 @@ pub struct ImageInRectNif {
     width: f64,
     height: f64,
     fit: FitNif,
+}
+
+#[derive(NifMap)]
+pub struct BarcodeNif<'a> {
+    barcode: SymbolNif<'a>,
+    width: f64,
+    height: f64,
+    align: AlignNif,
+    font_size: f64,
+}
+
+#[derive(NifMap)]
+pub struct BarcodeInRectNif<'a> {
+    barcode: SymbolNif<'a>,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[derive(NifMap)]
+pub struct SymbolNif<'a> {
+    columns: usize,
+    rows: usize,
+    modules: Binary<'a>,
+    quiet_zone: f64,
+    color: RgbNif,
+    background: Option<RgbNif>,
+    caption: Option<ParagraphNif>,
 }
 
 #[derive(NifUnitEnum, Clone, Copy)]
@@ -596,7 +627,7 @@ fn family_of(font: FontNif, auto: Family) -> Family {
     }
 }
 
-fn auto_family(ops: &[OpNif]) -> Family {
+fn auto_family(ops: &[OpNif<'_>]) -> Family {
     let helvetica = base14::face("Helvetica").expect("Helvetica is a base-14 face");
     let needs_unicode = ops
         .iter()
@@ -631,6 +662,15 @@ fn auto_family(ops: &[OpNif]) -> Family {
                 rows,
                 ..
             }) => Some(rows.iter().flatten().map(|cell| &cell.runs).collect()),
+            OpNif::Barcode(BarcodeNif { barcode, .. })
+            | OpNif::BarcodeInRect(BarcodeInRectNif { barcode, .. }) => match &barcode.caption {
+                Some(ParagraphNif {
+                    font: FontNif::Auto,
+                    runs,
+                    ..
+                }) => Some(vec![runs]),
+                _ => None,
+            },
             _ => None,
         })
         .flatten()
@@ -694,7 +734,7 @@ fn watermark(mark: WatermarkNif) -> Watermark {
 }
 
 fn ops(
-    ops: Vec<OpNif>,
+    ops: Vec<OpNif<'_>>,
     faces: &mut Faces<'_, '_>,
     pictures: &mut Pictures<'_, '_>,
     links: &mut Vec<Link>,
@@ -780,6 +820,17 @@ fn ops(
                 rect: [image.x, image.y, image.width, image.height],
                 fit: image.fit.into(),
             }),
+            OpNif::Barcode(barcode) => Ok(Op::Barcode {
+                barcode: symbol(index, barcode.barcode, auto, faces, links)?,
+                width: barcode.width,
+                height: barcode.height,
+                align: barcode.align.into(),
+                size: barcode.font_size,
+            }),
+            OpNif::BarcodeInRect(barcode) => Ok(Op::BarcodeInRect {
+                barcode: symbol(index, barcode.barcode, auto, faces, links)?,
+                rect: [barcode.x, barcode.y, barcode.width, barcode.height],
+            }),
             OpNif::Anchor(name) => Ok(Op::Anchor(name)),
             OpNif::LinkInRect(area) => Ok(Op::LinkInRect {
                 link: linked(links, index, area.link),
@@ -795,6 +846,38 @@ fn ops(
             }
         })
         .collect()
+}
+
+fn symbol(
+    index: usize,
+    symbol: SymbolNif<'_>,
+    auto: Family,
+    faces: &mut Faces<'_, '_>,
+    links: &mut Vec<Link>,
+) -> NifResult<Barcode> {
+    if symbol.modules.len() != symbol.columns * symbol.rows {
+        return Err(rustler::Error::BadArg);
+    }
+    let caption = symbol
+        .caption
+        .map(|caption| -> NifResult<Caption> {
+            Ok(Caption {
+                face: faces.face(index, family_of(caption.font, auto), Style::Regular)?,
+                runs: runs(index, caption.runs, caption.font, auto, faces, links)?,
+                size: caption.font_size,
+            })
+        })
+        .transpose()?;
+
+    Ok(Barcode {
+        columns: symbol.columns,
+        rows: symbol.rows,
+        modules: symbol.modules.as_slice().to_vec(),
+        quiet_zone: symbol.quiet_zone,
+        color: symbol.color.into(),
+        background: symbol.background.map(Into::into),
+        caption,
+    })
 }
 
 fn table_op(
@@ -1007,15 +1090,17 @@ fn refused(refusal: Refused) -> rustler::Error {
         Refused::CounterOverflow { op, page } => {
             format!("op {op} on page {page}: the list's numbering overflows; use a smaller :start")
         }
-        Refused::ImageTooLarge {
+        Refused::TooLarge {
             op,
             page,
+            what,
+            options,
             needed: (width, height),
             room: (room_width, room_height),
         } => format!(
-            "op {op} on page {page}: an image {width} × {height} points does not fit the \
-             {room_width} × {room_height}-point content area; give a smaller :width or \
-             :height, or reduce the margins"
+            "op {op} on page {page}: {what} {width} × {height} points does not fit the \
+             {room_width} × {room_height}-point content area; give a smaller {options}, \
+             or reduce the margins"
         ),
         Refused::NoSuchPage {
             op,

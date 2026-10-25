@@ -13,6 +13,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+# Keep barcode encoder versions aligned with `pdf_oxide`'s lock file.
+barcoders = { version = "=2.0.0", default-features = false, features = ["std"] }
 # Keep the PKCS#12 stack aligned with what `pdf_oxide` resolves.
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 # Keep CMS/DER aligned with `pdf_oxide`; `alloc`/`oid` expose the ASN.1 APIs used here,
@@ -28,6 +30,7 @@ office_oxide = { version = "=0.1.11", default-features = false }
 pdf_oxide = { version = "=0.3.78", features = ["signatures", "rendering"] }
 pkcs12 = { version = "=0.2.0-pre.0", features = ["kdf"] }
 pkcs5 = { version = "0.8", features = ["alloc", "pbes2"] }
+qrcode = { version = "=0.14.1", default-features = false }
 rc2 = "0.9"
 rustler = "0.37.4"
 # Keep aligned with the version `pdf_oxide` resolves; reads a font's PostScript name.

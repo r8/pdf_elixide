@@ -538,6 +538,27 @@ defmodule PdfElixide.OptionKeysTest do
       accepts_each!([fit: :fill], &Builder.image_in_rect(Builder.new(), rect, "image", &1))
     end
 
+    test "the Builder barcode operations" do
+      rect = %PdfElixide.Geometry.Rect{x: 72, y: 72, width: 200, height: 60}
+      red = %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}
+      symbol = [color: red, background: red, quiet_zone: 5]
+      linear = symbol ++ [text: true, font: :times, font_size: 8]
+      qr = symbol ++ [error_correction: :high]
+
+      accepts_each!(
+        linear,
+        &Builder.barcode_in_rect(Builder.new(), rect, :ean13, "590123412345", &1)
+      )
+
+      accepts_each!(
+        linear ++ [width: 150, height: 50, align: :center],
+        &Builder.barcode(Builder.new(), :ean13, "590123412345", &1)
+      )
+
+      accepts_each!(qr, &Builder.qr_code_in_rect(Builder.new(), rect, "data", &1))
+      accepts_each!(qr ++ [size: 72, align: :right], &Builder.qr_code(Builder.new(), "data", &1))
+    end
+
     test "Builder.watermark/3" do
       accepts_each!(
         [
@@ -785,6 +806,10 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.arc(Builder.new(), {0, 0}, 1, 0, 90, opts) end,
         fn opts -> Builder.bezier(Builder.new(), {0, 0}, {1, 1}, {2, 1}, {3, 0}, opts) end,
         fn opts -> Builder.path(Builder.new(), [{:move_to, 0, 0}], opts) end,
+        fn opts -> Builder.barcode(Builder.new(), :code128, "a", opts) end,
+        fn opts -> Builder.barcode_in_rect(Builder.new(), field_rect(), :code128, "a", opts) end,
+        fn opts -> Builder.qr_code(Builder.new(), "a", opts) end,
+        fn opts -> Builder.qr_code_in_rect(Builder.new(), field_rect(), "a", opts) end,
         fn opts -> Builder.text_field(Builder.new(), "f", field_rect(), opts) end,
         fn opts -> Builder.check_box(Builder.new(), "f", field_rect(), opts) end,
         fn opts -> Builder.combo_box(Builder.new(), "f", field_rect(), ["a"], opts) end,

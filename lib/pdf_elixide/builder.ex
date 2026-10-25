@@ -35,6 +35,12 @@ defmodule PdfElixide.Builder do
   `image/3` adds a JPEG or PNG image to the flow and `image_in_rect/4` places
   one outside it. See [Images](guides/building-documents.md#images).
 
+  ## Barcodes
+
+  `barcode/4` and `qr_code/3` add a linear barcode or a QR code to the flow,
+  and `barcode_in_rect/5` and `qr_code_in_rect/4` place one outside it. See
+  [Barcodes](guides/building-documents.md#barcodes).
+
   ## Links and watermarks
 
   A run's `:link` option makes its text clickable, `link_in_rect/3` makes an
@@ -70,6 +76,7 @@ defmodule PdfElixide.Builder do
   alias PdfElixide.Error
   alias PdfElixide.Geometry.Rect
   alias PdfElixide.LayoutOptions
+  alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
   @enforce_keys [
@@ -372,6 +379,132 @@ defmodule PdfElixide.Builder do
   @image_in_rect_opts_keys [:fit]
 
   @fits [:contain, :fill]
+
+  @typedoc """
+  A linear barcode symbology, for `barcode/4` and `barcode_in_rect/5`.
+
+    * `:code128` — printable ASCII characters.
+    * `:code39`, `:code93` — digits, capital letters, spaces and `- . $ / + %`.
+    * `:ean13`, `:ean8`, `:upc_a` — 12, 7 or 11 digits, with or without the
+      check digit after them. A check digit left off is computed, and one
+      given must be correct.
+    * `:itf` — Interleaved 2 of 5: an even number of digits.
+    * `:codabar` — digits and `- $ : / . +`, between a start and a stop
+      character, each one of `A`, `B`, `C` or `D`.
+
+  Variable-length symbologies take at most 256 characters.
+  """
+  @type symbology :: :code128 | :code39 | :code93 | :ean13 | :ean8 | :upc_a | :itf | :codabar
+
+  @symbologies [:code128, :code39, :code93, :ean13, :ean8, :upc_a, :itf, :codabar]
+
+  @typedoc """
+  Options accepted by `barcode_in_rect/5`.
+
+    * `:color` — a `PdfElixide.Color.RGB` for the bars and the caption.
+      Defaults to black.
+    * `:background` — a `PdfElixide.Color.RGB` painted behind the whole
+      symbol. Defaults to `nil`, none, so the page shows through.
+    * `:quiet_zone` — the blank margin on each side of the bars, in module
+      widths. It is part of the symbol's width. Defaults to `10`.
+    * `:text` — whether to print the encoded data, with any computed check
+      digit, as one centered line under the bars. Defaults to `false`.
+    * `:font`, `:font_size` — the caption's font and size, as for
+      `paragraph/3`.
+
+  With `:text`, the caption's line box comes out of the symbol's height, and
+  a height that leaves no room for bars above it raises `ArgumentError`.
+  """
+  @type barcode_in_rect_opts :: [
+          color: RGB.t(),
+          background: RGB.t() | nil,
+          quiet_zone: number(),
+          text: boolean(),
+          font: font() | nil,
+          font_size: number() | nil
+        ]
+
+  @barcode_in_rect_opts_keys [:color, :background, :quiet_zone, :text, :font, :font_size]
+
+  @typedoc """
+  Options accepted by `barcode/4`.
+
+    * `:color`, `:background`, `:quiet_zone`, `:text`, `:font`,
+      `:font_size` — as for `barcode_in_rect/5`.
+    * `:width` — the symbol's width in points, quiet zones included.
+      Defaults to `nil`, one point per module.
+    * `:height` — the symbol's height in points, caption included. Defaults
+      to `nil`: 36 points of bars, plus the caption's line box with `:text`.
+    * `:align` — `:left`, `:center` or `:right`: where the symbol sits
+      between the margins. Defaults to `:left`.
+
+  A `:width` or `:height` larger than the page's content area raises
+  `ArgumentError`.
+  """
+  @type barcode_opts :: [
+          color: RGB.t(),
+          background: RGB.t() | nil,
+          quiet_zone: number(),
+          text: boolean(),
+          font: font() | nil,
+          font_size: number() | nil,
+          width: number() | nil,
+          height: number() | nil,
+          align: :left | :center | :right
+        ]
+
+  @barcode_opts_keys @barcode_in_rect_opts_keys ++ [:width, :height, :align]
+
+  @typedoc """
+  Options accepted by `qr_code_in_rect/4`.
+
+    * `:color` — a `PdfElixide.Color.RGB` for the dark modules. Defaults to
+      black.
+    * `:background` — a `PdfElixide.Color.RGB` painted behind the whole
+      symbol. Defaults to `nil`, none, so the page shows through.
+    * `:quiet_zone` — the blank margin on each side, in modules. It is part of
+      the symbol's size. Defaults to `4`.
+    * `:error_correction` — `:low`, `:medium`, `:quartile` or `:high`: how
+      much of the symbol can be damaged and still read, roughly 7%, 15%, 25%
+      and 30%. Higher levels hold less data. Defaults to `:medium`.
+  """
+  @type qr_code_in_rect_opts :: [
+          color: RGB.t(),
+          background: RGB.t() | nil,
+          quiet_zone: number(),
+          error_correction: :low | :medium | :quartile | :high
+        ]
+
+  @qr_code_in_rect_opts_keys [:color, :background, :quiet_zone, :error_correction]
+
+  @typedoc """
+  Options accepted by `qr_code/3`.
+
+    * `:color`, `:background`, `:quiet_zone`, `:error_correction` — as for
+      `qr_code_in_rect/4`.
+    * `:size` — the side of the square symbol in points, quiet zone
+      included. Defaults to `nil`, two points per module.
+    * `:align` — `:left`, `:center` or `:right`: where the symbol sits
+      between the margins. Defaults to `:left`.
+
+  A `:size` larger than the page's content area raises `ArgumentError`.
+  """
+  @type qr_code_opts :: [
+          color: RGB.t(),
+          background: RGB.t() | nil,
+          quiet_zone: number(),
+          error_correction: :low | :medium | :quartile | :high,
+          size: number() | nil,
+          align: :left | :center | :right
+        ]
+
+  @qr_code_opts_keys @qr_code_in_rect_opts_keys ++ [:size, :align]
+
+  @error_corrections [:low, :medium, :quartile, :high]
+
+  @linear_module 1.0
+  @linear_bars 36.0
+  @qr_module 2.0
 
   @typedoc """
   Options accepted by `watermark/3`.
@@ -1201,6 +1334,194 @@ defmodule PdfElixide.Builder do
   end
 
   @doc """
+  Adds a linear barcode to the flow, between the margins.
+
+  See `t:symbology/0` for accepted data, `t:barcode_opts/0` for options and
+  [Barcodes](guides/building-documents.md#barcodes) for layout and errors.
+
+      PdfElixide.Builder.barcode(builder, :ean13, "590123412345", text: true)
+  """
+  @spec barcode(t(), symbology(), String.t(), barcode_opts()) :: t()
+  def barcode(%__MODULE__{} = builder, symbology, data, opts \\ [])
+      when is_binary(data) and is_list(opts) do
+    opts = Keyword.validate!(opts, @barcode_opts_keys)
+    %{width: width, height: height, align: align} = build_barcode_options(opts)
+    linear_opts = Keyword.take(opts, @barcode_in_rect_opts_keys)
+    {symbol, caption_line} = linear_symbol!(builder, symbology, data, linear_opts)
+    width = width || (symbol.columns + 2 * symbol.quiet_zone) * @linear_module
+    height = height || @linear_bars + caption_line
+    validate_bars_fit!(height, caption_line)
+    validate_block_fits!(builder, width, height, "barcode")
+
+    op =
+      {:barcode,
+       %{
+         barcode: symbol,
+         width: width,
+         height: height,
+         align: align,
+         font_size: builder.font_size
+       }}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Draws a linear barcode within `rect` on the current page, outside the flow.
+
+  The symbol fills the rect, quiet zones included. See `t:symbology/0` for
+  accepted data, `t:barcode_in_rect_opts/0` for options and
+  [Barcodes](guides/building-documents.md#barcodes) for coordinates and errors.
+
+      alias PdfElixide.Geometry.Rect
+
+      rect = %Rect{x: 72.0, y: 640.0, width: 200.0, height: 60.0}
+      PdfElixide.Builder.barcode_in_rect(builder, rect, :code128, "PO-2026-0412", text: true)
+  """
+  @spec barcode_in_rect(t(), Rect.t(), symbology(), String.t(), barcode_in_rect_opts()) :: t()
+  def barcode_in_rect(%__MODULE__{} = builder, %Rect{} = rect, symbology, data, opts \\ [])
+      when is_binary(data) and is_list(opts) do
+    %Rect{x: x, y: y, width: width, height: height} = rect |> rect!() |> normalize_rect()
+    width = LayoutOptions.positive!("rect", width)
+    height = LayoutOptions.positive!("rect", height)
+    opts = Keyword.validate!(opts, @barcode_in_rect_opts_keys)
+    {symbol, caption_line} = linear_symbol!(builder, symbology, data, opts)
+    validate_bars_fit!(height, caption_line)
+
+    op =
+      {:barcode_in_rect, %{barcode: symbol, x: x, y: y, width: width, height: height}}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Adds a QR code to the flow, between the margins.
+
+  See `t:qr_code_opts/0` for options and
+  [Barcodes](guides/building-documents.md#barcodes) for layout and errors.
+
+      PdfElixide.Builder.qr_code(builder, "https://example.com", size: 96)
+  """
+  @spec qr_code(t(), String.t(), qr_code_opts()) :: t()
+  def qr_code(%__MODULE__{} = builder, data, opts \\ [])
+      when is_binary(data) and is_list(opts) do
+    opts = Keyword.validate!(opts, @qr_code_opts_keys)
+    %{size: size, align: align} = build_qr_code_options(opts)
+    symbol = qr_symbol!(data, Keyword.take(opts, @qr_code_in_rect_opts_keys))
+    size = size || (symbol.columns + 2 * symbol.quiet_zone) * @qr_module
+    validate_block_fits!(builder, size, size, "QR code")
+
+    op =
+      {:barcode,
+       %{barcode: symbol, width: size, height: size, align: align, font_size: builder.font_size}}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Draws a QR code within `rect` on the current page, outside the flow.
+
+  The symbol is the largest centered square that fits, quiet zone included.
+  See `t:qr_code_in_rect_opts/0` for options and
+  [Barcodes](guides/building-documents.md#barcodes) for coordinates and errors.
+
+      alias PdfElixide.Geometry.Rect
+
+      rect = %Rect{x: 468.0, y: 648.0, width: 72.0, height: 72.0}
+      PdfElixide.Builder.qr_code_in_rect(builder, rect, "https://example.com", error_correction: :high)
+  """
+  @spec qr_code_in_rect(t(), Rect.t(), String.t(), qr_code_in_rect_opts()) :: t()
+  def qr_code_in_rect(%__MODULE__{} = builder, %Rect{} = rect, data, opts \\ [])
+      when is_binary(data) and is_list(opts) do
+    %Rect{x: x, y: y, width: width, height: height} = rect |> rect!() |> normalize_rect()
+    width = LayoutOptions.positive!("rect", width)
+    height = LayoutOptions.positive!("rect", height)
+    symbol = qr_symbol!(data, opts)
+    side = min(width, height)
+
+    op =
+      {:barcode_in_rect,
+       %{
+         barcode: symbol,
+         x: x + (width - side) / 2,
+         y: y + (height - side) / 2,
+         width: side,
+         height: side
+       }}
+
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  defp linear_symbol!(builder, symbology, data, opts) do
+    if symbology not in @symbologies do
+      raise ArgumentError,
+            "invalid symbology, expected one of #{inspect(@symbologies)}: #{inspect(symbology)}"
+    end
+
+    options = build_barcode_in_rect_options(opts)
+    encoded = encode_barcode!(symbology, data, :medium)
+
+    {caption, caption_line} =
+      if options.text do
+        font_size = options.font_size || builder.font_size
+        validate_line_precise!(builder, font_size)
+        run = run!({encoded.text, color: options.color})
+
+        {%{runs: [run], font: options.font || builder.font, font_size: font_size},
+         font_size * builder.line_height}
+      else
+        {nil, 0.0}
+      end
+
+    {symbol(encoded, options, caption), caption_line}
+  end
+
+  defp qr_symbol!(data, opts) do
+    options = build_qr_code_in_rect_options(opts)
+    encoded = encode_barcode!(:qr, data, options.error_correction)
+    symbol(encoded, options, nil)
+  end
+
+  defp symbol(encoded, options, caption) do
+    %{columns: columns, rows: rows, modules: modules} = encoded
+
+    %{
+      columns: columns,
+      rows: rows,
+      modules: modules,
+      quiet_zone: options.quiet_zone,
+      color: options.color,
+      background: options.background,
+      caption: caption
+    }
+  end
+
+  defp encode_barcode!(symbology, data, error_correction) do
+    data = LayoutOptions.utf8!("data", data)
+
+    case Wrap.call(fn -> Native.builder_encode_barcode(symbology, data, error_correction) end) do
+      {:ok, {:invalid, message}} ->
+        raise ArgumentError,
+              "invalid data, #{message}: #{inspect(data, printable_limit: 100)}"
+
+      {:ok, %{columns: _, rows: _, modules: _, text: _} = encoded} ->
+        encoded
+
+      {:error, error} ->
+        raise error
+    end
+  end
+
+  defp validate_bars_fit!(height, caption_line) do
+    if caption_line > 0 and height <= caption_line + @fit_tolerance do
+      raise ArgumentError,
+            "invalid height, a #{height}-point barcode leaves no room for bars above its " <>
+              "#{caption_line}-point caption; enlarge it, or reduce the font size or the " <>
+              "line height"
+    end
+  end
+
+  @doc """
   Makes `rect` on the current page a link to `link`.
 
   `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
@@ -1970,6 +2291,17 @@ defmodule PdfElixide.Builder do
     {{tag, %{block | font: {:family, position}}}, %{acc | families: families}}
   end
 
+  defp native_op(
+         {tag,
+          %{barcode: %{caption: %{font: %FontFamily{id: id} = family} = caption} = symbol} = block},
+         acc
+       ) do
+    {position, families} = position(acc.families, id, family)
+    symbol = %{symbol | caption: %{caption | font: {:family, position}}}
+
+    {{tag, %{block | barcode: symbol}}, %{acc | families: families}}
+  end
+
   defp native_op({tag, %{image: image} = block}, acc) when tag in [:image, :image_in_rect] do
     {position, images} = position(acc.images, image, image)
 
@@ -1999,6 +2331,10 @@ defmodule PdfElixide.Builder do
           | :cell
           | :image
           | :image_in_rect
+          | :barcode
+          | :barcode_in_rect
+          | :qr_code
+          | :qr_code_in_rect
           | :watermark
           | :text_field
           | :check_box
@@ -2019,6 +2355,10 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:cell), do: build_cell_options([])
   def __option_defaults__(:image), do: build_image_options([])
   def __option_defaults__(:image_in_rect), do: build_image_in_rect_options([])
+  def __option_defaults__(:barcode), do: build_barcode_options([])
+  def __option_defaults__(:barcode_in_rect), do: build_barcode_in_rect_options([])
+  def __option_defaults__(:qr_code), do: build_qr_code_options([])
+  def __option_defaults__(:qr_code_in_rect), do: build_qr_code_in_rect_options([])
   def __option_defaults__(:watermark), do: build_watermark_options([])
   def __option_defaults__(:text_field), do: build_text_field_options([])
   def __option_defaults__(:check_box), do: build_check_box_options([])
@@ -2126,6 +2466,74 @@ defmodule PdfElixide.Builder do
     end
 
     %{width: width, height: height, fit: fit, align: align!(Keyword.get(opts, :align, :left))}
+  end
+
+  defp build_barcode_in_rect_options(opts) do
+    opts = Keyword.validate!(opts, @barcode_in_rect_opts_keys)
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.merge(symbol_options(opts, 10))
+    |> Map.put(:text, boolean!(:text, Keyword.get(opts, :text, false)))
+  end
+
+  defp build_barcode_options(opts) do
+    opts = Keyword.validate!(opts, @barcode_opts_keys)
+
+    opts
+    |> Keyword.take(@barcode_in_rect_opts_keys)
+    |> build_barcode_in_rect_options()
+    |> Map.merge(%{
+      width: optional_positive!(:width, Keyword.get(opts, :width)),
+      height: optional_positive!(:height, Keyword.get(opts, :height)),
+      align: align!(Keyword.get(opts, :align, :left))
+    })
+  end
+
+  defp build_qr_code_in_rect_options(opts) do
+    opts = Keyword.validate!(opts, @qr_code_in_rect_opts_keys)
+
+    opts
+    |> symbol_options(4)
+    |> Map.put(
+      :error_correction,
+      error_correction!(Keyword.get(opts, :error_correction, :medium))
+    )
+  end
+
+  defp build_qr_code_options(opts) do
+    opts = Keyword.validate!(opts, @qr_code_opts_keys)
+
+    opts
+    |> Keyword.take(@qr_code_in_rect_opts_keys)
+    |> build_qr_code_in_rect_options()
+    |> Map.merge(%{
+      size: optional_positive!(:size, Keyword.get(opts, :size)),
+      align: align!(Keyword.get(opts, :align, :left))
+    })
+  end
+
+  defp symbol_options(opts, quiet_zone) do
+    color =
+      case color!(:color, Keyword.get(opts, :color, %RGB{r: 0.0, g: 0.0, b: 0.0})) do
+        nil -> raise ArgumentError, "invalid :color, a barcode needs one, so it cannot be nil"
+        color -> color
+      end
+
+    %{
+      color: color,
+      background: color!(:background, Keyword.get(opts, :background)),
+      quiet_zone: non_negative!(:quiet_zone, Keyword.get(opts, :quiet_zone, quiet_zone))
+    }
+  end
+
+  defp error_correction!(level) when level in @error_corrections, do: level
+
+  defp error_correction!(level) do
+    raise ArgumentError,
+          "invalid :error_correction, expected one of #{inspect(@error_corrections)}: " <>
+            inspect(level)
   end
 
   defp build_image_in_rect_options(opts) do
@@ -2594,12 +3002,26 @@ defmodule PdfElixide.Builder do
   end
 
   # Keep these fit and precision checks consistent with the native layout.
-  defp validate_image_fits!(_key, nil, _room), do: :ok
+  defp validate_image_fits!(key, size, room), do: validate_fits!(key, size, room, "image")
 
-  defp validate_image_fits!(key, size, room) do
+  defp validate_block_fits!(builder, width, height, noun) do
+    {page_width, page_height} = builder.current_page_size
+    validate_fits!(:width, width, page_width - builder.margin_left - builder.margin_right, noun)
+
+    validate_fits!(
+      :height,
+      height,
+      page_height - builder.margin_top - builder.margin_bottom,
+      noun
+    )
+  end
+
+  defp validate_fits!(_key, nil, _room, _noun), do: :ok
+
+  defp validate_fits!(key, size, room, noun) do
     if size > room + @fit_tolerance do
       raise ArgumentError,
-            "invalid #{inspect(key)}, a #{size}-point image does not fit the " <>
+            "invalid #{inspect(key)}, a #{size}-point #{noun} does not fit the " <>
               "#{room}-point content #{key}"
     end
   end

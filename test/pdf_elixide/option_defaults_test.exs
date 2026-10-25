@@ -458,6 +458,29 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Builder.__option_defaults__(:image_in_rect) == %{fit: :contain}
     end
 
+    test "the Builder barcode operations" do
+      black = %PdfElixide.Color.RGB{r: 0.0, g: 0.0, b: 0.0}
+
+      linear = %{
+        color: black,
+        background: nil,
+        quiet_zone: 10.0,
+        text: false,
+        font: nil,
+        font_size: nil
+      }
+
+      qr = %{color: black, background: nil, quiet_zone: 4.0, error_correction: :medium}
+
+      assert Builder.__option_defaults__(:barcode_in_rect) == linear
+
+      assert Builder.__option_defaults__(:barcode) ==
+               Map.merge(linear, %{width: nil, height: nil, align: :left})
+
+      assert Builder.__option_defaults__(:qr_code_in_rect) == qr
+      assert Builder.__option_defaults__(:qr_code) == Map.merge(qr, %{size: nil, align: :left})
+    end
+
     test "Editor.from_images/2" do
       assert Editor.__option_defaults__(:image_create) == %{
                title: nil,

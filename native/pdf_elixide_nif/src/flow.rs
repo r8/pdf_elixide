@@ -6,7 +6,7 @@ use unicode_normalization::char::canonical_combining_class;
 use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::base14::Base14;
+use crate::{barcode::dark_runs, base14::Base14};
 
 mod table;
 
@@ -202,6 +202,17 @@ pub enum Op {
         rect: [f64; 4],
         fit: Fit,
     },
+    Barcode {
+        barcode: Barcode,
+        width: f64,
+        height: f64,
+        align: Align,
+        size: f64,
+    },
+    BarcodeInRect {
+        barcode: Barcode,
+        rect: [f64; 4],
+    },
     Anchor(String),
     LinkInRect {
         link: usize,
@@ -235,6 +246,24 @@ pub struct FlowImage {
     pub height: Option<f64>,
     pub fit: Fit,
     pub align: Align,
+    pub size: f64,
+}
+
+pub struct Barcode {
+    pub columns: usize,
+    pub rows: usize,
+    // One byte per module, row by row from the top, nonzero for dark.
+    pub modules: Vec<u8>,
+    // In modules, on each side; a linear symbol has none above or below.
+    pub quiet_zone: f64,
+    pub color: Rgb,
+    pub background: Option<Rgb>,
+    pub caption: Option<Caption>,
+}
+
+pub struct Caption {
+    pub runs: Vec<Run>,
+    pub face: usize,
     pub size: f64,
 }
 
@@ -449,9 +478,11 @@ pub enum Refused {
         page: usize,
         flowing: bool,
     },
-    ImageTooLarge {
+    TooLarge {
         op: usize,
         page: usize,
+        what: &'static str,
+        options: &'static str,
         needed: (f64, f64),
         room: (f64, f64),
     },
@@ -594,6 +625,17 @@ pub fn lay_out(
                 rect,
                 fit,
             } => layout.image_in_rect(*image, *pixels, *rect, *fit),
+            Op::Barcode {
+                barcode,
+                width,
+                height,
+                align,
+                size,
+            } => layout.barcode(index, barcode, (*width, *height), *align, *size)?,
+            Op::BarcodeInRect { barcode, rect } => {
+                layout.ensure_page();
+                layout.draw_barcode(index, barcode, *rect)?
+            }
             Op::Anchor(name) => layout.pending_anchors.push(name.clone()),
             Op::LinkInRect { link, rect } => layout.link_in_rect(index, *link, *rect)?,
             Op::Watermark {
@@ -874,12 +916,14 @@ impl Layout<'_> {
                 Op::Rule { size } => return total + gap + size,
                 Op::Table(table) => return total + gap + self.table_lead(table),
                 Op::Image(image) => return total + gap + self.image_size(image).1,
+                Op::Barcode { height, .. } => return total + gap + height,
                 Op::Page { .. } => return total,
                 Op::Blank
                 | Op::TextAt { .. }
                 | Op::TextInRect { .. }
                 | Op::Path(_)
                 | Op::ImageInRect { .. }
+                | Op::BarcodeInRect { .. }
                 | Op::Anchor(_)
                 | Op::LinkInRect { .. }
                 | Op::Watermark { .. }
@@ -1131,14 +1175,55 @@ impl Layout<'_> {
 
     fn image(&mut self, op: usize, image: &FlowImage) -> Result<(), Refused> {
         self.ensure_page();
+        let (width, height) = self.image_size(image);
+        let what = ("an image", ":width or :height");
+        let (x, y) = self.place_block(op, what, (width, height), image.align, image.size)?;
+        self.page_mut().items.push(Item::Image(Picture {
+            image: image.image,
+            x,
+            y,
+            width,
+            height,
+        }));
+        Ok(())
+    }
+
+    fn barcode(
+        &mut self,
+        op: usize,
+        barcode: &Barcode,
+        (width, height): (f64, f64),
+        align: Align,
+        size: f64,
+    ) -> Result<(), Refused> {
+        self.ensure_page();
+        let options = if barcode.rows > 1 {
+            ":size"
+        } else {
+            ":width or :height"
+        };
+        let (x, y) = self.place_block(op, ("a barcode", options), (width, height), align, size)?;
+        self.draw_barcode(op, barcode, [x, y, width, height])
+    }
+
+    // Returns the block's bottom-left corner.
+    fn place_block(
+        &mut self,
+        op: usize,
+        (what, options): (&'static str, &'static str),
+        (width, height): (f64, f64),
+        align: Align,
+        size: f64,
+    ) -> Result<(f64, f64), Refused> {
         let page = self.pages.len() - 1;
         let room = self.content_width(op, page, self.margins.left)?;
-        let (width, height) = self.image_size(image);
         let (_, room_height) = self.content_area();
         if width > room + FIT_TOLERANCE || height > room_height + FIT_TOLERANCE {
-            return Err(Refused::ImageTooLarge {
+            return Err(Refused::TooLarge {
                 op,
                 page,
+                what,
+                options,
                 needed: (width, height),
                 room: (room, room_height),
             });
@@ -1155,23 +1240,113 @@ impl Layout<'_> {
         self.resolve_anchors();
 
         let left = self.margins.left;
-        let x = match image.align {
+        let x = match align {
             Align::Left => left,
             Align::Center => left + room / 2.0 - width / 2.0,
             Align::Right => left + room - width,
         };
         self.cursor -= height;
-        let y = self.cursor;
-        self.page_mut().items.push(Item::Image(Picture {
-            image: image.image,
-            x,
-            y,
-            width,
-            height,
-        }));
         self.fresh = false;
-        self.pending_space = 0.5 * image.size;
-        Ok(())
+        self.pending_space = 0.5 * size;
+        Ok((x, self.cursor))
+    }
+
+    // Fill all dark runs in one path to avoid seams between abutting modules.
+    fn draw_barcode(
+        &mut self,
+        op: usize,
+        barcode: &Barcode,
+        [x, y, width, height]: [f64; 4],
+    ) -> Result<(), Refused> {
+        let caption_height = barcode
+            .caption
+            .as_ref()
+            .map_or(0.0, |caption| caption.size * self.line_height);
+        let bars_height = height - caption_height;
+        let rectangle = |x: f64, y: f64, width: f64, height: f64| {
+            PathOperation::Rectangle(x as f32, y as f32, width as f32, height as f32)
+        };
+
+        if let Some(background) = barcode.background {
+            self.page_mut().items.push(Item::Path(Shape {
+                operations: vec![rectangle(x, y, width, height)],
+                stroke: None,
+                fill: Some(background),
+            }));
+        }
+
+        let across = barcode.quiet_zone;
+        let down = if barcode.rows > 1 { across } else { 0.0 };
+        let module_width = width / (barcode.columns as f64 + 2.0 * across);
+        let module_height = bars_height / (barcode.rows as f64 + 2.0 * down);
+        let top = y + height;
+        let operations = dark_runs(barcode.columns, &barcode.modules)
+            .into_iter()
+            .map(|(column, row, length)| {
+                rectangle(
+                    x + (across + column as f64) * module_width,
+                    top - (down + row as f64 + 1.0) * module_height,
+                    length as f64 * module_width,
+                    module_height,
+                )
+            })
+            .collect();
+        self.page_mut().items.push(Item::Path(Shape {
+            operations,
+            stroke: None,
+            fill: Some(barcode.color),
+        }));
+
+        match &barcode.caption {
+            Some(caption) => self.caption(op, caption, [x, y, width, caption_height]),
+            None => Ok(()),
+        }
+    }
+
+    // Placed as written rather than wrapped, so its spaces match the encoded data.
+    fn caption(
+        &mut self,
+        op: usize,
+        caption: &Caption,
+        [x, y, width, line]: [f64; 4],
+    ) -> Result<(), Refused> {
+        let page = self.pages.len() - 1;
+        let size = caption.size;
+        self.precise(op, page, size, size.min(line))?;
+        self.drawable(op, page, &[&caption.runs], &[])?;
+
+        let segments: Vec<Segment> = caption
+            .runs
+            .iter()
+            .map(|run| Segment {
+                text: run.text.clone(),
+                face: run.face,
+                color: run.color,
+                link: run.link,
+                width: self.fonts.width(run.face, &run.text, size),
+            })
+            .collect();
+        let advance: f64 = segments.iter().map(|segment| segment.width).sum();
+        if advance > width + FIT_TOLERANCE {
+            return Err(Refused::ClusterTooWide {
+                op,
+                page,
+                cluster: caption.runs.iter().map(|run| run.text.as_str()).collect(),
+                width: advance,
+                room: width,
+                within: Within::Box,
+            });
+        }
+
+        let above_baseline = self.above_baseline(caption.face, size, line);
+        let placed = boxed_lines(
+            vec![segments],
+            [x, y + line, width],
+            Align::Center,
+            above_baseline,
+            line,
+        );
+        self.place_positioned(op, placed, size, NO_EXTENT, false)
     }
 
     fn image_in_rect(&mut self, image: usize, pixels: (f64, f64), rect: [f64; 4], fit: Fit) {

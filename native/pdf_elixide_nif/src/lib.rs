@@ -1,4 +1,5 @@
 mod annotations;
+mod barcode;
 mod base14;
 mod binary;
 mod builder;
