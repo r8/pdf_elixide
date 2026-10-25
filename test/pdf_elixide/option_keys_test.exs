@@ -239,6 +239,8 @@ defmodule PdfElixide.OptionKeysTest do
       flunk("#{inspect(key)} was rejected: #{Exception.message(error)}")
   end
 
+  defp field_rect, do: %PdfElixide.Geometry.Rect{x: 72, y: 72, width: 100, height: 20}
+
   defp accepts_each!(opts, fun) do
     for {key, value} <- opts, do: accepts!(key, fn -> fun.([{key, value}]) end)
     # …and all of them together, which is the shape a real caller passes.
@@ -552,6 +554,38 @@ defmodule PdfElixide.OptionKeysTest do
       )
     end
 
+    test "the Builder form fields" do
+      rect = field_rect()
+      field = [required: true, read_only: true, tooltip: "tip"]
+
+      accepts_each!(
+        [value: "v", default_value: "d"] ++ field,
+        &Builder.text_field(Builder.new(), "f", rect, &1)
+      )
+
+      accepts_each!([checked: true] ++ field, &Builder.check_box(Builder.new(), "f", rect, &1))
+
+      accepts_each!(
+        [selected: "a"] ++ field,
+        &Builder.combo_box(Builder.new(), "f", rect, ["a"], &1)
+      )
+
+      accepts_each!(
+        [multi_select: false, selected: "a"] ++ field,
+        &Builder.list_box(Builder.new(), "f", rect, ["a"], &1)
+      )
+
+      accepts_each!(
+        [read_only: true, tooltip: "tip"],
+        &Builder.push_button(Builder.new(), "f", rect, "Go", &1)
+      )
+
+      accepts_each!(
+        [read_only: true, tooltip: "tip"],
+        &Builder.signature_field(Builder.new(), "f", rect, &1)
+      )
+    end
+
     test "Editor.save/3 and to_binary/2" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -750,7 +784,13 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.polygon(Builder.new(), [{0, 0}, {1, 0}, {0, 1}], opts) end,
         fn opts -> Builder.arc(Builder.new(), {0, 0}, 1, 0, 90, opts) end,
         fn opts -> Builder.bezier(Builder.new(), {0, 0}, {1, 1}, {2, 1}, {3, 0}, opts) end,
-        fn opts -> Builder.path(Builder.new(), [{:move_to, 0, 0}], opts) end
+        fn opts -> Builder.path(Builder.new(), [{:move_to, 0, 0}], opts) end,
+        fn opts -> Builder.text_field(Builder.new(), "f", field_rect(), opts) end,
+        fn opts -> Builder.check_box(Builder.new(), "f", field_rect(), opts) end,
+        fn opts -> Builder.combo_box(Builder.new(), "f", field_rect(), ["a"], opts) end,
+        fn opts -> Builder.list_box(Builder.new(), "f", field_rect(), ["a"], opts) end,
+        fn opts -> Builder.push_button(Builder.new(), "f", field_rect(), "Go", opts) end,
+        fn opts -> Builder.signature_field(Builder.new(), "f", field_rect(), opts) end
       ]
 
       for call <- calls do

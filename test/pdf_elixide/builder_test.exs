@@ -2099,7 +2099,14 @@ defmodule PdfElixide.BuilderTest do
                %Rect{x: 1.0e9 - 1, y: 0, width: 10, height: 10},
                "https://example.com"
              )
-             |> refusal() =~ "op 0 on page 0: the page is too large to place the link's area"
+             |> refusal() =~ "op 0 on page 0: where the link's area overlaps the page"
+
+      assert Builder.new()
+             |> Builder.link_in_rect(
+               %Rect{x: 0, y: 500, width: 0.000001, height: 20},
+               "https://example.com"
+             )
+             |> refusal() =~ "under 0.00001 points across once written"
     end
 
     defp quad_points(bytes) do
@@ -2407,6 +2414,236 @@ defmodule PdfElixide.BuilderTest do
       assert builder |> written() |> blank?.()
       assert marks(flattened) == []
       refute blank?.(flattened)
+    end
+  end
+
+  describe "form fields" do
+    alias PdfElixide.Form
+    alias PdfElixide.Form.Field
+    alias PdfElixide.Signature
+
+    defp box(x, y, width \\ 150, height \\ 20),
+      do: %Rect{x: x, y: y, width: width, height: height}
+
+    defp blank?(doc) do
+      %{data: data} = Document.render!(doc, 0, dpi: 18, format: :rgba8)
+      data == :binary.copy(<<255>>, byte_size(data))
+    end
+
+    test "each kind reads back as the field it was built as" do
+      doc =
+        Builder.new()
+        |> Builder.text_field("full_name", box(100, 650),
+          value: "Jane",
+          default_value: "Doe",
+          required: true,
+          tooltip: "Ваше имя"
+        )
+        |> Builder.check_box("agree", box(100, 600, 15, 15), checked: true, read_only: true)
+        |> Builder.check_box("spam", box(130, 600, 15, 15))
+        |> Builder.combo_box("country", box(100, 550), ["UA", "PL"], selected: "PL")
+        |> Builder.list_box("langs", box(100, 450, 150, 80), ["en", "uk", "pl"],
+          multi_select: true,
+          selected: ["en", "pl"]
+        )
+        |> Builder.list_box("size", box(300, 450, 150, 80), ["S", "M"], selected: "M")
+        |> Builder.push_button("go", box(100, 400), "Go", tooltip: "press")
+        |> written()
+
+      assert [
+               %Field.Text{
+                 name: "full_name",
+                 kind: :single_line,
+                 value: "Jane",
+                 default_value: "Doe",
+                 tooltip: "Ваше имя",
+                 rect: %Rect{x: 100.0, y: 650.0, width: 150.0, height: 20.0},
+                 flags: %Field.Text.Flags{required: true, read_only: false}
+               },
+               %Field.Button{
+                 name: "agree",
+                 kind: :check_box,
+                 value: true,
+                 flags: %Field.Button.Flags{read_only: true}
+               },
+               %Field.Button{name: "spam", kind: :check_box, value: false},
+               %Field.Choice{
+                 name: "country",
+                 kind: :combo_box,
+                 value: "PL",
+                 options: ["UA", "PL"]
+               },
+               %Field.Choice{
+                 name: "langs",
+                 kind: :list_box,
+                 value: ["en", "pl"],
+                 flags: %Field.Choice.Flags{multi_select: true}
+               },
+               %Field.Choice{name: "size", kind: :list_box, value: "M"},
+               %Field.Button{name: "go", kind: :push, tooltip: "press"}
+             ] = Form.fields!(doc)
+    end
+
+    test "a field has no appearance of its own until the form is flattened" do
+      builder = Builder.new() |> Builder.check_box("agree", box(100, 600, 15, 15), checked: true)
+      doc = written(builder)
+
+      assert [%Field.Button{on_states: []}] = Form.fields!(doc)
+      refute Builder.to_binary!(builder, compress: false) =~ "/AP"
+      assert blank?(doc)
+      refute builder |> Editor.from_builder!() |> Form.flatten!() |> written() |> blank?()
+    end
+
+    test "flattening draws a value only where it is a single string" do
+      flattened = fn builder ->
+        builder
+        |> Editor.from_builder!()
+        |> Form.flatten!()
+        |> Editor.to_binary!(compress: false)
+      end
+
+      drawn = [
+        Builder.text_field(Builder.new(), "t", box(100, 450), value: "hello"),
+        Builder.combo_box(Builder.new(), "c", box(100, 450), ["en", "uk"], selected: "uk"),
+        Builder.list_box(Builder.new(), "l", box(100, 450, 150, 80), ["en", "uk"], selected: "uk")
+      ]
+
+      for builder <- drawn, do: assert(flattened.(builder) =~ ~r/\((hello|uk)\) Tj/)
+
+      multi =
+        Builder.list_box(Builder.new(), "l", box(100, 450, 150, 80), ["en", "uk"],
+          multi_select: true,
+          selected: ["en", "uk"]
+        )
+
+      refute flattened.(multi) =~ "Tj"
+
+      refute Builder.new() |> Builder.push_button("go", box(100, 300), "Go") |> flattened.() =~
+               "Tj"
+    end
+
+    test "a flattened value draws only its ASCII characters as written" do
+      flattened =
+        Builder.new()
+        |> Builder.text_field("t", box(100, 450), value: "café")
+        |> Editor.from_builder!()
+        |> Form.flatten!()
+        |> Editor.to_binary!(compress: false)
+
+      assert flattened =~ "(caf\xEF\xBF\xBD) Tj"
+      refute flattened =~ "(caf\xE9) Tj"
+    end
+
+    test "text resembling a byte-order mark reads back as written" do
+      for text <- ["aþÿ", "þ", "ÿ", "ï»", "þa"] do
+        doc =
+          Builder.new(title: text)
+          |> Builder.paragraph("x")
+          |> Builder.text_field(text, box(100, 650),
+            value: text,
+            default_value: text,
+            tooltip: text
+          )
+          |> Builder.combo_box("c", box(100, 600), [text], selected: text)
+          |> written()
+
+        assert Document.metadata!(doc).title == text
+
+        assert [
+                 %Field.Text{name: ^text, value: ^text, default_value: ^text, tooltip: ^text},
+                 %Field.Choice{value: ^text, options: [^text]}
+               ] = Form.fields!(doc)
+      end
+    end
+
+    test "one-byte text that is not UTF-8 reads back as written" do
+      for text <- ["£", "é", "Â£€"] do
+        doc =
+          Builder.new()
+          |> Builder.text_field("t", box(100, 650), value: text, tooltip: text)
+          |> Builder.combo_box("c", box(100, 600), [text, "other"], selected: text)
+          |> written()
+
+        assert [
+                 %Field.Text{value: ^text, tooltip: ^text},
+                 %Field.Choice{value: ^text, options: [^text, "other"]}
+               ] = Form.fields!(doc)
+      end
+    end
+
+    test "filling a value keeps the document information" do
+      metadata =
+        Builder.new(title: "Report", author: "Jane")
+        |> Builder.text_field("t", box(100, 650), value: "v")
+        |> written()
+        |> Document.metadata!()
+
+      assert %{title: "Report", author: "Jane"} = metadata
+    end
+
+    test "an editor opened on the builder holds the same fields, unmodified" do
+      builder =
+        Builder.new()
+        |> Builder.text_field("full_name", box(100, 650), value: "Jane")
+        |> Builder.list_box("langs", box(100, 450, 150, 80), ["en", "uk"],
+          multi_select: true,
+          selected: ["uk"]
+        )
+
+      editor = builder |> Editor.from_builder!()
+      on_exit(fn -> Editor.close(editor) end)
+
+      refute Editor.modified?(editor)
+      assert Form.fields!(editor) == Form.fields!(written(builder))
+    end
+
+    test "a built field can be filled afterwards" do
+      doc =
+        Builder.new()
+        |> Builder.text_field("full_name", box(100, 650))
+        |> Builder.check_box("agree", box(100, 600, 15, 15))
+        |> Editor.from_builder!()
+        |> Form.put_values!(%{"full_name" => "Jane", "agree" => true})
+        |> written()
+
+      assert Form.value!(doc, "full_name") == "Jane"
+      assert Form.value!(doc, "agree") == true
+    end
+
+    test "a field lands on the page it was added to" do
+      doc =
+        Builder.new()
+        |> Builder.text_field("first", box(100, 650))
+        |> Builder.page()
+        |> Builder.text_field("second", box(100, 650))
+        |> written()
+
+      assert [%{field_name: "first"}] = Document.annotations!(doc, 0)
+      assert [%{field_name: "second"}] = Document.annotations!(doc, 1)
+    end
+
+    test "a signature field is an unsigned signature field, not a form field" do
+      doc =
+        Builder.new()
+        |> Builder.signature_field("approval", box(100, 200), tooltip: "Sign here")
+        |> written()
+
+      assert Signature.unsigned_fields!(doc) == ["approval"]
+      assert Signature.list!(doc) == []
+      assert Form.fields!(doc) == []
+    end
+
+    test "names and tooltips may hold any text, values only what the font draws" do
+      doc =
+        Builder.new()
+        |> Builder.text_field("Имя (полное)", box(100, 650),
+          value: "Ça coûte 5 € – “ok”",
+          tooltip: "名前"
+        )
+        |> written()
+
+      assert [%Field.Text{name: "Имя (полное)", value: "Ça coûte 5 € – “ok”", tooltip: "名前"}] =
+               Form.fields!(doc)
     end
   end
 
@@ -2723,6 +2960,202 @@ defmodule PdfElixide.BuilderTest do
                    fn ->
                      watermark.("DRAFT", center: {0, -1.0e19})
                    end
+    end
+
+    test "a form field" do
+      rect = %Rect{x: 72, y: 600, width: 100, height: 20}
+      text_field = &Builder.text_field(Builder.new(), &1, rect, &2)
+
+      assert_raise ArgumentError, ~r/^invalid name, a form field's name cannot be empty/, fn ->
+        text_field.("", [])
+      end
+
+      assert_raise ArgumentError, ~r/^invalid name, a "\." separates/, fn ->
+        text_field.("address.city", [])
+      end
+
+      assert_raise ArgumentError, ~r/^invalid name, a form field named "a" already exists/, fn ->
+        Builder.new() |> Builder.text_field("a", rect) |> Builder.check_box("a", rect)
+      end
+
+      for bad <- [
+            %Rect{x: -1, y: 0, width: 10, height: 10},
+            %Rect{x: 600, y: 0, width: 20, height: 10}
+          ] do
+        assert_raise ArgumentError,
+                     ~r/^invalid rect, a form field must lie on the 612.0 × 792.0/,
+                     fn ->
+                       Builder.text_field(Builder.new(), "a", bad)
+                     end
+      end
+
+      assert_raise ArgumentError, ~r/^invalid rect, expected a positive number/, fn ->
+        Builder.text_field(Builder.new(), "a", %{rect | width: 0})
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :value, .* "Ж" is not one/, fn ->
+        text_field.("a", value: "Жанна")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :default_value, .* "\\n" is not one/, fn ->
+        text_field.("a", default_value: "two\nlines")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :tooltip/, fn -> text_field.("a", tooltip: 1) end
+      assert_raise ArgumentError, ~r/^invalid :required/, fn -> text_field.("a", required: 1) end
+
+      assert_raise ArgumentError, ~r/^invalid :checked/, fn ->
+        Builder.check_box(Builder.new(), "a", rect, checked: :yes)
+      end
+
+      for kind <- [&Builder.combo_box/5, &Builder.list_box/5] do
+        assert_raise ArgumentError, ~r/^invalid options, a choice field needs at least one/, fn ->
+          kind.(Builder.new(), "a", rect, [], [])
+        end
+
+        assert_raise ArgumentError, ~r/^invalid options, each option must be distinct/, fn ->
+          kind.(Builder.new(), "a", rect, ["x", "x"], [])
+        end
+
+        assert_raise ArgumentError, ~r/^invalid options, .* "日" is not one/, fn ->
+          kind.(Builder.new(), "a", rect, ["日本"], [])
+        end
+
+        assert_raise ArgumentError,
+                     ~r/^invalid :selected, expected one of the field's options/,
+                     fn ->
+                       kind.(Builder.new(), "a", rect, ["x"], selected: "y")
+                     end
+      end
+
+      list_box = &Builder.list_box(Builder.new(), "a", rect, ["x", "y"], &1)
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :selected, a list .* needs multi_select: true/,
+                   fn ->
+                     list_box.(selected: ["x"])
+                   end
+
+      assert_raise ArgumentError, ~r/^invalid :selected, expected a list of options/, fn ->
+        list_box.(multi_select: true, selected: "x")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :selected, expected a list of option strings/, fn ->
+        list_box.(multi_select: true, selected: [nil])
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :selected, each option can be selected once/, fn ->
+        list_box.(multi_select: true, selected: ["x", "x"])
+      end
+
+      assert_raise ArgumentError, ~r/^invalid caption, .* "Ж" is not one/, fn ->
+        Builder.push_button(Builder.new(), "a", rect, "Жми")
+      end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:required\]/, fn ->
+        Builder.push_button(Builder.new(), "a", rect, "Go", required: true)
+      end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:required\]/, fn ->
+        Builder.signature_field(Builder.new(), "a", rect, required: true)
+      end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:selected\]/, fn ->
+        Builder.check_box(Builder.new(), "a", rect, selected: true)
+      end
+    end
+
+    test "text starting with a byte-order mark's characters" do
+      rect = %Rect{x: 72, y: 600, width: 100, height: 20}
+
+      for mark <- ["þÿ", "ÿþ", "ï»¿"], text = mark <> "abc" do
+        calls = [
+          fn -> Builder.new(title: text) end,
+          fn -> Builder.new(creator: text) end,
+          fn -> Builder.text_field(Builder.new(), text, rect) end,
+          fn -> Builder.text_field(Builder.new(), "a", rect, value: text) end,
+          fn -> Builder.text_field(Builder.new(), "a", rect, default_value: text) end,
+          fn -> Builder.check_box(Builder.new(), "a", rect, tooltip: text) end,
+          fn -> Builder.combo_box(Builder.new(), "a", rect, [text]) end,
+          fn -> Builder.push_button(Builder.new(), "a", rect, text) end
+        ]
+
+        for call <- calls do
+          assert_raise ArgumentError, ~r/is read back as a byte-order mark/, call
+        end
+      end
+    end
+
+    test "form field text a PDF reader would decode as other characters" do
+      rect = %Rect{x: 72, y: 600, width: 100, height: 20}
+
+      for text <- ["a\u00A0b", "s\u00ADh", "x\u0085y", "x\u0001y"] do
+        calls = [
+          fn -> Builder.text_field(Builder.new(), text, rect) end,
+          fn -> Builder.check_box(Builder.new(), "a", rect, tooltip: text) end,
+          fn -> Builder.signature_field(Builder.new(), "a", rect, tooltip: text) end,
+          fn -> Builder.text_field(Builder.new(), "a", rect, value: text) end,
+          fn -> Builder.text_field(Builder.new(), "a", rect, default_value: text) end,
+          fn -> Builder.list_box(Builder.new(), "a", rect, [text]) end,
+          fn -> Builder.push_button(Builder.new(), "a", rect, text) end
+        ]
+
+        for call <- calls do
+          assert_raise ArgumentError, ~r/a form field cannot hold/, call
+        end
+      end
+
+      assert %Builder{} = Builder.check_box(Builder.new(), "a", rect, tooltip: "tab\there")
+    end
+
+    test "form field text that would read back as other UTF-8 text" do
+      rect = %Rect{x: 72, y: 600, width: 100, height: 20}
+      message = ~r/a form field cannot hold .*: written one byte per character, it reads back as/
+
+      calls = [
+        fn -> Builder.combo_box(Builder.new(), "a", rect, ["Â£", "£"]) end,
+        fn -> Builder.text_field(Builder.new(), "Ã©", rect) end,
+        fn -> Builder.text_field(Builder.new(), "a", rect, value: "Ã©") end,
+        fn -> Builder.check_box(Builder.new(), "a", rect, tooltip: "Ã©") end
+      ]
+
+      for call <- calls, do: assert_raise(ArgumentError, message, call)
+    end
+
+    test "a form field too narrow to survive its position's float precision" do
+      builder = Builder.new(page_size: {2.0e9, 1000})
+
+      assert_raise ArgumentError,
+                   ~r/^invalid rect, its width or height is under 0.00001 points/,
+                   fn ->
+                     Builder.text_field(builder, "a", %Rect{
+                       x: 999_999_900,
+                       y: 100,
+                       width: 20,
+                       height: 20
+                     })
+                   end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid rect, its width or height is under 0.00001 points/,
+                   fn ->
+                     Builder.check_box(builder, "a", %Rect{
+                       x: 100,
+                       y: 100,
+                       width: 20,
+                       height: 1.0e-6
+                     })
+                   end
+
+      assert_raise ArgumentError, ~r/^invalid rect, .* under 0.00001 points/, fn ->
+        Builder.text_field(Builder.new(), "a", %Rect{x: 0, y: 600, width: 0.000001, height: 20})
+      end
+
+      assert [%{rect: %Rect{width: 20.0}}] =
+               builder
+               |> Builder.text_field("a", %Rect{x: 30_000_000, y: 100, width: 20, height: 20})
+               |> written()
+               |> PdfElixide.Form.fields!()
     end
 
     test "a malformed run" do

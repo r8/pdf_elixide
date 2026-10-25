@@ -50,6 +50,7 @@ defmodule PdfElixide.Form do
   alias PdfElixide.Editor
   alias PdfElixide.Error
   alias PdfElixide.Form.Field
+  alias PdfElixide.LayoutOptions
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
@@ -217,6 +218,10 @@ defmodule PdfElixide.Form do
       {:ok, editor} = PdfElixide.Form.put_value(editor, "full_name", "Jane Doe")
       {:ok, editor} = PdfElixide.Form.put_value(editor, "subscribe", true)
 
+  A string holding a character a PDF reader would decode differently, such as
+  a nonbreaking space, raises `ArgumentError`; see
+  [Text a field cannot hold](guides/forms.md#text-a-field-cannot-hold).
+
   Button fields are limited to `/Yes` and `/Off`; check for `"Yes"` in the
   field's `:on_states` before writing `true`. An unknown name, or a signature
   field, answers `:not_found`. The [Forms](guides/forms.md) guide has both.
@@ -248,10 +253,11 @@ defmodule PdfElixide.Form do
   Takes a map with string keys, or a list of `{name, value}` pairs.
 
   Everything is validated before anything is written. A duplicated name, a name
-  that is not a string, or a value outside `t:PdfElixide.Form.Field.value/0`
-  raises `ArgumentError` naming the field. A name the form does not carry — a
-  signature field included — is `{:error, %PdfElixide.Error{reason: :not_found}}`,
-  and nothing is written for the other names either.
+  that is not a string, a value outside `t:PdfElixide.Form.Field.value/0`, or
+  text `put_value/3` refuses raises `ArgumentError` naming the field. A name
+  the form does not carry — a signature field included — is
+  `{:error, %PdfElixide.Error{reason: :not_found}}`, and nothing is written for
+  the other names either.
 
   The editor is held exclusively while the values are applied, so concurrent
   calls see the form before or after the batch, never partway through it. An
@@ -395,13 +401,17 @@ defmodule PdfElixide.Form do
   end
 
   defp validate_pair!({name, value}) when is_binary(name) do
-    if valid_value?(value) do
-      :ok
-    else
+    if not valid_value?(value) do
       raise ArgumentError,
             "invalid value for field #{inspect(name)}, expected a string, a boolean, " <>
               "a list of strings or nil: #{inspect(value)}"
     end
+
+    for text <- List.wrap(value), is_binary(text) do
+      LayoutOptions.field_text!("value for field #{inspect(name)}", text)
+    end
+
+    :ok
   end
 
   defp validate_pair!({name, _value}) do

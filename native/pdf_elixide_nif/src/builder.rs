@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use pdf_oxide::{
+    editor::{DocumentEditor, FormFieldValue, SaveOptions},
     elements::{ContentElement, FontSpec, PathContent, TextContent, TextStyle},
     fonts::bundled::{DEJAVU_SANS, DEJAVU_SANS_BOLD},
     geometry::Rect,
     writer::{
-        Annotation, DocumentBuilder, EmbeddedFont, FitMode, ImageData, LinkAction, LinkAnnotation,
-        PageSize, WatermarkAnnotation,
+        Annotation, DocumentBuilder, EmbeddedFont, FitMode, FluentPageBuilder, ImageData,
+        LinkAction, LinkAnnotation, PageSize, WatermarkAnnotation,
     },
 };
 use rustler::{Binary, NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
@@ -23,6 +24,7 @@ use crate::{
         Marker, Op, Picture, Placed, Plan, Refused, Run, Shape, Stroke, Table, Unordered,
         Watermark, Width, Within,
     },
+    open_editor::OpenEditor,
     paths::PathOpNif,
 };
 
@@ -68,6 +70,49 @@ pub enum OpNif {
     Anchor(String),
     LinkInRect(LinkInRectNif),
     Watermark(WatermarkNif),
+    Field(FieldNif),
+}
+
+#[derive(NifMap)]
+pub struct FieldNif {
+    name: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    required: bool,
+    read_only: bool,
+    tooltip: Option<String>,
+    kind: FieldKindNif,
+}
+
+#[derive(NifTaggedEnum)]
+pub enum FieldKindNif {
+    Text(TextFieldNif),
+    CheckBox(bool),
+    ComboBox(ComboBoxNif),
+    ListBox(ListBoxNif),
+    PushButton(String),
+    Signature,
+}
+
+#[derive(NifMap)]
+pub struct TextFieldNif {
+    value: Option<String>,
+    default_value: Option<String>,
+}
+
+#[derive(NifMap)]
+pub struct ComboBoxNif {
+    options: Vec<String>,
+    selected: Option<String>,
+}
+
+#[derive(NifMap)]
+pub struct ListBoxNif {
+    options: Vec<String>,
+    selected: Vec<String>,
+    multi_select: bool,
 }
 
 #[derive(NifTaggedEnum, Clone)]
@@ -653,6 +698,7 @@ fn ops(
     faces: &mut Faces<'_, '_>,
     pictures: &mut Pictures<'_, '_>,
     links: &mut Vec<Link>,
+    fields: &mut Vec<FieldNif>,
 ) -> NifResult<Vec<Op>> {
     let auto = auto_family(&ops);
 
@@ -743,6 +789,10 @@ fn ops(
                 every_page: matches!(mark.pages, PagesNif::All),
                 mark: watermark(mark),
             }),
+            OpNif::Field(field) => {
+                fields.push(field);
+                Ok(Op::Field(fields.len() - 1))
+            }
         })
         .collect()
 }
@@ -890,8 +940,9 @@ fn refused(refusal: Refused) -> rustler::Error {
              precisely; use a smaller page or larger text"
         ),
         Refused::LinkImprecise { op, page } => format!(
-            "op {op} on page {page}: the page is too large to place the link's area \
-             precisely where it overlaps the page; enlarge the area or use a smaller page"
+            "op {op} on page {page}: where the link's area overlaps the page it is under \
+             0.00001 points across once written, or the page is too large to place it \
+             precisely; enlarge the area or use a smaller page"
         ),
         Refused::Undrawable {
             op,
@@ -992,6 +1043,7 @@ fn emit(
     images: &[Option<ImageData>],
     plan: Plan,
     links: &[Link],
+    fields: &[FieldNif],
 ) -> NifResult<Vec<u8>> {
     check_targets(&plan, links).map_err(refused)?;
 
@@ -1084,6 +1136,7 @@ fn emit(
                     annotations.watermark(mark);
                     builder
                 }
+                Item::Field(field) => form_field(builder, &fields[field]),
             };
         }
         for mark in &watermarks {
@@ -1095,7 +1148,97 @@ fn emit(
         builder.done();
     }
 
-    doc.build().map(label_opentype_fonts).map_err(to_nif_err)
+    let pdf = doc.build().map(label_opentype_fonts).map_err(to_nif_err)?;
+    fill(pdf, fields).map_err(to_nif_err)
+}
+
+// The page builder's own field writer, because it is the one that writes each
+// widget's print flag, tooltip, border and caption; the editor's drops them.
+fn form_field<'a>(builder: FluentPageBuilder<'a>, field: &FieldNif) -> FluentPageBuilder<'a> {
+    let name = field.name.clone();
+    let [x, y, width, height] = [field.x, field.y, field.width, field.height].map(|n| n as f32);
+    let builder = match &field.kind {
+        FieldKindNif::Text(text) => {
+            builder.text_field(name, x, y, width, height, text.default_value.clone())
+        }
+        &FieldKindNif::CheckBox(checked) => builder.checkbox(name, x, y, width, height, checked),
+        FieldKindNif::ComboBox(combo) => builder.combo_box(
+            name,
+            x,
+            y,
+            width,
+            height,
+            combo.options.clone(),
+            combo.selected.clone(),
+        ),
+        FieldKindNif::ListBox(list) => builder.list_box(
+            name,
+            x,
+            y,
+            width,
+            height,
+            list.options.clone(),
+            single_selection(list).cloned(),
+            list.multi_select,
+        ),
+        FieldKindNif::PushButton(caption) => {
+            builder.push_button(name, x, y, width, height, caption.clone())
+        }
+        FieldKindNif::Signature => builder.signature_field(name, x, y, width, height),
+    };
+    // Each modifier applies to the field queued last on the page.
+    let builder = if field.required {
+        builder.required()
+    } else {
+        builder
+    };
+    let builder = if field.read_only {
+        builder.read_only()
+    } else {
+        builder
+    };
+    match &field.tooltip {
+        Some(tooltip) => builder.tooltip(tooltip.clone()),
+        None => builder,
+    }
+}
+
+fn single_selection(list: &ListBoxNif) -> Option<&String> {
+    match list.selected.as_slice() {
+        [selected] if !list.multi_select => Some(selected),
+        _ => None,
+    }
+}
+
+// Values the page builder cannot write: it sets a text field's default only,
+// and a list's selection only as one string.
+fn fill(pdf: Vec<u8>, fields: &[FieldNif]) -> pdf_oxide::Result<Vec<u8>> {
+    let values: Vec<_> = fields
+        .iter()
+        .filter_map(|field| match &field.kind {
+            FieldKindNif::Text(TextFieldNif {
+                value: Some(value), ..
+            }) => Some((&field.name, FormFieldValue::Text(value.clone()))),
+            FieldKindNif::ListBox(list) if list.multi_select && !list.selected.is_empty() => {
+                Some((
+                    &field.name,
+                    FormFieldValue::MultiChoice(list.selected.clone()),
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    if values.is_empty() {
+        return Ok(pdf);
+    }
+
+    // An upstream full rewrite drops `/Info`; the editor's own saves put it back.
+    let mut editor = OpenEditor::new(DocumentEditor::from_bytes(pdf)?);
+    for (name, value) in values {
+        editor.set_form_field_value(name, value)?;
+    }
+    editor.resupply_info()?;
+    editor.save_to_bytes_with_options(SaveOptions::full_rewrite())
 }
 
 // Refuse missing targets before the writer silently drops their destinations.
@@ -1410,7 +1553,8 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
             decoded: vec![None; images.len()],
         };
         let mut links = Vec::new();
-        let ops = ops(op_nifs, &mut faces, &mut pictures, &mut links)?;
+        let mut fields = Vec::new();
+        let ops = ops(op_nifs, &mut faces, &mut pictures, &mut links, &mut fields)?;
         keep_apart(pictures.decoded.iter_mut().flatten());
         let plan =
             flow::lay_out(&faces.fonts, &margins, line_height, page_size, &ops).map_err(refused)?;
@@ -1422,13 +1566,17 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
             &pictures.decoded,
             plan,
             &links,
+            &fields,
         )
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use pdf_oxide::{
+        editor::DocumentEditor,
         elements::{
             ContentElement, FontSpec, LineCap, LineJoin, PathContent, PathOperation,
             StructureElement, TextContent, TextStyle,
@@ -1437,9 +1585,9 @@ mod tests {
         geometry::Rect,
         object::Object,
         writer::{
-            Annotation, DocumentBuilder, EmbeddedFont, FontManager, FreeTextAnnotation,
-            LinkAnnotation, PageSize, StampAnnotation, StampType, StreamingColumn,
-            StreamingTableConfig, Table, TableCell, TextAnnotation, TextLayout,
+            form_fields::TextFieldWidget, Annotation, DocumentBuilder, EmbeddedFont, FontManager,
+            FreeTextAnnotation, LinkAnnotation, PageSize, StampAnnotation, StampType,
+            StreamingColumn, StreamingTableConfig, Table, TableCell, TextAnnotation, TextLayout,
             TextMarkupAnnotation, WatermarkAnnotation,
         },
         PdfDocument, TextMarkupType,
@@ -1778,6 +1926,97 @@ mod tests {
             .expect("resolves");
 
         assert_eq!(entry(&mark, "P"), Some(page_ref(0)));
+    }
+
+    fn acroform_fields(pdf: Vec<u8>) -> Vec<HashMap<String, Object>> {
+        let doc = PdfDocument::from_bytes(pdf).expect("parses");
+        let entry = |dict: &Object, key: &str| {
+            let value = dict
+                .as_dict()
+                .and_then(|d| d.get(key))
+                .expect("has the key");
+            doc.resolve_object(value).expect("resolves")
+        };
+        let form = entry(&doc.catalog().expect("has a catalog"), "AcroForm");
+        let fields = entry(&form, "Fields");
+
+        fields
+            .as_array()
+            .expect("an array")
+            .iter()
+            .map(|field| {
+                let field = doc.resolve_object(field).expect("resolves");
+                field.as_dict().expect("a dictionary").clone()
+            })
+            .collect()
+    }
+
+    fn text_field_pdf() -> Vec<u8> {
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .text_field("name", 72.0, 700.0, 100.0, 12.0, None)
+            .done();
+        builder.build().expect("builds")
+    }
+
+    // The builder and `Form` refuse field text these bytes would misread.
+    #[test]
+    fn upstream_still_writes_a_one_byte_text_string_byte_for_byte() {
+        let bytes = |text: &str| match Object::text_string(text) {
+            Object::String(bytes) => bytes,
+            other => panic!("not a string: {other:?}"),
+        };
+
+        assert_eq!(bytes("a\u{A0}b"), [0x61, 0xA0, 0x62]);
+        assert!(bytes("þÿa").starts_with(&[0xFE, 0xFF, 0x61]));
+    }
+
+    #[test]
+    fn upstream_still_writes_radio_kids_without_a_parent() {
+        let mut builder = DocumentBuilder::new();
+        let buttons = vec![
+            ("card".into(), 72.0, 700.0, 12.0, 12.0),
+            ("cash".into(), 100.0, 700.0, 12.0, 12.0),
+        ];
+        builder
+            .page(PageSize::Letter)
+            .radio_group("pay", buttons, Some("cash".into()))
+            .done();
+        let fields = acroform_fields(builder.build().expect("builds"));
+
+        assert!(fields.iter().any(|field| field.contains_key("AS")));
+        assert!(fields
+            .iter()
+            .all(|field| !field.contains_key("Parent") && !field.contains_key("Kids")));
+    }
+
+    #[test]
+    fn upstream_still_drops_the_widget_entries_of_an_added_field() {
+        let mut editor =
+            DocumentEditor::from_bytes(annotated(1, LinkAnnotation::uri(area(), "a:b")))
+                .expect("parses");
+        editor
+            .add_form_field(0, TextFieldWidget::new("name", area()).with_tooltip("tip"))
+            .expect("adds");
+        let fields = acroform_fields(editor.save_to_bytes().expect("saves"));
+
+        assert!(fields[0].contains_key("FT"));
+        assert!(!fields[0].contains_key("F") && !fields[0].contains_key("TU"));
+    }
+
+    #[test]
+    fn upstream_still_ignores_field_property_setters_on_save() {
+        let mut editor = DocumentEditor::from_bytes(text_field_pdf()).expect("parses");
+        editor.set_form_field_max_length("name", 4).expect("sets");
+        editor.set_form_field_alignment("name", 1).expect("sets");
+        editor.set_form_field_flags("name", 4096).expect("sets");
+        let fields = acroform_fields(editor.save_to_bytes().expect("saves"));
+
+        assert!(fields[0].contains_key("FT"));
+        assert!(["MaxLen", "Q", "Ff"]
+            .iter()
+            .all(|key| !fields[0].contains_key(*key)));
     }
 
     #[test]

@@ -42,6 +42,13 @@ defmodule PdfElixide.Builder do
   a page, or every page. See [Links](guides/building-documents.md#links) and
   [Watermarks](guides/building-documents.md#watermarks).
 
+  ## Form fields
+
+  `text_field/4`, `check_box/4`, `combo_box/5`, `list_box/5`,
+  `push_button/5` and `signature_field/4` add fillable fields to a page. See
+  [Form fields](guides/building-documents.md#form-fields) for what each kind
+  holds and how viewers draw them.
+
   ## Fonts
 
   Use a built-in family, bundled DejaVu Sans or a
@@ -80,6 +87,7 @@ defmodule PdfElixide.Builder do
     :line_height,
     :current_page_size,
     :anchors,
+    :field_names,
     :ops
   ]
   defstruct @enforce_keys
@@ -105,6 +113,7 @@ defmodule PdfElixide.Builder do
           line_height: float(),
           current_page_size: {float(), float()},
           anchors: MapSet.t(String.t()),
+          field_names: MapSet.t(String.t()),
           ops: [tuple()]
         }
 
@@ -192,7 +201,9 @@ defmodule PdfElixide.Builder do
       Defaults to `1.5`.
 
   Sizes must be positive, with each page side at most 1.0e18 points, and
-  margins non-negative, leaving room on the page.
+  margins non-negative, leaving room on the page. A `:title`, `:author`,
+  `:subject` or `:creator` may not start with `"þÿ"`, `"ÿþ"` or `"ï»¿"`,
+  which read back as a byte-order mark.
   See [Errors](#module-errors) for validation failures.
   """
   @type new_opts :: [
@@ -404,6 +415,102 @@ defmodule PdfElixide.Builder do
     :opacity
   ]
 
+  @typedoc """
+  Options accepted by `text_field/4`.
+
+    * `:value` — the text the field holds. Defaults to `nil`, empty.
+    * `:default_value` — the text the field holds after a viewer resets the
+      form. Defaults to `nil`, empty.
+    * `:required` — whether the form needs a value here before it is
+      submitted. Defaults to `false`.
+    * `:read_only` — whether the viewer stops the user from changing the
+      field. Defaults to `false`.
+    * `:tooltip` — text a viewer shows when the pointer rests on the field.
+      Defaults to `nil`, none.
+
+  A value is one line of printable Windows-1252 characters, the ones the
+  field's font can draw; any other character raises `ArgumentError`. A
+  tooltip may hold other text too. No text a field writes, its name included,
+  may hold the characters
+  [Text a field cannot hold](guides/forms.md#text-a-field-cannot-hold)
+  lists.
+  """
+  @type text_field_opts :: [
+          value: String.t() | nil,
+          default_value: String.t() | nil,
+          required: boolean(),
+          read_only: boolean(),
+          tooltip: String.t() | nil
+        ]
+
+  @text_field_opts_keys [:value, :default_value, :required, :read_only, :tooltip]
+
+  @typedoc """
+  Options accepted by `check_box/4`.
+
+    * `:checked` — whether the box starts checked. Defaults to `false`.
+    * `:required`, `:read_only`, `:tooltip` — as for `text_field/4`.
+  """
+  @type check_box_opts :: [
+          checked: boolean(),
+          required: boolean(),
+          read_only: boolean(),
+          tooltip: String.t() | nil
+        ]
+
+  @check_box_opts_keys [:checked, :required, :read_only, :tooltip]
+
+  @typedoc """
+  Options accepted by `combo_box/5`.
+
+    * `:selected` — the option the field starts with. Defaults to `nil`,
+      none.
+    * `:required`, `:read_only`, `:tooltip` — as for `text_field/4`.
+  """
+  @type combo_box_opts :: [
+          selected: String.t() | nil,
+          required: boolean(),
+          read_only: boolean(),
+          tooltip: String.t() | nil
+        ]
+
+  @combo_box_opts_keys [:selected, :required, :read_only, :tooltip]
+
+  @typedoc """
+  Options accepted by `list_box/5`.
+
+    * `:multi_select` — whether the user may select several options at once.
+      Defaults to `false`.
+    * `:selected` — the option the field starts with, or with
+      `multi_select: true` a list of them. Defaults to `nil`, none.
+    * `:required`, `:read_only`, `:tooltip` — as for `text_field/4`.
+  """
+  @type list_box_opts :: [
+          multi_select: boolean(),
+          selected: String.t() | [String.t()] | nil,
+          required: boolean(),
+          read_only: boolean(),
+          tooltip: String.t() | nil
+        ]
+
+  @list_box_opts_keys [:multi_select, :selected, :required, :read_only, :tooltip]
+
+  @typedoc """
+  Options accepted by `push_button/5`: `:read_only` and `:tooltip`, as for
+  `text_field/4`.
+  """
+  @type push_button_opts :: [read_only: boolean(), tooltip: String.t() | nil]
+
+  @push_button_opts_keys [:read_only, :tooltip]
+
+  @typedoc """
+  Options accepted by `signature_field/4`: `:read_only` and `:tooltip`, as for
+  `text_field/4`.
+  """
+  @type signature_field_opts :: [read_only: boolean(), tooltip: String.t() | nil]
+
+  @signature_field_opts_keys [:read_only, :tooltip]
+
   @watermark_fonts [:helvetica, :times, :courier]
 
   @watermark_pages [:current, :all]
@@ -570,7 +677,12 @@ defmodule PdfElixide.Builder do
 
     struct!(
       __MODULE__,
-      Map.merge(options, %{current_page_size: options.page_size, anchors: MapSet.new(), ops: []})
+      Map.merge(options, %{
+        current_page_size: options.page_size,
+        anchors: MapSet.new(),
+        field_names: MapSet.new(),
+        ops: []
+      })
     )
   end
 
@@ -1177,6 +1289,260 @@ defmodule PdfElixide.Builder do
   end
 
   @doc """
+  Adds a text field to the current page.
+
+  `name` is the field's name, as `PdfElixide.Form.fields/1` reports it. `rect`
+  is a `PdfElixide.Geometry.Rect` in points from the page's bottom-left
+  corner, as for `rect/3`; reversed corners are normalized, and it must lie on
+  the page. See `t:text_field_opts/0` for the options and
+  [Form fields](guides/building-documents.md#form-fields) for how a viewer
+  draws the field.
+
+      alias PdfElixide.Geometry.Rect
+
+      PdfElixide.Builder.text_field(
+        builder,
+        "full_name",
+        %Rect{x: 72.0, y: 650.0, width: 200.0, height: 20.0},
+        tooltip: "Your full name"
+      )
+  """
+  @spec text_field(t(), String.t(), Rect.t(), text_field_opts()) :: t()
+  def text_field(%__MODULE__{} = builder, name, %Rect{} = rect, opts \\ [])
+      when is_binary(name) and is_list(opts) do
+    options = build_text_field_options(opts)
+    kind = {:text, Map.take(options, [:value, :default_value])}
+
+    field(builder, name, rect, Map.drop(options, [:value, :default_value]), kind)
+  end
+
+  @doc """
+  Adds a check box to the current page.
+
+  `name` and `rect` are as for `text_field/4`. A checked box has the on state
+  `"Yes"`, the one `PdfElixide.Form.put_value/3` writes for `true`. See
+  `t:check_box_opts/0` for the options.
+  """
+  @spec check_box(t(), String.t(), Rect.t(), check_box_opts()) :: t()
+  def check_box(%__MODULE__{} = builder, name, %Rect{} = rect, opts \\ [])
+      when is_binary(name) and is_list(opts) do
+    {checked, options} = opts |> build_check_box_options() |> Map.pop!(:checked)
+
+    field(builder, name, rect, options, {:check_box, checked})
+  end
+
+  @doc """
+  Adds a combo box, a drop-down list of `options`, to the current page.
+
+  `name` and `rect` are as for `text_field/4`. `options` is a non-empty list
+  of distinct strings, each both shown and stored as the field's value when
+  chosen. See `t:combo_box_opts/0` for the options.
+  """
+  @spec combo_box(t(), String.t(), Rect.t(), [String.t(), ...], combo_box_opts()) :: t()
+  def combo_box(%__MODULE__{} = builder, name, %Rect{} = rect, options, opts \\ [])
+      when is_binary(name) and is_list(options) and is_list(opts) do
+    choices = choices!(options)
+    {selected, field_options} = opts |> build_combo_box_options() |> Map.pop!(:selected)
+    selected!(selected, choices)
+
+    field(
+      builder,
+      name,
+      rect,
+      field_options,
+      {:combo_box, %{options: choices, selected: selected}}
+    )
+  end
+
+  @doc """
+  Adds a list box, a scrolling list of `options`, to the current page.
+
+  `name` and `rect` are as for `text_field/4`, and `options` as for
+  `combo_box/5`. See `t:list_box_opts/0` for the options, including choosing
+  several at once.
+  """
+  @spec list_box(t(), String.t(), Rect.t(), [String.t(), ...], list_box_opts()) :: t()
+  def list_box(%__MODULE__{} = builder, name, %Rect{} = rect, options, opts \\ [])
+      when is_binary(name) and is_list(options) and is_list(opts) do
+    choices = choices!(options)
+
+    {%{selected: selected, multi_select: multi_select}, field_options} =
+      opts |> build_list_box_options() |> Map.split([:selected, :multi_select])
+
+    selected = list_selection!(selected, multi_select, choices)
+
+    kind = {:list_box, %{options: choices, selected: selected, multi_select: multi_select}}
+    field(builder, name, rect, field_options, kind)
+  end
+
+  @doc """
+  Adds a push button labeled `caption` to the current page.
+
+  `name` and `rect` are as for `text_field/4`. The button runs no action when
+  pressed. See `t:push_button_opts/0` for the options.
+  """
+  @spec push_button(t(), String.t(), Rect.t(), String.t(), push_button_opts()) :: t()
+  def push_button(%__MODULE__{} = builder, name, %Rect{} = rect, caption, opts \\ [])
+      when is_binary(name) and is_binary(caption) and is_list(opts) do
+    caption = LayoutOptions.win_ansi!("caption", caption)
+    options = build_push_button_options(opts)
+
+    field(builder, name, rect, Map.put(options, :required, false), {:push_button, caption})
+  end
+
+  @doc """
+  Adds an empty signature field to the current page.
+
+  `name` and `rect` are as for `text_field/4`. The field holds no signature,
+  and `PdfElixide.Signature.unsigned_fields/1` reports it. This library cannot
+  sign it; see [Form fields](guides/building-documents.md#form-fields). See
+  `t:signature_field_opts/0` for the options.
+  """
+  @spec signature_field(t(), String.t(), Rect.t(), signature_field_opts()) :: t()
+  def signature_field(%__MODULE__{} = builder, name, %Rect{} = rect, opts \\ [])
+      when is_binary(name) and is_list(opts) do
+    options = build_signature_field_options(opts)
+
+    field(builder, name, rect, Map.put(options, :required, false), :signature)
+  end
+
+  defp field(builder, name, rect, options, kind) do
+    name = field_name!(builder, name)
+    %Rect{x: x, y: y, width: width, height: height} = field_rect!(builder, rect)
+
+    op =
+      {:field,
+       Map.merge(options, %{
+         name: name,
+         x: x,
+         y: y,
+         width: width,
+         height: height,
+         kind: kind
+       })}
+
+    %{builder | field_names: MapSet.put(builder.field_names, name), ops: [op | builder.ops]}
+  end
+
+  defp field_name!(builder, name) do
+    name = LayoutOptions.field_text!("name", name)
+
+    cond do
+      name == "" ->
+        raise ArgumentError, "invalid name, a form field's name cannot be empty"
+
+      String.contains?(name, ".") ->
+        raise ArgumentError,
+              "invalid name, a \".\" separates the parts of a nested field's name, which " <>
+                "the builder does not create: #{inspect(name)}"
+
+      MapSet.member?(builder.field_names, name) ->
+        raise ArgumentError,
+              "invalid name, a form field named #{inspect(name)} already exists; give " <>
+                "each field its own name"
+
+      true ->
+        name
+    end
+  end
+
+  defp field_rect!(builder, rect) do
+    %Rect{x: x, y: y, width: width, height: height} = rect |> rect!() |> normalize_rect()
+    width = LayoutOptions.positive!("rect", width)
+    height = LayoutOptions.positive!("rect", height)
+    {page_width, page_height} = builder.current_page_size
+
+    if x < 0 or y < 0 or x + width > page_width or y + height > page_height do
+      raise ArgumentError,
+            "invalid rect, a form field must lie on the #{page_width} × #{page_height} " <>
+              "page: #{inspect(rect)}"
+    end
+
+    if collapses?(x, width) or collapses?(y, height) do
+      raise ArgumentError,
+            "invalid rect, its width or height is under 0.00001 points once written at " <>
+              "this position; move the field nearer the page's origin or enlarge it: " <>
+              inspect(rect)
+    end
+
+    %Rect{x: x, y: y, width: width, height: height}
+  end
+
+  defp list_selection!(nil, _multi_select, _choices), do: []
+
+  defp list_selection!(values, true, choices) when is_list(values) do
+    if not Enum.all?(values, &is_binary/1) do
+      raise ArgumentError,
+            "invalid :selected, expected a list of option strings: #{inspect(values)}"
+    end
+
+    Enum.each(values, &selected!(&1, choices))
+
+    if Enum.uniq(values) != values do
+      raise ArgumentError,
+            "invalid :selected, each option can be selected once: #{inspect(values)}"
+    end
+
+    values
+  end
+
+  defp list_selection!(values, false, _choices) when is_list(values) do
+    raise ArgumentError,
+          "invalid :selected, a list selects several options, which needs " <>
+            "multi_select: true: #{inspect(values)}"
+  end
+
+  defp list_selection!(value, false, choices), do: [selected!(value, choices)]
+
+  defp list_selection!(value, true, _choices) do
+    raise ArgumentError,
+          "invalid :selected, expected a list of options with multi_select: true: " <>
+            inspect(value)
+  end
+
+  # The writer adds each size to its corner in 32-bit floats and writes five
+  # decimal places, so a smaller extent rounds to nothing.
+  defp collapses?(origin, size) do
+    start = LayoutOptions.to_f32(origin)
+    LayoutOptions.to_f32(start + LayoutOptions.to_f32(size)) - start < 1.0e-5
+  end
+
+  defp choices!([_ | _] = options) do
+    options = Enum.map(options, &choice!/1)
+
+    if Enum.uniq(options) != options do
+      raise ArgumentError, "invalid options, each option must be distinct: #{inspect(options)}"
+    end
+
+    options
+  end
+
+  defp choices!([]),
+    do: raise(ArgumentError, "invalid options, a choice field needs at least one")
+
+  defp choice!(option) when is_binary(option), do: LayoutOptions.win_ansi!("options", option)
+
+  defp choice!(option) do
+    raise ArgumentError, "invalid options, expected a list of strings: #{inspect(option)}"
+  end
+
+  defp selected!(nil, _choices), do: nil
+
+  defp selected!(value, choices) when is_binary(value) do
+    if value not in choices do
+      raise ArgumentError,
+            "invalid :selected, expected one of the field's options #{inspect(choices)}: " <>
+              inspect(value)
+    end
+
+    value
+  end
+
+  defp selected!(value, _choices) do
+    raise ArgumentError, "invalid :selected, expected an option string: #{inspect(value)}"
+  end
+
+  @doc """
   Draws a rectangle on the current page.
 
   `rect` is a `PdfElixide.Geometry.Rect` in points from the page's
@@ -1634,6 +2000,12 @@ defmodule PdfElixide.Builder do
           | :image
           | :image_in_rect
           | :watermark
+          | :text_field
+          | :check_box
+          | :combo_box
+          | :list_box
+          | :push_button
+          | :signature_field
         ) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
@@ -1648,6 +2020,12 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:image), do: build_image_options([])
   def __option_defaults__(:image_in_rect), do: build_image_in_rect_options([])
   def __option_defaults__(:watermark), do: build_watermark_options([])
+  def __option_defaults__(:text_field), do: build_text_field_options([])
+  def __option_defaults__(:check_box), do: build_check_box_options([])
+  def __option_defaults__(:combo_box), do: build_combo_box_options([])
+  def __option_defaults__(:list_box), do: build_list_box_options([])
+  def __option_defaults__(:push_button), do: build_push_button_options([])
+  def __option_defaults__(:signature_field), do: build_signature_field_options([])
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -1808,6 +2186,75 @@ defmodule PdfElixide.Builder do
       color: color,
       opacity: opacity!(Keyword.get(opts, :opacity, 0.3))
     }
+  end
+
+  defp build_text_field_options(opts) do
+    opts = Keyword.validate!(opts, @text_field_opts_keys)
+
+    opts
+    |> field_options()
+    |> Map.merge(%{
+      value: field_text!(:value, Keyword.get(opts, :value)),
+      default_value: field_text!(:default_value, Keyword.get(opts, :default_value))
+    })
+  end
+
+  defp build_check_box_options(opts) do
+    opts = Keyword.validate!(opts, @check_box_opts_keys)
+
+    opts
+    |> field_options()
+    |> Map.put(:checked, boolean!(:checked, Keyword.get(opts, :checked, false)))
+  end
+
+  defp build_combo_box_options(opts) do
+    opts = Keyword.validate!(opts, @combo_box_opts_keys)
+
+    opts |> field_options() |> Map.put(:selected, Keyword.get(opts, :selected))
+  end
+
+  defp build_list_box_options(opts) do
+    opts = Keyword.validate!(opts, @list_box_opts_keys)
+
+    opts
+    |> field_options()
+    |> Map.merge(%{
+      multi_select: boolean!(:multi_select, Keyword.get(opts, :multi_select, false)),
+      selected: Keyword.get(opts, :selected)
+    })
+  end
+
+  defp build_push_button_options(opts) do
+    opts |> Keyword.validate!(@push_button_opts_keys) |> field_options() |> Map.delete(:required)
+  end
+
+  defp build_signature_field_options(opts) do
+    opts
+    |> Keyword.validate!(@signature_field_opts_keys)
+    |> field_options()
+    |> Map.delete(:required)
+  end
+
+  defp field_options(opts) do
+    %{
+      required: boolean!(:required, Keyword.get(opts, :required, false)),
+      read_only: boolean!(:read_only, Keyword.get(opts, :read_only, false)),
+      tooltip: tooltip!(Keyword.get(opts, :tooltip))
+    }
+  end
+
+  defp tooltip!(nil), do: nil
+  defp tooltip!(tooltip) when is_binary(tooltip), do: LayoutOptions.field_text!(:tooltip, tooltip)
+
+  defp tooltip!(tooltip) do
+    raise ArgumentError, "invalid :tooltip, expected a string or nil: #{inspect(tooltip)}"
+  end
+
+  defp field_text!(_key, nil), do: nil
+  defp field_text!(key, value) when is_binary(value), do: LayoutOptions.win_ansi!(key, value)
+
+  defp field_text!(key, value) do
+    raise ArgumentError, "invalid #{inspect(key)}, expected a string or nil: #{inspect(value)}"
   end
 
   defp watermark_pages!(pages) when pages in @watermark_pages, do: pages
@@ -2073,7 +2520,7 @@ defmodule PdfElixide.Builder do
   end
 
   defp text!(_key, nil), do: nil
-  defp text!(key, value) when is_binary(value), do: LayoutOptions.utf8!(key, value)
+  defp text!(key, value) when is_binary(value), do: LayoutOptions.text_string!(key, value)
 
   defp text!(key, value) do
     raise ArgumentError, "invalid #{inspect(key)}, expected a string or nil: #{inspect(value)}"

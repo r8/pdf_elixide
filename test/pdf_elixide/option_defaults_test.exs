@@ -344,6 +344,22 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "the Builder form fields" do
+      field = %{required: false, read_only: false, tooltip: nil}
+
+      assert Builder.__option_defaults__(:text_field) ==
+               Map.merge(field, %{value: nil, default_value: nil})
+
+      assert Builder.__option_defaults__(:check_box) == Map.put(field, :checked, false)
+      assert Builder.__option_defaults__(:combo_box) == Map.put(field, :selected, nil)
+
+      assert Builder.__option_defaults__(:list_box) ==
+               Map.merge(field, %{multi_select: false, selected: nil})
+
+      assert Builder.__option_defaults__(:push_button) == %{read_only: false, tooltip: nil}
+      assert Builder.__option_defaults__(:signature_field) == %{read_only: false, tooltip: nil}
+    end
+
     test "Builder.paragraph/3" do
       assert Builder.__option_defaults__(:paragraph) == %{font: nil, font_size: nil}
     end

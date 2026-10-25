@@ -232,8 +232,10 @@ defmodule PdfElixide.Signature do
   stepped over" section of the [Signatures](guides/signatures.md) guide covers
   malformed fields and the damaged hierarchies this call refuses.
 
-  Reading from an editor reads the document as it was opened; nothing this
-  library does adds or fills a signature field.
+  Reading from an editor reads the document as it was opened; no editor call
+  adds or fills a signature field. An editor from
+  `PdfElixide.Editor.from_builder/1` opens with the fields
+  `PdfElixide.Builder.signature_field/4` added.
   """
   @spec unsigned_fields(source()) :: {:ok, [String.t()]} | {:error, Error.t()}
   def unsigned_fields(%Document{ref: ref}) do

@@ -1522,6 +1522,28 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert [_ | _] = Editor.flatten_warnings!(editor)
     end
 
+    test "a filled Latin-1 value flattens as UTF-8 bytes, unreported" do
+      flattened = fn value ->
+        editor = Editor.open!(@flatten_pdf)
+        on_exit(fn -> Editor.close(editor) end)
+
+        bytes =
+          editor
+          |> Form.put_value!("full_name", value)
+          |> Form.flatten!()
+          |> Editor.to_binary!(compress: false)
+
+        {bytes, Editor.flatten_warnings!(editor)}
+      end
+
+      {ascii, ascii_warnings} = flattened.("cafe")
+      {latin1, latin1_warnings} = flattened.("café")
+
+      assert ascii =~ "(cafe) Tj"
+      assert latin1 =~ "(caf\xC3\xA9) Tj"
+      assert latin1_warnings == ascii_warnings
+    end
+
     test "warnings accumulate across writes rather than being cleared" do
       editor = Editor.open!(@flatten_pdf)
       on_exit(fn -> Editor.close(editor) end)

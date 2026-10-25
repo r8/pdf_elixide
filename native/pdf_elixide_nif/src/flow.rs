@@ -211,6 +211,9 @@ pub enum Op {
         mark: Watermark,
         every_page: bool,
     },
+    // A form field on the current page, by its position in the builder's
+    // field table.
+    Field(usize),
 }
 
 #[derive(Clone)]
@@ -342,6 +345,7 @@ pub enum Item {
     Image(Picture),
     Link { link: usize, rect: [f64; 4] },
     Watermark(Watermark),
+    Field(usize),
 }
 
 pub struct Picture {
@@ -602,6 +606,10 @@ pub fn lay_out(
             } => {
                 layout.ensure_page();
                 layout.page_mut().items.push(Item::Watermark(mark.clone()));
+            }
+            Op::Field(field) => {
+                layout.ensure_page();
+                layout.page_mut().items.push(Item::Field(*field));
             }
         }
     }
@@ -874,7 +882,8 @@ impl Layout<'_> {
                 | Op::ImageInRect { .. }
                 | Op::Anchor(_)
                 | Op::LinkInRect { .. }
-                | Op::Watermark { .. } => {}
+                | Op::Watermark { .. }
+                | Op::Field(_) => {}
             }
         }
         total
@@ -1197,7 +1206,10 @@ impl Layout<'_> {
         let (page_width, page_height) = (self.page().width, self.page().height);
         let (left, bottom) = (x.max(0.0), y.max(0.0));
         let (right, top) = ((x + width).min(page_width), (y + height).min(page_height));
-        if left as f32 >= right as f32 || bottom as f32 >= top as f32 {
+        // The writer rounds a fractional coordinate to five decimal places.
+        const WRITTEN_STEP: f32 = 1.0e-5;
+        let narrow = |from: f64, to: f64| (to as f32 - from as f32) < WRITTEN_STEP;
+        if narrow(left, right) || narrow(bottom, top) {
             return Err(Refused::LinkImprecise {
                 op,
                 page: self.pages.len() - 1,

@@ -23,7 +23,8 @@ A description is laid out in one of three ways:
 - `Builder.to_binary/2` returns the PDF as a binary.
 - `Builder.save/3` writes it to a file.
 - `PdfElixide.Editor.from_builder/1` opens it as an editor, for work the
-  builder does not do, such as merging, attachments, keywords or form fields.
+  builder does not do, such as merging, attachments, keywords or filling form
+  fields.
 
 `to_binary/2` and `save/3` take the save options of an editor, including
 `:encryption`, and close the editor they use. An editor from
@@ -401,6 +402,67 @@ Viewers show and print it, but any PDF editor can delete it, so it labels a
 document rather than protecting it. Do not rely on text extraction or search to
 find its text. To draw it into the page's content instead, flatten it; see
 [Annotations after building](#annotations-after-building).
+
+## Form fields
+
+The builder adds fillable form fields to the current page, each at a
+`PdfElixide.Geometry.Rect` in points from the page's bottom-left corner:
+
+```elixir
+alias PdfElixide.Geometry.Rect
+
+Builder.new()
+|> Builder.text_at({72, 704}, "Name")
+|> Builder.text_field("name", %Rect{x: 150, y: 700, width: 200, height: 20},
+  required: true,
+  tooltip: "Your full name"
+)
+|> Builder.text_at({72, 664}, "Country")
+|> Builder.combo_box("country", %Rect{x: 150, y: 660, width: 200, height: 20},
+  ["France", "Germany", "Italy"]
+)
+|> Builder.check_box("subscribe", %Rect{x: 150, y: 620, width: 14, height: 14})
+|> Builder.signature_field("signature", %Rect{x: 150, y: 500, width: 200, height: 50})
+|> Builder.save!("application.pdf")
+```
+
+The kinds are `text_field/4`, `check_box/4`, `combo_box/5`, `list_box/5`,
+`push_button/5` and `signature_field/4`. See
+`t:PdfElixide.Builder.text_field_opts/0` for common modifiers and each
+function's option type for its settings.
+
+Each field needs a unique name without a `.` and must lie on its page.
+Fields sit outside the text flow; place labels with `text_at/4` and keep
+flowing content clear of them.
+
+A field draws its text in Helvetica, so a value, an option or a caption
+holds only printable Windows-1252 characters, and anything else raises
+`ArgumentError`. A name and a tooltip may hold other text, apart from the few
+characters described in [Text a field cannot hold](forms.md#text-a-field-cannot-hold).
+
+The fields read back through `PdfElixide.Form.fields/1`, and a signature
+field through `PdfElixide.Signature.unsigned_fields/1`. To fill them, open the
+description with `PdfElixide.Editor.from_builder/1` and use
+`PdfElixide.Form.put_value/3`; see [Filling a form](forms.md#filling-a-form).
+
+### How a built field is drawn
+
+A built field has no appearance of its own: a viewer draws it from the
+field's value each time it shows the page. As a result:
+
+- `PdfElixide.Document.render/3` draws the fields as blank space. Flatten
+  the form first, with `PdfElixide.Form.flatten/1`, to render it.
+- A check box reports no `:on_states`; its on state is `"Yes"`, the one
+  `PdfElixide.Form.put_value/3` writes for `true`.
+- Before flattening, read the [text limitations](forms.md#flattening).
+  Flattening draws no selection for a list box with several options selected,
+  and draws a push button without its caption. Leave such a form unflattened.
+
+A signature field is an empty placeholder for another tool to sign; this
+library does not sign documents. See [Signatures](signatures.md).
+
+Text fields are single-line, combo boxes are not editable, and push buttons
+have no actions. Radio groups, tab order and scripts are unsupported.
 
 ## Annotations after building
 

@@ -969,6 +969,23 @@ defmodule PdfElixide.FormTest do
         end
       end
     end
+
+    test "raises ArgumentError for text a PDF reader would decode as other characters" do
+      editor = Editor.open!(@form_pdf)
+
+      for bad <- ["a\u00A0b", "s\u00ADh", "x\u0001y", "þÿabc", ["Canada", "ï»¿x"], "Â£"] do
+        assert_raise ArgumentError, ~r/^invalid value for field "full_name", /, fn ->
+          Form.put_value(editor, "full_name", bad)
+        end
+      end
+
+      assert_raise ArgumentError, ~r/a form field cannot hold/, fn ->
+        Form.update_value(editor, "full_name", fn _ -> "a\u00ADb" end)
+      end
+
+      assert {:ok, ^editor} = Form.put_value(editor, "full_name", "Jane\tDoe")
+      assert {:ok, ^editor} = Form.put_value(editor, "full_name", "£")
+    end
   end
 
   describe "put_value!/3" do
@@ -997,6 +1014,17 @@ defmodule PdfElixide.FormTest do
   end
 
   describe "put_values/2" do
+    test "refuses text a PDF reader would decode as other characters, writing nothing" do
+      editor = Editor.open!(@form_pdf)
+      before = Form.fields!(editor)
+
+      assert_raise ArgumentError, ~r/^invalid value for field "country", .*"þÿx"/, fn ->
+        Form.put_values(editor, [{"full_name", "Jane"}, {"country", ["Canada", "þÿx"]}])
+      end
+
+      assert Form.fields!(editor) == before
+    end
+
     test "writes every field of a map and returns the editor" do
       editor = Editor.open!(@form_pdf)
 

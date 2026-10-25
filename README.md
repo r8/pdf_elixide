@@ -54,8 +54,8 @@ high-performance PDF library written in Rust. Built with
 - Create a new PDF from Markdown, HTML, plain text, or JPEG and PNG images, ready
   to edit and save
 - Build a new PDF from headings, wrapped paragraphs, lists, tables, styled
-  text, images and drawn shapes, paginated automatically and set in built-in
-  or embedded fonts
+  text, images, drawn shapes and fillable form fields, paginated
+  automatically and set in built-in or embedded fonts
 - Merge documents, and split one into pages, ranges, chunks or bookmarked
   sections in memory
 - Redact pages destructively, removing the covered text from the page rather

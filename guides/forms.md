@@ -298,7 +298,24 @@ end
 
 The values are the plain terms `PdfElixide.Form.fields/1` returns — no wrapper
 or tag. Fields are addressed by name, and only existing fields can be written.
-An unknown name is an error; this API cannot add fields.
+An unknown name is an error; this API cannot add fields. To make a new form,
+see [Form fields](building-documents.md#form-fields).
+
+### Text a field cannot hold
+
+Some text would be read back as different characters, so writing it raises
+`ArgumentError`:
+
+- a nonbreaking space (U+00A0) or a soft hyphen (U+00AD);
+- a control character other than tab, line feed and carriage return;
+- text starting with `"þÿ"`, `"ÿþ"` or `"ï»¿"`, which a reader takes for a
+  byte-order mark;
+- text made only of characters up to U+00FF whose bytes, one per character,
+  spell other UTF-8 text: `"Â£"` would read back as `"£"`.
+
+Use a plain space for a nonbreaking space, and leave the others out. The same
+rule applies to the names, values, options, captions and tooltips of fields made
+with `PdfElixide.Builder`.
 
 ## The tuple-returning half
 
@@ -527,6 +544,12 @@ flattening in one session means writing a full rewrite; see
 unflatten; reopen the source if you need an unflattened document. Writing twice
 gives you two flattened files.
 
+**Only ASCII text is drawn correctly when flattening generates a field's
+text.** This affects fields filled in the editor and fields without an
+appearance stream. Existing appearance streams copied unchanged retain their
+text. For non-ASCII values, leave the form unflattened; see
+[Check the warnings](#check-the-warnings) for what is reported.
+
 **A flatten is drawn above a redaction box on the same page.** A page the write
 actually redacts also loses its widgets — along with every other annotation on
 it — and a flatten on the same editor paints the field appearances over the box.
@@ -579,11 +602,10 @@ establish that flattening was faithful.
 
 Reported cases include:
 
-  * **A newly set value containing non-Latin text or emoji that this library
-    cannot draw into an appearance.** The field may contain incorrect glyphs or
-    none at all while the PDF remains valid. Check the warnings after filling
-    and flattening text outside Latin-1. Existing appearance streams are copied
-    unchanged and are unaffected.
+  * **A newly set value containing text beyond Latin-1 or emoji that this
+    library cannot draw into an appearance.** Latin-1 values and fields not
+    filled in this editor receive no text warning; the
+    [text limitation](#flattening) still applies.
 
     Such a warning may suggest enabling wider font support; this package has
     no such option. Take the warning to mean the field did not flatten legibly,
