@@ -438,7 +438,10 @@ defmodule PdfElixide.OptionKeysTest do
         &Builder.paragraph(Builder.new(), [{"Text", &1}])
       )
 
-      accepts_each!([font: :times, font_size: 20], &Builder.heading(Builder.new(), 1, "T", &1))
+      accepts_each!(
+        [font: :times, font_size: 20, bookmark: true],
+        &Builder.heading(Builder.new(), 1, "T", &1)
+      )
 
       accepts_each!(
         [font: :times, font_size: 20],
@@ -572,6 +575,34 @@ defmodule PdfElixide.OptionKeysTest do
           opacity: 0.5
         ],
         &Builder.watermark(Builder.new(), "DRAFT", &1)
+      )
+    end
+
+    test "the Builder navigation operations" do
+      red = %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0}
+
+      accepts_each!(
+        [level: 1, to: {:page, 0}, open: false, bold: true, italic: true, color: red],
+        &Builder.bookmark(Builder.new(), "T", &1)
+      )
+
+      accepts_each!([prefix: "A-", start: 5], &Builder.page_labels(Builder.new(), :decimal, &1))
+
+      for running <- [&Builder.header/2, &Builder.footer/2] do
+        accepts_each!(
+          [left: "L", center: "C", right: "R"],
+          &running.(Builder.new(), &1)
+        )
+
+        accepts_each!(
+          [font: :times, font_size: 9, color: red],
+          &running.(Builder.new(), [left: "L"] ++ &1)
+        )
+      end
+
+      accepts_each!(
+        [font: :times, font_size: 9, indent: 20],
+        &Builder.contents(Builder.new(), &1)
       )
     end
 
@@ -815,7 +846,12 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.combo_box(Builder.new(), "f", field_rect(), ["a"], opts) end,
         fn opts -> Builder.list_box(Builder.new(), "f", field_rect(), ["a"], opts) end,
         fn opts -> Builder.push_button(Builder.new(), "f", field_rect(), "Go", opts) end,
-        fn opts -> Builder.signature_field(Builder.new(), "f", field_rect(), opts) end
+        fn opts -> Builder.signature_field(Builder.new(), "f", field_rect(), opts) end,
+        fn opts -> Builder.bookmark(Builder.new(), "T", opts) end,
+        fn opts -> Builder.page_labels(Builder.new(), :decimal, opts) end,
+        fn opts -> Builder.header(Builder.new(), [left: "L"] ++ opts) end,
+        fn opts -> Builder.footer(Builder.new(), [left: "L"] ++ opts) end,
+        fn opts -> Builder.contents(Builder.new(), opts) end
       ]
 
       for call <- calls do

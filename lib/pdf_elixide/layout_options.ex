@@ -136,10 +136,13 @@ defmodule PdfElixide.LayoutOptions do
 
   def text_string!(_label, value), do: value
 
-  # Form field text is written one byte per character where it can be, and
-  # PDFDocEncoding gives these bytes other characters, or none.
-  @spec field_text!(label(), term()) :: term()
-  def field_text!(label, value) when is_binary(value) do
+  # Form field text, bookmark titles and page label prefixes are written one
+  # byte per character where they can be, and PDFDocEncoding gives these bytes
+  # other characters, or none.
+  @spec field_text!(label(), term(), String.t()) :: term()
+  def field_text!(label, value, holder \\ "a form field")
+
+  def field_text!(label, value, holder) when is_binary(value) do
     chars = label |> text_string!(value) |> String.to_charlist()
 
     case Enum.find(chars, &misread?/1) do
@@ -148,7 +151,7 @@ defmodule PdfElixide.LayoutOptions do
 
       char ->
         raise ArgumentError,
-              "invalid #{label(label)}, a form field cannot hold " <>
+              "invalid #{label(label)}, #{holder} cannot hold " <>
                 "#{inspect(<<char::utf8>>)}: a PDF reader decodes it as a different " <>
                 "character; use a plain space for a nonbreaking space and leave out soft " <>
                 "hyphens and control characters: #{inspect(value)}"
@@ -159,14 +162,14 @@ defmodule PdfElixide.LayoutOptions do
          bytes = :erlang.list_to_binary(chars),
          true <- String.valid?(bytes) do
       raise ArgumentError,
-            "invalid #{label(label)}, a form field cannot hold #{inspect(value)}: " <>
+            "invalid #{label(label)}, #{holder} cannot hold #{inspect(value)}: " <>
               "written one byte per character, it reads back as #{inspect(bytes)}"
     end
 
     value
   end
 
-  def field_text!(_label, value), do: value
+  def field_text!(_label, value, _holder), do: value
 
   defp misread?(char) when char in [?\t, ?\n, ?\r], do: false
   defp misread?(char), do: char < 0x20 or char in 0x7F..0xA0 or char == 0xAD

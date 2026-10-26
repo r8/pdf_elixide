@@ -621,6 +621,10 @@ defmodule PdfElixide.Document do
   index. Pages outside any declared label range fall back to their decimal page
   number, so the returned list always has one entry per page.
 
+  Lettered labels run A to Z, then AA to ZZ, then AAA, as viewers show them.
+  A lettered label past 26000 returns
+  `{:error, %PdfElixide.Error{reason: :unsupported}}`.
+
   See also `PdfElixide.Document.Page.label/1` for a single page's label, and
   `page_label_ranges/1` for the declared numbering schemes behind these strings.
   """

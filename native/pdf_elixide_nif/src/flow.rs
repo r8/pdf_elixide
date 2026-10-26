@@ -1,12 +1,20 @@
 use std::collections::{HashMap, HashSet};
 
-use pdf_oxide::{elements::PathOperation, writer::EmbeddedFont};
+use pdf_oxide::{
+    elements::PathOperation,
+    extractors::page_labels::{PageLabelRange, PageLabelStyle},
+    writer::EmbeddedFont,
+};
 use unicode_bidi::{bidi_class, BidiClass};
 use unicode_normalization::char::canonical_combining_class;
 use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{barcode::dark_runs, base14::Base14};
+use crate::{
+    barcode::dark_runs,
+    base14::Base14,
+    page_label::{self, MAX_LETTERED},
+};
 
 mod table;
 
@@ -122,6 +130,7 @@ pub fn embedded_key(face: usize) -> String {
 
 pub type Rgb = [f32; 3];
 
+#[derive(Clone)]
 pub struct Run {
     pub text: String,
     pub face: usize,
@@ -214,6 +223,15 @@ pub enum Op {
         rect: [f64; 4],
     },
     Anchor(String),
+    // Names the next flow content for the builder's bookmark of this number.
+    Bookmark(usize),
+    // A label range starting on the page the next content lands on; its
+    // `start_page` is set there.
+    PageLabels(PageLabelRange),
+    // Running text from the page the next content lands on; `None` clears it.
+    Header(Option<Running>),
+    Footer(Option<Running>),
+    Contents(Contents),
     LinkInRect {
         link: usize,
         rect: [f64; 4],
@@ -225,6 +243,51 @@ pub enum Op {
     // A form field on the current page, by its position in the builder's
     // field table.
     Field(usize),
+}
+
+pub struct Running {
+    pub left: Vec<Run>,
+    pub center: Vec<Run>,
+    pub right: Vec<Run>,
+    // The regular face whose metrics place the line.
+    pub face: usize,
+    pub size: f64,
+}
+
+pub struct Contents {
+    pub entries: Vec<Entry>,
+    pub face: usize,
+    pub size: f64,
+    pub indent: f64,
+}
+
+pub struct Entry {
+    pub runs: Vec<Run>,
+    pub level: usize,
+    pub target: EntryTarget,
+    pub link: usize,
+}
+
+// Where a bookmark points, for the page label its contents entry shows.
+pub enum EntryTarget {
+    Mark(usize),
+    Page(usize),
+    Anchor(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Artifact {
+    Header,
+    Footer,
+}
+
+impl Artifact {
+    fn noun(self) -> &'static str {
+        match self {
+            Artifact::Header => "header",
+            Artifact::Footer => "footer",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -351,12 +414,17 @@ pub struct Placed {
     pub size: f64,
     pub color: Option<Rgb>,
     pub link: Option<usize>,
+    pub artifact: Option<Artifact>,
 }
 
 pub struct Plan {
     pub pages: Vec<PagePlan>,
     // Each anchor's page and the top of the content it names.
     pub anchors: HashMap<String, (usize, f64)>,
+    // The same for each bookmark that names flow content, by its number.
+    pub bookmarks: HashMap<usize, (usize, f64)>,
+    // Empty when no op sets labels; otherwise starting on page 0.
+    pub labels: Vec<PageLabelRange>,
     // Watermarks drawn on every page, after the page's own items.
     pub watermarks: Vec<Watermark>,
 }
@@ -486,17 +554,63 @@ pub enum Refused {
         needed: (f64, f64),
         room: (f64, f64),
     },
+    // `what` is "link" or "bookmark"; a bookmark given a target has no page.
     NoSuchPage {
         op: usize,
-        page: usize,
+        page: Option<usize>,
+        what: &'static str,
         target: usize,
         pages: usize,
     },
     NoSuchAnchor {
         op: usize,
-        page: usize,
+        page: Option<usize>,
+        what: &'static str,
         name: String,
     },
+    // A page-scoped op that a later one of its kind replaces on the same page.
+    Superseded {
+        op: usize,
+        page: usize,
+        by: usize,
+        what: &'static str,
+    },
+    LabelTooLarge {
+        op: usize,
+        page: usize,
+        kind: LabelKind,
+    },
+    RunningTooTall {
+        op: usize,
+        page: usize,
+        what: &'static str,
+        line: f64,
+        room: f64,
+    },
+    RunningTooWide {
+        op: usize,
+        page: usize,
+        what: &'static str,
+        part: &'static str,
+        width: f64,
+        room: f64,
+    },
+    RunningOverlap {
+        op: usize,
+        page: usize,
+        what: &'static str,
+        parts: (&'static str, &'static str),
+    },
+    ContentsUnsettled {
+        op: usize,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub enum LabelKind {
+    Roman,
+    Letters,
+    Number,
 }
 
 #[derive(Clone, Copy)]
@@ -557,6 +671,23 @@ fn unordered(c: char) -> Option<Unordered> {
     .then_some(Unordered::NeedsShaping)
 }
 
+// The label column never shrinks; refuse if labels have not settled by this limit.
+const MAX_PASSES: usize = 8;
+
+// Labels past this have no Roman numeral, and a reader would draw thousands of
+// `m`s for a large one.
+pub const MAX_ROMAN: u64 = 3999;
+
+// The Elixir side's cap on `:start`: the largest a 32-bit counter holds.
+pub const MAX_NUMBER: u64 = 2_147_483_647;
+
+// The labels the contents draws and the width its label column reserves.
+#[derive(Default, PartialEq)]
+struct Guess {
+    labels: Vec<String>,
+    reserve: f64,
+}
+
 pub fn lay_out(
     fonts: &Fonts,
     margins: &Margins,
@@ -564,106 +695,117 @@ pub fn lay_out(
     first_page: (f64, f64),
     ops: &[Op],
 ) -> Result<Plan, Refused> {
-    let mut layout = Layout {
-        fonts,
-        margins,
-        line_height,
-        first_page,
-        pages: Vec::new(),
-        cursor: 0.0,
-        fresh: true,
-        pending_space: 0.0,
-        pending_anchors: Vec::new(),
-        anchors: HashMap::new(),
-        watermarks: Vec::new(),
+    let contents = ops.iter().enumerate().find_map(|(index, op)| match op {
+        Op::Contents(contents) => Some((index, contents)),
+        _ => None,
+    });
+    let mut guess = Guess {
+        labels: vec![String::new(); contents.map_or(0, |(_, c)| c.entries.len())],
+        reserve: 0.0,
     };
 
-    for (index, op) in ops.iter().enumerate() {
-        match op {
-            Op::Empty => {}
-            Op::Blank => layout.ensure_page(),
-            Op::Page { width, height } => layout.new_page(*width, *height),
-            Op::Paragraph {
-                runs,
-                face,
-                size,
-                keep_with_next,
-            } => {
-                // The lookahead measures headings against the current page.
-                layout.ensure_page();
-                let kept = keep_with_next.then(|| layout.kept_after(&ops[index + 1..], *size));
-                layout.paragraph(index, runs, *face, *size, kept)?;
-            }
-            Op::List {
-                items,
-                face,
-                size,
-                marker,
-                start,
-            } => layout.list(index, items, *face, *size, *marker, *start)?,
-            Op::Space(points) => layout.space(*points),
-            Op::Rule { size } => layout.rule(*size),
-            Op::TextAt { runs, size, x, y } => layout.text_at(index, runs, *size, *x, *y)?,
-            Op::TextInRect {
-                runs,
-                face,
-                size,
-                x,
-                y,
-                width,
-                height,
-                align,
-            } => {
-                layout.text_in_rect(index, runs, *face, *size, [*x, *y, *width, *height], *align)?
-            }
-            Op::Path(shape) => layout.path(shape),
-            Op::Table(table) => layout.table(index, table)?,
-            Op::Image(image) => layout.image(index, image)?,
-            Op::ImageInRect {
-                image,
-                pixels,
-                rect,
-                fit,
-            } => layout.image_in_rect(*image, *pixels, *rect, *fit),
-            Op::Barcode {
-                barcode,
-                width,
-                height,
-                align,
-                size,
-            } => layout.barcode(index, barcode, (*width, *height), *align, *size)?,
-            Op::BarcodeInRect { barcode, rect } => {
-                layout.ensure_page();
-                layout.draw_barcode(index, barcode, *rect)?
-            }
-            Op::Anchor(name) => layout.pending_anchors.push(name.clone()),
-            Op::LinkInRect { link, rect } => layout.link_in_rect(index, *link, *rect)?,
-            Op::Watermark {
-                mark,
-                every_page: true,
-            } => layout.watermarks.push(mark.clone()),
-            Op::Watermark {
-                mark,
-                every_page: false,
-            } => {
-                layout.ensure_page();
-                layout.page_mut().items.push(Item::Watermark(mark.clone()));
-            }
-            Op::Field(field) => {
-                layout.ensure_page();
-                layout.page_mut().items.push(Item::Field(*field));
-            }
+    for _ in 0..MAX_PASSES {
+        let mut layout = Layout::new(fonts, margins, line_height, first_page, &guess);
+        layout.run(ops)?;
+        let ranges = layout.label_ranges(ops)?;
+        let Some((_, contents)) = contents else {
+            return layout.finish(ops, ranges);
+        };
+
+        let labels = starting_at_zero(&ranges);
+        let drawn: Vec<String> = contents
+            .entries
+            .iter()
+            .map(|entry| layout.entry_label(entry, &labels))
+            .collect();
+        let reserve = drawn
+            .iter()
+            .map(|label| fonts.width(contents.face, label, contents.size))
+            .fold(guess.reserve, f64::max);
+        let next = Guess {
+            labels: drawn,
+            reserve,
+        };
+        if next == guess {
+            return layout.finish(ops, ranges);
         }
+        guess = next;
     }
 
-    // An anchor with no flow content after it names where the flow ends.
-    layout.ensure_page();
-    layout.resolve_anchors();
-    Ok(Plan {
-        pages: layout.pages,
-        anchors: layout.anchors,
-        watermarks: layout.watermarks,
+    Err(Refused::ContentsUnsettled {
+        op: contents.map_or(0, |(index, _)| index),
     })
+}
+
+// Pages before the first range are numbered from 1; a page label tree must
+// say so for page 0.
+fn starting_at_zero(ranges: &[(usize, PageLabelRange)]) -> Vec<PageLabelRange> {
+    let mut labels: Vec<PageLabelRange> = ranges.iter().map(|(_, range)| range.clone()).collect();
+    if labels.first().is_some_and(|range| range.start_page != 0) {
+        labels.insert(0, PageLabelRange::new(0));
+    }
+    labels
+}
+
+// A contents label stands alone, so it is laid out as a line of its own:
+// each run of whitespace as one space, none at either end.
+fn drawn_label(label: String) -> String {
+    label.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// A label in a header part keeps its spaces, which may separate it from the
+// text around it; the part is normalized as a whole once filled in.
+fn inline_label(label: String) -> String {
+    label
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect()
+}
+
+// Replace `{page}` and `{pages}` in one pass, so a label holding either is
+// drawn as written.
+pub fn substitute(text: &str, label: &str, count: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('{') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(after) = tail.strip_prefix("{page}") {
+            out.push_str(label);
+            rest = after;
+        } else if let Some(after) = tail.strip_prefix("{pages}") {
+            out.push_str(count);
+            rest = after;
+        } else {
+            out.push('{');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+// Refuse a page-scoped op that the next one of its kind replaces on the page
+// it would start on, so that it would apply to no page.
+fn superseded(
+    starts: impl Iterator<Item = (usize, usize)>,
+    what: &'static str,
+) -> Result<(), Refused> {
+    let mut previous: Option<(usize, usize)> = None;
+    for (op, page) in starts {
+        if let Some((before, before_page)) = previous {
+            if before_page == page {
+                return Err(Refused::Superseded {
+                    op: before,
+                    page,
+                    by: op,
+                    what,
+                });
+            }
+        }
+        previous = Some((op, page));
+    }
+    Ok(())
 }
 
 struct Block {
@@ -676,11 +818,27 @@ struct Block {
 // A line's segments with the left end of its baseline.
 type PositionedLine = (f64, f64, Vec<Segment>);
 
+// The page positioned text goes on, whether it belongs to the flow, and what
+// running text it is, if any.
+#[derive(Clone, Copy)]
+struct Spot {
+    page: usize,
+    flowing: bool,
+    artifact: Option<Artifact>,
+}
+
+// Marks that name the top of the next flow content.
+enum FlowMark {
+    Anchor(String),
+    Bookmark(usize),
+}
+
 struct Layout<'a> {
     fonts: &'a Fonts<'a>,
     margins: &'a Margins,
     line_height: f64,
     first_page: (f64, f64),
+    guess: &'a Guess,
     pages: Vec<PagePlan>,
     // Top of the next line box.
     cursor: f64,
@@ -688,17 +846,384 @@ struct Layout<'a> {
     fresh: bool,
     // Space owed after the previous block, dropped if a page break comes first.
     pending_space: f64,
-    pending_anchors: Vec<String>,
+    pending_flow: Vec<FlowMark>,
+    // Page-scoped ops, by index, waiting for the next content of any kind.
+    pending_pages: Vec<usize>,
     anchors: HashMap<String, (usize, f64)>,
+    bookmarks: HashMap<usize, (usize, f64)>,
+    // Each page-scoped op with the page it starts on, in op order.
+    page_marks: Vec<(usize, usize)>,
     watermarks: Vec<Watermark>,
 }
 
-impl Layout<'_> {
+impl<'a> Layout<'a> {
+    fn new(
+        fonts: &'a Fonts<'a>,
+        margins: &'a Margins,
+        line_height: f64,
+        first_page: (f64, f64),
+        guess: &'a Guess,
+    ) -> Self {
+        Layout {
+            fonts,
+            margins,
+            line_height,
+            first_page,
+            guess,
+            pages: Vec::new(),
+            cursor: 0.0,
+            fresh: true,
+            pending_space: 0.0,
+            pending_flow: Vec::new(),
+            pending_pages: Vec::new(),
+            anchors: HashMap::new(),
+            bookmarks: HashMap::new(),
+            page_marks: Vec::new(),
+            watermarks: Vec::new(),
+        }
+    }
+
+    fn run(&mut self, ops: &[Op]) -> Result<(), Refused> {
+        for (index, op) in ops.iter().enumerate() {
+            match op {
+                Op::Empty => {}
+                Op::Blank => self.positioned(),
+                Op::Page { width, height } => self.new_page(*width, *height),
+                Op::Paragraph {
+                    runs,
+                    face,
+                    size,
+                    keep_with_next,
+                } => {
+                    // The lookahead measures headings against the current page.
+                    self.ensure_page();
+                    let kept = keep_with_next.then(|| self.kept_after(&ops[index + 1..], *size));
+                    self.paragraph(index, runs, *face, *size, kept)?;
+                }
+                Op::List {
+                    items,
+                    face,
+                    size,
+                    marker,
+                    start,
+                } => self.list(index, items, *face, *size, *marker, *start)?,
+                Op::Space(points) => self.space(*points),
+                Op::Rule { size } => self.rule(*size),
+                Op::TextAt { runs, size, x, y } => {
+                    self.positioned();
+                    self.text_at(index, runs, *size, *x, *y)?
+                }
+                Op::TextInRect {
+                    runs,
+                    face,
+                    size,
+                    x,
+                    y,
+                    width,
+                    height,
+                    align,
+                } => {
+                    self.positioned();
+                    self.text_in_rect(index, runs, *face, *size, [*x, *y, *width, *height], *align)?
+                }
+                Op::Path(shape) => {
+                    self.positioned();
+                    self.path(shape)
+                }
+                Op::Table(table) => self.table(index, table)?,
+                Op::Image(image) => self.image(index, image)?,
+                Op::ImageInRect {
+                    image,
+                    pixels,
+                    rect,
+                    fit,
+                } => {
+                    self.positioned();
+                    self.image_in_rect(*image, *pixels, *rect, *fit)
+                }
+                Op::Barcode {
+                    barcode,
+                    width,
+                    height,
+                    align,
+                    size,
+                } => self.barcode(index, barcode, (*width, *height), *align, *size)?,
+                Op::BarcodeInRect { barcode, rect } => {
+                    self.positioned();
+                    self.draw_barcode(index, barcode, *rect)?
+                }
+                Op::Anchor(name) => self.pending_flow.push(FlowMark::Anchor(name.clone())),
+                Op::Bookmark(number) => self.pending_flow.push(FlowMark::Bookmark(*number)),
+                Op::PageLabels(_) | Op::Header(_) | Op::Footer(_) => self.pending_pages.push(index),
+                Op::Contents(contents) => self.contents(index, contents)?,
+                Op::LinkInRect { link, rect } => {
+                    self.positioned();
+                    self.link_in_rect(index, *link, *rect)?
+                }
+                Op::Watermark {
+                    mark,
+                    every_page: true,
+                } => self.watermarks.push(mark.clone()),
+                Op::Watermark {
+                    mark,
+                    every_page: false,
+                } => {
+                    self.positioned();
+                    self.page_mut().items.push(Item::Watermark(mark.clone()));
+                }
+                Op::Field(field) => {
+                    self.positioned();
+                    self.page_mut().items.push(Item::Field(*field));
+                }
+            }
+        }
+
+        // A mark with no content after it names where the flow ends.
+        self.ensure_page();
+        self.resolve_anchors();
+        Ok(())
+    }
+
+    // Runs before any label is formatted: `format_label` adds in `u32` unchecked.
+    fn label_ranges(&self, ops: &[Op]) -> Result<Vec<(usize, PageLabelRange)>, Refused> {
+        let ranges: Vec<(usize, PageLabelRange)> = self
+            .page_marks
+            .iter()
+            .filter_map(|&(op, page)| match &ops[op] {
+                Op::PageLabels(range) => Some((
+                    op,
+                    PageLabelRange {
+                        start_page: page,
+                        ..range.clone()
+                    },
+                )),
+                _ => None,
+            })
+            .collect();
+
+        for (index, (op, range)) in ranges.iter().enumerate() {
+            let last = ranges
+                .get(index + 1)
+                .map_or(self.pages.len(), |(_, next)| next.start_page)
+                .saturating_sub(1)
+                .max(range.start_page);
+            let kind = match range.style {
+                PageLabelStyle::RomanLower | PageLabelStyle::RomanUpper => LabelKind::Roman,
+                PageLabelStyle::AlphaLower | PageLabelStyle::AlphaUpper => LabelKind::Letters,
+                _ => LabelKind::Number,
+            };
+            let limit = match kind {
+                LabelKind::Roman => MAX_ROMAN,
+                LabelKind::Letters => MAX_LETTERED,
+                LabelKind::Number => MAX_NUMBER,
+            };
+            let start = u64::from(range.start_value);
+            if start + (last - range.start_page) as u64 > limit {
+                let page = range.start_page + (limit + 1).saturating_sub(start) as usize;
+                return Err(Refused::LabelTooLarge {
+                    op: *op,
+                    page,
+                    kind,
+                });
+            }
+        }
+
+        Ok(ranges)
+    }
+
+    fn entry_label(&self, entry: &Entry, labels: &[PageLabelRange]) -> String {
+        let page = match &entry.target {
+            EntryTarget::Mark(bookmark) => self.bookmarks.get(bookmark).map(|&(page, _)| page),
+            EntryTarget::Page(page) => Some(*page).filter(|&page| page < self.pages.len()),
+            EntryTarget::Anchor(name) => self.anchors.get(name).map(|&(page, _)| page),
+        };
+        // A missing target is refused before anything is written, and
+        // `label_ranges` has refused a label too long to write.
+        page.and_then(|page| page_label::label(labels, page).ok())
+            .map(drawn_label)
+            .unwrap_or_default()
+    }
+
+    fn finish(mut self, ops: &[Op], ranges: Vec<(usize, PageLabelRange)>) -> Result<Plan, Refused> {
+        superseded(
+            ranges.iter().map(|(op, range)| (*op, range.start_page)),
+            "page_labels/3",
+        )?;
+        let labels = starting_at_zero(&ranges);
+        // `label_ranges` has refused a label too long to write.
+        let texts: Vec<String> = (0..self.pages.len())
+            .map(|page| inline_label(page_label::label(&labels, page).unwrap_or_default()))
+            .collect();
+        self.furnish(ops, Artifact::Header, &texts)?;
+        self.furnish(ops, Artifact::Footer, &texts)?;
+
+        Ok(Plan {
+            pages: self.pages,
+            anchors: self.anchors,
+            bookmarks: self.bookmarks,
+            labels,
+            watermarks: self.watermarks,
+        })
+    }
+
+    fn furnish(
+        &mut self,
+        ops: &[Op],
+        artifact: Artifact,
+        labels: &[String],
+    ) -> Result<(), Refused> {
+        let starts: Vec<(usize, usize, &Option<Running>)> = self
+            .page_marks
+            .iter()
+            .filter_map(|&(op, page)| match (&ops[op], artifact) {
+                (Op::Header(running), Artifact::Header)
+                | (Op::Footer(running), Artifact::Footer) => Some((op, page, running)),
+                _ => None,
+            })
+            .collect();
+        let what = match artifact {
+            Artifact::Header => "header/2",
+            Artifact::Footer => "footer/2",
+        };
+        superseded(starts.iter().map(|&(op, page, _)| (op, page)), what)?;
+
+        let count = self.pages.len().to_string();
+        for (index, &(op, start, running)) in starts.iter().enumerate() {
+            let Some(running) = running else { continue };
+            let end = starts
+                .get(index + 1)
+                .map_or(self.pages.len(), |&(_, next, _)| next);
+            for (page, label) in labels.iter().enumerate().take(end).skip(start) {
+                self.place_running(op, page, running, artifact, label, &count)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn place_running(
+        &mut self,
+        op: usize,
+        page: usize,
+        running: &Running,
+        artifact: Artifact,
+        label: &str,
+        count: &str,
+    ) -> Result<(), Refused> {
+        let what = artifact.noun();
+        let size = running.size;
+        // Spelled as the Elixir check spells it, so both refuse the same lines.
+        let line = size * self.line_height;
+        let room = match artifact {
+            Artifact::Header => self.margins.top,
+            Artifact::Footer => self.margins.bottom,
+        };
+        if line > room {
+            return Err(Refused::RunningTooTall {
+                op,
+                page,
+                what,
+                line,
+                room,
+            });
+        }
+        let (width, height) = (self.pages[page].width, self.pages[page].height);
+        if width.max(height) > size.min(line) * PRECISION_STEPS {
+            return Err(Refused::Imprecise { op, page, size });
+        }
+
+        let parts: Vec<(&'static str, Vec<Run>)> = [
+            ("left", &running.left),
+            ("center", &running.center),
+            ("right", &running.right),
+        ]
+        .into_iter()
+        .map(|(part, runs)| {
+            let runs: Vec<Run> = runs
+                .iter()
+                .map(|run| run.styled(substitute(&run.text, label, count)))
+                .filter(|run| !run.text.is_empty())
+                .collect();
+            (part, runs)
+        })
+        .filter(|(_, runs)| !draws_nothing(runs.iter().map(|run| run.text.as_str())))
+        .collect();
+        let texts: Vec<&[Run]> = parts.iter().map(|(_, runs)| runs.as_slice()).collect();
+        self.drawable(op, page, &texts, &[])?;
+
+        let (left, right) = (self.margins.left, width - self.margins.right);
+        let top = match artifact {
+            Artifact::Header => height - (room - line) / 2.0,
+            Artifact::Footer => (room + line) / 2.0,
+        };
+        let baseline = top - self.above_baseline(running.face, size, line);
+
+        let mut lines: Vec<PositionedLine> = Vec::new();
+        let mut previous: Option<(&'static str, f64)> = None;
+        for (part, runs) in parts {
+            // One line, laid out as `text_at` lays out its own, so any run of
+            // whitespace is drawn and measured as one space.
+            let segments = wrap(self.fonts, &runs, size, f64::INFINITY)
+                .map_err(|_| Refused::RunningTooWide {
+                    op,
+                    page,
+                    what,
+                    part,
+                    width: f64::INFINITY,
+                    room: right - left,
+                })?
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let advance: f64 = segments.iter().map(|segment| segment.width).sum();
+            let x = match part {
+                "left" => left,
+                // Halved separately, as in a box.
+                "center" => width / 2.0 - advance / 2.0,
+                _ => right - advance,
+            };
+            if x < left - FIT_TOLERANCE || x + advance > right + FIT_TOLERANCE {
+                return Err(Refused::RunningTooWide {
+                    op,
+                    page,
+                    what,
+                    part,
+                    width: advance,
+                    room: right - left,
+                });
+            }
+            if let Some((before, end)) = previous {
+                if end > x + FIT_TOLERANCE {
+                    return Err(Refused::RunningOverlap {
+                        op,
+                        page,
+                        what,
+                        parts: (before, part),
+                    });
+                }
+            }
+            previous = Some((part, x + advance));
+            lines.push((x, baseline, segments));
+        }
+
+        let spot = Spot {
+            page,
+            flowing: false,
+            artifact: Some(artifact),
+        };
+        self.place_positioned_on(spot, op, lines, size, NO_EXTENT)
+    }
+
     fn ensure_page(&mut self) {
         if self.pages.is_empty() {
             let (width, height) = self.first_page;
             self.new_page(width, height);
         }
+    }
+
+    // Before content placed outside the flow: it lands on the current page.
+    fn positioned(&mut self) {
+        self.ensure_page();
+        self.resolve_page_marks();
     }
 
     fn page(&self) -> &PagePlan {
@@ -732,9 +1257,71 @@ impl Layout<'_> {
     // Resolve only after the next flow content's page-break decision.
     fn resolve_anchors(&mut self) {
         let at = (self.pages.len() - 1, self.cursor);
-        for name in self.pending_anchors.drain(..) {
-            self.anchors.entry(name).or_insert(at);
+        for mark in self.pending_flow.drain(..) {
+            match mark {
+                FlowMark::Anchor(name) => {
+                    self.anchors.entry(name).or_insert(at);
+                }
+                FlowMark::Bookmark(number) => {
+                    self.bookmarks.insert(number, at);
+                }
+            }
         }
+        self.resolve_page_marks();
+    }
+
+    fn resolve_page_marks(&mut self) {
+        let page = self.pages.len() - 1;
+        self.page_marks
+            .extend(self.pending_pages.drain(..).map(|op| (op, page)));
+    }
+
+    fn contents(&mut self, op: usize, contents: &Contents) -> Result<(), Refused> {
+        let Contents {
+            entries,
+            face,
+            size,
+            indent,
+        } = contents;
+        let (face, size, indent) = (*face, *size, *indent);
+        let guess = self.guess;
+        let texts: Vec<&[Run]> = entries.iter().map(|entry| entry.runs.as_slice()).collect();
+        let extra: Vec<(usize, &str)> = guess
+            .labels
+            .iter()
+            .map(|label| (face, label.as_str()))
+            .collect();
+        let block = self.block(op, &texts, &extra, face, size)?;
+
+        let gap = size;
+        let right = self.page().width - self.margins.right;
+        for (entry, label) in entries.iter().zip(&guess.labels) {
+            let x = self.margins.left + entry.level.saturating_sub(1) as f64 * indent;
+            let width = right - x - guess.reserve - gap;
+            let page = self.pages.len() - 1;
+            if width <= 0.0 {
+                return Err(Refused::NoWidth { op, page });
+            }
+            let lines = self.wrapped(op, page, &entry.runs, size, width)?;
+            let last = lines.len().saturating_sub(1);
+            for (index, segments) in lines.into_iter().enumerate() {
+                let label = (index == last && !label.is_empty()).then(|| {
+                    let label_width = self.fonts.width(face, label, size);
+                    let segment = Segment {
+                        text: label.clone(),
+                        face,
+                        color: None,
+                        link: Some(entry.link),
+                        width: label_width,
+                    };
+                    (right - label_width, segment)
+                });
+                self.place_line(&block, segments, size, x, label)?;
+            }
+        }
+
+        self.pending_space = 0.5 * size;
+        Ok(())
     }
 
     fn block(
@@ -914,6 +1501,7 @@ impl Layout<'_> {
                     return total + gap + size * self.line_height;
                 }
                 Op::Rule { size } => return total + gap + size,
+                Op::Contents(contents) => return total + gap + contents.size * self.line_height,
                 Op::Table(table) => return total + gap + self.table_lead(table),
                 Op::Image(image) => return total + gap + self.image_size(image).1,
                 Op::Barcode { height, .. } => return total + gap + height,
@@ -925,6 +1513,10 @@ impl Layout<'_> {
                 | Op::ImageInRect { .. }
                 | Op::BarcodeInRect { .. }
                 | Op::Anchor(_)
+                | Op::Bookmark(_)
+                | Op::PageLabels(_)
+                | Op::Header(_)
+                | Op::Footer(_)
                 | Op::LinkInRect { .. }
                 | Op::Watermark { .. }
                 | Op::Field(_) => {}
@@ -1071,8 +1663,28 @@ impl Layout<'_> {
         op: usize,
         lines: Vec<PositionedLine>,
         size: f64,
-        mut extent: [f64; 4],
+        extent: [f64; 4],
         flowing: bool,
+    ) -> Result<(), Refused> {
+        let spot = Spot {
+            page: self.pages.len() - 1,
+            flowing,
+            artifact: None,
+        };
+        self.place_positioned_on(spot, op, lines, size, extent)
+    }
+
+    fn place_positioned_on(
+        &mut self,
+        Spot {
+            page: page_index,
+            flowing,
+            artifact,
+        }: Spot,
+        op: usize,
+        lines: Vec<PositionedLine>,
+        size: f64,
+        mut extent: [f64; 4],
     ) -> Result<(), Refused> {
         for (x, baseline, segments) in &lines {
             let mut pen = *x;
@@ -1088,7 +1700,7 @@ impl Layout<'_> {
             }
         }
 
-        let (width, height) = (self.page().width, self.page().height);
+        let (width, height) = (self.pages[page_index].width, self.pages[page_index].height);
         if extent[0] < -FIT_TOLERANCE
             || extent[1] < -FIT_TOLERANCE
             || extent[2] > width + FIT_TOLERANCE
@@ -1096,12 +1708,12 @@ impl Layout<'_> {
         {
             return Err(Refused::OffPage {
                 op,
-                page: self.pages.len() - 1,
+                page: page_index,
                 flowing,
             });
         }
 
-        let page = self.page_mut();
+        let page = &mut self.pages[page_index];
         for (x, baseline, segments) in lines {
             let mut at = x;
             for segment in segments {
@@ -1114,6 +1726,7 @@ impl Layout<'_> {
                     size,
                     color: segment.color,
                     link: segment.link,
+                    artifact,
                 }));
                 at += segment.width;
             }
@@ -1508,6 +2121,7 @@ impl Layout<'_> {
                 size,
                 color: segment.color,
                 link: segment.link,
+                artifact: None,
             }));
         }
 
@@ -1775,7 +2389,9 @@ mod tests {
 
     use pdf_oxide::{fonts::bundled::DEJAVU_SANS, writer::EmbeddedFont};
 
-    use super::{lay_out, unordered, Embedded, Face, Fonts, Margins, Op, Refused, Run, Unordered};
+    use super::{
+        lay_out, substitute, unordered, Embedded, Face, Fonts, Margins, Op, Refused, Run, Unordered,
+    };
 
     // DejaVu Sans with its cmap cut down to `covered`, as a font with no space
     // glyph would have it.
@@ -1829,5 +2445,15 @@ mod tests {
         assert!(unordered('\u{0E3A}').is_none());
         assert!(unordered('\u{0EBA}').is_none());
         assert!(unordered('\u{0301}').is_none());
+    }
+
+    #[test]
+    fn placeholders_are_replaced_once_and_other_braces_kept() {
+        assert_eq!(substitute("{page}/{pages}", "iv", "9"), "iv/9");
+        assert_eq!(
+            substitute("{{page}} {pagesx {page", "1", "2"),
+            "{1} {pagesx {page"
+        );
+        assert_eq!(substitute("{page}", "{pages}", "2"), "{pages}");
     }
 }

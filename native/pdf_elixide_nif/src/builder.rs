@@ -3,11 +3,16 @@ use std::collections::{HashMap, HashSet};
 use pdf_oxide::{
     editor::{DocumentEditor, FormFieldValue, SaveOptions},
     elements::{ContentElement, FontSpec, PathContent, TextContent, TextStyle},
+    extractors::{
+        page_labels::{PageLabelRange, PageLabelStyle},
+        text::{ArtifactType, PaginationSubtype},
+    },
     fonts::bundled::{DEJAVU_SANS, DEJAVU_SANS_BOLD},
     geometry::Rect,
     writer::{
+        outline_builder::{OutlineBuilder, OutlineDestination, OutlineItem, OutlineStyle},
         Annotation, DocumentBuilder, EmbeddedFont, FitMode, FluentPageBuilder, ImageData,
-        LinkAction, LinkAnnotation, PageSize, WatermarkAnnotation,
+        LinkAction, LinkAnnotation, PageLabelsBuilder, PageSize, WatermarkAnnotation,
     },
 };
 use rustler::{Binary, NifMap, NifResult, NifTaggedEnum, NifUnitEnum};
@@ -20,11 +25,13 @@ use crate::{
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Align, Barcode, Caption, Cell, Embedded, Face, Fit, FlowImage, Fonts,
-        Item, Margins, Marker, Op, Picture, Placed, Plan, Refused, Run, Shape, Stroke, Table,
-        Unordered, Watermark, Width, Within,
+        self, embedded_key, Align, Artifact, Barcode, Caption, Cell, Contents, Embedded, Entry,
+        EntryTarget, Face, Fit, FlowImage, Fonts, Item, LabelKind, Margins, Marker, Op, Picture,
+        Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke, Table, Unordered, Watermark,
+        Width, Within,
     },
     open_editor::OpenEditor,
+    page_label::MAX_LETTERED,
     paths::PathOpNif,
 };
 
@@ -73,6 +80,68 @@ pub enum OpNif<'a> {
     LinkInRect(LinkInRectNif),
     Watermark(WatermarkNif),
     Field(FieldNif),
+    Bookmark(BookmarkNif),
+    PageLabels(PageLabelsNif),
+    Header(Option<RunningNif>),
+    Footer(Option<RunningNif>),
+    Contents(ContentsNif),
+}
+
+#[derive(NifMap)]
+pub struct BookmarkNif {
+    title: String,
+    level: usize,
+    to: Option<LinkNif>,
+    open: bool,
+    bold: bool,
+    italic: bool,
+    color: Option<RgbNif>,
+}
+
+#[derive(NifMap)]
+pub struct PageLabelsNif {
+    style: LabelStyleNif,
+    prefix: Option<String>,
+    start: u32,
+}
+
+#[derive(NifUnitEnum, Clone, Copy)]
+pub enum LabelStyleNif {
+    Decimal,
+    RomanLower,
+    RomanUpper,
+    AlphaLower,
+    AlphaUpper,
+    None,
+}
+
+impl From<LabelStyleNif> for PageLabelStyle {
+    fn from(style: LabelStyleNif) -> Self {
+        match style {
+            LabelStyleNif::Decimal => PageLabelStyle::Decimal,
+            LabelStyleNif::RomanLower => PageLabelStyle::RomanLower,
+            LabelStyleNif::RomanUpper => PageLabelStyle::RomanUpper,
+            LabelStyleNif::AlphaLower => PageLabelStyle::AlphaLower,
+            LabelStyleNif::AlphaUpper => PageLabelStyle::AlphaUpper,
+            LabelStyleNif::None => PageLabelStyle::None,
+        }
+    }
+}
+
+#[derive(NifMap)]
+pub struct RunningNif {
+    left: Vec<RunNif>,
+    center: Vec<RunNif>,
+    right: Vec<RunNif>,
+    font: FontNif,
+    font_size: f64,
+}
+
+#[derive(NifMap)]
+pub struct ContentsNif {
+    font: FontNif,
+    font_size: f64,
+    indent: f64,
 }
 
 #[derive(NifMap)]
@@ -162,7 +231,31 @@ pub enum WatermarkFontNif {
 // Flow link ids index this table; retain the originating op for refusals.
 struct Link {
     op: usize,
-    target: LinkNif,
+    target: Target,
+}
+
+enum Target {
+    Given(LinkNif),
+    // A contents entry, pointing where its bookmark points.
+    Bookmark(usize),
+}
+
+#[derive(Default)]
+struct Tables {
+    links: Vec<Link>,
+    fields: Vec<FieldNif>,
+    bookmarks: Vec<Bookmark>,
+}
+
+struct Bookmark {
+    op: usize,
+    title: String,
+    level: usize,
+    to: Option<LinkNif>,
+    open: bool,
+    bold: bool,
+    italic: bool,
+    color: Option<Rgb>,
 }
 
 #[derive(NifMap)]
@@ -629,6 +722,40 @@ fn family_of(font: FontNif, auto: Family) -> Family {
 
 fn auto_family(ops: &[OpNif<'_>]) -> Family {
     let helvetica = base14::face("Helvetica").expect("Helvetica is a base-14 face");
+    let auto_running = ops.iter().any(|op| {
+        matches!(
+            op,
+            OpNif::Header(Some(RunningNif {
+                font: FontNif::Auto,
+                ..
+            })) | OpNif::Footer(Some(RunningNif {
+                font: FontNif::Auto,
+                ..
+            }))
+        )
+    });
+    let auto_contents = ops.iter().any(|op| {
+        matches!(
+            op,
+            OpNif::Contents(ContentsNif {
+                font: FontNif::Auto,
+                ..
+            })
+        )
+    });
+    // Bookmark titles are drawn only in contents, and label prefixes only
+    // through `{page}` or contents.
+    let drawn_text = ops
+        .iter()
+        .filter_map(|op| match op {
+            OpNif::Bookmark(mark) if auto_contents => Some(mark.title.as_str()),
+            OpNif::PageLabels(PageLabelsNif {
+                prefix: Some(prefix),
+                ..
+            }) if auto_running || auto_contents => Some(prefix.as_str()),
+            _ => None,
+        })
+        .flat_map(str::chars);
     let needs_unicode = ops
         .iter()
         .filter_map(|op| match op {
@@ -671,11 +798,26 @@ fn auto_family(ops: &[OpNif<'_>]) -> Family {
                 }) => Some(vec![runs]),
                 _ => None,
             },
+            OpNif::Header(Some(RunningNif {
+                font: FontNif::Auto,
+                left,
+                center,
+                right,
+                ..
+            }))
+            | OpNif::Footer(Some(RunningNif {
+                font: FontNif::Auto,
+                left,
+                center,
+                right,
+                ..
+            })) => Some(vec![left, center, right]),
             _ => None,
         })
         .flatten()
         .flatten()
         .flat_map(|run| run.text.chars())
+        .chain(drawn_text)
         .any(|c| !c.is_whitespace() && helvetica.width(c).is_none());
 
     if needs_unicode {
@@ -712,8 +854,77 @@ fn runs(
 }
 
 fn linked(links: &mut Vec<Link>, op: usize, target: LinkNif) -> usize {
-    links.push(Link { op, target });
+    links.push(Link {
+        op,
+        target: Target::Given(target),
+    });
     links.len() - 1
+}
+
+fn running(
+    op: usize,
+    running: RunningNif,
+    auto: Family,
+    faces: &mut Faces<'_, '_>,
+    links: &mut Vec<Link>,
+) -> NifResult<Running> {
+    let font = running.font;
+    Ok(Running {
+        face: faces.face(op, family_of(font, auto), Style::Regular)?,
+        left: runs(op, running.left, font, auto, faces, links)?,
+        center: runs(op, running.center, font, auto, faces, links)?,
+        right: runs(op, running.right, font, auto, faces, links)?,
+        size: running.font_size,
+    })
+}
+
+fn contents_entries(
+    ops: &mut [Op],
+    bookmarks: &[Bookmark],
+    links: &mut Vec<Link>,
+) -> NifResult<()> {
+    let Some((index, contents)) = ops.iter_mut().enumerate().find_map(|(index, op)| match op {
+        Op::Contents(contents) => Some((index, contents)),
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+    if bookmarks.is_empty() {
+        return Err(unsupported(format!(
+            "op {index}: contents/2 lists the document's bookmarks, but it has none; add \
+             bookmarks, or leave out the contents"
+        )));
+    }
+
+    contents.entries = bookmarks
+        .iter()
+        .enumerate()
+        .map(|(number, bookmark)| {
+            links.push(Link {
+                op: index,
+                target: Target::Bookmark(number),
+            });
+            let link = links.len() - 1;
+            Entry {
+                runs: vec![Run {
+                    text: bookmark.title.clone(),
+                    face: contents.face,
+                    color: None,
+                    link: Some(link),
+                }],
+                level: bookmark.level,
+                target: match &bookmark.to {
+                    None => EntryTarget::Mark(number),
+                    Some(LinkNif::Page(page)) => EntryTarget::Page(*page),
+                    Some(LinkNif::Anchor(name)) => EntryTarget::Anchor(name.clone()),
+                    // Not sent for a bookmark; it names no page.
+                    Some(LinkNif::Uri(_)) => EntryTarget::Page(usize::MAX),
+                },
+                link,
+            }
+        })
+        .collect();
+    Ok(())
 }
 
 fn watermark(mark: WatermarkNif) -> Watermark {
@@ -737,12 +948,17 @@ fn ops(
     ops: Vec<OpNif<'_>>,
     faces: &mut Faces<'_, '_>,
     pictures: &mut Pictures<'_, '_>,
-    links: &mut Vec<Link>,
-    fields: &mut Vec<FieldNif>,
+    tables: &mut Tables,
 ) -> NifResult<Vec<Op>> {
     let auto = auto_family(&ops);
+    let Tables {
+        links,
+        fields,
+        bookmarks,
+    } = tables;
 
-    ops.into_iter()
+    let mut ops = ops
+        .into_iter()
         .enumerate()
         .map(|(index, op)| match op {
             OpNif::Page((width, height)) => Ok(Op::Page { width, height }),
@@ -844,8 +1060,50 @@ fn ops(
                 fields.push(field);
                 Ok(Op::Field(fields.len() - 1))
             }
+            OpNif::Bookmark(mark) => {
+                let flows = mark.to.is_none();
+                bookmarks.push(Bookmark {
+                    op: index,
+                    title: mark.title,
+                    level: mark.level,
+                    to: mark.to,
+                    open: mark.open,
+                    bold: mark.bold,
+                    italic: mark.italic,
+                    color: mark.color.map(Into::into),
+                });
+                Ok(if flows {
+                    Op::Bookmark(bookmarks.len() - 1)
+                } else {
+                    Op::Empty
+                })
+            }
+            OpNif::PageLabels(labels) => {
+                let mut range = PageLabelRange::new(0)
+                    .with_style(labels.style.into())
+                    .with_start_value(labels.start);
+                range.prefix = labels.prefix;
+                Ok(Op::PageLabels(range))
+            }
+            OpNif::Header(text) => Ok(Op::Header(
+                text.map(|text| running(index, text, auto, faces, links))
+                    .transpose()?,
+            )),
+            OpNif::Footer(text) => Ok(Op::Footer(
+                text.map(|text| running(index, text, auto, faces, links))
+                    .transpose()?,
+            )),
+            OpNif::Contents(contents) => Ok(Op::Contents(Contents {
+                entries: Vec::new(),
+                face: faces.face(index, family_of(contents.font, auto), Style::Regular)?,
+                size: contents.font_size,
+                indent: contents.indent,
+            })),
         })
-        .collect()
+        .collect::<NifResult<Vec<Op>>>()?;
+
+    contents_entries(&mut ops, bookmarks, links)?;
+    Ok(ops)
 }
 
 fn symbol(
@@ -1105,20 +1363,102 @@ fn refused(refusal: Refused) -> rustler::Error {
         Refused::NoSuchPage {
             op,
             page,
+            what,
             target,
             pages,
         } => format!(
-            "op {op} on page {page}: the link points to page {target}, but the document has \
-             {pages} page{}, numbered from 0; link to a page that exists",
+            "{}: the {what} points to page {target}, but the document has {pages} page{}, \
+             numbered from 0; point to a page that exists",
+            at(op, page),
             if pages == 1 { "" } else { "s" }
         ),
-        Refused::NoSuchAnchor { op, page, name } => format!(
-            "op {op} on page {page}: the link points to anchor {name:?}, which no anchor/2 \
-             call names; add the anchor or correct the name"
+        Refused::NoSuchAnchor {
+            op,
+            page,
+            what,
+            name,
+        } => format!(
+            "{}: the {what} points to anchor {name:?}, which no anchor/2 call names; add the \
+             anchor or correct the name",
+            at(op, page)
+        ),
+        Refused::Superseded { op, page, by, what } => format!(
+            "op {op}: its {what} setting would start on page {page}, where op {by} replaces \
+             it, so it would apply to no page; remove one of them, or put content between them"
+        ),
+        Refused::LabelTooLarge {
+            op,
+            page,
+            kind: LabelKind::Roman,
+        } => format!(
+            "op {op}: the label of page {page} would be past {}, which has no Roman numeral; \
+             start another label range before that page, or use another style",
+            flow::MAX_ROMAN
+        ),
+        Refused::LabelTooLarge {
+            op,
+            page,
+            kind: LabelKind::Letters,
+        } => format!(
+            "op {op}: the label of page {page} would be past {}, which in letters takes over \
+             1000; start another label range before that page, or use another style",
+            MAX_LETTERED
+        ),
+        Refused::LabelTooLarge {
+            op,
+            page,
+            kind: LabelKind::Number,
+        } => format!(
+            "op {op}: the label of page {page} would be past {}; use a smaller :start",
+            flow::MAX_NUMBER
+        ),
+        Refused::RunningTooTall {
+            op,
+            page,
+            what,
+            line,
+            room,
+        } => format!(
+            "op {op} on page {page}: the {what}'s line is {line} points tall (font size × line \
+             height), more than the {room}-point {} margin it sits in; reduce the font size or \
+             the line height, or enlarge the margin",
+            if what == "header" { "top" } else { "bottom" }
+        ),
+        Refused::RunningTooWide {
+            op,
+            page,
+            what,
+            part,
+            width,
+            room,
+        } => format!(
+            "op {op} on page {page}: the {what}'s {part} part is {width} points wide once \
+             {{page}} and {{pages}} are filled in, and does not fit between the margins, {room} \
+             points apart; shorten it or reduce the font size"
+        ),
+        Refused::RunningOverlap {
+            op,
+            page,
+            what,
+            parts: (first, second),
+        } => format!(
+            "op {op} on page {page}: the {what}'s {first} and {second} parts overlap once \
+             {{page}} and {{pages}} are filled in; shorten them or reduce the font size"
+        ),
+        Refused::ContentsUnsettled { op } => format!(
+            "op {op}: the page labels the contents shows kept moving as its length changed; \
+             shorten the bookmark titles or change the contents' :font_size"
         ),
     };
 
     unsupported(message)
+}
+
+fn at(op: usize, page: Option<usize>) -> String {
+    match page {
+        Some(page) => format!("op {op} on page {page}"),
+        None => format!("op {op}"),
+    }
 }
 
 fn emit(
@@ -1127,10 +1467,14 @@ fn emit(
     sources: &[(usize, &[u8])],
     images: &[Option<ImageData>],
     plan: Plan,
-    links: &[Link],
-    fields: &[FieldNif],
+    tables: &Tables,
 ) -> NifResult<Vec<u8>> {
-    check_targets(&plan, links).map_err(refused)?;
+    let Tables {
+        links,
+        fields,
+        bookmarks,
+    } = tables;
+    check_targets(&plan, links, bookmarks).map_err(refused)?;
 
     let mut doc = DocumentBuilder::new();
     if let Some(title) = meta.title {
@@ -1154,8 +1498,21 @@ fn emit(
     let Plan {
         pages,
         anchors,
+        bookmarks: marks,
+        labels,
         watermarks,
     } = plan;
+    let targets = Targets {
+        anchors: &anchors,
+        marks: &marks,
+        bookmarks,
+    };
+    if !bookmarks.is_empty() {
+        doc = doc.bookmark_tree(|outline| fill_outline(outline, &targets));
+    }
+    if !labels.is_empty() {
+        doc = doc.with_page_labels(PageLabelsBuilder::from_ranges(labels));
+    }
     for page in pages {
         let mut builder = doc.page(PageSize::Custom(page.width as f32, page.height as f32));
         let mut annotations = PageLinks::default();
@@ -1169,7 +1526,7 @@ fn emit(
                     if let Some(color) = placed.color {
                         style.color = color_from_components(color);
                     }
-                    let text = TextContent::new(
+                    let mut text = TextContent::new(
                         placed.text,
                         Rect::new(
                             placed.x as f32,
@@ -1183,6 +1540,13 @@ fn emit(
                         },
                         style,
                     );
+                    // Marked as pagination artifacts, which a screen reader skips.
+                    text.artifact_type = placed.artifact.map(|artifact| {
+                        ArtifactType::Pagination(match artifact {
+                            Artifact::Header => PaginationSubtype::Header,
+                            Artifact::Footer => PaginationSubtype::Footer,
+                        })
+                    });
                     builder.element(ContentElement::Text(text))
                 }
                 Item::Path(shape) => builder.element(ContentElement::Path(path_content(shape))),
@@ -1227,7 +1591,7 @@ fn emit(
         for mark in &watermarks {
             annotations.watermark(mark.clone());
         }
-        for annotation in annotations.build(links, &anchors, (page.width, page.height)) {
+        for annotation in annotations.build(links, &targets, (page.width, page.height)) {
             builder = builder.add_annotation(annotation);
         }
         builder.done();
@@ -1327,38 +1691,140 @@ fn fill(pdf: Vec<u8>, fields: &[FieldNif]) -> pdf_oxide::Result<Vec<u8>> {
 }
 
 // Refuse missing targets before the writer silently drops their destinations.
-fn check_targets(plan: &Plan, links: &[Link]) -> Result<(), Refused> {
-    for (page, plan_page) in plan.pages.iter().enumerate() {
-        for item in &plan_page.items {
-            let link = match item {
+fn check_targets(plan: &Plan, links: &[Link], bookmarks: &[Bookmark]) -> Result<(), Refused> {
+    let given = plan
+        .pages
+        .iter()
+        .enumerate()
+        .flat_map(|(page, plan_page)| {
+            plan_page.items.iter().filter_map(move |item| match item {
                 Item::Text(Placed {
                     link: Some(link), ..
                 })
-                | Item::Link { link, .. } => *link,
-                _ => continue,
-            };
-            let op = links[link].op;
-            match &links[link].target {
-                &LinkNif::Page(target) if target >= plan.pages.len() => {
-                    return Err(Refused::NoSuchPage {
-                        op,
-                        page,
-                        target,
-                        pages: plan.pages.len(),
-                    });
-                }
-                LinkNif::Anchor(name) if !plan.anchors.contains_key(name) => {
-                    return Err(Refused::NoSuchAnchor {
-                        op,
-                        page,
-                        name: name.clone(),
-                    });
-                }
-                _ => {}
+                | Item::Link { link, .. } => match &links[*link].target {
+                    Target::Given(target) => Some((links[*link].op, Some(page), "link", target)),
+                    // An entry points where its bookmark does, checked below.
+                    Target::Bookmark(_) => None,
+                },
+                _ => None,
+            })
+        })
+        .chain(
+            bookmarks.iter().filter_map(|bookmark| {
+                Some((bookmark.op, None, "bookmark", bookmark.to.as_ref()?))
+            }),
+        );
+
+    for (op, page, what, target) in given {
+        match target {
+            &LinkNif::Page(target) if target >= plan.pages.len() => {
+                return Err(Refused::NoSuchPage {
+                    op,
+                    page,
+                    what,
+                    target,
+                    pages: plan.pages.len(),
+                });
             }
+            LinkNif::Anchor(name) if !plan.anchors.contains_key(name) => {
+                return Err(Refused::NoSuchAnchor {
+                    op,
+                    page,
+                    what,
+                    name: name.clone(),
+                });
+            }
+            _ => {}
         }
     }
     Ok(())
+}
+
+struct Targets<'p> {
+    anchors: &'p HashMap<String, (usize, f64)>,
+    marks: &'p HashMap<usize, (usize, f64)>,
+    bookmarks: &'p [Bookmark],
+}
+
+enum Dest<'t> {
+    Uri(&'t str),
+    Page(usize),
+    // A page and the top of the content there.
+    At(usize, f64),
+}
+
+impl<'p> Targets<'p> {
+    fn given(&self, target: &'p LinkNif) -> Dest<'p> {
+        match target {
+            LinkNif::Uri(uri) => Dest::Uri(uri),
+            LinkNif::Page(page) => Dest::Page(*page),
+            LinkNif::Anchor(name) => {
+                let (page, top) = self.anchors[name];
+                Dest::At(page, top)
+            }
+        }
+    }
+
+    fn bookmark(&self, number: usize) -> Dest<'p> {
+        match &self.bookmarks[number].to {
+            Some(target) => self.given(target),
+            None => {
+                let (page, top) = self.marks[&number];
+                Dest::At(page, top)
+            }
+        }
+    }
+
+    fn of(&self, target: &'p Target) -> Dest<'p> {
+        match target {
+            Target::Given(target) => self.given(target),
+            Target::Bookmark(number) => self.bookmark(*number),
+        }
+    }
+}
+
+// Upstream's `add_child` descends into the child it adds, so each bookmark
+// first climbs back to its parent's level.
+fn fill_outline(outline: &mut OutlineBuilder, targets: &Targets) {
+    let mut depth = 0;
+    for (number, bookmark) in targets.bookmarks.iter().enumerate() {
+        let destination = match targets.bookmark(number) {
+            Dest::Uri(uri) => OutlineDestination::Uri(uri.to_string()),
+            Dest::Page(page) => OutlineDestination::Page(page),
+            Dest::At(page, top) => OutlineDestination::PageFit {
+                page,
+                fit: FitMode::XYZ {
+                    left: None,
+                    top: Some(top as f32),
+                    zoom: None,
+                },
+            },
+        };
+        let mut style = OutlineStyle::new();
+        if bookmark.bold {
+            style = style.bold();
+        }
+        if bookmark.italic {
+            style = style.italic();
+        }
+        if let Some([r, g, b]) = bookmark.color {
+            style = style.color(r, g, b);
+        }
+        let item = OutlineItem::with_destination(bookmark.title.clone(), destination)
+            .with_style(style)
+            .with_open(bookmark.open);
+
+        let level = bookmark.level.clamp(1, depth + 1);
+        if level == 1 {
+            outline.add_item(item);
+        } else {
+            for _ in level..=depth {
+                outline.pop();
+            }
+            outline.add_child(item);
+        }
+        depth = level;
+    }
 }
 
 fn text_box(fonts: &Fonts, placed: &Placed) -> [f64; 4] {
@@ -1401,12 +1867,7 @@ impl PageLinks {
         self.pending.push(Pending::Watermark(mark));
     }
 
-    fn build(
-        mut self,
-        links: &[Link],
-        anchors: &HashMap<String, (usize, f64)>,
-        page: (f64, f64),
-    ) -> Vec<Annotation> {
+    fn build(mut self, links: &[Link], targets: &Targets, page: (f64, f64)) -> Vec<Annotation> {
         self.pending
             .into_iter()
             .map(|pending| match pending {
@@ -1419,12 +1880,12 @@ impl PageLinks {
                         .map(|value| value as f32)
                         .collect();
                     Annotation::Link(
-                        link_annotation(&links[link].target, enclosing(&quads), anchors)
+                        link_annotation(targets.of(&links[link].target), enclosing(&quads))
                             .with_quad_points(quads),
                     )
                 }
                 Pending::Area(link, rect) => {
-                    Annotation::Link(link_annotation(&links[link].target, rect, anchors))
+                    Annotation::Link(link_annotation(targets.of(&links[link].target), rect))
                 }
                 Pending::Watermark(mark) => {
                     Annotation::Watermark(watermark_annotation(&mark, page))
@@ -1456,22 +1917,17 @@ fn span(from: f32, to: f32) -> f32 {
 }
 
 // Targets were checked against the layout, so every page and anchor exists.
-fn link_annotation(
-    target: &LinkNif,
-    rect: Rect,
-    anchors: &HashMap<String, (usize, f64)>,
-) -> LinkAnnotation {
-    match target {
-        LinkNif::Uri(uri) => LinkAnnotation::uri(rect, uri.as_str()),
-        LinkNif::Page(page) => LinkAnnotation::goto_page(rect, *page),
-        LinkNif::Anchor(name) => {
-            let (page, y) = anchors[name];
+fn link_annotation(dest: Dest, rect: Rect) -> LinkAnnotation {
+    match dest {
+        Dest::Uri(uri) => LinkAnnotation::uri(rect, uri),
+        Dest::Page(page) => LinkAnnotation::goto_page(rect, page),
+        Dest::At(page, top) => {
             let mut link = LinkAnnotation::goto_page(rect, page);
             link.action = LinkAction::GoTo {
                 page,
                 fit: Some(FitMode::XYZ {
                     left: None,
-                    top: Some(y as f32),
+                    top: Some(top as f32),
                     zoom: None,
                 }),
             };
@@ -1637,9 +2093,8 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
             sources: images,
             decoded: vec![None; images.len()],
         };
-        let mut links = Vec::new();
-        let mut fields = Vec::new();
-        let ops = ops(op_nifs, &mut faces, &mut pictures, &mut links, &mut fields)?;
+        let mut tables = Tables::default();
+        let ops = ops(op_nifs, &mut faces, &mut pictures, &mut tables)?;
         keep_apart(pictures.decoded.iter_mut().flatten());
         let plan =
             flow::lay_out(&faces.fonts, &margins, line_height, page_size, &ops).map_err(refused)?;
@@ -1650,8 +2105,7 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
             &faces.sources,
             &pictures.decoded,
             plan,
-            &links,
-            &fields,
+            &tables,
         )
     })
 }
@@ -1670,12 +2124,12 @@ mod tests {
         geometry::Rect,
         object::Object,
         writer::{
-            form_fields::TextFieldWidget, Annotation, DocumentBuilder, EmbeddedFont, FontManager,
-            FreeTextAnnotation, LinkAnnotation, PageSize, StampAnnotation, StampType,
-            StreamingColumn, StreamingTableConfig, Table, TableCell, TextAnnotation, TextLayout,
-            TextMarkupAnnotation, WatermarkAnnotation,
+            form_fields::TextFieldWidget, Annotation, Artifact, ArtifactStyle, DocumentBuilder,
+            EmbeddedFont, FontManager, FreeTextAnnotation, LinkAnnotation, PageSize, PageTemplate,
+            StampAnnotation, StampType, StreamingColumn, StreamingTableConfig, Table, TableCell,
+            TextAnnotation, TextLayout, TextMarkupAnnotation, WatermarkAnnotation,
         },
-        PdfDocument, TextMarkupType,
+        Destination, PdfDocument, TextMarkupType,
     };
 
     use crate::metadata::read_metadata;
@@ -2240,5 +2694,59 @@ mod tests {
         let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
 
         assert!(!doc.extract_text(0).expect("extracts").contains('中'));
+    }
+
+    #[test]
+    fn upstream_still_drops_an_outline_destination_past_the_last_page() {
+        let mut builder = DocumentBuilder::new().bookmark("Gone", 1);
+        builder.page(PageSize::Letter).done();
+        let pdf = builder.build().expect("builds");
+
+        assert!(contains(&pdf, b"/Title (Gone)"));
+        assert!(!contains(&pdf, b"/Dest") && !contains(&pdf, b"/A "));
+    }
+
+    // The A4 page the bookmark names moves to page 1; the bookmark stays on 0.
+    #[test]
+    fn upstream_still_inserts_a_letter_contents_page_without_renumbering() {
+        let mut builder = DocumentBuilder::new().bookmark("Chapter", 0);
+        builder.page(PageSize::A4).done();
+        let pdf = builder.insert_toc(0, "Contents").build().expect("builds");
+        let doc = PdfDocument::from_bytes(pdf.clone()).expect("parses");
+        let outline = doc.get_outline().expect("reads").expect("has one");
+
+        assert_eq!(doc.page_count().expect("counts"), 2);
+        assert!(matches!(outline[0].dest, Some(Destination::PageIndex(0))));
+        assert!(contains(&pdf, b"/MediaBox [0 0 612 792]"));
+    }
+
+    // Object order varies between builds, so compare the page's content.
+    #[test]
+    fn upstream_still_ignores_the_artifact_separator() {
+        let build = |style: ArtifactStyle| {
+            let template = PageTemplate::new().header(Artifact::left("Top").with_style(style));
+            let mut builder = DocumentBuilder::new().template(template);
+            builder.page(PageSize::Letter).done();
+            let pdf = builder.build().expect("builds");
+            let at = |pattern: &[u8]| {
+                pdf.windows(pattern.len())
+                    .position(|window| window == pattern)
+                    .expect("has a content stream")
+            };
+            pdf[at(b"stream\n")..at(b"endstream")].to_vec()
+        };
+
+        assert_eq!(
+            build(ArtifactStyle::new()),
+            build(ArtifactStyle::new().with_separator(2.0))
+        );
+    }
+
+    // An em dash is 1000 units wide in Helvetica.
+    #[test]
+    fn upstream_still_measures_template_text_with_approximate_widths() {
+        let (width, _) = TextLayout::new().text_bounds("\u{2014}", "Helvetica", 1000.0, 10_000.0);
+
+        assert_eq!(width, 500.0);
     }
 }

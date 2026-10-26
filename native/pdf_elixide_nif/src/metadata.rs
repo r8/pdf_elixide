@@ -12,7 +12,9 @@ use pdf_oxide::{
 use rustler::{NifMap, NifResult, NifUnitEnum, ResourceArc};
 
 use crate::{
-    error::to_nif_err,
+    atoms,
+    error::{tagged_err, to_nif_err},
+    page_label::{self, TooLong, MAX_LETTERED},
     pages::ensure_page_in_range,
     resource::DocumentResource,
     text_string::{decode_pdf_text_string, encode_pdf_text_string},
@@ -232,10 +234,20 @@ fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
     resource.doc.with_read(|doc| {
         let ranges = PageLabelExtractor::extract(doc).map_err(to_nif_err)?;
         let count = doc.page_count().map_err(to_nif_err)?;
-        Ok((0..count)
-            .map(|index| PageLabelExtractor::get_label(&ranges, index))
-            .collect())
+        (0..count)
+            .map(|index| page_label::label(&ranges, index).map_err(too_long))
+            .collect()
     })
+}
+
+fn too_long(TooLong { page }: TooLong) -> rustler::Error {
+    tagged_err(
+        atoms::unsupported(),
+        format!(
+            "the label of page {page} counts past {MAX_LETTERED} in letters, which would take \
+             over 1000 of them; this library reads labels in letters up to {MAX_LETTERED}"
+        ),
+    )
 }
 
 // Returns one page's logical page label. Upstream has no single-label accessor
@@ -248,12 +260,12 @@ fn document_page_label(
     page_index: usize,
 ) -> NifResult<String> {
     resource.doc.with_read(|doc| {
-        // Load-bearing: `get_label` is infallible and falls back to the decimal
-        // page number, so an out-of-range index would silently yield a label.
+        // Load-bearing: a label falls back to the decimal page number, so an
+        // out-of-range index would silently yield one.
         ensure_page_in_range(doc, page_index)?;
 
         let ranges = PageLabelExtractor::extract(doc).map_err(to_nif_err)?;
-        Ok(PageLabelExtractor::get_label(&ranges, page_index))
+        page_label::label(&ranges, page_index).map_err(too_long)
     })
 }
 

@@ -365,7 +365,35 @@ defmodule PdfElixide.OptionDefaultsTest do
     end
 
     test "Builder.heading/4" do
-      assert Builder.__option_defaults__(:heading) == %{font: nil, font_size: nil}
+      assert Builder.__option_defaults__(:heading) == %{
+               font: nil,
+               font_size: nil,
+               bookmark: false
+             }
+    end
+
+    test "the Builder navigation operations" do
+      assert Builder.__option_defaults__(:bookmark) == %{
+               level: 1,
+               to: nil,
+               open: true,
+               bold: false,
+               italic: false,
+               color: nil
+             }
+
+      assert Builder.__option_defaults__(:page_labels) == %{prefix: nil, start: 1}
+
+      assert Builder.__option_defaults__(:running) == %{
+               left: nil,
+               center: nil,
+               right: nil,
+               font: nil,
+               font_size: nil,
+               color: nil
+             }
+
+      assert Builder.__option_defaults__(:contents) == %{font: nil, font_size: nil, indent: nil}
     end
 
     test "Builder.text_in_rect/4" do

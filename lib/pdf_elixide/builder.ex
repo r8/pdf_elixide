@@ -48,6 +48,16 @@ defmodule PdfElixide.Builder do
   a page, or every page. See [Links](guides/building-documents.md#links) and
   [Watermarks](guides/building-documents.md#watermarks).
 
+  ## Navigation and page furniture
+
+  `bookmark/3`, or a heading's `:bookmark` option, adds to the outline a
+  viewer shows, and `contents/2` lists the bookmarks on a page.
+  `page_labels/3` sets the labels a viewer shows for pages, and `header/2`
+  and `footer/2` draw running text in the margins. See
+  [Navigation](guides/building-documents.md#navigation),
+  [Page labels](guides/building-documents.md#page-labels) and
+  [Headers and footers](guides/building-documents.md#headers-and-footers).
+
   ## Form fields
 
   `text_field/4`, `check_box/4`, `combo_box/5`, `list_box/5`,
@@ -95,6 +105,8 @@ defmodule PdfElixide.Builder do
     :current_page_size,
     :anchors,
     :field_names,
+    :bookmark_level,
+    :contents,
     :ops
   ]
   defstruct @enforce_keys
@@ -121,6 +133,8 @@ defmodule PdfElixide.Builder do
           current_page_size: {float(), float()},
           anchors: MapSet.t(String.t()),
           field_names: MapSet.t(String.t()),
+          bookmark_level: non_neg_integer(),
+          contents: boolean(),
           ops: [tuple()]
         }
 
@@ -266,12 +280,20 @@ defmodule PdfElixide.Builder do
     * `:font_size` — text size in points. Defaults to `nil`, which scales the
       document's `:font_size` by the level: 2, 1.5, 1.25 and 1.1 times for
       levels 1 to 4.
+    * `:bookmark` — `true` adds a `bookmark/3` at the heading's level that
+      points to the heading and is titled with its text; a string titles it
+      otherwise. Defaults to `false`, no bookmark. The level must follow the
+      rule of `t:bookmark_opts/0`.
 
   Size validation is as for `t:paragraph_opts/0`.
   """
-  @type heading_opts :: [font: font() | nil, font_size: number() | nil]
+  @type heading_opts :: [
+          font: font() | nil,
+          font_size: number() | nil,
+          bookmark: boolean() | String.t()
+        ]
 
-  @heading_opts_keys [:font, :font_size]
+  @heading_opts_keys [:font, :font_size, :bookmark]
 
   @heading_scales %{1 => 2.0, 2 => 1.5, 3 => 1.25, 4 => 1.1}
 
@@ -651,6 +673,112 @@ defmodule PdfElixide.Builder do
   @script_schemes ["javascript:", "vbscript:"]
 
   @typedoc """
+  Options accepted by `bookmark/3`.
+
+    * `:level` — the bookmark's depth in the outline, `1` for the top. A
+      bookmark nests under the closest bookmark before it with a smaller
+      level, so its level can be at most one more than the previous
+      bookmark's, and at most 256. Defaults to `1`.
+    * `:to` — `{:page, index}` for a zero-based page of this document, or
+      `{:anchor, name}` for a place named by `anchor/2`. Defaults to `nil`,
+      the next flowing content; see `bookmark/3`. A page past the last one,
+      or an anchor no `anchor/2` call names, is refused when the document is
+      built.
+    * `:open` — whether a viewer first shows the bookmark's children.
+      Defaults to `true`.
+    * `:bold`, `:italic` — how a viewer styles the title. Each defaults to
+      `false`.
+    * `:color` — a `PdfElixide.Color.RGB` for the title. Defaults to `nil`,
+      the viewer's usual color.
+  """
+  @type bookmark_opts :: [
+          level: pos_integer(),
+          to: {:page, non_neg_integer()} | {:anchor, String.t()} | nil,
+          open: boolean(),
+          bold: boolean(),
+          italic: boolean(),
+          color: RGB.t() | nil
+        ]
+
+  @bookmark_opts_keys [:level, :to, :open, :bold, :italic, :color]
+
+  # Deeper outlines are not read back.
+  @max_bookmark_level 256
+
+  @typedoc """
+  How `page_labels/3` numbers pages: `:decimal` (1, 2, 3), `:roman_lower`
+  (i, ii, iii), `:roman_upper` (I, II, III), `:alpha_lower` (a, b, …, z, aa,
+  bb, …, zz, aaa, …), `:alpha_upper` (A, B, …), or `:none`, the prefix alone.
+  """
+  @type label_style ::
+          :decimal | :roman_lower | :roman_upper | :alpha_lower | :alpha_upper | :none
+
+  @label_styles [:decimal, :roman_lower, :roman_upper, :alpha_lower, :alpha_upper, :none]
+
+  @typedoc """
+  Options accepted by `page_labels/3`.
+
+    * `:prefix` — text put before each number, such as `"A-"`, on one line.
+      Defaults to `nil`, none.
+    * `:start` — the number of the range's first page, a positive integer.
+      Defaults to `1`. Labels are limited to 2147483647 for numbers, 3999 for
+      Roman numerals and 26000 for letters. A range must start within its
+      style's limit; a later page past it is refused when the document is built.
+  """
+  @type page_labels_opts :: [prefix: String.t() | nil, start: pos_integer()]
+
+  @page_labels_opts_keys [:prefix, :start]
+
+  @typedoc """
+  The parts and options of `header/2` and `footer/2`.
+
+    * `:left`, `:center`, `:right` — a `t:text/0` drawn on one line at the
+      left margin, the center of the page and the right margin. Each defaults
+      to `nil`, nothing; give at least one. `{page}` in a run is replaced with
+      the page's label, as `PdfElixide.Document.page_labels/1` reports it,
+      and `{pages}` with the number of pages.
+    * `:font` — the `t:font/0`. Defaults to `nil`, which uses the document's
+      `:font`.
+    * `:font_size` — text size in points. Defaults to `nil`, which uses the
+      document's `:font_size`.
+    * `:color` — a `PdfElixide.Color.RGB` for runs that set no color of their
+      own. Defaults to `nil`, black.
+
+  The line, `:font_size` times the document's `:line_height` tall, must fit
+  in the margin it is centered in. Parts that are too wide for the space
+  between the margins, or that overlap, are refused when the document is
+  built, after `{page}` and `{pages}` are filled in.
+  """
+  @type running_opts :: [
+          left: text() | nil,
+          center: text() | nil,
+          right: text() | nil,
+          font: font() | nil,
+          font_size: number() | nil,
+          color: RGB.t() | nil
+        ]
+
+  @running_opts_keys [:left, :center, :right, :font, :font_size, :color]
+
+  @typedoc """
+  Options accepted by `contents/2`.
+
+    * `:font` — the `t:font/0`. Defaults to `nil`, which uses the document's
+      `:font`.
+    * `:font_size` — text size in points. Defaults to `nil`, which uses the
+      document's `:font_size`.
+    * `:indent` — how far each outline level is indented, in points.
+      Defaults to `nil`, the text size.
+  """
+  @type contents_opts :: [
+          font: font() | nil,
+          font_size: number() | nil,
+          indent: number() | nil
+        ]
+
+  @contents_opts_keys [:font, :font_size, :indent]
+
+  @typedoc """
   A cell of `table/3`: a `t:text/0`, or a cell with its own options made by
   `cell/2`.
   """
@@ -814,6 +942,8 @@ defmodule PdfElixide.Builder do
         current_page_size: options.page_size,
         anchors: MapSet.new(),
         field_names: MapSet.new(),
+        bookmark_level: 0,
+        contents: false,
         ops: []
       })
     )
@@ -875,9 +1005,22 @@ defmodule PdfElixide.Builder do
   def heading(%__MODULE__{} = builder, level, text, opts \\ [])
       when level in 1..4 and (is_binary(text) or is_list(text)) and is_list(opts) do
     runs = text |> runs!() |> Enum.map(&%{&1 | bold: true})
-    %{font: font, font_size: font_size} = build_heading_options(opts)
+    %{font: font, font_size: font_size, bookmark: bookmark} = build_heading_options(opts)
     font_size = font_size || builder.font_size * Map.fetch!(@heading_scales, level)
     validate_line_fits!(builder, font_size)
+
+    builder =
+      case bookmark do
+        false ->
+          builder
+
+        true ->
+          title = runs |> Enum.map_join(& &1.text) |> String.split() |> Enum.join(" ")
+          add_bookmark(builder, title!(":bookmark", title), level, %{}, "level")
+
+        title ->
+          add_bookmark(builder, title, level, %{}, "level")
+      end
 
     op = {:heading, %{runs: runs, font: font || builder.font, font_size: font_size}}
     %{builder | ops: [op | builder.ops]}
@@ -1607,6 +1750,194 @@ defmodule PdfElixide.Builder do
     end
 
     %{builder | ops: [{:watermark, Map.put(options, :text, text)} | builder.ops]}
+  end
+
+  @doc """
+  Adds a bookmark titled `title` to the document's outline.
+
+  By default the bookmark points to the top of the next paragraph, heading,
+  list, table, image or rule, wherever that content lands, as `anchor/2`
+  does; `heading/4`'s `:bookmark` option adds one for a heading. Bookmarks
+  appear in the outline in the order they are added. See
+  `t:bookmark_opts/0` for nesting and the options, and
+  [Navigation](guides/building-documents.md#navigation) for an example.
+
+      PdfElixide.Builder.bookmark(builder, "Results", level: 2)
+  """
+  @spec bookmark(t(), String.t(), bookmark_opts()) :: t()
+  def bookmark(%__MODULE__{} = builder, title, opts \\ [])
+      when is_binary(title) and is_list(opts) do
+    title = title!("title", title)
+    options = build_bookmark_options(opts)
+    add_bookmark(builder, title, options.level, Map.delete(options, :level), ":level")
+  end
+
+  defp add_bookmark(builder, title, level, options, label) do
+    previous = builder.bookmark_level
+
+    if level > previous + 1 do
+      after_previous =
+        if previous == 0,
+          do: "it is the first bookmark",
+          else: "the previous one is at #{previous}"
+
+      raise ArgumentError,
+            "invalid #{label}, a bookmark can be at most one level deeper than the bookmark " <>
+              "before it, and #{after_previous}: #{level}"
+    end
+
+    options = Map.merge(build_bookmark_options([]), options)
+    op = {:bookmark, Map.merge(options, %{title: title, level: level})}
+    %{builder | bookmark_level: level, ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Numbers pages in `style` until the next `page_labels/3`.
+
+  These are the labels a viewer shows for its pages, and what `{page}`
+  prints in a `header/2` or `footer/2`. The range starts on the page the next
+  content lands on; see [Page labels](guides/building-documents.md#page-labels)
+  for where exactly, and for an example. See `t:label_style/0` for the styles
+  and `t:page_labels_opts/0` for the options.
+
+      PdfElixide.Builder.page_labels(builder, :roman_lower)
+  """
+  @spec page_labels(t(), label_style(), page_labels_opts()) :: t()
+  def page_labels(%__MODULE__{} = builder, style, opts \\ []) when is_list(opts) do
+    if style not in @label_styles do
+      raise ArgumentError,
+            "invalid style, expected one of #{inspect(@label_styles)}: #{inspect(style)}"
+    end
+
+    options = build_page_labels_options(opts)
+
+    if style in [:roman_lower, :roman_upper] and options.start > 3999 do
+      raise ArgumentError,
+            "invalid :start, Roman numerals stop at 3999: #{inspect(options.start)}"
+    end
+
+    if style in [:alpha_lower, :alpha_upper] and options.start > 26_000 do
+      raise ArgumentError,
+            "invalid :start, letters stop at 26000, which take 1000 of them: " <>
+              inspect(options.start)
+    end
+
+    %{builder | ops: [{:page_labels, Map.put(options, :style, style)} | builder.ops]}
+  end
+
+  @doc """
+  Draws running text in the top margin until the next `header/2`; `nil` stops it.
+
+  The header starts on the page the next content lands on, as a
+  `page_labels/3` range does. See `t:running_opts/0` for the parts and
+  options, and
+  [Headers and footers](guides/building-documents.md#headers-and-footers) for
+  an example.
+
+      PdfElixide.Builder.header(builder, left: "Annual report", right: "{page} of {pages}")
+  """
+  @spec header(t(), running_opts() | nil) :: t()
+  def header(%__MODULE__{} = builder, parts) when is_list(parts) or parts == nil do
+    running(builder, :header, parts, builder.margin_top, "top")
+  end
+
+  @doc """
+  Draws running text in the bottom margin until the next `footer/2`; `nil` stops it.
+
+  Starting-page behavior and options are as for `header/2`.
+
+      PdfElixide.Builder.footer(builder, center: "{page}")
+  """
+  @spec footer(t(), running_opts() | nil) :: t()
+  def footer(%__MODULE__{} = builder, parts) when is_list(parts) or parts == nil do
+    running(builder, :footer, parts, builder.margin_bottom, "bottom")
+  end
+
+  defp running(builder, tag, nil, _margin, _where) do
+    %{builder | ops: [{tag, nil} | builder.ops]}
+  end
+
+  defp running(builder, tag, parts, margin, where) do
+    options = build_running_options(parts)
+
+    if Enum.all?([options.left, options.center, options.right], &is_nil/1) do
+      raise ArgumentError,
+            "invalid #{tag}, expected at least one of :left, :center and :right, or nil to " <>
+              "stop the #{tag}: #{inspect(parts)}"
+    end
+
+    font_size = options.font_size || builder.font_size
+    line = font_size * builder.line_height
+
+    if line > margin do
+      raise ArgumentError,
+            "invalid :font_size, a line #{line} points tall (font size × line height) does " <>
+              "not fit the #{margin}-point #{where} margin; reduce the font size or the line " <>
+              "height, or enlarge the margin"
+    end
+
+    validate_line_precise!(builder, font_size)
+
+    text =
+      Map.new([:left, :center, :right], fn part ->
+        {part, part_runs!(part, Map.fetch!(options, part), options.color)}
+      end)
+
+    op = Map.merge(text, %{font: options.font || builder.font, font_size: font_size})
+    %{builder | ops: [{tag, op} | builder.ops]}
+  end
+
+  defp part_runs!(_part, nil, _color), do: []
+
+  defp part_runs!(part, text, color) when is_binary(text) or is_list(text) do
+    runs = text |> runs!() |> Enum.map(&%{&1 | color: &1.color || color})
+
+    if Enum.any?(runs, &String.contains?(&1.text, "\n")) do
+      raise ArgumentError,
+            "invalid #{inspect(part)}, a header or footer part is one line, so it cannot " <>
+              "contain \"\\n\""
+    end
+
+    runs
+  end
+
+  defp part_runs!(part, other, _color) do
+    raise ArgumentError,
+          "invalid #{inspect(part)}, expected a string, a list of runs or nil: #{inspect(other)}"
+  end
+
+  @doc """
+  Adds a table of contents listing every bookmark, wherever it is added.
+
+  Each bookmark's title is indented by its level, links to where the
+  bookmark points, and has its page's label at the right margin. The
+  contents flow like a list and can run onto further pages, and the labels
+  account for the pages the contents itself takes. A document can have one
+  contents, and it needs at least one bookmark when it is built. See
+  `t:contents_opts/0` for the options and
+  [Navigation](guides/building-documents.md#navigation) for an example.
+
+      PdfElixide.Builder.contents(builder)
+  """
+  @spec contents(t(), contents_opts()) :: t()
+  def contents(%__MODULE__{} = builder, opts \\ []) when is_list(opts) do
+    if builder.contents do
+      raise ArgumentError, "invalid contents, a document can have only one contents"
+    end
+
+    options = build_contents_options(opts)
+    font_size = options.font_size || builder.font_size
+    validate_line_fits!(builder, font_size)
+
+    op =
+      {:contents,
+       %{
+         font: options.font || builder.font,
+         font_size: font_size,
+         indent: options.indent || font_size
+       }}
+
+    %{builder | contents: true, ops: [op | builder.ops]}
   end
 
   @doc """
@@ -2342,6 +2673,10 @@ defmodule PdfElixide.Builder do
           | :list_box
           | :push_button
           | :signature_field
+          | :bookmark
+          | :page_labels
+          | :running
+          | :contents
         ) :: map()
   def __option_defaults__(:new), do: build_new_options([])
   def __option_defaults__(:paragraph), do: build_paragraph_options([])
@@ -2366,6 +2701,128 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:list_box), do: build_list_box_options([])
   def __option_defaults__(:push_button), do: build_push_button_options([])
   def __option_defaults__(:signature_field), do: build_signature_field_options([])
+  def __option_defaults__(:bookmark), do: build_bookmark_options([])
+  def __option_defaults__(:page_labels), do: build_page_labels_options([])
+  def __option_defaults__(:running), do: build_running_options([])
+  def __option_defaults__(:contents), do: build_contents_options([])
+
+  defp build_bookmark_options(opts) do
+    opts = Keyword.validate!(opts, @bookmark_opts_keys)
+
+    %{
+      level: bookmark_level!(Keyword.get(opts, :level, 1)),
+      to: bookmark_target!(Keyword.get(opts, :to)),
+      open: boolean!(:open, Keyword.get(opts, :open, true)),
+      bold: boolean!(:bold, Keyword.get(opts, :bold, false)),
+      italic: boolean!(:italic, Keyword.get(opts, :italic, false)),
+      color: color!(:color, Keyword.get(opts, :color))
+    }
+  end
+
+  defp build_page_labels_options(opts) do
+    opts = Keyword.validate!(opts, @page_labels_opts_keys)
+
+    prefix =
+      case Keyword.get(opts, :prefix) do
+        nil ->
+          nil
+
+        prefix when is_binary(prefix) ->
+          label_prefix!(prefix)
+
+        other ->
+          raise ArgumentError, "invalid :prefix, expected a string or nil: #{inspect(other)}"
+      end
+
+    start =
+      case Keyword.get(opts, :start, 1) do
+        start when is_integer(start) and start >= 1 and start <= @max_list_number ->
+          start
+
+        other ->
+          raise ArgumentError,
+                "invalid :start, expected an integer from 1 to #{@max_list_number}: " <>
+                  inspect(other)
+      end
+
+    %{prefix: prefix, start: start}
+  end
+
+  defp build_running_options(opts) do
+    opts = Keyword.validate!(opts, @running_opts_keys)
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.merge(%{
+      left: Keyword.get(opts, :left),
+      center: Keyword.get(opts, :center),
+      right: Keyword.get(opts, :right),
+      color: color!(:color, Keyword.get(opts, :color))
+    })
+  end
+
+  defp build_contents_options(opts) do
+    opts = Keyword.validate!(opts, @contents_opts_keys)
+
+    indent =
+      case Keyword.get(opts, :indent) do
+        nil -> nil
+        indent -> non_negative!(:indent, indent)
+      end
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.put(:indent, indent)
+  end
+
+  defp label_prefix!(prefix) do
+    prefix = LayoutOptions.field_text!(:prefix, prefix, "a page label")
+
+    if String.contains?(prefix, ["\n", "\r", "\u2028", "\u2029"]) do
+      raise ArgumentError,
+            "invalid :prefix, a page label is one line, so it cannot contain a line break: " <>
+              inspect(prefix)
+    end
+
+    prefix
+  end
+
+  defp bookmark_level!(level)
+       when is_integer(level) and level >= 1 and level <= @max_bookmark_level,
+       do: level
+
+  defp bookmark_level!(level) do
+    raise ArgumentError,
+          "invalid :level, expected an integer from 1 to #{@max_bookmark_level}: " <>
+            inspect(level)
+  end
+
+  defp bookmark_target!(nil), do: nil
+
+  defp bookmark_target!({:page, page})
+       when is_integer(page) and page >= 0 and page <= @max_list_number,
+       do: {:page, page}
+
+  defp bookmark_target!({:anchor, name}) when is_binary(name),
+    do: {:anchor, anchor_name!(":to", name)}
+
+  defp bookmark_target!(other) do
+    raise ArgumentError,
+          "invalid :to, expected {:page, index} with an index from 0 to #{@max_list_number}, " <>
+            "{:anchor, name} or nil: #{inspect(other)}"
+  end
+
+  defp title!(label, title) do
+    title = LayoutOptions.field_text!(label, title, "a bookmark title")
+
+    if String.trim(title) == "" do
+      raise ArgumentError, "invalid #{label}, a bookmark needs a title other than whitespace"
+    end
+
+    title
+  end
 
   defp build_new_options(opts) do
     opts = Keyword.validate!(opts, @new_opts_keys)
@@ -2739,7 +3196,25 @@ defmodule PdfElixide.Builder do
   end
 
   defp build_heading_options(opts) do
-    opts |> Keyword.validate!(@heading_opts_keys) |> build_paragraph_options()
+    opts = Keyword.validate!(opts, @heading_opts_keys)
+
+    bookmark =
+      case Keyword.get(opts, :bookmark, false) do
+        bookmark when is_boolean(bookmark) ->
+          bookmark
+
+        title when is_binary(title) ->
+          title!(":bookmark", title)
+
+        other ->
+          raise ArgumentError,
+                "invalid :bookmark, expected a boolean or a string: #{inspect(other)}"
+      end
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.put(:bookmark, bookmark)
   end
 
   defp build_paragraph_options(opts) do

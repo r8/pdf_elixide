@@ -420,6 +420,95 @@ builder
 |> Builder.link_in_rect(logo_box, "https://example.com")
 ```
 
+## Navigation
+
+Bookmarks make up the outline a viewer shows beside the pages. Give a heading
+`bookmark: true` to bookmark it under its own text, or add one with
+`bookmark/3`:
+
+```elixir
+Builder.new(title: "Annual report")
+|> Builder.heading(1, "Contents")
+|> Builder.contents()
+|> Builder.page()
+|> Builder.heading(1, "Results", bookmark: true)
+|> Builder.paragraph("Revenue rose on the year.")
+|> Builder.heading(2, "By region", bookmark: true)
+|> Builder.paragraph("Every region grew.")
+|> Builder.bookmark("Regional table", level: 3)
+|> Builder.table([["North", "12%"], ["South", "9%"]])
+|> Builder.save!("report.pdf")
+```
+
+A bookmark points to the content after it, as an anchor does, or wherever
+its `:to` says. A heading's bookmark takes the heading's level. See
+`t:PdfElixide.Builder.bookmark_opts/0` for nesting and styling.
+
+`contents/2` lists every bookmark with the label of its page, and links each
+entry to it.
+
+## Page labels
+
+A viewer shows a label for each page, normally its number. `page_labels/3`
+starts a range of labels in a numbering style, with an optional prefix and
+starting number:
+
+```elixir
+Builder.new()
+|> Builder.heading(1, "Annual report")
+|> Builder.page()
+|> Builder.page_labels(:roman_lower)
+|> Builder.paragraph("Preface")
+|> Builder.page()
+|> Builder.page_labels(:decimal)
+|> Builder.paragraph("Chapter one")
+|> Builder.save!("report.pdf")
+```
+
+Here the title page is 1, the preface i, and the chapter starts again at 1.
+A range starts on the page where the next content lands, whether it flows or
+is placed, or on the last page if no content follows. It lasts until the
+next range. Pages before the first range are numbered
+from 1. `t:PdfElixide.Builder.label_style/0` lists the styles.
+
+## Headers and footers
+
+`header/2` and `footer/2` draw a line of text in the top or bottom margin of
+every page:
+
+```elixir
+alias PdfElixide.Color.RGB
+
+Builder.new()
+|> Builder.header(left: "Annual report", right: "Draft", color: %RGB{r: 0.4, g: 0.4, b: 0.4})
+|> Builder.footer(center: "Page {page} of {pages}", font_size: 9)
+|> Builder.paragraph("Revenue rose on the year.")
+|> Builder.save!("report.pdf")
+```
+
+A header has up to three parts: `:left` starts at the left margin, `:center`
+is centered on the page and `:right` ends at the right margin. Each is a line
+of text, with runs styled as in [Styled text](#styled-text).
+
+In any part, `{page}` is replaced with the page's label, as set by
+[Page labels](#page-labels), and `{pages}` with the number of pages. There
+is no way to write the text `{page}` itself.
+
+A header starts and ends as a label range does (see
+[Page labels](#page-labels)); pass `nil` to stop it. To leave a title page
+bare, add the header after the page break that ends it:
+
+```elixir
+Builder.new()
+|> Builder.heading(1, "Annual report")
+|> Builder.page()
+|> Builder.footer(center: "{page}")
+|> Builder.paragraph("Revenue rose on the year.")
+```
+
+Headers and footers are marked as page furniture, which screen readers skip.
+Their text is still extracted with the rest of the page.
+
 ## Watermarks
 
 `watermark/3` draws a line of translucent text across a page:
@@ -596,8 +685,17 @@ The builder refuses content it cannot draw faithfully:
   italic `j` with no left margin or an accented capital with no top margin.
   Widen the margins, or for flowing text increase the line height; move
   positioned text further onto the page.
-- **An invalid link target**, such as a missing page or anchor; see
-  `t:PdfElixide.Builder.link/0`.
+- **An invalid link or bookmark target**, such as a missing page or anchor;
+  see `t:PdfElixide.Builder.link/0`.
+- **Header and footer parts that do not fit between the margins or that
+  overlap**, once `{page}` and `{pages}` are filled in. Shorten them or reduce
+  the text size.
+- **A page label range, header or footer replaced on the page it would start
+  on**, which would apply to no page. Remove one, or put content between
+  them.
+- **A Roman page label past 3999, or a lettered one past 26000.** Start
+  another range before that page.
+- **Contents in a document with no bookmarks.**
 - **A barcode caption wider than its symbol**; see [Barcodes](#barcodes).
 
 The barcode operations draw the symbologies `t:PdfElixide.Builder.symbology/0`

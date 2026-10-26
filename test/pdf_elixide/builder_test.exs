@@ -2920,6 +2920,462 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "bookmarks" do
+    defp titles(items), do: Enum.map(items, &{&1.title, &1.dest, titles(&1.children)})
+
+    test "levels nest bookmarks, and a heading's bookmark takes its text and level" do
+      doc =
+        Builder.new()
+        |> Builder.heading(1, "One", bookmark: true)
+        |> Builder.heading(2, ["Two ", {"words", italic: true}], bookmark: true)
+        |> Builder.bookmark("Three", level: 3)
+        |> Builder.paragraph("x")
+        |> Builder.heading(2, "Four", bookmark: "Fourth")
+        |> Builder.bookmark("Five")
+        |> Builder.paragraph("y")
+        |> written()
+
+      assert doc |> Document.outline!() |> titles() == [
+               {"One", {:page, 0},
+                [
+                  {"Two words", {:page, 0}, [{"Three", {:page, 0}, []}]},
+                  {"Fourth", {:page, 0}, []}
+                ]},
+               {"Five", {:page, 0}, []}
+             ]
+    end
+
+    test "a bookmark points to the top of the content after it, wherever it lands" do
+      bytes =
+        Builder.new(page_size: {300, 300})
+        |> Builder.paragraph("first")
+        |> Builder.paragraph(Enum.join(1..6, "\n"))
+        |> Builder.bookmark("End")
+        |> Builder.heading(2, "End")
+        |> Builder.to_binary!(compress: false)
+
+      assert destinations(bytes) == [{1, ["/XYZ", "null", "228", "null"]}]
+    end
+
+    test "a bookmark can point to a page or an anchor instead" do
+      bytes =
+        Builder.new()
+        |> Builder.bookmark("Cover", to: {:page, 0})
+        |> Builder.bookmark("Later", to: {:anchor, "later"})
+        |> Builder.paragraph("first")
+        |> Builder.anchor("later")
+        |> Builder.paragraph("second")
+        |> Builder.to_binary!(compress: false)
+
+      assert destinations(bytes) == [{0, ["/Fit"]}, {0, ["/XYZ", "null", "696", "null"]}]
+    end
+
+    test "a bookmark's style and whether its children show are written" do
+      bytes =
+        Builder.new()
+        |> Builder.bookmark("Closed", open: false, bold: true, italic: true)
+        |> Builder.bookmark("Child", level: 2, color: %RGB{r: 1.0, g: 0.0, b: 0.0})
+        |> Builder.paragraph("x")
+        |> Builder.to_binary!(compress: false)
+
+      [closed] = Regex.run(~r{<<[^>]*/Title \(Closed\)[^>]*>>}, bytes)
+      [child] = Regex.run(~r{<<[^>]*/Title \(Child\)[^>]*>>}, bytes)
+
+      assert closed =~ "/Count -1"
+      assert closed =~ "/F 3"
+      assert child =~ ~r{/C \[1(\.0+)? 0(\.0+)? 0(\.0+)?\]}
+      refute child =~ "/F "
+    end
+
+    test "a page past the last one, or an anchor no call names, is refused" do
+      message =
+        Builder.new()
+        |> Builder.paragraph("only")
+        |> Builder.bookmark("Gone", to: {:page, 3})
+        |> refusal()
+
+      assert message =~ "op 1: the bookmark points to page 3, but the document has 1 page,"
+
+      message =
+        Builder.new()
+        |> Builder.bookmark("Lost", to: {:anchor, "nowhere"})
+        |> refusal()
+
+      assert message =~ ~s(op 0: the bookmark points to anchor "nowhere")
+    end
+  end
+
+  describe "page_labels/3" do
+    test "a range starts on the page its next content lands on, even after a page break" do
+      doc =
+        Builder.new(page_size: {300, 300})
+        |> Builder.paragraph(Enum.join(1..8, "\n"))
+        |> Builder.page_labels(:roman_upper)
+        |> Builder.paragraph("next")
+        |> Builder.page()
+        |> Builder.page_labels(:decimal, prefix: "A-", start: 5)
+        |> Builder.paragraph("a")
+        |> Builder.page()
+        |> Builder.paragraph("b")
+        |> written()
+
+      assert Document.page_labels!(doc) == ["1", "I", "A-5", "A-6"]
+    end
+
+    test "every style, and pages before the first range numbered from 1" do
+      labels =
+        for style <- [:decimal, :roman_lower, :roman_upper, :alpha_lower, :alpha_upper, :none] do
+          Builder.new()
+          |> Builder.paragraph("cover")
+          |> Builder.page()
+          |> Builder.page_labels(style, start: 28)
+          |> Builder.paragraph("body")
+          |> written()
+          |> Document.page_labels!()
+        end
+
+      assert labels == [
+               ["1", "28"],
+               ["1", "xxviii"],
+               ["1", "XXVIII"],
+               ["1", "bb"],
+               ["1", "BB"],
+               ["1", ""]
+             ]
+    end
+
+    test "a document without ranges writes no labels" do
+      bytes = Builder.new() |> Builder.paragraph("x") |> Builder.to_binary!(compress: false)
+
+      refute bytes =~ "/PageLabels"
+    end
+
+    test "a range replaced on its own first page is refused" do
+      message =
+        Builder.new()
+        |> Builder.page_labels(:roman_lower)
+        |> Builder.page_labels(:decimal)
+        |> Builder.paragraph("x")
+        |> refusal()
+
+      assert message =~
+               "op 0: its page_labels/3 setting would start on page 0, where op 1 replaces it"
+    end
+
+    test "{page} letters pages as the labels do, repeating the letter after Z" do
+      doc =
+        Builder.new()
+        |> Builder.page_labels(:alpha_upper, start: 26)
+        |> Builder.footer(center: "{page}")
+        |> Builder.paragraph("a")
+        |> Builder.page()
+        |> Builder.paragraph("b")
+        |> Builder.page()
+        |> Builder.paragraph("c")
+        |> written()
+
+      footers =
+        for page <- 0..2 do
+          doc |> Document.words!(page) |> Enum.find(&(&1.bbox.y < 72)) |> Map.fetch!(:text)
+        end
+
+      assert footers == ["Z", "AA", "BB"]
+      assert Document.page_labels!(doc) == footers
+    end
+
+    test "a label is drawn with each run of whitespace as one space" do
+      doc =
+        Builder.new()
+        |> Builder.page_labels(:decimal, prefix: "A\u2003\t")
+        |> Builder.footer(center: "Page {page} of {pages}")
+        |> Builder.contents()
+        |> Builder.bookmark("Intro")
+        |> Builder.paragraph("x")
+        |> written()
+
+      assert Document.page_labels!(doc) == ["A\u2003\t1"]
+      assert Document.text!(doc, 0) =~ "Intro A 1"
+      assert Document.text!(doc, 0) =~ "Page A 1 of 1"
+    end
+
+    test "spaces at either end of a label still separate it in a header" do
+      doc =
+        Builder.new()
+        |> Builder.page_labels(:none, prefix: " A\u2003")
+        |> Builder.footer(center: "Page{page}of {pages}")
+        |> Builder.paragraph("x")
+        |> written()
+
+      assert Document.text!(doc, 0) =~ "Page A of 1"
+    end
+
+    test "a lettered label past 26000 is refused when built, and cannot be read" do
+      message =
+        Builder.new()
+        |> Builder.page_labels(:alpha_lower, start: 26_000)
+        |> Builder.paragraph("a")
+        |> Builder.page()
+        |> Builder.paragraph("b")
+        |> refusal()
+
+      assert message =~ "op 0: the label of page 1 would be past 26000"
+
+      bytes =
+        Builder.new()
+        |> Builder.page_labels(:decimal, start: 26_001)
+        |> Builder.paragraph("a")
+        |> Builder.to_binary!(compress: false)
+
+      lettered = String.replace(bytes, "/S /D/St 26001", "/S /A/St 26001")
+      assert lettered != bytes
+      doc = Document.from_binary!(lettered)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} = Document.page_labels(doc)
+      assert message =~ "the label of page 0 counts past 26000 in letters"
+      assert {:error, %Error{reason: :unsupported}} = doc |> Document.page!(0) |> Page.label()
+    end
+
+    test "a label past 2147483647 is refused, and one at the limit is not" do
+      at_limit = fn -> Builder.new() |> Builder.page_labels(:decimal, start: 2_147_483_647) end
+
+      assert at_limit.() |> Builder.paragraph("a") |> written() |> Document.page_labels!() ==
+               ["2147483647"]
+
+      message =
+        at_limit.()
+        |> Builder.paragraph("a")
+        |> Builder.page()
+        |> Builder.paragraph("b")
+        |> refusal()
+
+      assert message =~ "op 0: the label of page 1 would be past 2147483647;"
+    end
+
+    test "a Roman numeral past 3999 is refused, naming the page" do
+      message =
+        Builder.new()
+        |> Builder.page_labels(:roman_lower, start: 3999)
+        |> Builder.paragraph("a")
+        |> Builder.page()
+        |> Builder.paragraph("b")
+        |> refusal()
+
+      assert message =~ "op 0: the label of page 1 would be past 3999"
+    end
+  end
+
+  describe "header/2 and footer/2" do
+    defp running_words(doc, page, band) do
+      for word <- Document.words!(doc, page), band.(word.bbox.y), do: word
+    end
+
+    defp header?(y), do: y > 720
+    defp footer?(y), do: y < 72
+
+    test "parts sit at the margins and the center, on a line centered in the margin" do
+      doc =
+        Builder.new()
+        |> Builder.header(left: "Left", center: "Middle", right: "Right")
+        |> Builder.footer(center: "Foot")
+        |> Builder.paragraph("body")
+        |> written()
+
+      assert [left, middle, right] = running_words(doc, 0, &header?/1)
+      assert_in_delta left.bbox.x, 72, 0.001
+      assert_in_delta middle.bbox.x + middle.bbox.width / 2, 306, 0.01
+      assert_in_delta right.bbox.x + right.bbox.width, 540, 0.01
+
+      [foot] = running_words(doc, 0, &footer?/1)
+      chars = Document.chars!(doc, 0)
+      header_char = Enum.find(chars, &(&1.text == "L"))
+      footer_char = Enum.find(chars, &(&1.text == "F"))
+
+      assert_in_delta header_char.bbox.y, baseline(792 - (72 - 18) / 2, 12), 0.001
+      assert_in_delta footer_char.bbox.y, baseline((72 + 18) / 2, 12), 0.001
+      assert foot.text == "Foot"
+    end
+
+    test "{page} prints the page's label and {pages} the number of pages" do
+      doc =
+        Builder.new()
+        |> Builder.page_labels(:roman_lower)
+        |> Builder.footer(right: "{page} of {pages}", left: "{{page}")
+        |> Builder.paragraph("a")
+        |> Builder.page()
+        |> Builder.paragraph("b")
+        |> written()
+
+      for {page, label} <- [{0, "i"}, {1, "ii"}] do
+        assert doc |> running_words(page, &footer?/1) |> Enum.map(& &1.text) ==
+                 ["{#{label}", label, "of", "2"]
+      end
+    end
+
+    test "a header runs from the page its next content lands on until replaced or stopped" do
+      doc =
+        Builder.new()
+        |> Builder.header(left: "A")
+        |> Builder.paragraph("one")
+        |> Builder.page()
+        |> Builder.header(left: "B")
+        |> Builder.paragraph("two")
+        |> Builder.page()
+        |> Builder.paragraph("three")
+        |> Builder.page()
+        |> Builder.header(nil)
+        |> Builder.paragraph("four")
+        |> written()
+
+      headers =
+        for page <- 0..3, do: doc |> running_words(page, &header?/1) |> Enum.map(& &1.text)
+
+      assert headers == [["A"], ["B"], ["B"], []]
+    end
+
+    test "content placed outside the flow starts it on the current page" do
+      doc =
+        Builder.new()
+        |> Builder.footer(center: "{page}")
+        |> Builder.text_at({72, 400}, "placed")
+        |> Builder.page()
+        |> Builder.text_at({72, 400}, "again")
+        |> written()
+
+      for page <- 0..1 do
+        assert doc |> running_words(page, &footer?/1) |> Enum.map(& &1.text) ==
+                 ["#{page + 1}"]
+      end
+    end
+
+    test "any run of whitespace is drawn and measured as one space" do
+      doc =
+        Builder.new()
+        |> Builder.header(right: "a\u2003b  \tc")
+        |> Builder.paragraph("x")
+        |> written()
+
+      words = running_words(doc, 0, &header?/1)
+      last = List.last(words)
+
+      assert Enum.map(words, & &1.text) == ["a", "b", "c"]
+      assert_in_delta last.bbox.x + last.bbox.width, 540, 0.01
+      assert doc |> Document.text!(0) |> String.starts_with?("a b c")
+    end
+
+    test "the text is marked as a header or footer artifact" do
+      bytes =
+        Builder.new()
+        |> Builder.header(left: "Top")
+        |> Builder.footer(left: "Bottom")
+        |> Builder.paragraph("body")
+        |> Builder.to_binary!(compress: false)
+
+      assert bytes =~ "/Artifact <</Type /Pagination /Subtype /Header>> BDC"
+      assert bytes =~ "/Artifact <</Type /Pagination /Subtype /Footer>> BDC"
+    end
+
+    test "text :auto cannot draw in Helvetica switches the document to DejaVu Sans" do
+      doc =
+        Builder.new()
+        |> Builder.header(left: "Отчёт")
+        |> Builder.paragraph("body")
+        |> written()
+
+      assert doc |> fonts_by_text() |> Map.fetch!("b") =~ "DejaVuSans"
+    end
+
+    test "parts that overlap or do not fit once filled in are refused" do
+      long = String.duplicate("wide ", 40)
+
+      assert Builder.new()
+             |> Builder.header(center: long)
+             |> Builder.paragraph("x")
+             |> refusal() =~
+               "op 0 on page 0: the header's center part is"
+
+      assert Builder.new()
+             |> Builder.footer(
+               left: String.duplicate("a ", 30),
+               right: String.duplicate("b ", 30)
+             )
+             |> Builder.paragraph("x")
+             |> refusal() =~
+               "op 0 on page 0: the footer's left and right parts overlap"
+    end
+
+    test "a header replaced on its own first page is refused" do
+      message =
+        Builder.new()
+        |> Builder.header(left: "A")
+        |> Builder.header(left: "B")
+        |> Builder.paragraph("x")
+        |> refusal()
+
+      assert message =~ "op 0: its header/2 setting would start on page 0, where op 1 replaces it"
+    end
+  end
+
+  describe "contents/2" do
+    defp flat(items), do: Enum.flat_map(items, &[&1 | flat(&1.children)])
+
+    test "lists each bookmark with the label of its page, after the contents' own pages" do
+      builder =
+        Builder.new(page_size: {300, 300})
+        |> Builder.page_labels(:roman_lower)
+        |> Builder.contents()
+        |> Builder.page()
+        |> Builder.page_labels(:decimal)
+
+      bytes =
+        1..14
+        |> Enum.reduce(builder, fn n, builder ->
+          builder
+          |> Builder.heading(1, "Chapter #{n}", bookmark: true)
+          |> Builder.paragraph("text")
+        end)
+        |> Builder.to_binary!(compress: false)
+
+      doc = Document.from_binary!(bytes)
+      on_exit(fn -> Document.close(doc) end)
+
+      labels = Document.page_labels!(doc)
+      items = doc |> Document.outline!() |> flat()
+      contents = [Document.text!(doc, 0), Document.text!(doc, 1)] |> Enum.join("\n")
+
+      assert length(items) == 14
+      assert Enum.take(labels, 2) == ["i", "ii"]
+
+      for %{title: title, dest: {:page, page}} <- items do
+        assert contents =~ "#{title} #{Enum.at(labels, page)}"
+      end
+
+      links = for page <- 0..1, link <- links(doc, page), do: link
+      assert length(links) == 14
+    end
+
+    test "a long title wraps, with its label on its last line" do
+      doc =
+        Builder.new()
+        |> Builder.contents()
+        |> Builder.bookmark(String.duplicate("long title ", 12))
+        |> Builder.paragraph("x")
+        |> written()
+
+      {entry, ["x"]} =
+        doc |> Document.text!(0) |> String.split("\n", trim: true) |> Enum.split(-1)
+
+      assert length(entry) > 1
+      assert List.last(entry) =~ ~r/ 1$/
+      refute Enum.any?(Enum.drop(entry, -1), &(&1 =~ ~r/ 1$/))
+    end
+
+    test "contents with no bookmarks is refused" do
+      assert Builder.new() |> Builder.contents() |> refusal() =~
+               "op 0: contents/2 lists the document's bookmarks, but it has none"
+    end
+  end
+
   describe "font refusals" do
     test "a style the family has no face for" do
       message =
@@ -3051,6 +3507,80 @@ defmodule PdfElixide.BuilderTest do
   end
 
   describe "malformed arguments raise where they are passed" do
+    test "navigation" do
+      assert_raise ArgumentError,
+                   ~r/^invalid :level, a bookmark can be at most one level deeper .* it is the first bookmark: 2$/,
+                   fn -> Builder.bookmark(Builder.new(), "T", level: 2) end
+
+      assert_raise ArgumentError, ~r/^invalid level, .* the previous one is at 1: 3$/, fn ->
+        Builder.new() |> Builder.bookmark("A") |> Builder.heading(3, "C", bookmark: true)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :level, expected an integer from 1 to 256/, fn ->
+        Builder.bookmark(Builder.new(), "T", level: 0)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid title, a bookmark needs a title/, fn ->
+        Builder.bookmark(Builder.new(), "  ")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid title, a bookmark title cannot hold/, fn ->
+        Builder.bookmark(Builder.new(), "x\u0085y")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :to, expected/, fn ->
+        Builder.bookmark(Builder.new(), "T", to: "https://example.com")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :bookmark, expected a boolean or a string/, fn ->
+        Builder.heading(Builder.new(), 1, "T", bookmark: :yes)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid style, expected one of/, fn ->
+        Builder.page_labels(Builder.new(), untyped(:roman))
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :start, Roman numerals stop at 3999/, fn ->
+        Builder.page_labels(Builder.new(), :roman_upper, start: 4000)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :start, letters stop at 26000/, fn ->
+        Builder.page_labels(Builder.new(), :alpha_lower, start: 26_001)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :start, expected an integer from 1/, fn ->
+        Builder.page_labels(Builder.new(), :decimal, start: 0)
+      end
+
+      for prefix <- ["A\n", "A\r", "A\u2028"] do
+        assert_raise ArgumentError, ~r/^invalid :prefix, a page label is one line/, fn ->
+          Builder.page_labels(Builder.new(), :decimal, prefix: prefix)
+        end
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :prefix, a page label cannot hold/, fn ->
+        Builder.page_labels(Builder.new(), :decimal, prefix: "Ã©")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid header, expected at least one of :left/, fn ->
+        Builder.header(Builder.new(), font_size: 9)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :left, a header or footer part is one line/, fn ->
+        Builder.footer(Builder.new(), left: "a\nb")
+      end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :font_size, a line 75.0 points tall .* the 72.0-point top margin/,
+                   fn -> Builder.header(Builder.new(), left: "x", font_size: 50) end
+
+      assert_raise ArgumentError, ~r/^invalid contents, a document can have only one/, fn ->
+        Builder.new() |> Builder.contents() |> untyped() |> Builder.contents()
+      end
+
+      assert_raise FunctionClauseError, fn -> Builder.header(Builder.new(), untyped("x")) end
+    end
+
     test "images" do
       rect = %Rect{x: 72.0, y: 72.0, width: 10.0, height: 10.0}
 

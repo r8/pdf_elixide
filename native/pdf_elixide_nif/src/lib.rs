@@ -28,6 +28,7 @@ mod open_document;
 mod open_editor;
 mod optional_content;
 mod outline;
+mod page_label;
 mod pages;
 mod paths;
 mod redaction;
