@@ -152,7 +152,7 @@ defmodule PdfElixide.LayoutOptions do
       char ->
         raise ArgumentError,
               "invalid #{label(label)}, #{holder} cannot hold " <>
-                "#{inspect(<<char::utf8>>)}: a PDF reader decodes it as a different " <>
+                "#{escape(char)}: a PDF reader decodes it as a different " <>
                 "character; use a plain space for a nonbreaking space and leave out soft " <>
                 "hyphens and control characters: #{inspect(value)}"
     end
@@ -170,6 +170,10 @@ defmodule PdfElixide.LayoutOptions do
   end
 
   def field_text!(_label, value, _holder), do: value
+
+  # Every misread character is invisible or blank, and `inspect/1` escapes
+  # them only in recent Elixir versions.
+  defp escape(char), do: ~s("\\u#{char |> Integer.to_string(16) |> String.pad_leading(4, "0")}")
 
   defp misread?(char) when char in [?\t, ?\n, ?\r], do: false
   defp misread?(char), do: char < 0x20 or char in 0x7F..0xA0 or char == 0xAD
