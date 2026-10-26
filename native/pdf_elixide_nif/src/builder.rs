@@ -25,10 +25,10 @@ use crate::{
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Align, Artifact, Barcode, Caption, Cell, Contents, Embedded, Entry,
-        EntryTarget, Face, Fit, FlowImage, Fonts, Item, LabelKind, Margins, Marker, Op, Picture,
-        Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke, Table, Unordered, Watermark,
-        Width, Within,
+        self, embedded_key, Align, Artifact, Barcode, Caption, Cell, CodeBlock, Contents, Embedded,
+        Entry, EntryTarget, Face, Fit, FlowImage, Fonts, Item, LabelKind, Margins, Marker, Op,
+        Picture, Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke, Table, Unordered,
+        Watermark, Width, Within,
     },
     open_editor::OpenEditor,
     page_label::MAX_LETTERED,
@@ -66,6 +66,7 @@ pub enum OpNif<'a> {
     Paragraph(ParagraphNif),
     Heading(ParagraphNif),
     List(ListNif),
+    CodeBlock(CodeBlockNif),
     Space(f64),
     Rule(f64),
     TextAt(TextAtNif),
@@ -478,6 +479,16 @@ pub struct ParagraphNif {
 }
 
 #[derive(NifMap)]
+pub struct CodeBlockNif {
+    runs: Vec<RunNif>,
+    font: FontNif,
+    font_size: f64,
+    fill_color: Option<RgbNif>,
+    padding: f64,
+    tab_width: usize,
+}
+
+#[derive(NifMap)]
 pub struct RunNif {
     text: String,
     bold: bool,
@@ -778,6 +789,11 @@ fn auto_family(ops: &[OpNif<'_>]) -> Family {
                 font: FontNif::Auto,
                 runs,
                 ..
+            })
+            | OpNif::CodeBlock(CodeBlockNif {
+                font: FontNif::Auto,
+                runs,
+                ..
             }) => Some(vec![runs]),
             OpNif::List(ListNif {
                 font: FontNif::Auto,
@@ -969,6 +985,11 @@ fn ops(
             {
                 Ok(Op::Empty)
             }
+            OpNif::CodeBlock(CodeBlockNif { runs, .. })
+                if flow::code_draws_nothing(runs.iter().map(|run| run.text.as_str())) =>
+            {
+                Ok(Op::Empty)
+            }
             OpNif::List(ListNif { items, .. }) if items.is_empty() => Ok(Op::Empty),
             OpNif::Table(TableNif { rows, .. }) if rows.is_empty() => Ok(Op::Empty),
             OpNif::TextAt(TextAtNif { runs, .. })
@@ -1001,6 +1022,14 @@ fn ops(
                 marker: list.marker.into(),
                 start: list.start,
             }),
+            OpNif::CodeBlock(code) => Ok(Op::CodeBlock(CodeBlock {
+                face: faces.face(index, family_of(code.font, auto), Style::Regular)?,
+                runs: runs(index, code.runs, code.font, auto, faces, links)?,
+                size: code.font_size,
+                fill: code.fill_color.map(Into::into),
+                padding: code.padding,
+                tab_width: code.tab_width,
+            })),
             OpNif::Space(points) => Ok(Op::Space(points)),
             OpNif::Rule(size) => Ok(Op::Rule { size }),
             OpNif::TextAt(text) => Ok(Op::TextAt {
@@ -1189,14 +1218,35 @@ fn refused(refusal: Refused) -> rustler::Error {
             page,
             line,
             room,
+            padding: 0.0,
         } => format!(
             "op {op} on page {page}: a line {line} points tall (font size × line height) \
              does not fit the {room}-point content height; reduce the font size, the \
              line height or the margins"
         ),
-        Refused::NoWidth { op, page } => {
+        Refused::LineTooTall {
+            op,
+            page,
+            line,
+            room,
+            padding,
+        } => format!(
+            "op {op} on page {page}: a line {line} points tall (font size × line height) \
+             with {padding} points of padding above and below does not fit the \
+             {room}-point content height; reduce the font size, the padding, the line \
+             height or the margins"
+        ),
+        Refused::NoWidth {
+            op,
+            page,
+            padding: 0.0,
+        } => {
             format!("op {op} on page {page}: the left and right margins leave no room for text")
         }
+        Refused::NoWidth { op, page, padding } => format!(
+            "op {op} on page {page}: the left and right margins, with {padding} points of \
+             padding on each side, leave no room for text"
+        ),
         Refused::ClusterTooWide {
             op,
             page,
@@ -2279,6 +2329,40 @@ mod tests {
         builder
             .page(PageSize::Letter)
             .table(Table::new(rows))
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let chars = doc.extract_chars(0).expect("extracts");
+
+        assert_eq!(doc.page_count().expect("counts"), 1);
+        assert!(chars.iter().any(|c| c.bbox.y < 72.0));
+    }
+
+    #[test]
+    fn upstream_still_collapses_indentation_in_a_code_block() {
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .at(72.0, 720.0)
+            .code_block("rust", "    x = 1")
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let chars = doc.extract_chars(0).expect("extracts");
+        let x = chars.iter().find(|c| c.char == 'x').expect("drawn");
+
+        assert!((x.bbox.x - 72.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn upstream_still_runs_a_code_block_past_the_bottom_margin() {
+        let source = (0..80)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .at(72.0, 720.0)
+            .code_block("text", &source)
             .done();
         let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
         let chars = doc.extract_chars(0).expect("extracts");

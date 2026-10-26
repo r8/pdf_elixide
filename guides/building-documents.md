@@ -137,6 +137,48 @@ text. Accents and italic overhangs may reach past the box, as flowing text may
 reach into the margins, but not past the edge of the page. The box itself may
 extend off the page as long as its text does not.
 
+## Code blocks
+
+`Builder.code_block/3` adds source text to the flow, set as written on a
+shaded background:
+
+```elixir
+source = """
+defmodule Hello do
+\tdef world, do: :ok
+end
+"""
+
+Builder.new()
+|> Builder.paragraph("The module:")
+|> Builder.code_block(source, font_size: 9)
+```
+
+Unlike a paragraph, a code block keeps its spacing. Spaces are not collapsed,
+blank lines keep their height, and each tab moves to the next stop, every
+`:tab_width` characters from the start of its line. `\r\n` and `\r` end a
+line as `\n` does, and whitespace at the end of a line is dropped. A line
+wider than the block breaks at the character that would cross its edge, not
+between words, and continues at the block's left edge.
+
+The background fills the width between the margins. Line height and spacing
+follow [paragraphs](#flowing-text). A block holding only spaces and tabs adds
+nothing. When a block continues onto another page, each page's part gets a
+background of its own, padded on every side. See
+`t:PdfElixide.Builder.code_block_opts/0` for padding, background controls and
+option defaults.
+
+The default font is `:courier`, whatever the document's `:font`. Courier draws
+only Windows-1252 characters, so for code with other characters, pass a
+monospaced `PdfElixide.Builder.FontFamily` that covers them as `:font`. Text
+is a `t:PdfElixide.Builder.text/0`, so styled runs can highlight syntax:
+
+```elixir
+keyword = %PdfElixide.Color.RGB{r: 0.6, g: 0.1, b: 0.5}
+
+Builder.code_block(builder, [{"def", color: keyword, bold: true}, " world, do: :ok"])
+```
+
 ## Tables
 
 `Builder.table/3` takes a list of rows, each a list of cells, and flows like a

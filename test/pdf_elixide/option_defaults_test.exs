@@ -396,6 +396,16 @@ defmodule PdfElixide.OptionDefaultsTest do
       assert Builder.__option_defaults__(:contents) == %{font: nil, font_size: nil, indent: nil}
     end
 
+    test "Builder.code_block/3" do
+      assert Builder.__option_defaults__(:code_block) == %{
+               font: :courier,
+               font_size: nil,
+               fill_color: %PdfElixide.Color.RGB{r: 0.95, g: 0.95, b: 0.95},
+               padding: 6.0,
+               tab_width: 4
+             }
+    end
+
     test "Builder.text_in_rect/4" do
       assert Builder.__option_defaults__(:text_in_rect) == %{
                font: nil,

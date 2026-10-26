@@ -449,6 +449,17 @@ defmodule PdfElixide.OptionKeysTest do
       )
 
       accepts_each!(
+        [
+          font: :times,
+          font_size: 20,
+          fill_color: %PdfElixide.Color.RGB{r: 0.9, g: 0.9, b: 0.9},
+          padding: 2,
+          tab_width: 8
+        ],
+        &Builder.code_block(Builder.new(), "T", &1)
+      )
+
+      accepts_each!(
         [font: :times, font_size: 20, align: :center],
         &Builder.text_in_rect(
           Builder.new(),
@@ -810,6 +821,7 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.paragraph(Builder.new(), [{"Text", opts}]) end,
         fn opts -> Builder.heading(Builder.new(), 1, "Text", opts) end,
         fn opts -> Builder.text_at(Builder.new(), {72, 72}, "Text", opts) end,
+        fn opts -> Builder.code_block(Builder.new(), "Text", opts) end,
         fn opts ->
           Builder.text_in_rect(
             Builder.new(),

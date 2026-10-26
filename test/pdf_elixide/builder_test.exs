@@ -1120,6 +1120,163 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "code_block/3" do
+    # Courier's 12-point advance, and the margin plus the default padding.
+    @column 7.2
+    @code_left 78.0
+
+    defp coded(text, opts \\ []), do: Builder.new() |> Builder.code_block(text, opts) |> written()
+
+    defp column_of(char), do: round((char.bbox.x - @code_left) / @column)
+
+    defp code_lines(doc, page) do
+      for line <- chars_by_line(doc, page) do
+        for char <- line, char.text != " ", do: {char.text, column_of(char)}
+      end
+    end
+
+    test "keeps indentation, spaces and blank lines as written" do
+      doc = coded("def a do\n    x  = 1\n\nend\n")
+
+      assert code_lines(doc, 0) == [
+               [{"d", 0}, {"e", 1}, {"f", 2}, {"a", 4}, {"d", 6}, {"o", 7}],
+               [{"x", 4}, {"=", 7}, {"1", 9}],
+               [{"e", 0}, {"n", 1}, {"d", 2}]
+             ]
+
+      [first, second, third] = baselines(doc, 0)
+      assert_in_delta first - second, 18, 0.001
+      assert_in_delta second - third, 36, 0.001
+    end
+
+    test "expands tabs to stops counted from the start of each line" do
+      assert code_lines(coded("\tx\nab\ty\nabcd\tz"), 0) == [
+               [{"x", 4}],
+               [{"a", 0}, {"b", 1}, {"y", 4}],
+               [{"a", 0}, {"b", 1}, {"c", 2}, {"d", 3}, {"z", 8}]
+             ]
+
+      assert code_lines(coded("ab\tx", tab_width: 8), 0) == [[{"a", 0}, {"b", 1}, {"x", 8}]]
+    end
+
+    test "ends lines at \\r\\n and \\r as at \\n, and drops trailing whitespace" do
+      doc = coded("a  \r\nb\t\rc\n   ")
+
+      assert code_lines(doc, 0) == [[{"a", 0}], [{"b", 0}], [{"c", 0}]]
+    end
+
+    test "a line break is a line however it is written" do
+      after_block =
+        for ending <- ["\n", "\r\n", "\r"] do
+          doc = Builder.new() |> Builder.code_block(ending) |> Builder.paragraph("a") |> written()
+
+          assert length(Document.paths!(doc, 0)) == 1
+          [a, b] = baselines(coded("a" <> ending <> ending <> "b"), 0)
+          assert_in_delta a - b, 36, 0.001
+
+          baselines(doc, 0)
+        end
+
+      assert [same] = Enum.uniq(after_block)
+      assert hd(same) < baseline(720, 12) - 30
+    end
+
+    test "breaks a line too wide for the block at the column, not between words" do
+      # 456 points between the paddings holds 63 columns.
+      doc = coded(String.duplicate("abcd ", 20))
+      [first, second] = chars_by_line(doc, 0)
+
+      assert length(first) == 63
+      assert {List.last(first).text, column_of(List.last(first))} == {"c", 62}
+      assert {hd(second).text, column_of(hd(second))} == {"d", 0}
+
+      for char <- first ++ second do
+        assert char.bbox.x + char.bbox.width <= 540 - 6 + 0.001
+      end
+    end
+
+    test "draws its background across the margins, under the text" do
+      fill = %RGB{r: 0.9, g: 0.8, b: 0.7}
+      doc = coded("a\nb", fill_color: fill, padding: 10)
+
+      assert [%{bbox: bbox, fill_color: color, stroke_color: nil}] = Document.paths!(doc, 0)
+      assert bbox == %Rect{x: 72.0, y: 720.0 - 56.0, width: 468.0, height: 56.0}
+      assert_in_delta color.g, 0.8, 0.0001
+      assert_in_delta hd(Document.chars!(doc, 0)).bbox.x, 82, 0.001
+
+      body = Builder.new() |> Builder.code_block("a") |> content()
+      assert elem(:binary.match(body, "re\nf\n"), 0) < elem(:binary.match(body, "BT\n"), 0)
+
+      assert Document.paths!(coded("a", fill_color: nil), 0) == []
+    end
+
+    test "continues across pages, each page's part in a box of its own" do
+      source = Enum.map_join(1..50, "\n", &"line #{&1}")
+      doc = Builder.new() |> Builder.code_block(source) |> Builder.paragraph("after") |> written()
+
+      # 648 points of content height hold 35 lines of 18 points within the
+      # padding.
+      assert Document.page_count!(doc) == 2
+
+      assert [%Rect{x: 72.0, y: 78.0, width: 468.0, height: 642.0}] =
+               Enum.map(Document.paths!(doc, 0), & &1.bbox)
+
+      assert [%Rect{y: 438.0, height: 282.0}] =
+               Enum.map(Document.paths!(doc, 1), & &1.bbox)
+
+      lines = for page <- 0..1, line <- page_lines(doc, page), do: line
+      assert lines == Enum.map(1..50, &"line #{&1}") ++ ["after"]
+
+      assert hd(baselines(doc, 1)) == hd(baselines(doc, 0))
+    end
+
+    test "a heading is kept with the block's first line" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("a")
+        |> Builder.space(580)
+        |> Builder.heading(1, "H")
+        |> Builder.code_block("code")
+        |> written()
+
+      assert Document.page_count!(doc) == 2
+      assert Document.text!(doc, 0) =~ "a"
+      refute Document.text!(doc, 0) =~ "H"
+    end
+
+    test "sets Courier by default, and takes runs, another font and a size" do
+      assert fonts_by_text(coded("a"))["a"] == "Courier"
+
+      doc =
+        coded(["a", {"b", bold: true}, {"c", color: %RGB{r: 1.0, g: 0.0, b: 0.0}}],
+          font: :times,
+          font_size: 9
+        )
+
+      fonts = fonts_by_text(doc)
+
+      assert fonts["a"] == "Times-Roman" and fonts["b"] == "Times-Bold"
+      assert_in_delta hd(Document.chars!(doc, 0)).font_size, 9, 0.001
+      refute fonts_by_text(coded("ab", font: cff_family()))["a"] =~ "Courier"
+    end
+
+    test "counts for :auto, and refuses what Courier cannot draw" do
+      [char | _] = "Звіт" |> coded(font: :auto) |> Document.chars!(0)
+      assert char.font =~ "DejaVuSans"
+
+      message = Builder.new() |> Builder.code_block("Звіт") |> refusal()
+      assert message =~ "op 0 on page 0"
+      assert message =~ "Courier"
+    end
+
+    test "text that draws nothing adds nothing" do
+      doc = Builder.new() |> Builder.code_block("  \t ") |> Builder.paragraph("a") |> written()
+
+      assert Document.paths!(doc, 0) == []
+      assert_in_delta Enum.max(baselines(doc, 0)), baseline(720, 12), 0.001
+    end
+  end
+
   describe "table/3" do
     @fill %RGB{r: 0.75, g: 0.75, b: 0.75}
 
@@ -3507,6 +3664,38 @@ defmodule PdfElixide.BuilderTest do
   end
 
   describe "malformed arguments raise where they are passed" do
+    test "code blocks" do
+      assert_raise ArgumentError,
+                   ~r/^invalid layout, a line 18.0 points tall .* with 320.0 points of padding above and below does not fit the 648.0-point content height/,
+                   fn -> Builder.code_block(Builder.new(), "x", padding: 320) end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :padding, 234.0 points on each side leave no room for text/,
+                   fn -> Builder.code_block(Builder.new(), "x", padding: 234) end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :tab_width, expected an integer from 1 to 64: 0/,
+                   fn ->
+                     Builder.code_block(Builder.new(), "x", tab_width: 0)
+                   end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :tab_width, expected an integer from 1 to 64: 65/,
+                   fn ->
+                     Builder.code_block(Builder.new(), "x", tab_width: 65)
+                   end
+
+      assert_raise ArgumentError, ~r/^invalid :padding, expected a non-negative number/, fn ->
+        Builder.code_block(Builder.new(), "x", padding: -1)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :font, expected one of/, fn ->
+        Builder.code_block(Builder.new(), "x", font: :menlo)
+      end
+
+      assert_raise FunctionClauseError, fn -> Builder.code_block(Builder.new(), untyped(:x)) end
+    end
+
     test "navigation" do
       assert_raise ArgumentError,
                    ~r/^invalid :level, a bookmark can be at most one level deeper .* it is the first bookmark: 2$/,

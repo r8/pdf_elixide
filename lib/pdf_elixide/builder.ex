@@ -17,10 +17,11 @@ defmodule PdfElixide.Builder do
 
   ## Layout
 
-  Paragraphs, headings, lists and tables wrap within the margins and start new
-  pages as needed. `text_at/4` and `text_in_rect/4` place text outside that
-  flow. See [Flowing text](guides/building-documents.md#flowing-text) for line
-  spacing, page breaks and heading placement, and
+  Paragraphs, headings, lists, code blocks and tables wrap within the margins
+  and start new pages as needed. `text_at/4` and `text_in_rect/4` place text
+  outside that flow. See [Flowing text](guides/building-documents.md#flowing-text)
+  for line spacing, page breaks and heading placement,
+  [Code blocks](guides/building-documents.md#code-blocks) for source text, and
   [Tables](guides/building-documents.md#tables) for columns, spans and header
   rows.
 
@@ -336,6 +337,40 @@ defmodule PdfElixide.Builder do
   # A line box computed from a fractional size can exceed a box it fits
   # exactly by a rounding step; the layout allows this much.
   @fit_tolerance 1.0e-6
+
+  @typedoc """
+  Options accepted by `code_block/3`.
+
+    * `:font` — the block's `t:font/0`. Defaults to `:courier`, not the
+      document's `:font`.
+    * `:font_size` — text size in points. Defaults to `nil`, which uses the
+      document's `:font_size`.
+    * `:fill_color` — the background's `PdfElixide.Color.RGB`, or `nil` for
+      no background. Defaults to a light gray, `%RGB{r: 0.95, g: 0.95, b: 0.95}`.
+    * `:padding` — space in points between the background's edges and the
+      text, at least `0`. Defaults to `6`.
+    * `:tab_width` — the distance between tab stops, in characters, an
+      integer from 1 to 64. Defaults to `4`.
+
+  Padding that leaves a line box no room in the page's content height or
+  width raises `ArgumentError`. See [Errors](#module-errors) for other
+  failures.
+  """
+  @type code_block_opts :: [
+          font: font(),
+          font_size: number() | nil,
+          fill_color: RGB.t() | nil,
+          padding: number(),
+          tab_width: 1..64
+        ]
+
+  @code_block_opts_keys [:font, :font_size, :fill_color, :padding, :tab_width]
+
+  @code_fill %RGB{r: 0.95, g: 0.95, b: 0.95}
+
+  # Each tab is expanded to spaces before layout, so the stop distance bounds
+  # how much text one character can become.
+  @max_tab_width 64
 
   @typedoc """
   Options accepted by `text_at/4`: `:font` and `:font_size`, as for
@@ -1120,6 +1155,28 @@ defmodule PdfElixide.Builder do
     end
 
     %{builder | ops: [{:rule, builder.font_size} | builder.ops]}
+  end
+
+  @doc """
+  Adds a block of source text, set as written on a shaded background.
+
+  Accepts a string or styled runs (`t:text/0`).
+
+      PdfElixide.Builder.code_block(builder, "def hello do\\n  :world\\nend", font_size: 9)
+
+  See [Code blocks](guides/building-documents.md#code-blocks) for layout and
+  page breaks, and `t:code_block_opts/0` for the options.
+  """
+  @spec code_block(t(), text(), code_block_opts()) :: t()
+  def code_block(%__MODULE__{} = builder, text, opts \\ [])
+      when (is_binary(text) or is_list(text)) and is_list(opts) do
+    runs = runs!(text)
+    options = build_code_block_options(opts)
+    font_size = options.font_size || builder.font_size
+    validate_code_block_fits!(builder, font_size, options.padding)
+
+    op = {:code_block, Map.merge(options, %{runs: runs, font_size: font_size})}
+    %{builder | ops: [op | builder.ops]}
   end
 
   @doc """
@@ -2658,6 +2715,7 @@ defmodule PdfElixide.Builder do
           | :numbered_list
           | :run
           | :text_in_rect
+          | :code_block
           | :table
           | :cell
           | :image
@@ -2686,6 +2744,7 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:numbered_list), do: build_numbered_list_options([])
   def __option_defaults__(:run), do: build_run_options([])
   def __option_defaults__(:text_in_rect), do: build_text_in_rect_options([])
+  def __option_defaults__(:code_block), do: build_code_block_options([])
   def __option_defaults__(:table), do: build_table_options([])
   def __option_defaults__(:cell), do: build_cell_options([])
   def __option_defaults__(:image), do: build_image_options([])
@@ -2863,6 +2922,20 @@ defmodule PdfElixide.Builder do
     |> Keyword.take([:font, :font_size])
     |> build_paragraph_options()
     |> Map.put(:align, align!(Keyword.get(opts, :align, :left)))
+  end
+
+  defp build_code_block_options(opts) do
+    opts = Keyword.validate!(opts, @code_block_opts_keys)
+
+    opts
+    |> Keyword.take([:font_size])
+    |> build_paragraph_options()
+    |> Map.merge(%{
+      font: font!(Keyword.get(opts, :font, :courier)),
+      fill_color: color!(:fill_color, Keyword.get(opts, :fill_color, @code_fill)),
+      padding: non_negative!(:padding, Keyword.get(opts, :padding, 6)),
+      tab_width: tab_width!(Keyword.get(opts, :tab_width, 4))
+    })
   end
 
   defp build_table_options(opts) do
@@ -3334,6 +3407,13 @@ defmodule PdfElixide.Builder do
     raise ArgumentError, "invalid #{inspect(key)}, expected a positive integer: #{inspect(count)}"
   end
 
+  defp tab_width!(width) when is_integer(width) and width in 1..@max_tab_width, do: width
+
+  defp tab_width!(width) do
+    raise ArgumentError,
+          "invalid :tab_width, expected an integer from 1 to #{@max_tab_width}: #{inspect(width)}"
+  end
+
   defp header_rows!(count) when is_integer(count) and count >= 0, do: count
 
   defp header_rows!(count) do
@@ -3521,6 +3601,29 @@ defmodule PdfElixide.Builder do
             "invalid :font_size, a line #{line} points tall (font size × line height) " <>
               "does not fit the #{room}-point content height; reduce the font size, " <>
               "the line height or the margins"
+    end
+
+    validate_line_precise!(builder, font_size)
+  end
+
+  # Spelled as the layout spells its checks, so both refuse the same blocks.
+  defp validate_code_block_fits!(builder, font_size, padding) do
+    {width, height} = builder.current_page_size
+    line = font_size * builder.line_height
+    room = height - builder.margin_top - builder.margin_bottom
+
+    if line + 2 * padding > room do
+      raise ArgumentError,
+            "invalid layout, a line #{line} points tall (font size × line height) with " <>
+              "#{padding} points of padding above and below does not fit the " <>
+              "#{room}-point content height; reduce the font size, the padding, the line " <>
+              "height or the margins"
+    end
+
+    if width - builder.margin_left - builder.margin_right - 2 * padding <= 0 do
+      raise ArgumentError,
+            "invalid :padding, #{padding} points on each side leave no room for text " <>
+              "between the margins"
     end
 
     validate_line_precise!(builder, font_size)

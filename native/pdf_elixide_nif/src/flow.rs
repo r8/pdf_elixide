@@ -178,6 +178,7 @@ pub enum Op {
         marker: Marker,
         start: usize,
     },
+    CodeBlock(CodeBlock),
     Space(f64),
     Rule {
         size: f64,
@@ -243,6 +244,15 @@ pub enum Op {
     // A form field on the current page, by its position in the builder's
     // field table.
     Field(usize),
+}
+
+pub struct CodeBlock {
+    pub runs: Vec<Run>,
+    pub face: usize,
+    pub size: f64,
+    pub fill: Option<Rgb>,
+    pub padding: f64,
+    pub tab_width: usize,
 }
 
 pub struct Running {
@@ -476,10 +486,12 @@ pub enum Refused {
         page: usize,
         line: f64,
         room: f64,
+        padding: f64,
     },
     NoWidth {
         op: usize,
         page: usize,
+        padding: f64,
     },
     ClusterTooWide {
         op: usize,
@@ -907,6 +919,7 @@ impl<'a> Layout<'a> {
                     marker,
                     start,
                 } => self.list(index, items, *face, *size, *marker, *start)?,
+                Op::CodeBlock(code) => self.code_block(index, code)?,
                 Op::Space(points) => self.space(*points),
                 Op::Rule { size } => self.rule(*size),
                 Op::TextAt { runs, size, x, y } => {
@@ -1300,7 +1313,11 @@ impl<'a> Layout<'a> {
             let width = right - x - guess.reserve - gap;
             let page = self.pages.len() - 1;
             if width <= 0.0 {
-                return Err(Refused::NoWidth { op, page });
+                return Err(Refused::NoWidth {
+                    op,
+                    page,
+                    padding: 0.0,
+                });
             }
             let lines = self.wrapped(op, page, &entry.runs, size, width)?;
             let last = lines.len().saturating_sub(1);
@@ -1345,6 +1362,7 @@ impl<'a> Layout<'a> {
                 page: page_index,
                 line,
                 room,
+                padding: 0.0,
             });
         }
 
@@ -1426,7 +1444,11 @@ impl<'a> Layout<'a> {
     fn content_width(&self, op: usize, page: usize, left: f64) -> Result<f64, Refused> {
         let width = self.page().width - left - self.margins.right;
         if width <= 0.0 {
-            return Err(Refused::NoWidth { op, page });
+            return Err(Refused::NoWidth {
+                op,
+                page,
+                padding: 0.0,
+            });
         }
         Ok(width)
     }
@@ -1499,6 +1521,9 @@ impl<'a> Layout<'a> {
                 }
                 Op::Paragraph { size, .. } | Op::List { size, .. } => {
                     return total + gap + size * self.line_height;
+                }
+                Op::CodeBlock(code) => {
+                    return total + gap + code.size * self.line_height + 2.0 * code.padding;
                 }
                 Op::Rule { size } => return total + gap + size,
                 Op::Contents(contents) => return total + gap + contents.size * self.line_height,
@@ -2076,16 +2101,24 @@ impl<'a> Layout<'a> {
         self.resolve_anchors();
 
         let baseline = self.cursor - block.above_baseline;
-        let mut x = x;
         let placed: Vec<(f64, Segment)> = marker
             .into_iter()
-            .chain(segments.into_iter().map(|segment| {
-                let at = x;
-                x += segment.width;
-                (at, segment)
-            }))
+            .chain(side_by_side(x, segments))
             .collect();
+        self.emit_line(block.op, baseline, placed, size)?;
 
+        self.cursor -= block.line;
+        self.fresh = false;
+        Ok(())
+    }
+
+    fn emit_line(
+        &mut self,
+        op: usize,
+        baseline: f64,
+        placed: Vec<(f64, Segment)>,
+        size: f64,
+    ) -> Result<(), Refused> {
         // The line's box and advances are inside the margins, but a glyph's
         // ink can overhang its advance or rise above the ascent.
         let mut ink = [
@@ -2104,7 +2137,7 @@ impl<'a> Layout<'a> {
             || ink[3] > height + FIT_TOLERANCE
         {
             return Err(Refused::OffPage {
-                op: block.op,
+                op,
                 page: self.pages.len() - 1,
                 flowing: true,
             });
@@ -2124,11 +2157,105 @@ impl<'a> Layout<'a> {
                 artifact: None,
             }));
         }
-
-        self.cursor -= block.line;
-        self.fresh = false;
         Ok(())
     }
+
+    fn code_block(&mut self, op: usize, code: &CodeBlock) -> Result<(), Refused> {
+        let (size, padding) = (code.size, code.padding);
+        self.ensure_page();
+        let line = size * self.line_height;
+        let room = self.page().height - self.margins.top - self.margins.bottom;
+        // Spelled as the Elixir check spells it, so both refuse the same blocks.
+        if line + 2.0 * padding > room {
+            return Err(Refused::LineTooTall {
+                op,
+                page: self.pages.len() - 1,
+                line,
+                room,
+                padding,
+            });
+        }
+
+        let block = self.block(op, &[&code.runs], &[], code.face, size)?;
+        let left = self.margins.left;
+        let outer = self.content_width(op, block.page, left)?;
+        let width = outer - 2.0 * padding;
+        if width <= 0.0 {
+            return Err(Refused::NoWidth {
+                op,
+                page: block.page,
+                padding,
+            });
+        }
+        let lines = code_lines(self.fonts, &code.runs, size, width, code.tab_width).map_err(
+            |(cluster, cluster_width)| Refused::ClusterTooWide {
+                op,
+                page: block.page,
+                cluster,
+                width: cluster_width,
+                room: width,
+                within: Within::Line,
+            },
+        )?;
+
+        let mut lines = lines.into_iter().peekable();
+        while lines.peek().is_some() {
+            if !self.fresh {
+                let spaced = self.cursor - self.pending_space;
+                self.pending_space = 0.0;
+                if self.fits(spaced, line + 2.0 * padding) {
+                    self.cursor = spaced;
+                } else {
+                    self.break_page();
+                }
+            }
+            self.resolve_anchors();
+
+            let top = self.cursor;
+            let first_item = self.page().items.len();
+            self.cursor -= padding;
+            for segments in lines.by_ref() {
+                let baseline = self.cursor - block.above_baseline;
+                let placed = side_by_side(left + padding, segments).collect();
+                self.emit_line(op, baseline, placed, size)?;
+                self.cursor -= line;
+                self.fresh = false;
+                if !self.fits(self.cursor, line + padding) {
+                    break;
+                }
+            }
+            self.cursor -= padding;
+
+            if let Some(fill) = code.fill {
+                let bottom = self.cursor;
+                self.page_mut().items.insert(
+                    first_item,
+                    Item::Path(Shape {
+                        operations: vec![PathOperation::Rectangle(
+                            left as f32,
+                            bottom as f32,
+                            outer as f32,
+                            (top - bottom) as f32,
+                        )],
+                        stroke: None,
+                        fill: Some(fill),
+                    }),
+                );
+            }
+        }
+
+        self.pending_space = 0.5 * size;
+        Ok(())
+    }
+}
+
+fn side_by_side(x: f64, segments: Vec<Segment>) -> impl Iterator<Item = (f64, Segment)> {
+    let mut x = x;
+    segments.into_iter().map(move |segment| {
+        let at = x;
+        x += segment.width;
+        (at, segment)
+    })
 }
 
 #[derive(Clone)]
@@ -2218,6 +2345,14 @@ pub fn draws_nothing<'t>(texts: impl IntoIterator<Item = &'t str>) -> bool {
         .into_iter()
         .flat_map(str::chars)
         .all(|c| c != '\n' && c.is_whitespace())
+}
+
+// `source_lines` ends a line at `\r` too, where `wrap` draws it as a space.
+pub fn code_draws_nothing<'t>(texts: impl IntoIterator<Item = &'t str>) -> bool {
+    texts
+        .into_iter()
+        .flat_map(str::chars)
+        .all(|c| c != '\n' && c != '\r' && c.is_whitespace())
 }
 
 #[derive(Default)]
@@ -2345,11 +2480,18 @@ fn split_word(
     let mut chunk: Vec<Run> = Vec::new();
     let mut width = 0.0;
 
+    // Clusters only advance, so a piece wholly behind one stays behind.
+    let mut first = 0;
+
     for (cluster_start, cluster) in word.grapheme_indices(true) {
         let cluster_end = cluster_start + cluster.len();
-        let spans: Vec<Run> = pieces
+        while first < pieces.len() && starts[first] + pieces[first].text.len() <= cluster_start {
+            first += 1;
+        }
+        let spans: Vec<Run> = pieces[first..]
             .iter()
-            .zip(&starts)
+            .zip(&starts[first..])
+            .take_while(|&(_, &start)| start < cluster_end)
             .filter_map(|(piece, &start)| {
                 let from = cluster_start.max(start);
                 let to = cluster_end.min(start + piece.text.len());
@@ -2381,6 +2523,89 @@ fn split_word(
     }
 
     Ok(chunks)
+}
+
+fn code_lines(
+    fonts: &Fonts,
+    runs: &[Run],
+    size: f64,
+    max_width: f64,
+    tab_width: usize,
+) -> Result<Vec<Vec<Segment>>, TooWide> {
+    let limit = max_width + FIT_TOLERANCE;
+    let mut lines = Vec::new();
+    for source in source_lines(runs, tab_width) {
+        let chunks = if source.is_empty() {
+            vec![Vec::new()]
+        } else {
+            split_word(fonts, source, size, limit)?
+        };
+        for chunk in chunks {
+            let mut line = Line::default();
+            for piece in chunk {
+                line.push(fonts, piece, size);
+            }
+            lines.push(line.segments(fonts, size));
+        }
+    }
+    Ok(lines)
+}
+
+fn source_lines(runs: &[Run], tab_width: usize) -> Vec<Vec<Run>> {
+    let mut lines = Vec::new();
+    let mut line: Vec<Run> = Vec::new();
+    // A cluster never spans a tab, so a line's column is the clusters since
+    // its last tab added to that tab's stop.
+    let mut stop = 0;
+    let mut since_stop = String::new();
+    let mut after_cr = false;
+
+    let push = |line: &mut Vec<Run>, run: &Run, text: &str| match line.last_mut() {
+        Some(last) if last.same_style(run) => last.text.push_str(text),
+        _ => line.push(run.styled(text)),
+    };
+    let end = |line: &mut Vec<Run>, lines: &mut Vec<Vec<Run>>| {
+        let mut line = std::mem::take(line);
+        while let Some(last) = line.last_mut() {
+            let kept = last.text.trim_end_matches(' ').len();
+            last.text.truncate(kept);
+            if !last.text.is_empty() {
+                break;
+            }
+            line.pop();
+        }
+        lines.push(line);
+    };
+
+    for run in runs {
+        for c in run.text.chars() {
+            let crlf = after_cr && c == '\n';
+            after_cr = c == '\r';
+            if crlf {
+                continue;
+            }
+            if c == '\n' || c == '\r' {
+                end(&mut line, &mut lines);
+                stop = 0;
+                since_stop.clear();
+            } else if c == '\t' {
+                let column = stop + since_stop.graphemes(true).count();
+                let next = (column / tab_width + 1) * tab_width;
+                push(&mut line, run, &" ".repeat(next - column));
+                stop = next;
+                since_stop.clear();
+            } else {
+                let c = if c.is_whitespace() { ' ' } else { c };
+                since_stop.push(c);
+                push(&mut line, run, c.encode_utf8(&mut [0; 4]));
+            }
+        }
+    }
+    // A trailing break or a blank last line adds no line, as in a paragraph.
+    if line.iter().any(|run| run.text.chars().any(|c| c != ' ')) {
+        end(&mut line, &mut lines);
+    }
+    lines
 }
 
 #[cfg(test)]
