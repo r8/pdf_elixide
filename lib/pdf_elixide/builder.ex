@@ -66,6 +66,13 @@ defmodule PdfElixide.Builder do
   [Form fields](guides/building-documents.md#form-fields) for what each kind
   holds and how viewers draw them.
 
+  ## Scripts
+
+  JavaScript for a viewer to run is written only where it is given as a
+  script: `new/1`'s `:scripts` for the document, `page_scripts/2` for a page,
+  a `{:script, code}` link, and a field's `:scripts`. See
+  [Scripts](guides/building-documents.md#scripts).
+
   ## Fonts
 
   Use a built-in family, bundled DejaVu Sans or a
@@ -103,6 +110,7 @@ defmodule PdfElixide.Builder do
     :font,
     :font_size,
     :line_height,
+    :scripts,
     :current_page_size,
     :anchors,
     :field_names,
@@ -131,6 +139,7 @@ defmodule PdfElixide.Builder do
           font: font(),
           font_size: float(),
           line_height: float(),
+          scripts: %{open: String.t() | nil},
           current_page_size: {float(), float()},
           anchors: MapSet.t(String.t()),
           field_names: MapSet.t(String.t()),
@@ -169,7 +178,9 @@ defmodule PdfElixide.Builder do
 
   @typedoc """
   Where a link points: a URI string, `{:page, index}` for a zero-based page of
-  this document, or `{:anchor, name}` for a place named by `anchor/2`.
+  this document, `{:anchor, name}` for a place named by `anchor/2`, or
+  `{:script, code}` for JavaScript a viewer runs when the link is clicked;
+  see [Scripts](guides/building-documents.md#scripts).
 
   A URI is written as given, so it must be printable ASCII with no spaces:
   encode other characters first, for example with `URI.encode/1`. A
@@ -177,7 +188,8 @@ defmodule PdfElixide.Builder do
   document's last page, or an anchor no `anchor/2` call names, is refused when
   the document is built. See [Links](guides/building-documents.md#links).
   """
-  @type link :: String.t() | {:page, non_neg_integer()} | {:anchor, String.t()}
+  @type link ::
+          String.t() | {:page, non_neg_integer()} | {:anchor, String.t()} | {:script, String.t()}
 
   @typedoc """
   A position `{x, y}` in points from the page's bottom-left corner.
@@ -206,6 +218,26 @@ defmodule PdfElixide.Builder do
   @run_opts_keys [:bold, :italic, :color, :link]
 
   @typedoc """
+  JavaScript a viewer runs for the whole document, given to `new/1`.
+
+    * `:open` — run when the document is opened.
+
+  See [Scripts](guides/building-documents.md#scripts) for what a script must
+  hold and how viewers treat it.
+  """
+  @type document_scripts :: [open: String.t()]
+
+  @typedoc """
+  JavaScript a viewer runs for one page, given to `page_scripts/2`.
+
+    * `:open` — run when the page is shown.
+    * `:close` — run when the viewer leaves the page.
+
+  See [Scripts](guides/building-documents.md#scripts).
+  """
+  @type page_scripts :: [open: String.t(), close: String.t()]
+
+  @typedoc """
   Options accepted by `new/1`.
 
     * `:title`, `:author`, `:subject`, `:creator` — written to the document
@@ -221,6 +253,8 @@ defmodule PdfElixide.Builder do
       own. Defaults to `12`.
     * `:line_height` — line box height as a multiple of the text size.
       Defaults to `1.5`.
+    * `:scripts` — `t:document_scripts/0` a viewer runs. Defaults to `[]`,
+      none.
 
   Sizes must be positive, with each page side at most 1.0e18 points, and
   margins non-negative, leaving room on the page. A `:title`, `:author`,
@@ -240,7 +274,8 @@ defmodule PdfElixide.Builder do
           margin_right: number(),
           font: font(),
           font_size: number(),
-          line_height: number()
+          line_height: number(),
+          scripts: document_scripts()
         ]
 
   @new_opts_keys [
@@ -255,7 +290,8 @@ defmodule PdfElixide.Builder do
     :margin_right,
     :font,
     :font_size,
-    :line_height
+    :line_height,
+    :scripts
   ]
 
   @typedoc """
@@ -617,6 +653,10 @@ defmodule PdfElixide.Builder do
       field. Defaults to `false`.
     * `:tooltip` — text a viewer shows when the pointer rests on the field.
       Defaults to `nil`, none.
+    * `:scripts` — JavaScript a viewer runs for the field: `:keystroke` as
+      the user types, `:format` to display the value, and `:validate` to
+      check a new value. Defaults to `[]`, none. See
+      [Scripts](guides/building-documents.md#scripts).
 
   A value is one line of printable Windows-1252 characters, the ones the
   field's font can draw; any other character raises `ArgumentError`. A
@@ -630,10 +670,11 @@ defmodule PdfElixide.Builder do
           default_value: String.t() | nil,
           required: boolean(),
           read_only: boolean(),
-          tooltip: String.t() | nil
+          tooltip: String.t() | nil,
+          scripts: [keystroke: String.t(), format: String.t(), validate: String.t()]
         ]
 
-  @text_field_opts_keys [:value, :default_value, :required, :read_only, :tooltip]
+  @text_field_opts_keys [:value, :default_value, :required, :read_only, :tooltip, :scripts]
 
   @typedoc """
   Options accepted by `check_box/4`.
@@ -656,15 +697,17 @@ defmodule PdfElixide.Builder do
     * `:selected` — the option the field starts with. Defaults to `nil`,
       none.
     * `:required`, `:read_only`, `:tooltip` — as for `text_field/4`.
+    * `:scripts` — `:keystroke` and `:validate`, as for `text_field/4`.
   """
   @type combo_box_opts :: [
           selected: String.t() | nil,
           required: boolean(),
           read_only: boolean(),
-          tooltip: String.t() | nil
+          tooltip: String.t() | nil,
+          scripts: [keystroke: String.t(), validate: String.t()]
         ]
 
-  @combo_box_opts_keys [:selected, :required, :read_only, :tooltip]
+  @combo_box_opts_keys [:selected, :required, :read_only, :tooltip, :scripts]
 
   @typedoc """
   Options accepted by `list_box/5`.
@@ -674,16 +717,18 @@ defmodule PdfElixide.Builder do
     * `:selected` — the option the field starts with, or with
       `multi_select: true` a list of them. Defaults to `nil`, none.
     * `:required`, `:read_only`, `:tooltip` — as for `text_field/4`.
+    * `:scripts` — `:validate`, as for `text_field/4`.
   """
   @type list_box_opts :: [
           multi_select: boolean(),
           selected: String.t() | [String.t()] | nil,
           required: boolean(),
           read_only: boolean(),
-          tooltip: String.t() | nil
+          tooltip: String.t() | nil,
+          scripts: [validate: String.t()]
         ]
 
-  @list_box_opts_keys [:multi_select, :selected, :required, :read_only, :tooltip]
+  @list_box_opts_keys [:multi_select, :selected, :required, :read_only, :tooltip, :scripts]
 
   @typedoc """
   Options accepted by `push_button/5`: `:read_only` and `:tooltip`, as for
@@ -1910,6 +1955,29 @@ defmodule PdfElixide.Builder do
     running(builder, :footer, parts, builder.margin_bottom, "bottom")
   end
 
+  @doc """
+  Sets the `t:page_scripts/0` a viewer runs on the page the next content
+  lands on.
+
+  The page is found as for `page_labels/3`, and is the last page when no
+  content follows. A page takes one `page_scripts/2`, so give both scripts
+  in one call; a second call landing on the same page is refused when the
+  document is built. See [Scripts](guides/building-documents.md#scripts).
+
+      PdfElixide.Builder.page_scripts(builder, open: "app.alert('Page shown');")
+  """
+  @spec page_scripts(t(), page_scripts()) :: t()
+  def page_scripts(%__MODULE__{} = builder, scripts) when is_list(scripts) do
+    options = scripts!(scripts, [:open, :close], [:open, :close])
+
+    if Enum.all?(Map.values(options), &is_nil/1) do
+      raise ArgumentError,
+            "invalid scripts, expected at least one of :open and :close: #{inspect(scripts)}"
+    end
+
+    %{builder | ops: [{:page_scripts, options} | builder.ops]}
+  end
+
   defp running(builder, tag, nil, _margin, _where) do
     %{builder | ops: [{tag, nil} | builder.ops]}
   end
@@ -2118,6 +2186,8 @@ defmodule PdfElixide.Builder do
   defp field(builder, name, rect, options, kind) do
     name = field_name!(builder, name)
     %Rect{x: x, y: y, width: width, height: height} = field_rect!(builder, rect)
+
+    options = Map.put_new(options, :scripts, field_scripts!([], []))
 
     op =
       {:field,
@@ -2664,7 +2734,8 @@ defmodule PdfElixide.Builder do
       :margin_bottom,
       :margin_left,
       :margin_right,
-      :line_height
+      :line_height,
+      :scripts
     ])
     |> Map.merge(%{
       ops: ops,
@@ -2899,7 +2970,8 @@ defmodule PdfElixide.Builder do
       page_size: page_size!(Keyword.get(opts, :page_size, :letter)),
       font: font!(Keyword.get(opts, :font, :auto)),
       font_size: positive!(:font_size, Keyword.get(opts, :font_size, 12)),
-      line_height: positive!(:line_height, Keyword.get(opts, :line_height, 1.5))
+      line_height: positive!(:line_height, Keyword.get(opts, :line_height, 1.5)),
+      scripts: scripts!(Keyword.get(opts, :scripts, []), [:open], [:open])
     })
   end
 
@@ -3133,7 +3205,8 @@ defmodule PdfElixide.Builder do
     |> field_options()
     |> Map.merge(%{
       value: field_text!(:value, Keyword.get(opts, :value)),
-      default_value: field_text!(:default_value, Keyword.get(opts, :default_value))
+      default_value: field_text!(:default_value, Keyword.get(opts, :default_value)),
+      scripts: field_scripts!(opts, [:keystroke, :format, :validate])
     })
   end
 
@@ -3148,7 +3221,12 @@ defmodule PdfElixide.Builder do
   defp build_combo_box_options(opts) do
     opts = Keyword.validate!(opts, @combo_box_opts_keys)
 
-    opts |> field_options() |> Map.put(:selected, Keyword.get(opts, :selected))
+    opts
+    |> field_options()
+    |> Map.merge(%{
+      selected: Keyword.get(opts, :selected),
+      scripts: field_scripts!(opts, [:keystroke, :validate])
+    })
   end
 
   defp build_list_box_options(opts) do
@@ -3158,7 +3236,8 @@ defmodule PdfElixide.Builder do
     |> field_options()
     |> Map.merge(%{
       multi_select: boolean!(:multi_select, Keyword.get(opts, :multi_select, false)),
-      selected: Keyword.get(opts, :selected)
+      selected: Keyword.get(opts, :selected),
+      scripts: field_scripts!(opts, [:validate])
     })
   end
 
@@ -3187,6 +3266,41 @@ defmodule PdfElixide.Builder do
   defp tooltip!(tooltip) do
     raise ArgumentError, "invalid :tooltip, expected a string or nil: #{inspect(tooltip)}"
   end
+
+  defp field_scripts!(opts, keys) do
+    opts |> Keyword.get(:scripts, []) |> scripts!(keys, [:keystroke, :format, :validate])
+  end
+
+  # Every event key is sent, so the native decode sees a total map.
+  defp scripts!(scripts, keys, events) when is_list(scripts) do
+    scripts = Keyword.validate!(scripts, keys)
+    Map.new(events, &{&1, scripts |> Keyword.get(&1) |> optional_script!(&1)})
+  end
+
+  defp scripts!(other, _keys, _events) do
+    raise ArgumentError, "invalid :scripts, expected a keyword list: #{inspect(other)}"
+  end
+
+  defp optional_script!(nil, _key), do: nil
+  defp optional_script!(code, key), do: script!(key, code)
+
+  defp script!(label, code) when is_binary(code) do
+    code = LayoutOptions.field_text!(label, code, "a script")
+
+    if String.trim(code) == "" do
+      raise ArgumentError,
+            "invalid #{script_label(label)}, a script needs code other than whitespace"
+    end
+
+    code
+  end
+
+  defp script!(label, other) do
+    raise ArgumentError, "invalid #{script_label(label)}, expected a string: #{inspect(other)}"
+  end
+
+  defp script_label(key) when is_atom(key), do: inspect(key)
+  defp script_label(name), do: name
 
   defp field_text!(_key, nil), do: nil
   defp field_text!(key, value) when is_binary(value), do: LayoutOptions.win_ansi!(key, value)
@@ -3238,14 +3352,23 @@ defmodule PdfElixide.Builder do
               inspect(uri)
     end
 
-    if String.starts_with?(String.downcase(uri), @script_schemes) do
-      raise ArgumentError,
-            "invalid :link, a #{uri |> String.split(":") |> hd()}: URI runs a script, " <>
-              "which the builder does not write: #{inspect(uri)}"
-    end
+    case Enum.find(@script_schemes, &String.starts_with?(String.downcase(uri), &1)) do
+      nil ->
+        {:uri, uri}
 
-    {:uri, uri}
+      "javascript:" ->
+        raise ArgumentError,
+              "invalid :link, a javascript: URI is not run as a script; give the code as " <>
+                "{:script, code}: #{inspect(uri)}"
+
+      scheme ->
+        raise ArgumentError,
+              "invalid :link, a #{scheme} URI runs a script in a language the builder does " <>
+                "not write: #{inspect(uri)}"
+    end
   end
+
+  defp link!({:script, code}) when is_binary(code), do: {:script, script!(":link", code)}
 
   defp link!({:page, page}) when is_integer(page) and page >= 0 and page <= @max_list_number,
     do: {:page, page}
@@ -3255,7 +3378,7 @@ defmodule PdfElixide.Builder do
   defp link!(other) do
     raise ArgumentError,
           "invalid :link, expected a URI string, {:page, index} with an index from 0 to " <>
-            "#{@max_list_number}, or {:anchor, name}: #{inspect(other)}"
+            "#{@max_list_number}, {:anchor, name} or {:script, code}: #{inspect(other)}"
   end
 
   defp anchor_name!(label, name) do

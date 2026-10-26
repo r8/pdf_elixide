@@ -659,6 +659,32 @@ mod tests {
     }
 
     #[test]
+    fn upstream_still_overlooks_page_link_and_field_scripts_in_pdf_a() {
+        use pdf_oxide::writer::{DocumentBuilder, PageSize};
+
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .at(72.0, 700.0)
+            .text("Run")
+            .link_javascript("app.alert('link');")
+            .on_open("app.alert('page');")
+            .text_field("total", 72.0, 600.0, 100.0, 20.0, None)
+            .field_validate("app.alert('field');")
+            .done();
+        let bytes = builder.build().expect("builds");
+        assert_eq!(bytes.windows(11).filter(|w| w == b"/JavaScript").count(), 3);
+
+        let mut doc = PdfDocument::from_bytes(bytes).expect("parses");
+        let report = validate_pdf_a(&mut doc, PdfALevel::A2b).unwrap();
+
+        assert!(!report
+            .errors
+            .iter()
+            .any(|error| error.code == ErrorCode::JavaScriptNotAllowed));
+    }
+
+    #[test]
     fn upstream_still_validates_ua2_as_ua1() {
         for name in ["sample.pdf", "tagged.pdf"] {
             let mut doc = fixture(name);

@@ -47,7 +47,8 @@ defmodule PdfElixide.OptionKeysTest do
     margin_right: 10.0,
     font: :times,
     font_size: 10.0,
-    line_height: 1.2
+    line_height: 1.2,
+    scripts: [open: "this.print();"]
   ]
 
   @builder_output_opts [compress: false, garbage_collect: false, encryption: nil]
@@ -598,6 +599,7 @@ defmodule PdfElixide.OptionKeysTest do
       )
 
       accepts_each!([prefix: "A-", start: 5], &Builder.page_labels(Builder.new(), :decimal, &1))
+      accepts_each!([open: "o();", close: "c();"], &Builder.page_scripts(Builder.new(), &1))
 
       for running <- [&Builder.header/2, &Builder.footer/2] do
         accepts_each!(
@@ -622,19 +624,34 @@ defmodule PdfElixide.OptionKeysTest do
       field = [required: true, read_only: true, tooltip: "tip"]
 
       accepts_each!(
-        [value: "v", default_value: "d"] ++ field,
+        [value: "v", default_value: "d", scripts: [keystroke: "k();", format: "f();"]] ++ field,
         &Builder.text_field(Builder.new(), "f", rect, &1)
+      )
+
+      accepts_each!(
+        [keystroke: "k();", format: "f();", validate: "v();"],
+        &Builder.text_field(Builder.new(), "f", rect, scripts: &1)
+      )
+
+      accepts_each!(
+        [keystroke: "k();", validate: "v();"],
+        &Builder.combo_box(Builder.new(), "f", rect, ["a"], scripts: &1)
+      )
+
+      accepts_each!(
+        [validate: "v();"],
+        &Builder.list_box(Builder.new(), "f", rect, ["a"], scripts: &1)
       )
 
       accepts_each!([checked: true] ++ field, &Builder.check_box(Builder.new(), "f", rect, &1))
 
       accepts_each!(
-        [selected: "a"] ++ field,
+        [selected: "a", scripts: [validate: "v();"]] ++ field,
         &Builder.combo_box(Builder.new(), "f", rect, ["a"], &1)
       )
 
       accepts_each!(
-        [multi_select: false, selected: "a"] ++ field,
+        [multi_select: false, selected: "a", scripts: [validate: "v();"]] ++ field,
         &Builder.list_box(Builder.new(), "f", rect, ["a"], &1)
       )
 
@@ -861,6 +878,11 @@ defmodule PdfElixide.OptionKeysTest do
         fn opts -> Builder.signature_field(Builder.new(), "f", field_rect(), opts) end,
         fn opts -> Builder.bookmark(Builder.new(), "T", opts) end,
         fn opts -> Builder.page_labels(Builder.new(), :decimal, opts) end,
+        fn opts -> Builder.page_scripts(Builder.new(), [open: "o();"] ++ opts) end,
+        fn opts -> Builder.new(scripts: opts) end,
+        fn opts -> Builder.text_field(Builder.new(), "f", field_rect(), scripts: opts) end,
+        fn opts -> Builder.combo_box(Builder.new(), "f", field_rect(), ["a"], scripts: opts) end,
+        fn opts -> Builder.list_box(Builder.new(), "f", field_rect(), ["a"], scripts: opts) end,
         fn opts -> Builder.header(Builder.new(), [left: "L"] ++ opts) end,
         fn opts -> Builder.footer(Builder.new(), [left: "L"] ++ opts) end,
         fn opts -> Builder.contents(Builder.new(), opts) end

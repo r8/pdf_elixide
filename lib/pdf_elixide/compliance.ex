@@ -38,6 +38,10 @@ defmodule PdfElixide.Compliance do
   (`/ID`), both of which PDF/A requires. A PDF/A-1 report does not check that
   the XMP metadata is stored uncompressed, which PDF/A-1 also requires.
 
+  A PDF/A report flags the JavaScript a document runs when it is opened, and
+  its document-level scripts. It does not flag JavaScript run by a page, a
+  link or a form field, and conversion does not remove it.
+
   PDF/A and PDF/X forbid encryption, so an encrypted document always fails them.
   PDF/UA-2 is not offered: this library performs no check specific to it.
 
@@ -204,8 +208,9 @@ defmodule PdfElixide.Compliance do
     * `:embed_fonts` — embed fonts the document uses without carrying them,
       using fonts installed on this machine. Output can vary by machine; see
       the conversion guide before enabling it. Defaults to `false`.
-    * `:remove_javascript` — remove document JavaScript and JavaScript
-      actions, which PDF/A forbids. Defaults to `true`.
+    * `:remove_javascript` — remove document-level JavaScript, including
+      the open script. Defaults to `true`. See
+      [What a report establishes](#module-what-a-report-establishes) for limits.
     * `:remove_embedded_files` — remove attached files, which a PDF/A-1 or
       PDF/A-2 report lists as a violation. They are kept for a PDF/A-3 target
       whatever this says. Defaults to `true`.

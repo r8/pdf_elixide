@@ -2023,6 +2023,29 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert dict =~ "/Filter"
     end
 
+    test "still removes only the document's open script" do
+      builder =
+        Builder.new(scripts: [open: "o();"])
+        |> Builder.paragraph([{"x", link: {:script, "a();"}}])
+        |> Builder.page_scripts(open: "p();")
+        |> Builder.text_field("name", %Rect{x: 72.0, y: 600.0, width: 150.0, height: 20.0},
+          scripts: [validate: "v();"]
+        )
+
+      editor = Editor.from_builder!(builder)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert :removed_javascript in Enum.map(
+               Compliance.convert!(editor, :pdf_a_2b).actions,
+               & &1.type
+             )
+
+      pdf = Editor.to_binary!(editor, compress: false)
+
+      refute pdf =~ "/OpenAction"
+      assert length(String.split(pdf, "/JavaScript")) - 1 == 3
+    end
+
     test "keeps the document information dictionary when nothing needs converting" do
       converted = Editor.open!(Path.join(@fixtures, "metadata.pdf"))
       Compliance.convert!(converted, :pdf_a_2b)

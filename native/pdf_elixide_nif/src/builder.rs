@@ -27,8 +27,8 @@ use crate::{
     flow::{
         self, embedded_key, Align, Artifact, Barcode, Caption, Cell, CodeBlock, Contents, Embedded,
         Entry, EntryTarget, Face, Fit, FlowImage, Fonts, Item, LabelKind, Margins, Marker, Op,
-        Picture, Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke, Table, Unordered,
-        Watermark, Width, Within,
+        PageScripts, Picture, Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke, Table,
+        Unordered, Watermark, Width, Within,
     },
     open_editor::OpenEditor,
     page_label::MAX_LETTERED,
@@ -47,9 +47,15 @@ pub struct BuildNif<'a> {
     margin_left: f64,
     margin_right: f64,
     line_height: f64,
+    scripts: DocumentScriptsNif,
     families: Vec<FamilyNif<'a>>,
     images: Vec<Binary<'a>>,
     ops: Vec<OpNif<'a>>,
+}
+
+#[derive(NifMap)]
+pub struct DocumentScriptsNif {
+    open: Option<String>,
 }
 
 #[derive(NifMap)]
@@ -85,6 +91,7 @@ pub enum OpNif<'a> {
     PageLabels(PageLabelsNif),
     Header(Option<RunningNif>),
     Footer(Option<RunningNif>),
+    PageScripts(PageScriptsNif),
     Contents(ContentsNif),
 }
 
@@ -92,7 +99,7 @@ pub enum OpNif<'a> {
 pub struct BookmarkNif {
     title: String,
     level: usize,
-    to: Option<LinkNif>,
+    to: Option<PlaceNif>,
     open: bool,
     bold: bool,
     italic: bool,
@@ -139,6 +146,12 @@ pub struct RunningNif {
 }
 
 #[derive(NifMap)]
+pub struct PageScriptsNif {
+    open: Option<String>,
+    close: Option<String>,
+}
+
+#[derive(NifMap)]
 pub struct ContentsNif {
     font: FontNif,
     font_size: f64,
@@ -155,7 +168,15 @@ pub struct FieldNif {
     required: bool,
     read_only: bool,
     tooltip: Option<String>,
+    scripts: FieldScriptsNif,
     kind: FieldKindNif,
+}
+
+#[derive(NifMap)]
+pub struct FieldScriptsNif {
+    keystroke: Option<String>,
+    format: Option<String>,
+    validate: Option<String>,
 }
 
 #[derive(NifTaggedEnum)]
@@ -190,8 +211,40 @@ pub struct ListBoxNif {
 #[derive(NifTaggedEnum, Clone)]
 pub enum LinkNif {
     Uri(String),
+    Script(String),
     Page(usize),
     Anchor(String),
+}
+
+// Where a bookmark points: always within the document.
+#[derive(NifTaggedEnum, Clone)]
+pub enum PlaceNif {
+    Page(usize),
+    Anchor(String),
+}
+
+enum Place<'t> {
+    Page(usize),
+    Anchor(&'t str),
+}
+
+impl LinkNif {
+    fn place(&self) -> Option<Place<'_>> {
+        match self {
+            LinkNif::Uri(_) | LinkNif::Script(_) => None,
+            &LinkNif::Page(page) => Some(Place::Page(page)),
+            LinkNif::Anchor(name) => Some(Place::Anchor(name)),
+        }
+    }
+}
+
+impl PlaceNif {
+    fn place(&self) -> Place<'_> {
+        match self {
+            &PlaceNif::Page(page) => Place::Page(page),
+            PlaceNif::Anchor(name) => Place::Anchor(name),
+        }
+    }
 }
 
 #[derive(NifMap)]
@@ -252,7 +305,7 @@ struct Bookmark {
     op: usize,
     title: String,
     level: usize,
-    to: Option<LinkNif>,
+    to: Option<PlaceNif>,
     open: bool,
     bold: bool,
     italic: bool,
@@ -931,10 +984,8 @@ fn contents_entries(
                 level: bookmark.level,
                 target: match &bookmark.to {
                     None => EntryTarget::Mark(number),
-                    Some(LinkNif::Page(page)) => EntryTarget::Page(*page),
-                    Some(LinkNif::Anchor(name)) => EntryTarget::Anchor(name.clone()),
-                    // Not sent for a bookmark; it names no page.
-                    Some(LinkNif::Uri(_)) => EntryTarget::Page(usize::MAX),
+                    Some(PlaceNif::Page(page)) => EntryTarget::Page(*page),
+                    Some(PlaceNif::Anchor(name)) => EntryTarget::Anchor(name.clone()),
                 },
                 link,
             }
@@ -1122,6 +1173,10 @@ fn ops(
                 text.map(|text| running(index, text, auto, faces, links))
                     .transpose()?,
             )),
+            OpNif::PageScripts(scripts) => Ok(Op::PageScripts(PageScripts {
+                open: scripts.open,
+                close: scripts.close,
+            })),
             OpNif::Contents(contents) => Ok(Op::Contents(Contents {
                 entries: Vec::new(),
                 face: faces.face(index, family_of(contents.font, auto), Style::Regular)?,
@@ -1539,6 +1594,9 @@ fn emit(
     if let Some(creator) = meta.creator {
         doc = doc.creator(creator);
     }
+    if let Some(script) = meta.open_script {
+        doc = doc.on_open(script);
+    }
     for &(face, bytes) in sources {
         let font = load(bytes)
             .map_err(|reason| unsupported(format!("a face parsed once failed again: {reason}")))?;
@@ -1644,6 +1702,14 @@ fn emit(
         for annotation in annotations.build(links, &targets, (page.width, page.height)) {
             builder = builder.add_annotation(annotation);
         }
+        if let Some(PageScripts { open, close }) = page.scripts {
+            if let Some(script) = open {
+                builder = builder.on_open(&script);
+            }
+            if let Some(script) = close {
+                builder = builder.on_close(&script);
+            }
+        }
         builder.done();
     }
 
@@ -1696,8 +1762,25 @@ fn form_field<'a>(builder: FluentPageBuilder<'a>, field: &FieldNif) -> FluentPag
     } else {
         builder
     };
-    match &field.tooltip {
+    let builder = match &field.tooltip {
         Some(tooltip) => builder.tooltip(tooltip.clone()),
+        None => builder,
+    };
+    let FieldScriptsNif {
+        keystroke,
+        format,
+        validate,
+    } = &field.scripts;
+    let builder = match keystroke {
+        Some(script) => builder.field_keystroke(script.clone()),
+        None => builder,
+    };
+    let builder = match format {
+        Some(script) => builder.field_format(script.clone()),
+        None => builder,
+    };
+    match validate {
+        Some(script) => builder.field_validate(script.clone()),
         None => builder,
     }
 }
@@ -1752,22 +1835,22 @@ fn check_targets(plan: &Plan, links: &[Link], bookmarks: &[Bookmark]) -> Result<
                     link: Some(link), ..
                 })
                 | Item::Link { link, .. } => match &links[*link].target {
-                    Target::Given(target) => Some((links[*link].op, Some(page), "link", target)),
+                    Target::Given(target) => target
+                        .place()
+                        .map(|place| (links[*link].op, Some(page), "link", place)),
                     // An entry points where its bookmark does, checked below.
                     Target::Bookmark(_) => None,
                 },
                 _ => None,
             })
         })
-        .chain(
-            bookmarks.iter().filter_map(|bookmark| {
-                Some((bookmark.op, None, "bookmark", bookmark.to.as_ref()?))
-            }),
-        );
+        .chain(bookmarks.iter().filter_map(|bookmark| {
+            Some((bookmark.op, None, "bookmark", bookmark.to.as_ref()?.place()))
+        }));
 
     for (op, page, what, target) in given {
         match target {
-            &LinkNif::Page(target) if target >= plan.pages.len() => {
+            Place::Page(target) if target >= plan.pages.len() => {
                 return Err(Refused::NoSuchPage {
                     op,
                     page,
@@ -1776,12 +1859,12 @@ fn check_targets(plan: &Plan, links: &[Link], bookmarks: &[Bookmark]) -> Result<
                     pages: plan.pages.len(),
                 });
             }
-            LinkNif::Anchor(name) if !plan.anchors.contains_key(name) => {
+            Place::Anchor(name) if !plan.anchors.contains_key(name) => {
                 return Err(Refused::NoSuchAnchor {
                     op,
                     page,
                     what,
-                    name: name.clone(),
+                    name: name.to_string(),
                 });
             }
             _ => {}
@@ -1798,6 +1881,11 @@ struct Targets<'p> {
 
 enum Dest<'t> {
     Uri(&'t str),
+    Script(&'t str),
+    Spot(Spot),
+}
+
+enum Spot {
     Page(usize),
     // A page and the top of the content there.
     At(usize, f64),
@@ -1807,20 +1895,24 @@ impl<'p> Targets<'p> {
     fn given(&self, target: &'p LinkNif) -> Dest<'p> {
         match target {
             LinkNif::Uri(uri) => Dest::Uri(uri),
-            LinkNif::Page(page) => Dest::Page(*page),
-            LinkNif::Anchor(name) => {
-                let (page, top) = self.anchors[name];
-                Dest::At(page, top)
-            }
+            LinkNif::Script(script) => Dest::Script(script),
+            LinkNif::Page(page) => Dest::Spot(Spot::Page(*page)),
+            LinkNif::Anchor(name) => Dest::Spot(self.anchor(name)),
         }
     }
 
-    fn bookmark(&self, number: usize) -> Dest<'p> {
+    fn anchor(&self, name: &str) -> Spot {
+        let (page, top) = self.anchors[name];
+        Spot::At(page, top)
+    }
+
+    fn bookmark(&self, number: usize) -> Spot {
         match &self.bookmarks[number].to {
-            Some(target) => self.given(target),
+            Some(PlaceNif::Page(page)) => Spot::Page(*page),
+            Some(PlaceNif::Anchor(name)) => self.anchor(name),
             None => {
                 let (page, top) = self.marks[&number];
-                Dest::At(page, top)
+                Spot::At(page, top)
             }
         }
     }
@@ -1828,7 +1920,7 @@ impl<'p> Targets<'p> {
     fn of(&self, target: &'p Target) -> Dest<'p> {
         match target {
             Target::Given(target) => self.given(target),
-            Target::Bookmark(number) => self.bookmark(*number),
+            Target::Bookmark(number) => Dest::Spot(self.bookmark(*number)),
         }
     }
 }
@@ -1839,9 +1931,8 @@ fn fill_outline(outline: &mut OutlineBuilder, targets: &Targets) {
     let mut depth = 0;
     for (number, bookmark) in targets.bookmarks.iter().enumerate() {
         let destination = match targets.bookmark(number) {
-            Dest::Uri(uri) => OutlineDestination::Uri(uri.to_string()),
-            Dest::Page(page) => OutlineDestination::Page(page),
-            Dest::At(page, top) => OutlineDestination::PageFit {
+            Spot::Page(page) => OutlineDestination::Page(page),
+            Spot::At(page, top) => OutlineDestination::PageFit {
                 page,
                 fit: FitMode::XYZ {
                     left: None,
@@ -1970,8 +2061,13 @@ fn span(from: f32, to: f32) -> f32 {
 fn link_annotation(dest: Dest, rect: Rect) -> LinkAnnotation {
     match dest {
         Dest::Uri(uri) => LinkAnnotation::uri(rect, uri),
-        Dest::Page(page) => LinkAnnotation::goto_page(rect, page),
-        Dest::At(page, top) => {
+        Dest::Script(script) => {
+            let mut link = LinkAnnotation::uri(rect, String::new());
+            link.action = LinkAction::JavaScript(script.to_string());
+            link
+        }
+        Dest::Spot(Spot::Page(page)) => LinkAnnotation::goto_page(rect, page),
+        Dest::Spot(Spot::At(page, top)) => {
             let mut link = LinkAnnotation::goto_page(rect, page);
             link.action = LinkAction::GoTo {
                 page,
@@ -2109,6 +2205,7 @@ struct Meta {
     author: Option<String>,
     subject: Option<String>,
     creator: Option<String>,
+    open_script: Option<String>,
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -2124,6 +2221,7 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
         author: build.author,
         subject: build.subject,
         creator: build.creator,
+        open_script: build.scripts.open,
     };
     let page_size = build.page_size;
     let line_height = build.line_height;
@@ -2612,6 +2710,28 @@ mod tests {
         assert!(fields
             .iter()
             .all(|field| !field.contains_key("Parent") && !field.contains_key("Kids")));
+    }
+
+    #[test]
+    fn upstream_still_writes_no_calculation_order() {
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .text_field("total", 72.0, 700.0, 100.0, 20.0, None)
+            .field_calculate("event.value = 1;")
+            .done();
+        let pdf = builder.build().expect("builds");
+        let fields = acroform_fields(pdf.clone());
+        let doc = PdfDocument::from_bytes(pdf).expect("parses");
+        let catalog = doc.catalog().expect("has a catalog");
+        let form = catalog
+            .as_dict()
+            .and_then(|catalog| catalog.get("AcroForm"))
+            .expect("has a form");
+        let form = doc.resolve_object(form).expect("resolves");
+
+        assert!(fields[0].contains_key("AA"));
+        assert!(!form.as_dict().expect("a dictionary").contains_key("CO"));
     }
 
     #[test]

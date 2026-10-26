@@ -3077,6 +3077,262 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "scripts" do
+    defp field_box(y), do: %Rect{x: 72.0, y: y, width: 150.0, height: 20.0}
+
+    defp objects(bytes) do
+      for [number, object] <-
+            Regex.scan(~r/(\d+) 0 obj(.*?)endobj/s, bytes, capture: :all_but_first),
+          into: %{},
+          do: {number, object}
+    end
+
+    # Each action dictionary under a one-letter key — a trigger in `/AA`, or a
+    # link's `/A` — or under `/OpenAction`, with its decoded `/JS`.
+    defp scripts_of(object) do
+      ~r{/([A-Z]|OpenAction)\s*<<(?:(?!>>).)*?/JS\s*(\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]*>)}s
+      |> Regex.scan(object, capture: :all_but_first)
+      |> Map.new(fn [key, literal] -> {key, literal(literal)} end)
+    end
+
+    defp literal("<" <> hex) do
+      hex
+      |> String.trim_trailing(">")
+      |> String.replace(~r/\s/, "")
+      |> Base.decode16!(case: :mixed)
+      |> decoded()
+    end
+
+    defp literal(text),
+      do: text |> binary_part(1, byte_size(text) - 2) |> unescape(<<>>) |> decoded()
+
+    defp decoded(<<0xFE, 0xFF, utf16::binary>>),
+      do: :unicode.characters_to_binary(utf16, {:utf16, :big})
+
+    defp decoded(bytes), do: :unicode.characters_to_binary(bytes, :latin1)
+
+    @escapes %{?n => ?\n, ?r => ?\r, ?t => ?\t, ?b => ?\b, ?f => ?\f}
+
+    defp unescape(<<?\\, a, b, c, rest::binary>>, acc)
+         when a in ?0..?7 and b in ?0..?7 and c in ?0..?7,
+         do: unescape(rest, <<acc::binary, List.to_integer([a, b, c], 8)>>)
+
+    defp unescape(<<?\\, char, rest::binary>>, acc),
+      do: unescape(rest, <<acc::binary, Map.get(@escapes, char, char)>>)
+
+    defp unescape(<<char, rest::binary>>, acc), do: unescape(rest, <<acc::binary, char>>)
+    defp unescape(<<>>, acc), do: acc
+
+    defp catalog_scripts(bytes) do
+      [catalog] = for {_, object} <- objects(bytes), object =~ "/Type /Catalog", do: object
+      scripts_of(catalog)
+    end
+
+    defp page_scripts(bytes) do
+      objects = objects(bytes)
+      [[kids]] = Regex.scan(~r{/Kids \[([^\]]*)\]}, bytes, capture: :all_but_first)
+
+      for [number] <- Regex.scan(~r/(\d+) 0 R/, kids, capture: :all_but_first) do
+        case Regex.run(~r{/AA\s*<<(.*?>>)\s*>>}s, objects[number], capture: :all_but_first) do
+          [triggers] -> scripts_of(triggers)
+          nil -> %{}
+        end
+      end
+    end
+
+    defp field_scripts(bytes, name) do
+      [field] = for {_, object} <- objects(bytes), object =~ "/T (#{name})", do: object
+
+      case Regex.run(~r{/AA\s*<<(.*?>>)\s*>>}s, field, capture: :all_but_first) do
+        [triggers] -> scripts_of(triggers)
+        nil -> %{}
+      end
+    end
+
+    defp link_scripts(bytes) do
+      for {_, object} <- objects(bytes), object =~ "/Subtype /Link", do: scripts_of(object)
+    end
+
+    test "a script link runs its code, from a run or an area" do
+      code = "app.alert(\"(unbalanced ) \\\\ \\u00e9\");\r\nvar total = 1;"
+
+      builder =
+        Builder.new()
+        |> Builder.paragraph(["Run ", {"this", link: {:script, code}}])
+        |> Builder.link_in_rect(field_box(500.0), {:script, "app.beep(0);"})
+
+      bytes = Builder.to_binary!(builder, compress: false)
+      doc = Document.from_binary!(bytes)
+
+      assert [{:other, "JavaScript"}, {:other, "JavaScript"}] =
+               for(%{subtype: :link, action: action} <- Document.annotations!(doc, 0), do: action)
+
+      assert link_scripts(bytes) == [%{"A" => code}, %{"A" => "app.beep(0);"}]
+    end
+
+    test "a script that is not Latin-1 text is written whole" do
+      code = "app.alert('Привіт, 世界');"
+      bytes = Builder.new(scripts: [open: code]) |> Builder.to_binary!(compress: false)
+
+      assert catalog_scripts(bytes) == %{"OpenAction" => code}
+    end
+
+    test "document, page and field scripts are written where a viewer runs them" do
+      builder =
+        Builder.new(scripts: [open: "this.print();"])
+        |> Builder.paragraph("One")
+        |> Builder.page_scripts(open: "shown();", close: "left();")
+        |> Builder.text_field("total", field_box(600.0),
+          scripts: [keystroke: "k();", format: "f();", validate: "v();"]
+        )
+        |> Builder.combo_box("country", field_box(550.0), ["UA", "PL"],
+          scripts: [keystroke: "ck();", validate: "cv();"]
+        )
+        |> Builder.list_box("size", %Rect{x: 72.0, y: 450.0, width: 150.0, height: 60.0}, ["S"],
+          scripts: [validate: "lv();"]
+        )
+        |> Builder.check_box("agree", %Rect{x: 72.0, y: 400.0, width: 15.0, height: 15.0})
+
+      bytes = Builder.to_binary!(builder, compress: false)
+
+      assert catalog_scripts(bytes) == %{"OpenAction" => "this.print();"}
+      assert page_scripts(bytes) == [%{"O" => "shown();", "C" => "left();"}]
+      assert field_scripts(bytes, "total") == %{"K" => "k();", "F" => "f();", "V" => "v();"}
+      assert field_scripts(bytes, "country") == %{"K" => "ck();", "V" => "cv();"}
+      assert field_scripts(bytes, "size") == %{"V" => "lv();"}
+      assert field_scripts(bytes, "agree") == %{}
+    end
+
+    test "scripts survive the pass that sets field values, and a later save" do
+      builder =
+        Builder.new(scripts: [open: "o();"])
+        |> Builder.paragraph([{"x", link: {:script, "a();"}}])
+        |> Builder.page_scripts(open: "p();")
+        |> Builder.text_field("name", field_box(600.0),
+          value: "Jane",
+          scripts: [validate: "v();"]
+        )
+
+      editor = Editor.from_builder!(builder)
+      on_exit(fn -> Editor.close(editor) end)
+
+      for bytes <- [
+            Builder.to_binary!(builder, compress: false),
+            Editor.to_binary!(editor, compress: false)
+          ] do
+        assert catalog_scripts(bytes) == %{"OpenAction" => "o();"}
+        assert page_scripts(bytes) == [%{"O" => "p();"}]
+        assert field_scripts(bytes, "name") == %{"V" => "v();"}
+        assert link_scripts(bytes) == [%{"A" => "a();"}]
+      end
+    end
+
+    test "sanitizing removes the document's open script only" do
+      builder =
+        Builder.new(scripts: [open: "o();"])
+        |> Builder.paragraph([{"x", link: {:script, "a();"}}])
+        |> Builder.page_scripts(close: "c();")
+        |> Builder.text_field("name", field_box(600.0), scripts: [format: "f();"])
+
+      editor = Editor.from_builder!(builder)
+      on_exit(fn -> Editor.close(editor) end)
+      Editor.sanitize!(editor)
+      bytes = Editor.to_binary!(editor, compress: false)
+
+      assert catalog_scripts(bytes) == %{}
+      assert page_scripts(bytes) == [%{"C" => "c();"}]
+      assert field_scripts(bytes, "name") == %{"F" => "f();"}
+      assert link_scripts(bytes) == [%{"A" => "a();"}]
+    end
+
+    test "page scripts go to the page the next content lands on" do
+      bytes =
+        Builder.new()
+        |> Builder.paragraph("One")
+        |> Builder.page_scripts(open: "two();")
+        |> Builder.page()
+        |> Builder.paragraph("Two")
+        |> Builder.page()
+        |> Builder.paragraph("Three")
+        |> Builder.page_scripts(close: "last();")
+        |> Builder.to_binary!(compress: false)
+
+      assert page_scripts(bytes) == [%{}, %{"O" => "two();"}, %{"C" => "last();"}]
+    end
+
+    test "a second page_scripts/2 on the same page is refused" do
+      message =
+        Builder.new()
+        |> Builder.page_scripts(open: "a();")
+        |> Builder.page_scripts(close: "b();")
+        |> Builder.paragraph("x")
+        |> refusal()
+
+      assert message =~ "op 0: its page_scripts/2 setting would start on page 0, where op 1"
+    end
+
+    test "a script must be text a viewer reads as written" do
+      link = &Builder.paragraph(Builder.new(), [{"x", link: {:script, &1}}])
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :link, a script needs code other than whitespace/,
+                   fn ->
+                     link.(" \n")
+                   end
+
+      assert_raise ArgumentError, ~r/^invalid :open, a script needs code other than/, fn ->
+        Builder.new(scripts: [open: ""])
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :validate, text starting with/, fn ->
+        Builder.text_field(Builder.new(), "f", field_box(600.0), scripts: [validate: "þÿx"])
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :close, a script cannot hold "\\u00A0"/, fn ->
+        Builder.page_scripts(Builder.new(), close: "a\u00A0b")
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :keystroke, expected a string: 1/, fn ->
+        Builder.combo_box(Builder.new(), "f", field_box(600.0), ["a"],
+          scripts: [keystroke: untyped(1)]
+        )
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :scripts, expected a keyword list: "x"/, fn ->
+        Builder.new(scripts: untyped("x"))
+      end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid scripts, expected at least one of :open and :close/,
+                   fn ->
+                     Builder.page_scripts(Builder.new(), [])
+                   end
+    end
+
+    test "a field takes only the scripts its kind runs" do
+      rect = field_box(600.0)
+
+      refused = [
+        fn -> Builder.text_field(Builder.new(), "f", rect, scripts: [calculate: "c();"]) end,
+        fn -> Builder.combo_box(Builder.new(), "f", rect, ["a"], scripts: [format: "f();"]) end,
+        fn -> Builder.list_box(Builder.new(), "f", rect, ["a"], scripts: [keystroke: "k();"]) end,
+        fn -> Builder.new(scripts: [close: "c();"]) end
+      ]
+
+      for call <- refused, do: assert_raise(ArgumentError, ~r/unknown keys/, call)
+
+      without = [
+        fn -> Builder.check_box(Builder.new(), "f", rect, scripts: [validate: "v();"]) end,
+        fn ->
+          Builder.push_button(Builder.new(), "f", rect, "Go", scripts: [validate: "v();"])
+        end,
+        fn -> Builder.signature_field(Builder.new(), "f", rect, scripts: [validate: "v();"]) end
+      ]
+
+      for call <- without, do: assert_raise(ArgumentError, ~r/unknown keys \[:scripts\]/, call)
+    end
+  end
+
   describe "bookmarks" do
     defp titles(items), do: Enum.map(items, &{&1.title, &1.dest, titles(&1.children)})
 
@@ -3884,9 +4140,17 @@ defmodule PdfElixide.BuilderTest do
         paragraph.("https://example.com/a b")
       end
 
-      assert_raise ArgumentError, ~r/^invalid :link, a JavaScript: URI runs a script/, fn ->
-        paragraph.("JavaScript:alert(1)")
-      end
+      assert_raise ArgumentError,
+                   ~r/^invalid :link, a javascript: URI is not run as a script; give the code as {:script, code}/,
+                   fn ->
+                     paragraph.("JavaScript:alert(1)")
+                   end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid :link, a vbscript: URI runs a script in a language/,
+                   fn ->
+                     paragraph.("VBScript:MsgBox(1)")
+                   end
 
       assert_raise ArgumentError, ~r/^invalid :link, expected a URI string, {:page, index}/, fn ->
         paragraph.({:page, -1})

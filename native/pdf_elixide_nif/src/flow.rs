@@ -232,6 +232,8 @@ pub enum Op {
     // Running text from the page the next content lands on; `None` clears it.
     Header(Option<Running>),
     Footer(Option<Running>),
+    // Scripts for the page the next content lands on.
+    PageScripts(PageScripts),
     Contents(Contents),
     LinkInRect {
         link: usize,
@@ -444,6 +446,13 @@ pub struct PagePlan {
     pub height: f64,
     // In the order the ops drew them, so later ops paint over earlier ones.
     pub items: Vec<Item>,
+    pub scripts: Option<PageScripts>,
+}
+
+#[derive(Clone)]
+pub struct PageScripts {
+    pub open: Option<String>,
+    pub close: Option<String>,
 }
 
 pub enum Item {
@@ -967,7 +976,9 @@ impl<'a> Layout<'a> {
                 }
                 Op::Anchor(name) => self.pending_flow.push(FlowMark::Anchor(name.clone())),
                 Op::Bookmark(number) => self.pending_flow.push(FlowMark::Bookmark(*number)),
-                Op::PageLabels(_) | Op::Header(_) | Op::Footer(_) => self.pending_pages.push(index),
+                Op::PageLabels(_) | Op::Header(_) | Op::Footer(_) | Op::PageScripts(_) => {
+                    self.pending_pages.push(index)
+                }
                 Op::Contents(contents) => self.contents(index, contents)?,
                 Op::LinkInRect { link, rect } => {
                     self.positioned();
@@ -1069,6 +1080,7 @@ impl<'a> Layout<'a> {
             .collect();
         self.furnish(ops, Artifact::Header, &texts)?;
         self.furnish(ops, Artifact::Footer, &texts)?;
+        self.script_pages(ops)?;
 
         Ok(Plan {
             pages: self.pages,
@@ -1077,6 +1089,25 @@ impl<'a> Layout<'a> {
             labels,
             watermarks: self.watermarks,
         })
+    }
+
+    fn script_pages(&mut self, ops: &[Op]) -> Result<(), Refused> {
+        let scripts: Vec<(usize, usize, &PageScripts)> = self
+            .page_marks
+            .iter()
+            .filter_map(|&(op, page)| match &ops[op] {
+                Op::PageScripts(scripts) => Some((op, page, scripts)),
+                _ => None,
+            })
+            .collect();
+        superseded(
+            scripts.iter().map(|&(op, page, _)| (op, page)),
+            "page_scripts/2",
+        )?;
+        for (_, page, scripts) in scripts {
+            self.pages[page].scripts = Some(scripts.clone());
+        }
+        Ok(())
     }
 
     fn furnish(
@@ -1256,6 +1287,7 @@ impl<'a> Layout<'a> {
             width,
             height,
             items: Vec::new(),
+            scripts: None,
         });
         self.cursor = height - self.margins.top;
         self.fresh = true;
@@ -1542,6 +1574,7 @@ impl<'a> Layout<'a> {
                 | Op::PageLabels(_)
                 | Op::Header(_)
                 | Op::Footer(_)
+                | Op::PageScripts(_)
                 | Op::LinkInRect { .. }
                 | Op::Watermark { .. }
                 | Op::Field(_) => {}

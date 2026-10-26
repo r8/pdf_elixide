@@ -444,6 +444,8 @@ A link points to one of:
 - **`{:anchor, name}`**, a place in this document named by
   `PdfElixide.Builder.anchor/2`. Links may precede their anchors; see that
   function for how the destination is positioned.
+- **`{:script, code}`**, JavaScript a viewer runs when the link is clicked;
+  see [Scripts](#scripts).
 
 The clickable area follows each line of text. A run that wraps is one link
 per page. Separate runs stay separate links, even with the same target. A
@@ -638,7 +640,8 @@ A signature field is an empty placeholder for another tool to sign; this
 library does not sign documents. See [Signatures](signatures.md).
 
 Text fields are single-line, combo boxes are not editable, and push buttons
-have no actions. Radio groups, tab order and scripts are unsupported.
+have no actions. Radio groups and tab order are unsupported. For the scripts
+a text field, combo box or list box can run, see [Scripts](#scripts).
 
 ## Annotations after building
 
@@ -660,6 +663,69 @@ Links and watermarks are annotations, and an editor treats them as such:
 
 The builder writes no comment annotations: highlights, underlines, sticky
 notes, stamps and free text.
+
+## Scripts
+
+The builder writes JavaScript for a viewer to run through explicit script
+options and link targets:
+
+```elixir
+alias PdfElixide.Geometry.Rect
+
+Builder.new(scripts: [open: "app.alert('Fill in the amount, then print.');"])
+|> Builder.paragraph(["When you are done, ", {"print the form", link: {:script, "this.print();"}}, "."])
+|> Builder.page_scripts(open: "this.getField('amount').setFocus();")
+|> Builder.text_field("amount", %Rect{x: 150, y: 600, width: 100, height: 20},
+  scripts: [validate: "if (event.value < 0) { app.alert('Enter a positive amount.'); event.rc = false; }"]
+)
+|> Builder.save!("order.pdf")
+```
+
+| Given as | Runs |
+|---|---|
+| `scripts: [open: code]` to `PdfElixide.Builder.new/1` | when the document is opened |
+| `PdfElixide.Builder.page_scripts/2`, with `:open` and `:close` | when the viewer shows the page, and when it leaves it |
+| `{:script, code}` as a `:link`, or to `link_in_rect/3` | when the link is clicked |
+| `:keystroke` in a field's `:scripts` | as the user types into the field |
+| `:format` in a field's `:scripts` | when the field's value is displayed |
+| `:validate` in a field's `:scripts` | when the user commits a new value |
+
+Each field kind's options list the scripts it takes, starting with
+`t:PdfElixide.Builder.text_field_opts/0`, and
+`PdfElixide.Builder.page_scripts/2` says which page receives its scripts.
+Calculated fields and document-close scripts are unsupported.
+
+A link given as a `javascript:` or `vbscript:` URI raises `ArgumentError`
+rather than becoming a script, so a URL taken from user input never turns
+into code.
+
+### What a script holds
+
+The code is written as given. This library does not run, parse or check it,
+so a mistake in a script shows only when a viewer runs it. A script cannot be
+empty or only whitespace, and it may hold any text except the characters
+described in [Text a field cannot hold](forms.md#text-a-field-cannot-hold).
+
+### How viewers treat scripts
+
+Viewers differ: some run no scripts at all, some ask the user before running
+any, and some support only part of the JavaScript a desktop viewer offers.
+Keep the document usable when its scripts do not run.
+
+### Scripts after building
+
+Scripts stay in the document unless something removes them:
+
+- `PdfElixide.Editor.sanitize/2` removes the open script given to `new/1`,
+  but not page, link or field scripts.
+- Leave scripts out of documents intended for PDF/A; see
+  [What a report establishes](`m:PdfElixide.Compliance#module-what-a-report-establishes`)
+  for validation and conversion limits.
+- `PdfElixide.Editor.merge/2` refuses a page with page, link or field
+  scripts; see
+  [When a merge is refused](merging-and-splitting.md#when-a-merge-is-refused).
+- `PdfElixide.Editor.flatten_annotations/1` removes script links along with
+  every other link.
 
 ## Fonts
 

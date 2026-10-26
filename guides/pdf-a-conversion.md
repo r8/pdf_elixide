@@ -28,9 +28,10 @@ certification.
 ## What conversion fixes
 
 Conversion can declare the requested level in XMP metadata, add an sRGB output
-intent, remove JavaScript, remove attachments where the level forbids them, and
-set the document language to `en` for a level `a` target that declares none. The
-options to `PdfElixide.Compliance.convert/3` can disable some of these fixes.
+intent, remove document-level JavaScript, remove attachments where the level
+forbids them, and set the document language to `en` for a level `a` target that
+declares none. The options to `PdfElixide.Compliance.convert/3` can disable some
+of these fixes.
 
 Anything else stays in the report. In particular:
 
@@ -38,6 +39,10 @@ Anything else stays in the report. In particular:
   * A level `a` target needs a tagged document, and conversion adds no tags.
   * Transparent content can remain in a PDF/A-1 result because the transparency
     check is partial and conversion does not flatten it.
+
+Conversion does not remove every script; see
+[What a report establishes](`m:PdfElixide.Compliance#module-what-a-report-establishes`)
+for the JavaScript limits.
 
 The conversion succeeds even when findings remain. Check
 `conversion.report.compliant?`, `conversion.actions` and
