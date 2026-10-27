@@ -7,7 +7,7 @@ use pdf_oxide::{
     object::Object,
     PdfDocument,
 };
-use rustler::{NifMap, NifResult, NifUnitEnum};
+use rustler::{Atom, NifMap, NifResult, NifUnitEnum};
 
 use crate::{
     atoms,
@@ -101,6 +101,12 @@ impl From<SaveOptionsNif> for SaveOptions {
             encryption: o.encryption.map(Into::into),
         }
     }
+}
+
+// Rustler argument decoding performs the validation.
+#[rustler::nif]
+fn save_options_valid(_options: SaveOptionsNif) -> Atom {
+    atoms::ok()
 }
 
 // Incremental output copies the original bytes, retaining removed content.

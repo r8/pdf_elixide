@@ -130,6 +130,33 @@ defmodule PdfElixide.BuilderTest do
       assert_receive {:trace, ^pid, :call, {Editor, :close, [%Editor{}]}}
       assert_receive {:trace, ^pid, :call, {Editor, :close, [%Editor{}]}}
     end
+
+    @tag :tmp_dir
+    test "a bad output option raises even when layout would refuse the description",
+         %{tmp_dir: tmp_dir} do
+      builder =
+        Builder.new(font: FontFamily.new(regular: "not a font")) |> Builder.paragraph("a")
+
+      path = Path.join(tmp_dir, "never.pdf")
+
+      assert_raise ArgumentError, ~r/:compress/, fn ->
+        Builder.to_binary(builder, compress: untyped(:invalid))
+      end
+
+      assert_raise ArgumentError, ~r/:compress/, fn ->
+        Builder.save(builder, path, compress: untyped(:invalid))
+      end
+
+      assert_raise ArgumentError, ~r/:bogus/, fn ->
+        Builder.to_binary(builder, encryption: untyped(bogus: 1))
+      end
+
+      assert_raise ArgumentError, ~r/:aes256/, fn ->
+        Builder.save(builder, path, encryption: [algorithm: untyped(:aes256)])
+      end
+
+      refute File.exists?(path)
+    end
   end
 
   describe "layout" do

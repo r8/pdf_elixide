@@ -2678,6 +2678,13 @@ defmodule PdfElixide.Editor do
     }
   end
 
+  @doc false
+  @spec __validate_save_opts__(keyword()) :: :ok
+  def __validate_save_opts__(opts) do
+    options = build_save_options(opts)
+    Wrap.call!(fn -> Native.save_options_valid(options) end)
+  end
+
   # Without this guard an incremental save silently writes plaintext.
   defp validate_encryption_target!(true, encryption) when not is_nil(encryption) do
     raise ArgumentError,

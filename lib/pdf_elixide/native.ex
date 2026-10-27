@@ -138,6 +138,7 @@ defmodule PdfElixide.Native do
   def editor_set_form_field_values(_editor, _pairs), do: err()
   def editor_to_bytes(_editor, _options), do: err()
   def editor_save(_editor, _path, _options), do: err()
+  def save_options_valid(_options), do: err()
   def editor_embed_file(_editor, _name, _data, _description, _relationship), do: err()
   def editor_embedded_files(_editor), do: err()
   def editor_info(_editor), do: err()

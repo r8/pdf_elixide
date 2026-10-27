@@ -2795,6 +2795,7 @@ defmodule PdfElixide.Builder do
   @spec to_binary(t(), output_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_binary(%__MODULE__{} = builder, opts \\ []) when is_list(opts) do
     opts = Keyword.validate!(opts, @output_opts_keys)
+    Editor.__validate_save_opts__(opts)
 
     with_editor(builder, &Editor.to_binary(&1, opts))
   end
@@ -2821,6 +2822,7 @@ defmodule PdfElixide.Builder do
   def save(%__MODULE__{} = builder, path, opts \\ [])
       when is_binary(path) and is_list(opts) do
     opts = Keyword.validate!(opts, @output_opts_keys)
+    Editor.__validate_save_opts__(opts)
 
     case with_editor(builder, &Editor.save(&1, path, opts)) do
       {:ok, _} -> :ok
