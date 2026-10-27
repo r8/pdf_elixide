@@ -1263,6 +1263,31 @@ defmodule PdfElixide.FormTest do
     end
   end
 
+  describe "a name that is not UTF-8" do
+    test "raises ArgumentError from every function that takes a name" do
+      doc = Document.open!(@form_pdf)
+      editor = Editor.open!(@form_pdf)
+      name = <<255>>
+
+      calls = [
+        fn -> Form.field(doc, name) end,
+        fn -> Form.value(doc, name) end,
+        fn -> Form.field(editor, name) end,
+        fn -> Form.value(editor, name) end,
+        fn -> Form.put_value(editor, name, "x") end,
+        fn -> Form.put_values(editor, [{name, "x"}]) end,
+        fn -> Form.put_values(editor, %{name => "x"}) end,
+        fn -> Form.update_value(editor, name, fn _ -> flunk("fun called") end) end
+      ]
+
+      for call <- calls do
+        assert_raise ArgumentError, ~r/invalid name, expected a UTF-8 string: <<255>>/, call
+      end
+
+      refute Editor.modified?(editor)
+    end
+  end
+
   describe "signature fields" do
     test "are not reported by fields/1, from either source" do
       doc = Document.open!(@signature_pdf)

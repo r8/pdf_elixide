@@ -125,6 +125,8 @@ defmodule PdfElixide.Form do
   """
   @spec field(source(), String.t()) :: {:ok, Field.t()} | {:error, Error.t()}
   def field(source, name) when is_binary(name) do
+    validate_name!(name)
+
     with {:ok, fields} <- fields(source) do
       case Enum.find(fields, &(&1.name == name)) do
         nil -> {:error, not_found(name)}
@@ -254,9 +256,10 @@ defmodule PdfElixide.Form do
   Takes a map with string keys, or a list of `{name, value}` pairs.
 
   Everything is validated before anything is written. A duplicated name, a name
-  that is not a string, a value outside `t:PdfElixide.Form.Field.value/0`, or
-  text `put_value/3` refuses raises `ArgumentError` naming the field. A name
-  the form does not carry — a signature field included — is
+  that is not a UTF-8 string, a value outside
+  `t:PdfElixide.Form.Field.value/0`, or text `put_value/3` refuses raises
+  `ArgumentError` naming the field. A name the form does not carry — a signature
+  field included — is
   `{:error, %PdfElixide.Error{reason: :not_found}}`, and nothing is written for
   the other names either.
 
@@ -401,6 +404,8 @@ defmodule PdfElixide.Form do
   end
 
   defp validate_pair!({name, value}) when is_binary(name) do
+    validate_name!(name)
+
     if not valid_value?(value) do
       raise ArgumentError,
             "invalid value for field #{inspect(name)}, expected a string, a boolean, " <>
@@ -421,6 +426,8 @@ defmodule PdfElixide.Form do
   defp validate_pair!(other) do
     raise ArgumentError, "invalid values, expected a {name, value} pair: #{inspect(other)}"
   end
+
+  defp validate_name!(name), do: LayoutOptions.utf8!("name", name)
 
   defp valid_value?(value) when is_binary(value) or is_boolean(value) or is_nil(value), do: true
   defp valid_value?(value) when is_list(value), do: Enum.all?(value, &is_binary/1)
