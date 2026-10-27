@@ -25,10 +25,10 @@ use crate::{
     editor::OpenedEditor,
     error::{tagged_err, to_nif_err},
     flow::{
-        self, embedded_key, Align, Artifact, Barcode, Caption, Cell, CodeBlock, Contents, Embedded,
-        Entry, EntryTarget, Face, Fit, FlowImage, Fonts, Item, LabelKind, Margins, Marker, Op,
-        PageScripts, Picture, Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke, Table,
-        Unordered, Watermark, Width, Within,
+        self, embedded_key, Align, Artifact, Barcode, Caption, Cell, CodeBlock, Columns, Contents,
+        Embedded, Entry, EntryTarget, Face, Fit, FlowImage, Fonts, Item, LabelKind, Margins,
+        Marker, Op, PageScripts, Picture, Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke,
+        Table, Unordered, Watermark, Width, Within,
     },
     open_editor::OpenEditor,
     page_label::MAX_LETTERED,
@@ -73,6 +73,7 @@ pub enum OpNif<'a> {
     Heading(ParagraphNif),
     List(ListNif),
     CodeBlock(CodeBlockNif),
+    Columns(ColumnsNif),
     Space(f64),
     Rule(f64),
     TextAt(TextAtNif),
@@ -542,6 +543,17 @@ pub struct CodeBlockNif {
 }
 
 #[derive(NifMap)]
+pub struct ColumnsNif {
+    paragraphs: Vec<Vec<RunNif>>,
+    font: FontNif,
+    font_size: f64,
+    count: usize,
+    gap: f64,
+    rule: bool,
+    balance: bool,
+}
+
+#[derive(NifMap)]
 pub struct RunNif {
     text: String,
     bold: bool,
@@ -852,6 +864,11 @@ fn auto_family(ops: &[OpNif<'_>]) -> Family {
                 font: FontNif::Auto,
                 items,
                 ..
+            })
+            | OpNif::Columns(ColumnsNif {
+                font: FontNif::Auto,
+                paragraphs: items,
+                ..
             }) => Some(items.iter().collect()),
             OpNif::Table(TableNif {
                 font: FontNif::Auto,
@@ -920,6 +937,10 @@ fn runs(
             })
         })
         .collect()
+}
+
+fn blank(runs: &[RunNif]) -> bool {
+    flow::draws_nothing(runs.iter().map(|run| run.text.as_str()))
 }
 
 fn linked(links: &mut Vec<Link>, op: usize, target: LinkNif) -> usize {
@@ -1042,6 +1063,11 @@ fn ops(
                 Ok(Op::Empty)
             }
             OpNif::List(ListNif { items, .. }) if items.is_empty() => Ok(Op::Empty),
+            OpNif::Columns(ColumnsNif { paragraphs, .. })
+                if paragraphs.iter().all(|paragraph| blank(paragraph)) =>
+            {
+                Ok(Op::Empty)
+            }
             OpNif::Table(TableNif { rows, .. }) if rows.is_empty() => Ok(Op::Empty),
             OpNif::TextAt(TextAtNif { runs, .. })
             | OpNif::TextInRect(TextInRectNif { runs, .. })
@@ -1080,6 +1106,20 @@ fn ops(
                 fill: code.fill_color.map(Into::into),
                 padding: code.padding,
                 tab_width: code.tab_width,
+            })),
+            OpNif::Columns(columns) => Ok(Op::Columns(Columns {
+                face: faces.face(index, family_of(columns.font, auto), Style::Regular)?,
+                paragraphs: columns
+                    .paragraphs
+                    .into_iter()
+                    .filter(|paragraph| !blank(paragraph))
+                    .map(|paragraph| runs(index, paragraph, columns.font, auto, faces, links))
+                    .collect::<NifResult<_>>()?,
+                size: columns.font_size,
+                count: columns.count,
+                gap: columns.gap,
+                rule: columns.rule,
+                balance: columns.balance,
             })),
             OpNif::Space(points) => Ok(Op::Space(points)),
             OpNif::Rule(size) => Ok(Op::Rule { size }),
@@ -1302,6 +1342,16 @@ fn refused(refusal: Refused) -> rustler::Error {
             "op {op} on page {page}: the left and right margins, with {padding} points of \
              padding on each side, leave no room for text"
         ),
+        Refused::NoColumnWidth {
+            op,
+            page,
+            count,
+            gap,
+            room,
+        } => format!(
+            "op {op} on page {page}: {count} columns with {gap}-point gaps leave no room for \
+             text in the {room}-point content width; use fewer columns or narrower gaps"
+        ),
         Refused::ClusterTooWide {
             op,
             page,
@@ -1335,6 +1385,17 @@ fn refused(refusal: Refused) -> rustler::Error {
             "op {op} on page {page}: {cluster:?} is {width} points wide, wider than the \
              {room}-point text width of the cell at row {row}, column {column}; reduce the \
              font size or the padding, or widen the column"
+        ),
+        Refused::ClusterTooWide {
+            op,
+            page,
+            cluster,
+            width,
+            room,
+            within: Within::Column,
+        } => format!(
+            "op {op} starting on page {page}: {cluster:?} is {width} points wide, wider than \
+             the {room}-point column; reduce the font size, the number of columns or the gap"
         ),
         Refused::TableTooTall {
             op,
@@ -2461,6 +2522,22 @@ mod tests {
             .page(PageSize::Letter)
             .at(72.0, 720.0)
             .code_block("text", &source)
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let chars = doc.extract_chars(0).expect("extracts");
+
+        assert_eq!(doc.page_count().expect("counts"), 1);
+        assert!(chars.iter().any(|c| c.bbox.y < 72.0));
+    }
+
+    #[test]
+    fn upstream_still_lays_columns_out_on_one_page() {
+        let text = vec!["a paragraph of several words"; 120].join("\n\n");
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .at(72.0, 720.0)
+            .columns(2, 12.0, &text)
             .done();
         let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
         let chars = doc.extract_chars(0).expect("extracts");

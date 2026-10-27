@@ -1277,6 +1277,212 @@ defmodule PdfElixide.BuilderTest do
     end
   end
 
+  describe "columns/3" do
+    # Two 228-point columns 12 points apart: the gap's middle is at 306.
+    defp by_column(doc, page, split \\ 306) do
+      {left, right} =
+        doc |> Document.chars!(page) |> Enum.split_with(&(&1.bbox.x < split))
+
+      for chars <- [left, right] do
+        chars
+        |> Enum.sort_by(&{-&1.bbox.y, &1.bbox.x})
+        |> Enum.chunk_by(&Float.round(&1.bbox.y, 3))
+        |> Enum.map(fn line -> Enum.map_join(line, & &1.text) end)
+      end
+    end
+
+    defp numbered(count), do: Enum.map(1..count, &"p#{&1}")
+
+    test "balances the lines between the block before and the next" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("Before")
+        |> Builder.columns(numbered(7))
+        |> Builder.paragraph("After")
+        |> written()
+
+      assert by_column(doc, 0) == [
+               ["Before", "p1", "p2", "p3", "p4", "After"],
+               ["p5", "p6", "p7"]
+             ]
+
+      {left, right} = doc |> Document.chars!(0) |> Enum.split_with(&(&1.bbox.x < 306))
+      assert Enum.all?(left, &(&1.bbox.x >= 72 and &1.bbox.x + &1.bbox.width <= 300))
+      assert Enum.all?(right, &(&1.bbox.x >= 312 and &1.bbox.x + &1.bbox.width <= 540))
+
+      # Four lines with three paragraph gaps between them, then the space
+      # after the block.
+      [before, top | _] = baselines(doc, 0)
+      assert_in_delta before, baseline(720, 12), 0.001
+      assert_in_delta top, baseline(696, 12), 0.001
+      assert_in_delta Enum.min(baselines(doc, 0)), baseline(600, 12), 0.001
+    end
+
+    test "fills each page's columns in order, and balances the last page's" do
+      doc = Builder.new() |> Builder.columns(numbered(70)) |> written()
+
+      # 648 points hold 27 lines of 18 points with a 6-point gap between each.
+      assert Document.page_count!(doc) == 2
+      assert by_column(doc, 0) == [numbered(54) |> Enum.take(27), numbered(54) |> Enum.drop(27)]
+      assert by_column(doc, 1) == [Enum.map(55..62, &"p#{&1}"), Enum.map(63..70, &"p#{&1}")]
+      assert hd(baselines(doc, 1)) == hd(baselines(doc, 0))
+    end
+
+    test "drops a paragraph's space at the top of a column" do
+      doc = Builder.new() |> Builder.columns(["a\nb", "c\nd"]) |> written()
+
+      assert by_column(doc, 0) == [["a", "b"], ["c", "d"]]
+      assert [_top, _second] = baselines(doc, 0)
+
+      [first, second] =
+        Builder.new() |> Builder.columns(["a", "b"], count: 1) |> written() |> baselines(0)
+
+      assert_in_delta first - second, 24, 0.001
+    end
+
+    test "with balance: false, fills a column to the bottom before the next" do
+      unbalanced =
+        Builder.new()
+        |> Builder.columns(["a", "b", "c"], balance: false)
+        |> Builder.paragraph("after")
+        |> written()
+
+      assert by_column(unbalanced, 0) == [["a", "b", "c", "after"], []]
+      assert_in_delta Enum.min(baselines(unbalanced, 0)), baseline(648, 12), 0.001
+
+      balanced =
+        Builder.new()
+        |> Builder.columns(["a", "b", "c"])
+        |> Builder.paragraph("after")
+        |> written()
+
+      assert by_column(balanced, 0) == [["a", "b", "after"], ["c"]]
+      assert_in_delta Enum.min(baselines(balanced, 0)), baseline(672, 12), 0.001
+    end
+
+    test "with rule: true, draws a line down the middle of each gap beside text" do
+      ruled = fn paragraphs, opts ->
+        Builder.new()
+        |> Builder.columns(paragraphs, [rule: true] ++ opts)
+        |> written()
+        |> Document.paths!(0)
+        |> Enum.map(& &1.bbox)
+      end
+
+      assert ruled.(["a", "b", "c"], []) == [%Rect{x: 306.0, y: 678.0, width: 0.0, height: 42.0}]
+
+      # Three 148-point columns, the third left empty.
+      assert ruled.(["a", "b"], count: 3) == [%Rect{x: 226.0, y: 702.0, width: 0.0, height: 18.0}]
+
+      assert Builder.new() |> Builder.columns(["a", "b"]) |> written() |> Document.paths!(0) == []
+    end
+
+    test "a heading is kept with the columns' first line" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph("a")
+        |> Builder.space(580)
+        |> Builder.heading(1, "H")
+        |> Builder.columns(["b", "c"])
+        |> written()
+
+      assert Document.page_count!(doc) == 2
+      refute Document.text!(doc, 0) =~ "H"
+    end
+
+    test "takes runs, a font and a size, and counts for :auto" do
+      doc =
+        Builder.new()
+        |> Builder.columns([["a", {"b", bold: true}]], font: :times, font_size: 9)
+        |> written()
+
+      fonts = fonts_by_text(doc)
+      assert fonts["a"] == "Times-Roman" and fonts["b"] == "Times-Bold"
+      assert_in_delta hd(Document.chars!(doc, 0)).font_size, 9, 0.001
+
+      [char | _] = Builder.new() |> Builder.columns(["Звіт"]) |> written() |> Document.chars!(0)
+      assert char.font =~ "DejaVuSans"
+
+      message = Builder.new() |> Builder.columns(["Звіт"], font: :helvetica) |> refusal()
+      assert message =~ "op 0 on page 0"
+      assert message =~ "Helvetica"
+    end
+
+    test "refuses a character wider than a column" do
+      # Twenty 23.4-point columns; a 30-point W is 28.32 points wide.
+      message =
+        Builder.new()
+        |> Builder.columns(["W"], count: 20, gap: 0, font_size: 30)
+        |> refusal()
+
+      assert message =~ "op 0 starting on page 0"
+      assert message =~ "point column"
+    end
+
+    test "raises for a caller bug" do
+      builder = Builder.new()
+
+      assert_raise ArgumentError, ~r/invalid :count/, fn ->
+        Builder.columns(builder, ["a"], count: 0)
+      end
+
+      assert_raise ArgumentError, ~r/invalid :count/, fn ->
+        Builder.columns(builder, ["a"], count: 1.5)
+      end
+
+      for count <- [2_147_483_648, 18_446_744_073_709_551_616] do
+        assert_raise ArgumentError,
+                     ~r/invalid :count, expected an integer from 1 to 2147483647/,
+                     fn -> Builder.columns(builder, ["\n"], count: count, gap: 0) end
+      end
+
+      assert_raise ArgumentError, ~r/invalid :gap/, fn ->
+        Builder.columns(builder, ["a"], gap: -1)
+      end
+
+      assert_raise ArgumentError, ~r/invalid :rule/, fn ->
+        Builder.columns(builder, ["a"], rule: :yes)
+      end
+
+      assert_raise ArgumentError, ~r/invalid layout, 3 columns with 300.0-point gaps/, fn ->
+        Builder.columns(builder, ["a"], count: 3, gap: 300)
+      end
+
+      assert_raise ArgumentError, ~r/invalid paragraph/, fn ->
+        Builder.columns(builder, [:a])
+      end
+
+      assert_raise FunctionClauseError, fn -> Builder.columns(builder, untyped("a")) end
+    end
+
+    test "balancing ends where a line is too large for the fit tolerance to absorb rounding" do
+      size = 1_000_000_000.1
+
+      assert {:ok, _} =
+               Builder.new(page_size: {size * 100, size * 100}, font_size: size)
+               |> Builder.columns(["a\na\na", "a\na", "a", "a", "a", "a"])
+               |> Builder.to_binary()
+    end
+
+    test "the largest column count, far above the lines, is laid out" do
+      assert {:ok, _} =
+               Builder.new()
+               |> Builder.columns(["\n"], gap: 0, count: 2_147_483_647)
+               |> Builder.to_binary()
+    end
+
+    test "paragraphs that draw nothing add nothing" do
+      for paragraphs <- [[], ["  ", ""]] do
+        doc = Builder.new() |> Builder.columns(paragraphs) |> Builder.paragraph("a") |> written()
+
+        assert_in_delta Enum.max(baselines(doc, 0)), baseline(720, 12), 0.001
+      end
+
+      doc = Builder.new() |> Builder.columns(["", "a", " ", "b"]) |> written()
+      assert by_column(doc, 0) == [["a"], ["b"]]
+    end
+  end
+
   describe "table/3" do
     @fill %RGB{r: 0.75, g: 0.75, b: 0.75}
 

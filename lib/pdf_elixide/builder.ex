@@ -404,6 +404,33 @@ defmodule PdfElixide.Builder do
 
   @code_fill %RGB{r: 0.95, g: 0.95, b: 0.95}
 
+  @typedoc """
+  Options accepted by `columns/3`.
+
+    * `:font`, `:font_size` — as for `paragraph/3`.
+    * `:count` — the number of columns, an integer from 1 to 2147483647.
+      Defaults to `2`.
+    * `:gap` — the space between neighboring columns in points, at least `0`.
+      Defaults to `nil`, which uses the font size.
+    * `:rule` — whether to draw a thin gray line down the middle of each gap
+      beside a column holding text. Defaults to `false`.
+    * `:balance` — whether to balance the columns on the last page the text
+      reaches. Defaults to `true`.
+
+  Columns and gaps that leave a column no width raise `ArgumentError`. See
+  [Errors](#module-errors) for other failures.
+  """
+  @type columns_opts :: [
+          font: font() | nil,
+          font_size: number() | nil,
+          count: pos_integer(),
+          gap: number() | nil,
+          rule: boolean(),
+          balance: boolean()
+        ]
+
+  @columns_opts_keys [:font, :font_size, :count, :gap, :rule, :balance]
+
   # Each tab is expanded to spaces before layout, so the stop distance bounds
   # how much text one character can become.
   @max_tab_width 64
@@ -1221,6 +1248,38 @@ defmodule PdfElixide.Builder do
     validate_code_block_fits!(builder, font_size, options.padding)
 
     op = {:code_block, Map.merge(options, %{runs: runs, font_size: font_size})}
+    %{builder | ops: [op | builder.ops]}
+  end
+
+  @doc """
+  Adds paragraphs set in side-by-side columns of equal width.
+
+  `paragraphs` is a list of `t:text/0`, one per paragraph.
+
+      PdfElixide.Builder.columns(builder, ["First paragraph", "Second paragraph"], count: 3)
+
+  See [Columns](guides/building-documents.md#columns) for how text is
+  distributed and balanced, and `t:columns_opts/0` for the options.
+  """
+  @spec columns(t(), [text()], columns_opts()) :: t()
+  def columns(%__MODULE__{} = builder, paragraphs, opts \\ [])
+      when is_list(paragraphs) and is_list(opts) do
+    paragraphs = Enum.map(paragraphs, &paragraph!/1)
+    options = build_columns_options(opts)
+    font_size = options.font_size || builder.font_size
+    gap = options.gap || font_size
+    validate_line_fits!(builder, font_size)
+    validate_columns_fit!(builder, options.count, gap)
+
+    op =
+      {:columns,
+       Map.merge(options, %{
+         paragraphs: paragraphs,
+         font: options.font || builder.font,
+         font_size: font_size,
+         gap: gap
+       })}
+
     %{builder | ops: [op | builder.ops]}
   end
 
@@ -2787,6 +2846,7 @@ defmodule PdfElixide.Builder do
           | :run
           | :text_in_rect
           | :code_block
+          | :columns
           | :table
           | :cell
           | :image
@@ -2816,6 +2876,7 @@ defmodule PdfElixide.Builder do
   def __option_defaults__(:run), do: build_run_options([])
   def __option_defaults__(:text_in_rect), do: build_text_in_rect_options([])
   def __option_defaults__(:code_block), do: build_code_block_options([])
+  def __option_defaults__(:columns), do: build_columns_options([])
   def __option_defaults__(:table), do: build_table_options([])
   def __option_defaults__(:cell), do: build_cell_options([])
   def __option_defaults__(:image), do: build_image_options([])
@@ -3007,6 +3068,26 @@ defmodule PdfElixide.Builder do
       fill_color: color!(:fill_color, Keyword.get(opts, :fill_color, @code_fill)),
       padding: non_negative!(:padding, Keyword.get(opts, :padding, 6)),
       tab_width: tab_width!(Keyword.get(opts, :tab_width, 4))
+    })
+  end
+
+  defp build_columns_options(opts) do
+    opts = Keyword.validate!(opts, @columns_opts_keys)
+
+    gap =
+      case Keyword.get(opts, :gap) do
+        nil -> nil
+        gap -> non_negative!(:gap, gap)
+      end
+
+    opts
+    |> Keyword.take([:font, :font_size])
+    |> build_paragraph_options()
+    |> Map.merge(%{
+      count: count!(Keyword.get(opts, :count, 2)),
+      gap: gap,
+      rule: boolean!(:rule, Keyword.get(opts, :rule, false)),
+      balance: boolean!(:balance, Keyword.get(opts, :balance, true))
     })
   end
 
@@ -3499,6 +3580,21 @@ defmodule PdfElixide.Builder do
     raise ArgumentError, "invalid item, expected a string or a list of runs: #{inspect(other)}"
   end
 
+  defp paragraph!(text) when is_binary(text) or is_list(text), do: runs!(text)
+
+  defp paragraph!(other) do
+    raise ArgumentError,
+          "invalid paragraph, expected a string or a list of runs: #{inspect(other)}"
+  end
+
+  defp count!(count) when is_integer(count) and count >= 1 and count <= @max_list_number,
+    do: count
+
+  defp count!(count) do
+    raise ArgumentError,
+          "invalid :count, expected an integer from 1 to #{@max_list_number}: #{inspect(count)}"
+  end
+
   defp list_style!(style) when style in @list_styles, do: style
 
   defp list_style!(style) do
@@ -3750,6 +3846,18 @@ defmodule PdfElixide.Builder do
     end
 
     validate_line_precise!(builder, font_size)
+  end
+
+  # Spelled as the layout spells its check, so both refuse the same layouts.
+  defp validate_columns_fit!(builder, count, gap) do
+    {width, _height} = builder.current_page_size
+    room = width - builder.margin_left - builder.margin_right
+
+    if (room - gap * (count - 1)) / count <= 0 do
+      raise ArgumentError,
+            "invalid layout, #{count} columns with #{gap}-point gaps leave no room for " <>
+              "text in the #{room}-point content width; use fewer columns or narrower gaps"
+    end
   end
 
   defp validate_line_fits_box!(builder, font_size, room) do

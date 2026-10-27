@@ -410,6 +410,17 @@ defmodule PdfElixide.OptionDefaultsTest do
              }
     end
 
+    test "Builder.columns/3" do
+      assert Builder.__option_defaults__(:columns) == %{
+               font: nil,
+               font_size: nil,
+               count: 2,
+               gap: nil,
+               rule: false,
+               balance: true
+             }
+    end
+
     test "Builder.text_in_rect/4" do
       assert Builder.__option_defaults__(:text_in_rect) == %{
                font: nil,

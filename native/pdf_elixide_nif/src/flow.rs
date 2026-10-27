@@ -16,8 +16,10 @@ use crate::{
     page_label::{self, MAX_LETTERED},
 };
 
+mod columns;
 mod table;
 
+pub use columns::Columns;
 pub use table::{Cell, Table, Width};
 
 // A fit test on accumulated f64 positions must not lose a line that fits
@@ -179,6 +181,7 @@ pub enum Op {
         start: usize,
     },
     CodeBlock(CodeBlock),
+    Columns(Columns),
     Space(f64),
     Rule {
         size: f64,
@@ -502,6 +505,13 @@ pub enum Refused {
         page: usize,
         padding: f64,
     },
+    NoColumnWidth {
+        op: usize,
+        page: usize,
+        count: usize,
+        gap: f64,
+        room: f64,
+    },
     ClusterTooWide {
         op: usize,
         page: usize,
@@ -638,6 +648,7 @@ pub enum LabelKind {
 pub enum Within {
     Line,
     Box,
+    Column,
     Cell { row: usize, column: usize },
 }
 
@@ -929,6 +940,7 @@ impl<'a> Layout<'a> {
                     start,
                 } => self.list(index, items, *face, *size, *marker, *start)?,
                 Op::CodeBlock(code) => self.code_block(index, code)?,
+                Op::Columns(columns) => self.columns(index, columns)?,
                 Op::Space(points) => self.space(*points),
                 Op::Rule { size } => self.rule(*size),
                 Op::TextAt { runs, size, x, y } => {
@@ -1551,7 +1563,9 @@ impl<'a> Layout<'a> {
                     total += gap + self.line_count(runs, *size) as f64 * size * self.line_height;
                     gap = 0.5 * size;
                 }
-                Op::Paragraph { size, .. } | Op::List { size, .. } => {
+                Op::Paragraph { size, .. }
+                | Op::List { size, .. }
+                | Op::Columns(Columns { size, .. }) => {
                     return total + gap + size * self.line_height;
                 }
                 Op::CodeBlock(code) => {

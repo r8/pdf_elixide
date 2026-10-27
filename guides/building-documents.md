@@ -179,6 +179,43 @@ keyword = %PdfElixide.Color.RGB{r: 0.6, g: 0.1, b: 0.5}
 Builder.code_block(builder, [{"def", color: keyword, bold: true}, " world, do: :ok"])
 ```
 
+## Columns
+
+`Builder.columns/3` sets paragraphs side by side in columns of equal width,
+in the flow:
+
+```elixir
+Builder.new()
+|> Builder.heading(1, "Newsletter")
+|> Builder.columns(
+  ["The first paragraph …", ["The second, with ", {"bold", bold: true}, " text."]],
+  count: 3,
+  rule: true
+)
+|> Builder.paragraph("Back to the full width.")
+```
+
+Each paragraph is a `t:PdfElixide.Builder.text/0` and follows the
+[Flowing text](#flowing-text) rules, wrapped to the column's width.
+The columns divide the width between the margins, less a `:gap` between each
+pair.
+
+The columns start below the preceding content and fill left to right to the
+bottom margin, continuing at the top of new pages as needed. On the last page,
+they are balanced to nearly equal heights, as whole lines allow. With
+`balance: false`, columns on that page fill to the bottom margin in turn,
+so those to the right may be short or empty. Following content starts below
+the tallest column. Paragraph spacing is dropped at column tops.
+
+`rule: true` draws a thin gray line down the middle of each gap with text on
+both sides, as tall as the tallest column on that page. A heading before the
+columns is kept with their first line. See
+`t:PdfElixide.Builder.columns_opts/0` for the options.
+
+`PdfElixide.Document.text/1` may interleave lines from neighboring columns.
+To read columns in order, group `PdfElixide.Document.words/1` or
+`PdfElixide.Document.chars/1` by their horizontal position.
+
 ## Tables
 
 `Builder.table/3` takes a list of rows, each a list of cells, and flows like a
@@ -780,9 +817,9 @@ The builder refuses content it cannot draw faithfully:
 - **Right-to-left text**, such as Hebrew or Arabic, and **scripts that need
   shaping**, whose letters join, reorder or combine, such as Devanagari,
   Tibetan and Khmer. These are unsupported in every font.
-- **A character wider than the line, box or table cell**, which no amount of
-  wrapping can fit. Reduce the text size or the side margins, or widen the box
-  or the column.
+- **A character wider than the line, box, table cell or column**, which no
+  amount of wrapping can fit. Reduce the text size or the side margins, widen
+  the box or the table column, or use fewer or wider columns.
 - **Text taller than its box**; see [Text in a box](#text-in-a-box).
 - **Table rows that cannot be split and do not fit on a page**, and **columns
   that do not fit the page**; see [Across pages](#across-pages) and
