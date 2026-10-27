@@ -306,7 +306,6 @@ mod tests {
         assert!(messages(&GLOBAL.snapshot()).contains(&"sentinel for drained"));
     }
 
-    // The claim in `OpenDocument` goes when this fails, not the assertion.
     #[test]
     fn upstream_still_merges_the_global_sink_into_a_document_read() {
         let doc = PdfDocument::open(fixture("sample.pdf")).expect("fixture opens");

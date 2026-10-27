@@ -1,7 +1,7 @@
 defmodule PdfElixide.Form.Field.Choice.Flags do
   @moduledoc """
   The `/Ff` field flags of a choice field (ISO 32000-1 Table 230), alongside the
-  three every field carries (Table 226).
+  three every field carries (Table 221).
 
   ## Fields
 

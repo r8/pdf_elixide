@@ -17,13 +17,15 @@ defmodule PdfElixide.Builder do
 
   ## Layout
 
-  Paragraphs, headings, lists, code blocks and tables wrap within the margins
-  and start new pages as needed. `text_at/4` and `text_in_rect/4` place text
-  outside that flow. See [Flowing text](guides/building-documents.md#flowing-text)
-  for line spacing, page breaks and heading placement,
-  [Code blocks](guides/building-documents.md#code-blocks) for source text, and
-  [Tables](guides/building-documents.md#tables) for columns, spans and header
-  rows.
+  Paragraphs, headings, lists, code blocks, columns and tables wrap within the
+  margins and start new pages as needed. `text_at/4` and `text_in_rect/4` place
+  text outside that flow. See
+  [Flowing text](guides/building-documents.md#flowing-text) for line spacing,
+  page breaks and heading placement,
+  [Code blocks](guides/building-documents.md#code-blocks) for source text,
+  [Columns](guides/building-documents.md#columns) for multi-column text, and
+  [Tables](guides/building-documents.md#tables) for column widths, spans and
+  header rows.
 
   ## Footnotes
 
@@ -57,7 +59,7 @@ defmodule PdfElixide.Builder do
   ## Navigation and page furniture
 
   `bookmark/3`, or a heading's `:bookmark` option, adds to the outline a
-  viewer shows, and `contents/2` lists the bookmarks on a page.
+  viewer shows, and `contents/2` adds a table of contents listing them.
   `page_labels/3` sets the labels a viewer shows for pages, and `header/2`
   and `footer/2` draw running text in the margins. See
   [Navigation](guides/building-documents.md#navigation),
@@ -1062,6 +1064,7 @@ defmodule PdfElixide.Builder do
 
   @output_opts_keys [:compress, :garbage_collect, :encryption]
 
+  @doc group: "Pages and margins"
   @doc """
   Starts a document description.
 
@@ -1085,6 +1088,7 @@ defmodule PdfElixide.Builder do
     )
   end
 
+  @doc group: "Pages and margins"
   @doc """
   Starts a new page, of `page_size` if given and otherwise the size of the
   page before it.
@@ -1106,6 +1110,7 @@ defmodule PdfElixide.Builder do
     %{builder | current_page_size: size, ops: [{:page, size} | builder.ops]}
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds a paragraph of text, wrapped at the right margin.
 
@@ -1128,6 +1133,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds a heading of `level` 1 to 4, set in the bold face of its font family.
 
@@ -1162,6 +1168,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds a list whose items are marked with a bullet.
 
@@ -1178,6 +1185,7 @@ defmodule PdfElixide.Builder do
     list(builder, items, :bullet, 1, opts)
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds a list whose items are numbered.
 
@@ -1227,6 +1235,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds `points` of space before the next block.
 
@@ -1238,6 +1247,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [{:space, non_negative!(:points, points)} | builder.ops]}
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds a thin gray line across the page between the margins.
 
@@ -1258,6 +1268,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [{:rule, builder.font_size} | builder.ops]}
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds a block of source text, set as written on a shaded background.
 
@@ -1280,6 +1291,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Flowing text"
   @doc """
   Adds paragraphs set in side-by-side columns of equal width.
 
@@ -1312,6 +1324,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Positioned text"
   @doc """
   Draws one line of text on the current page, its baseline starting at
   `point`.
@@ -1344,6 +1357,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Positioned text"
   @doc """
   Draws text wrapped within `rect` on the current page.
 
@@ -1391,6 +1405,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Tables"
   @doc """
   Makes a table cell with its own options, for `table/3`.
 
@@ -1403,6 +1418,7 @@ defmodule PdfElixide.Builder do
     {:cell, runs!(text, :flow), build_cell_options(opts)}
   end
 
+  @doc group: "Tables"
   @doc """
   Adds a table, wrapping each cell's text within its column.
 
@@ -1611,6 +1627,7 @@ defmodule PdfElixide.Builder do
     aligns
   end
 
+  @doc group: "Images"
   @doc """
   Adds a JPEG or PNG image to the flow, between the margins.
 
@@ -1648,6 +1665,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Images"
   @doc """
   Draws a JPEG or PNG image within `rect` on the current page.
 
@@ -1672,6 +1690,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Barcodes"
   @doc """
   Adds a linear barcode to the flow, between the margins.
 
@@ -1705,6 +1724,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Barcodes"
   @doc """
   Draws a linear barcode within `rect` on the current page, outside the flow.
 
@@ -1733,6 +1753,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Barcodes"
   @doc """
   Adds a QR code to the flow, between the margins.
 
@@ -1757,6 +1778,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Barcodes"
   @doc """
   Draws a QR code within `rect` on the current page, outside the flow.
 
@@ -1860,6 +1882,7 @@ defmodule PdfElixide.Builder do
     end
   end
 
+  @doc group: "Links and watermarks"
   @doc """
   Makes `rect` on the current page a link to `link`.
 
@@ -1889,12 +1912,13 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [op | builder.ops]}
   end
 
+  @doc group: "Links and watermarks"
   @doc """
   Names the place where the next flowing content starts, for a
   `{:anchor, name}` link.
 
-  The anchor points to the top of the next paragraph, heading, list, table,
-  image or rule, on whatever page that content lands. With no flowing content
+  The anchor points to the top of the next flowing content, on whatever page
+  it lands. With no flowing content
   after it, it points to where the flow ends. Each anchor needs its own
   non-empty `name`.
 
@@ -1915,6 +1939,7 @@ defmodule PdfElixide.Builder do
     %{builder | anchors: MapSet.put(builder.anchors, name), ops: [{:anchor, name} | builder.ops]}
   end
 
+  @doc group: "Links and watermarks"
   @doc """
   Draws `text` as a translucent watermark on the current page, or on every
   page.
@@ -1948,12 +1973,12 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [{:watermark, Map.put(options, :text, text)} | builder.ops]}
   end
 
+  @doc group: "Navigation and page furniture"
   @doc """
   Adds a bookmark titled `title` to the document's outline.
 
-  By default the bookmark points to the top of the next paragraph, heading,
-  list, table, image or rule, wherever that content lands, as `anchor/2`
-  does; `heading/4`'s `:bookmark` option adds one for a heading. Bookmarks
+  By default the bookmark points to the top of the next flowing content,
+  wherever it lands, as `anchor/2` does; `heading/4`'s `:bookmark` option adds one for a heading. Bookmarks
   appear in the outline in the order they are added. See
   `t:bookmark_opts/0` for nesting and the options, and
   [Navigation](guides/building-documents.md#navigation) for an example.
@@ -1987,6 +2012,7 @@ defmodule PdfElixide.Builder do
     %{builder | bookmark_level: level, ops: [op | builder.ops]}
   end
 
+  @doc group: "Navigation and page furniture"
   @doc """
   Numbers pages in `style` until the next `page_labels/3`.
 
@@ -2021,6 +2047,7 @@ defmodule PdfElixide.Builder do
     %{builder | ops: [{:page_labels, Map.put(options, :style, style)} | builder.ops]}
   end
 
+  @doc group: "Navigation and page furniture"
   @doc """
   Draws running text in the top margin until the next `header/2`; `nil` stops it.
 
@@ -2037,6 +2064,7 @@ defmodule PdfElixide.Builder do
     running(builder, :header, parts, builder.margin_top, "top")
   end
 
+  @doc group: "Navigation and page furniture"
   @doc """
   Draws running text in the bottom margin until the next `footer/2`; `nil` stops it.
 
@@ -2049,6 +2077,7 @@ defmodule PdfElixide.Builder do
     running(builder, :footer, parts, builder.margin_bottom, "bottom")
   end
 
+  @doc group: "Scripts"
   @doc """
   Sets the `t:page_scripts/0` a viewer runs on the page the next content
   lands on.
@@ -2125,6 +2154,7 @@ defmodule PdfElixide.Builder do
           "invalid #{inspect(part)}, expected a string, a list of runs or nil: #{inspect(other)}"
   end
 
+  @doc group: "Navigation and page furniture"
   @doc """
   Adds a table of contents listing every bookmark, wherever it is added.
 
@@ -2159,6 +2189,7 @@ defmodule PdfElixide.Builder do
     %{builder | contents: true, ops: [op | builder.ops]}
   end
 
+  @doc group: "Form fields"
   @doc """
   Adds a text field to the current page.
 
@@ -2187,6 +2218,7 @@ defmodule PdfElixide.Builder do
     field(builder, name, rect, Map.drop(options, [:value, :default_value]), kind)
   end
 
+  @doc group: "Form fields"
   @doc """
   Adds a check box to the current page.
 
@@ -2202,6 +2234,7 @@ defmodule PdfElixide.Builder do
     field(builder, name, rect, options, {:check_box, checked})
   end
 
+  @doc group: "Form fields"
   @doc """
   Adds a combo box, a drop-down list of `options`, to the current page.
 
@@ -2225,6 +2258,7 @@ defmodule PdfElixide.Builder do
     )
   end
 
+  @doc group: "Form fields"
   @doc """
   Adds a list box, a scrolling list of `options`, to the current page.
 
@@ -2246,6 +2280,7 @@ defmodule PdfElixide.Builder do
     field(builder, name, rect, field_options, kind)
   end
 
+  @doc group: "Form fields"
   @doc """
   Adds a push button labeled `caption` to the current page.
 
@@ -2261,6 +2296,7 @@ defmodule PdfElixide.Builder do
     field(builder, name, rect, Map.put(options, :required, false), {:push_button, caption})
   end
 
+  @doc group: "Form fields"
   @doc """
   Adds an empty signature field to the current page.
 
@@ -2415,6 +2451,7 @@ defmodule PdfElixide.Builder do
     raise ArgumentError, "invalid :selected, expected an option string: #{inspect(value)}"
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws a rectangle on the current page.
 
@@ -2440,6 +2477,7 @@ defmodule PdfElixide.Builder do
     shape(builder, [{:rectangle, x, y, width, height}], build_shape_options(opts))
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws a straight line from one `t:point/0` to another on the current page.
 
@@ -2457,6 +2495,7 @@ defmodule PdfElixide.Builder do
     shape(builder, [move_to(from), line_to(to)], build_line_options(opts))
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws a circle of `radius` points around `center` on the current page.
 
@@ -2476,6 +2515,7 @@ defmodule PdfElixide.Builder do
     shape(builder, operations, build_shape_options(opts))
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws an ellipse around `center` on the current page, `{rx, ry}` being its
   horizontal and vertical radii in points.
@@ -2496,6 +2536,7 @@ defmodule PdfElixide.Builder do
     shape(builder, operations, build_shape_options(opts))
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws a closed polygon through `points`, at least three `t:point/0`s, on the
   current page.
@@ -2524,13 +2565,14 @@ defmodule PdfElixide.Builder do
     raise ArgumentError, "invalid point, expected {x, y} with two numbers: #{inspect(point)}"
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws an arc of a circle of `radius` points around `center` on the current
   page, from angle `from` to angle `to`.
 
-  Angles are in degrees, counter-clockwise from the positive x-axis, so `0` is
+  Angles are in degrees, counterclockwise from the positive x-axis, so `0` is
   the circle's rightmost point and `90` its top. A `to` below `from` draws
-  clockwise. The arc may go round at most once: `from` and `to` must differ,
+  clockwise. The arc may go around at most once: `from` and `to` must differ,
   by no more than 360. See
   [Drawing shapes](guides/building-documents.md#drawing-shapes) and
   `t:line_opts/0` for the options.
@@ -2557,6 +2599,7 @@ defmodule PdfElixide.Builder do
     shape(builder, operations, build_line_options(opts))
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws a cubic Bézier curve from `from` to `to`, shaped by the control points
   `c1` and `c2`, on the current page.
@@ -2582,6 +2625,7 @@ defmodule PdfElixide.Builder do
     )
   end
 
+  @doc group: "Drawing"
   @doc """
   Draws a path made of `operations` on the current page.
 
@@ -2741,6 +2785,7 @@ defmodule PdfElixide.Builder do
     %{rect | x: x, y: y, width: width, height: height}
   end
 
+  @doc group: "Getting the PDF"
   @doc """
   Lays out the description and returns the PDF as a binary.
 
@@ -2754,6 +2799,7 @@ defmodule PdfElixide.Builder do
     with_editor(builder, &Editor.to_binary(&1, opts))
   end
 
+  @doc group: "Getting the PDF"
   @doc """
   Lays out the description and returns the PDF as a binary, raising an error
   if it fails.
@@ -2763,6 +2809,7 @@ defmodule PdfElixide.Builder do
     to_binary(builder, opts) |> Wrap.unwrap!()
   end
 
+  @doc group: "Getting the PDF"
   @doc """
   Lays out the description and writes the PDF to `path`.
 
@@ -2781,6 +2828,7 @@ defmodule PdfElixide.Builder do
     end
   end
 
+  @doc group: "Getting the PDF"
   @doc """
   Lays out the description and writes the PDF to `path`, raising an error if
   it fails.
@@ -3156,7 +3204,6 @@ defmodule PdfElixide.Builder do
     stroke_width =
       non_negative!(:stroke_width, Keyword.get(opts, :stroke_width, @grid_width))
 
-    # The grid's width would be dropped with the grid.
     if stroke_color == nil and stroke_width != @grid_width do
       raise ArgumentError,
             ":stroke_width has no effect with stroke_color: nil; give one or the other"
@@ -3605,7 +3652,6 @@ defmodule PdfElixide.Builder do
         dash_pattern: dash_pattern!(Keyword.get(opts, :dash_pattern))
       })
 
-    # The outline's settings would be dropped with the outline.
     if options.stroke_color == nil do
       defaults = paint_options([], [])
 
@@ -3869,7 +3915,8 @@ defmodule PdfElixide.Builder do
     end
   end
 
-  # Keep these fit and precision checks consistent with the native layout.
+  # The fit and precision checks below are spelled as the native layout spells
+  # its own, so both refuse the same blocks.
   defp validate_image_fits!(key, size, room), do: validate_fits!(key, size, room, "image")
 
   defp validate_block_fits!(builder, width, height, noun) do
@@ -3919,7 +3966,6 @@ defmodule PdfElixide.Builder do
     validate_line_precise!(builder, font_size)
   end
 
-  # Spelled as the layout spells its checks, so both refuse the same blocks.
   defp validate_code_block_fits!(builder, font_size, padding) do
     {width, height} = builder.current_page_size
     line = font_size * builder.line_height
@@ -3942,7 +3988,6 @@ defmodule PdfElixide.Builder do
     validate_line_precise!(builder, font_size)
   end
 
-  # Spelled as the layout spells its check, so both refuse the same layouts.
   defp validate_columns_fit!(builder, count, gap) do
     {width, _height} = builder.current_page_size
     room = width - builder.margin_left - builder.margin_right

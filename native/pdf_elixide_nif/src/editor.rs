@@ -107,7 +107,7 @@ fn editor_open(path: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedEdi
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedEditor> {
-    // The same two routes as `editor_open`, for the same reason; see there.
+    // The same two routes as `editor_open`; the second keeps the authentication.
     let editor =
         warnings::drained(
             || match DocumentEditor::from_bytes(bytes.as_slice().to_vec()) {
@@ -423,7 +423,7 @@ fn editor_set_form_field_value(
     value: Option<FieldValueNif>,
 ) -> NifResult<Atom> {
     resource.editor.with_lock(|editor| {
-        // Inside the guard, so check and write cannot straddle another writer.
+        // Inside the guard, per `Closable::with_lock`.
         let (resolved, upstream) = editor.resolved_fields()?;
         ensure_writable(resolved, &name)?;
 
@@ -709,8 +709,6 @@ fn plan_in_output_order(
     )
 }
 
-// Reading the file needs no editor, and an exclusive guard serializes every other
-// call on the handle.
 #[rustler::nif(schedule = "DirtyIo")]
 fn editor_merge(resource: ResourceArc<EditorResource>, path: Binary) -> NifResult<Atom> {
     let path = path_arg(path)?;

@@ -395,12 +395,6 @@ original AcroForm structure:
 Other pending changes, including flatten marks, require a full rewrite. See
 [Saving edits](editing.md#saving-edits) for all incremental-save restrictions.
 
-`to_binary/2` clears `PdfElixide.Editor.modified?/1` even though it writes no
-file; an incremental `save/3` leaves it set.
-
-For a very large document, prefer `save/3`; see `PdfElixide.Editor.to_binary/2`
-for what `to_binary/2` holds in memory.
-
 ## Exporting field data
 
 `PdfElixide.Form.export/3` hands the form's values back on their own, as FDF or
@@ -604,8 +598,8 @@ Reported cases include:
 
   * **A newly set value containing text beyond Latin-1 or emoji that this
     library cannot draw into an appearance.** Latin-1 values and fields not
-    filled in this editor receive no text warning; the
-    [text limitation](#flattening) still applies.
+    filled in this editor receive no text warning; the text limitation in
+    [Flattening](#flattening) still applies.
 
     Such a warning may suggest enabling wider font support; this package has
     no such option. Take the warning to mean the field did not flatten legibly,

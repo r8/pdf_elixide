@@ -81,7 +81,7 @@ impl From<&FormField> for FieldMeta {
     }
 }
 
-// The `/Ff` bits ISO 32000-1 Table 226 gives every field, whatever its `/FT`.
+// The `/Ff` bits ISO 32000-1 Table 221 gives every field, whatever its `/FT`.
 #[derive(NifStruct, Debug, PartialEq)]
 #[module = "PdfElixide.Form.Field.Flags"]
 pub struct CommonFlagsNif {
@@ -272,7 +272,7 @@ fn text_kind_nif(bits: u32) -> TextKindNif {
     }
 }
 
-// Push button is tested first because Table 227 makes the two mutually
+// Push button is tested first because Table 226 makes the two mutually
 // exclusive and gives no rule for a field setting both.
 fn button_kind_nif(bits: u32) -> ButtonKindNif {
     if bits & field_flags::PUSH_BUTTON != 0 {
@@ -448,9 +448,7 @@ pub fn document_form_field_to_nif(
     attrs: Option<ResolvedAttrs<'_>>,
     on_states: &[String],
 ) -> Option<FieldNif> {
-    // Built before the destructure below consumes `field`. Cloning what it
-    // could have moved is the price of both paths running through one
-    // conversion, which is what stops them disagreeing.
+    // Built before the destructure below consumes `field`.
     let meta = FieldMeta::from(&field);
     // Destructured because `value` moves into the mapper while `field_type` is
     // still borrowed by `field_nif`.
@@ -860,7 +858,7 @@ mod tests {
     // Every button kind is derived from these two bits, so a drift in either
     // silently retypes every one of them.
     #[test]
-    fn upstream_field_flag_constants_still_match_table_227() {
+    fn upstream_field_flag_constants_still_match_table_226() {
         assert_eq!(field_flags::RADIO, 0x8000);
         assert_eq!(field_flags::PUSH_BUTTON, 0x10000);
     }

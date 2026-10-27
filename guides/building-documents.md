@@ -164,7 +164,7 @@ wider than the block breaks at the character that would cross its edge, not
 between words, and continues at the block's left edge.
 
 The background fills the width between the margins. Line height and spacing
-follow [paragraphs](#flowing-text). A block holding only spaces and tabs adds
+follow paragraphs; see [Flowing text](#flowing-text). A block holding only spaces and tabs adds
 nothing. When a block continues onto another page, each page's part gets a
 background of its own, padded on every side. See
 `t:PdfElixide.Builder.code_block_opts/0` for padding, background controls and
@@ -333,7 +333,7 @@ fill without an outline, pass `stroke_color: nil` with a `:fill_color`.
 Where an outline crosses itself, the inside is filled by the nonzero winding
 rule.
 
-Line ends are cut square at the end point and corners are mitred; neither can
+Line ends are cut square at the end point and corners are mitered; neither can
 be changed.
 
 The operations, and the `:stroke_color`, `:fill_color`, `:stroke_width` and
@@ -345,16 +345,20 @@ source
 |> PdfElixide.Document.paths!(0)
 |> Enum.filter(&(&1.stroke_color || &1.fill_color))
 |> Enum.reduce(Builder.new(), fn path, builder ->
-  Builder.path(builder, path.operations,
-    stroke_color: path.stroke_color,
-    fill_color: path.fill_color,
-    stroke_width: path.stroke_width
-  )
+  outline =
+    if path.stroke_color,
+      do: [stroke_color: path.stroke_color, stroke_width: path.stroke_width],
+      else: [stroke_color: nil]
+
+  Builder.path(builder, path.operations, [fill_color: path.fill_color] ++ outline)
 end)
 ```
 
+A `:stroke_width` without an outline is refused, so a fill-only path is
+given `stroke_color: nil` alone.
+
 Extraction does not report dash patterns, and line ends and corners are always
-square and mitred here, so a redrawn outline is solid and square-ended whatever
+square and mitered here, so a redrawn outline is solid and square-ended whatever
 the source drew.
 
 An extracted path or `bbox` lands where it was on the source page only when
@@ -439,7 +443,8 @@ Scanners need clear quiet zones, sufficient module size and good contrast.
 Keep black symbols on a light page, or set `:background` when drawing over a
 color. Reducing a symbol's size also shrinks its modules and quiet zones.
 
-Flowing symbols paginate and use the same spacing as [images](#images).
+Flowing symbols paginate and use the same spacing as images; see
+[Images](#images).
 
 ## Styled text
 
@@ -711,7 +716,8 @@ field's value each time it shows the page. As a result:
   the form first, with `PdfElixide.Form.flatten/1`, to render it.
 - A check box reports no `:on_states`; its on state is `"Yes"`, the one
   `PdfElixide.Form.put_value/3` writes for `true`.
-- Before flattening, read the [text limitations](forms.md#flattening).
+- Before flattening, read the text limitations in
+  [Flattening](forms.md#flattening).
   Flattening draws no selection for a list box with several options selected,
   and draws a push button without its caption. Leave such a form unflattened.
 
@@ -727,14 +733,16 @@ a text field, combo box or list box can run, see [Scripts](#scripts).
 Links and watermarks are annotations, and an editor treats them as such:
 
 - `PdfElixide.Editor.flatten_annotations/1` draws a watermark into the page's
-  content and removes the page's annotations, **links included**, since a link
-  has nothing to draw:
+  content. On a page with a watermark it also removes the page's other
+  annotations, **links and form fields included**, since neither has anything
+  to draw. A page with no watermark keeps its links and fields:
 
   ```elixir
   builder
-  |> Editor.from_builder!()
-  |> Editor.flatten_annotations!()
-  |> Editor.save!("flattened.pdf")
+  |> PdfElixide.Editor.from_builder!()
+  |> PdfElixide.Editor.flatten_annotations!()
+  |> PdfElixide.Editor.save!("flattened.pdf")
+  |> PdfElixide.Editor.close()
   ```
 
 - `PdfElixide.Editor.merge/2` refuses a page with annotations; see
@@ -804,7 +812,8 @@ Scripts stay in the document unless something removes them:
   scripts; see
   [When a merge is refused](merging-and-splitting.md#when-a-merge-is-refused).
 - `PdfElixide.Editor.flatten_annotations/1` removes script links along with
-  every other link.
+  every other link on a page with a watermark; see
+  [Annotations after building](#annotations-after-building).
 
 ## Fonts
 
@@ -863,8 +872,8 @@ The builder refuses content it cannot draw faithfully:
   amount of wrapping can fit. Reduce the text size or the side margins, widen
   the box or the table column, or use fewer or wider columns.
 - **Text taller than its box**; see [Text in a box](#text-in-a-box).
-- **Table rows that cannot be split and do not fit on a page**, and **columns
-  that do not fit the page**; see [Across pages](#across-pages) and
+- **Table rows that cannot be split and do not fit on a page**, and **table
+  columns that do not fit the page**; see [Across pages](#across-pages) and
   [Column widths](#column-widths).
 - **An image whose proportions take it past the content area**, such as a
   tall image given only a `:width`. Give a smaller `:width` or a `:height`.
@@ -878,8 +887,8 @@ The builder refuses content it cannot draw faithfully:
   overlap**, once `{page}` and `{pages}` are filled in. Shorten them or reduce
   the text size.
 - **A page label range, header or footer replaced on the page it would start
-  on**, which would apply to no page. Remove one, or put content between
-  them.
+  on**, which would apply to no page, and **a second `page_scripts/2` on the
+  same page**. Remove one, or put content between them.
 - **A Roman page label past 3999, or a lettered one past 26000.** Start
   another range before that page.
 - **Contents in a document with no bookmarks.**

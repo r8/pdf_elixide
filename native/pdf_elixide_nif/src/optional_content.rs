@@ -46,9 +46,8 @@ fn read_layers(doc: &PdfDocument) -> Result<Vec<String>> {
         if let Some(token) = name.as_name() {
             names.push(token.to_string());
         } else if let Some(bytes) = name.as_string() {
-            // Raw, *not* `metadata.rs`'s wrapper, which strips a PDF 2.0
-            // `EF BB BF` and trims. The matcher does neither, so a name tidied
-            // up here would silently stop matching the filter it feeds.
+            // Preserve the filter decoder's spelling: stripping a UTF-8 BOM
+            // or trimming whitespace would make a listed name stop matching.
             names.push(decode_pdf_text_string(bytes));
         }
     }

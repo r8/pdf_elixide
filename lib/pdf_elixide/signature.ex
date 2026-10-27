@@ -39,6 +39,7 @@ defmodule PdfElixide.Signature do
   alias PdfElixide.Signature.DSS
   alias PdfElixide.Signature.Timestamp
 
+  @typedoc "A document or editor to read signatures from."
   @type source :: Document.t() | Editor.t()
 
   @typedoc """

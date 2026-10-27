@@ -2,7 +2,6 @@
 
 // The shared decoder handles UTF-16, UTF-8 and PDFDocEncoding. Strip PDF 2.0's
 // UTF-8 BOM first because the decoder otherwise preserves it as U+FEFF.
-// Every PDF text string this crate reads goes through here.
 pub(crate) fn decode_pdf_text_string(bytes: &[u8]) -> String {
     let body = match bytes {
         [0xEF, 0xBB, 0xBF, rest @ ..] => rest,

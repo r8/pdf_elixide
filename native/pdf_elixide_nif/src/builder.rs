@@ -2027,11 +2027,11 @@ fn fill(pdf: Vec<u8>, fields: &[FieldNif]) -> pdf_oxide::Result<Vec<u8>> {
         return Ok(pdf);
     }
 
-    // An upstream full rewrite drops `/Info`; the editor's own saves put it back.
     let mut editor = OpenEditor::new(DocumentEditor::from_bytes(pdf)?);
     for (name, value) in values {
         editor.set_form_field_value(name, value)?;
     }
+    // A full rewrite drops `/Info`; put it back as the editor's own saves do.
     editor.resupply_info()?;
     editor.save_to_bytes_with_options(SaveOptions::full_rewrite())
 }

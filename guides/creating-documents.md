@@ -38,10 +38,13 @@ lower-case, attribute-free `<h1>` to `<h4>`, `<p>`, `<br>`, `<b>`, `<strong>`,
 `<i>`, `<em>`, `<code>`, `<pre>`, `<ul>`, `<ol>` and `<li>` tags. Ordered and
 unordered list items both become bullets.
 
-Pass body content with each block on its own unindented line. Source line
-breaks and indentation are preserved, so pretty-printed or inline block tags
-may appear as literal Markdown markers instead of receiving their intended
-formatting. Tags with attributes or upper-case names are not recognized.
+Adjacent blocks work: `<h1>Report</h1><p>Body</p>` produces a heading followed
+by a paragraph. Source line breaks and indentation are preserved, however.
+Indenting a list item can print its literal `-` marker, and a heading after
+running text, such as `<p>lead<h2>Title</h2></p>`, prints `lead## Title`.
+Keep list items and headings at the start of an unindented line, or immediately
+after a block that ends the preceding line. Tags with attributes or upper-case
+names are not recognized.
 
 Other tags are removed but their contents remain. This includes `title`,
 `style` and `script` content, so do not pass a complete HTML document. `<h5>`
@@ -105,8 +108,9 @@ PdfElixide.Editor.from_images!([scan],
 ```
 
 Because one page size applies to the whole list, images of different shapes
-in one call cannot each fill their page. Build one editor per image and
-combine them with `PdfElixide.Editor.merge_binary/2` if they must.
+in one call cannot each fill their page. To size each page to its image, use
+`PdfElixide.Builder.page/2` and `PdfElixide.Builder.image_in_rect/4`; see
+[Building documents](building-documents.md).
 
 A JPEG is embedded without re-encoding, so it keeps its quality and size. A
 PNG is decoded and its pixels stored losslessly, so an 8-bit PNG keeps every

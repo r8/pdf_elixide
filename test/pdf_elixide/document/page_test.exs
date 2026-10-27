@@ -243,7 +243,7 @@ defmodule PdfElixide.Document.PageTest do
     end
 
     # The three crop boxes this reader declines, against the same medium. Page 5
-    # is also where `crop_box/1` errors instead, which the drift test pins.
+    # is also where `crop_box/1` errors instead.
     test "falls back to the medium for an absent, null or short crop box" do
       doc = Document.open!(@crop_box_pdf)
       medium = %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}

@@ -160,7 +160,7 @@ pub enum WidgetFieldTypeNif {
     Unknown,
 }
 
-// Upstream's classifier reads Table 227's Radio and Pushbutton bits backwards,
+// Upstream's classifier reads Table 226's Radio and Pushbutton bits backwards,
 // so the `/Btn` trio is re-derived here. Which of the three arrives says only
 // that `/FT` was `/Btn`, which is why no `/FT` string is needed.
 fn widget_field_type_nif(

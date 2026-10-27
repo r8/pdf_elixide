@@ -6,8 +6,8 @@ defmodule PdfElixide.Error do
   raise the same struct (it is an exception). Match on `:reason` to handle
   specific failures:
 
-      case PdfElixide.Document.open(path) do
-        {:ok, doc} -> doc
+      case PdfElixide.Editor.open(path) do
+        {:ok, editor} -> editor
         {:error, %PdfElixide.Error{reason: :encrypted}} -> prompt_for_password()
         {:error, %PdfElixide.Error{reason: :invalid_pdf}} -> reject()
       end
@@ -74,9 +74,10 @@ defmodule PdfElixide.Error do
   the *caller* arrives as a `%PdfElixide.Error{}`; if you get one, the arguments
   were accepted and the document, the filesystem or the handle is what failed.
 
-  An `ErlangError` from any function, predicates included, means the call never
-  reached the document: the native library could not be loaded or called. It is
-  not a condition of the input; report it.
+  An `ErlangError` from any function, predicates included, reports an unexpected
+  native-boundary failure, such as an unloaded library, an uncontained panic or
+  a malformed native error. Processing may already have started. Report the
+  exception with its stacktrace.
 
   Predicates ending in `?` are the mirror image. They return a bare boolean, so
   a failure has nowhere to be reported, and this struct is raised instead, from

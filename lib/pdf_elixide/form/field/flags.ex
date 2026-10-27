@@ -1,7 +1,7 @@
 defmodule PdfElixide.Form.Field.Flags do
   @moduledoc """
   The `/Ff` field flags every AcroForm field has, whatever its type
-  (ISO 32000-1 §12.7.3.1, Table 226).
+  (ISO 32000-1 §12.7.3.1, Table 221).
 
   Carried by `PdfElixide.Form.Field.Unknown`, which has no type and so no
   type-specific bits. The other three kinds carry a struct of their own —

@@ -228,9 +228,10 @@ defmodule PdfElixide.Document.Image do
   @doc """
   Encodes the image to a binary in the requested format.
 
-  `opts[:format]` is `:png` (the default) or `:jpeg`. For a `:jpeg` source image
-  the original bytes are returned untouched (zero loss), except CMYK JPEGs which
-  are re-encoded to RGB.
+  `opts[:format]` is `:png` (the default) or `:jpeg`. When requesting `:jpeg`
+  output from a `:jpeg` source image, the original bytes are returned untouched
+  (zero loss), except CMYK JPEGs which are re-encoded to RGB. PNG output is
+  always encoded as PNG, regardless of the source format.
 
   That pass-through copies the stored blob once, straight into the returned
   binary; the PNG and re-encoding paths hold the encoded image and the binary at
@@ -288,8 +289,7 @@ defmodule PdfElixide.Document.Image do
   @spec save!(t(), Path.t(), image_opts()) :: :ok
   def save!(%__MODULE__{} = image, path, opts \\ [])
       when is_binary(path) and is_list(opts) do
-    # Local `case` rather than `Wrap.unwrap!/1`: `save/3` answers a bare `:ok`,
-    # not `{:ok, value}`, so there is no payload to unwrap.
+    # Local `case` for the same reason as `PdfElixide.Document.prepare_search!/1`.
     case save(image, path, opts) do
       :ok -> :ok
       {:error, error} -> raise error

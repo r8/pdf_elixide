@@ -3369,9 +3369,8 @@ defmodule PdfElixide.DocumentTest do
     test "a handle read before authenticating answers correctly afterwards" do
       doc = Document.open!(@encrypted_pdf)
 
-      # Every one of these caches its own empty result natively, and `search/2`
-      # caches into one nothing evicts from — so reading first is what makes this
-      # sequence worth asserting rather than the plain `authenticate` above.
+      # Reading first is the point: each of these caches its empty result, and
+      # `search/2` caches into an index nothing evicts.
       assert {:ok, ""} = Document.text(doc, 0)
       assert {:ok, []} = Document.chars(doc, 0)
       assert {:ok, []} = Document.search(doc, "Page")
@@ -3853,10 +3852,9 @@ defmodule PdfElixide.DocumentTest do
       # …while 0xA0-0xFF is Latin-1 as before.
       assert meta.keywords == "café, naïve"
 
-      # /Creator and /Producer go through the same decoder as every other field
-      # rather than upstream's `document_creator/document_producer`, so raw
-      # UTF-8 and PDF 2.0's EF BB BF BOM both work. The BOM is stripped rather
-      # than surviving as a leading U+FEFF, which `String.trim/1` would keep.
+      # /Creator and /Producer take raw UTF-8 and PDF 2.0's EF BB BF BOM like
+      # every other field. The BOM is stripped rather than surviving as a
+      # leading U+FEFF, which `String.trim/1` would keep.
       assert meta.creator == "Créateur"
       assert meta.producer == "pdf_elixide ✓"
 

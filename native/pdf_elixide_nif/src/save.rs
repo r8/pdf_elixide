@@ -174,12 +174,8 @@ pub(crate) fn ensure_metadata_survives_save(
     editor: &OpenEditor,
     options: &SaveOptionsNif,
 ) -> NifResult<()> {
-    // An incremental update appends rather than copying, so it never reaches the
-    // decrypt-on-copy that drops the stream: nothing is lost, and this refusal
-    // would otherwise name a rewrite the caller did not ask for and recommend a
-    // sanitize that leaves the save refused anyway. Encryption owns that refusal
-    // instead - `ensure_incremental_is_not_encrypted` on a save, upstream's own
-    // check on `editor_to_bytes`.
+    // An incremental update never reaches the decrypt-on-copy, so nothing is
+    // lost; encryption owns that refusal (`ensure_incremental_is_not_encrypted`).
     if options.incremental {
         return Ok(());
     }

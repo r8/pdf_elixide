@@ -653,8 +653,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@flags_pdf)
       editor = Editor.open!(@flags_pdf)
 
-      # Upstream reads /Ff off the field's own dictionary, so without the walk
-      # this leaf would report a cleared 0 and classify as a check box.
+      # `group.a` declares no /Ff; its parent's makes it a radio.
       for source <- [doc, editor] do
         assert %Field.Button{kind: :radio, flags: %Field.Button.Flags{raw: 32_768}} =
                  Form.field!(source, "group.a")
@@ -681,9 +680,6 @@ defmodule PdfElixide.FormTest do
     test "each struct carries exactly the keys its module declares" do
       doc = Document.open!(@metadata_pdf)
 
-      # Nothing else gates this: the field structs are built in Rust, so a key
-      # the two sides disagree about is either silently extra on the map or
-      # missing and raises only when something reads it.
       for field <- Form.fields!(doc) do
         assert Map.keys(field) == field.__struct__ |> struct() |> Map.keys(),
                "#{inspect(field.__struct__)} disagrees with its NIF struct"
@@ -701,8 +697,7 @@ defmodule PdfElixide.FormTest do
     test "reports the field's box as a normalized rect" do
       doc = Document.open!(@metadata_pdf)
 
-      # `/Rect [100 700 260 720]` is a 160 x 20 box. Upstream's own accessor
-      # reads the far corner as the size and would answer 260 x 720 here.
+      # `/Rect [100 700 260 720]` is a 160 x 20 box, not 260 x 720.
       assert %Field.Text{rect: %Rect{x: 100.0, y: 700.0, width: 160.0, height: 20.0}} =
                Form.field!(doc, "full_name")
 
@@ -751,8 +746,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@metadata_pdf)
       editor = Editor.open!(@metadata_pdf)
 
-      # Upstream reads both off the field's own dictionary, so without the walk
-      # this leaf would report neither.
+      # `limits.a` declares neither; both come from its parent.
       for source <- [doc, editor] do
         assert %Field.Text{max_length: 12, alignment: :center} =
                  Form.field!(source, "limits.a")
@@ -769,8 +763,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@metadata_pdf)
       editor = Editor.open!(@metadata_pdf)
 
-      # Upstream reads /FT off the field's own dictionary, so without the walk
-      # this leaf would be an Unknown carrying neither key.
+      # `typed.text` declares no /FT; its parent types it.
       for source <- [doc, editor] do
         assert %Field.Text{kind: :single_line, max_length: 9, alignment: :right} =
                  Form.field!(source, "typed.text")
@@ -781,8 +774,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@metadata_pdf)
       editor = Editor.open!(@metadata_pdf)
 
-      # Upstream maps /Yes and /Off to a boolean only for a field it typed /Btn
-      # itself, so both arrive as text here and are remapped afterwards.
+      # `toggle.on` declares no /FT; its parent types it /Btn.
       for source <- [doc, editor] do
         assert %Field.Button{kind: :check_box, value: true, default_value: false} =
                  Form.field!(source, "toggle.on")
@@ -793,8 +785,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@metadata_pdf)
       editor = Editor.open!(@metadata_pdf)
 
-      # /MaxLen -1 and /Ff -1. Upstream casts both with a wrapping `as u32`, so
-      # its reading is a cap of 4294967295 and every flag bit set.
+      # /MaxLen -1 and /Ff -1, not a cap of 4294967295 and every flag bit set.
       for source <- [doc, editor] do
         assert %Field.Text{
                  max_length: nil,
@@ -852,8 +843,7 @@ defmodule PdfElixide.FormTest do
       doc = Document.open!(@metadata_pdf)
       editor = Editor.open!(@metadata_pdf)
 
-      # Upstream reads /Opt nowhere on this path, so this list exists only
-      # because the walk carried it down.
+      # `langs.a` declares no /Opt; the list is its parent's.
       for source <- [doc, editor] do
         assert %Field.Choice{options: ["en", {"fr", "French"}]} =
                  Form.field!(source, "langs.a")
@@ -1324,9 +1314,8 @@ defmodule PdfElixide.FormTest do
   end
 
   describe "a signature typed on an ancestor" do
-    # Upstream reads `/FT` off the field's own dictionary only, so it classifies
-    # `inherited.leaf` as a field of no known kind. Left at that it would be an
-    # ordinary fillable field, and writing to it destroys the signature.
+    # `inherited.leaf` is typed /Sig only on an ancestor. Reported as an
+    # ordinary fillable field, a write to it would destroy the signature.
 
     test "is not reported by fields/1, from either source" do
       doc = Document.open!(@signature_edge_pdf)
@@ -1393,9 +1382,8 @@ defmodule PdfElixide.FormTest do
 
   describe "a cyclic field tree" do
     test "is refused rather than walked, from every function that reads one" do
-      # `form_cyclic.pdf`'s only field is its own `/Kids` entry. Upstream's
-      # extractor would recurse until the native stack is gone, so refusal must
-      # happen before calling it.
+      # `form_cyclic.pdf`'s only field is its own `/Kids` entry. Walking it
+      # exhausts the native stack, so the refusal must come first.
       doc = Document.open!(@cyclic_pdf)
       editor = Editor.open!(@cyclic_pdf)
 

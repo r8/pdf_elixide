@@ -56,7 +56,8 @@ change would still be missing from it.
 **An editor built with `PdfElixide.Editor.from_binary/2` cannot save
 incrementally**, and neither can one created with
 `PdfElixide.Editor.from_markdown/2`, `PdfElixide.Editor.from_html/2`,
-`PdfElixide.Editor.from_plain_text/2` or `PdfElixide.Editor.from_images/2`.
+`PdfElixide.Editor.from_plain_text/2`, `PdfElixide.Editor.from_images/2` or
+`PdfElixide.Editor.from_builder/1`.
 None of them has a source file to copy, so `incremental: true` returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` even with no edits or only
 field values. Use `PdfElixide.Editor.open/2` for incremental saving, or write a
@@ -148,7 +149,7 @@ moved are left pointing where they were.
 
 **Angles are quadrants.** `PdfElixide.Editor.set_rotation/3` takes `0`, `90`,
 `180` or `270`, and the two relative calls take any multiple of `90` — negative
-to turn anticlockwise, past `360` to wrap. Anything else raises
+to turn counterclockwise, past `360` to wrap. Anything else raises
 `FunctionClauseError` rather than being rounded to the nearest quadrant. An
 invalid stored `/Rotate` reads as `0` before the delta is added, so turning a
 `45` page by `90` lands on `90`, not `135`.

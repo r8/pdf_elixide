@@ -1,7 +1,7 @@
 defmodule PdfElixide.Form.Field.Button.Flags do
   @moduledoc """
-  The `/Ff` field flags of a button field (ISO 32000-1 Table 227), alongside the
-  three every field carries (Table 226).
+  The `/Ff` field flags of a button field (ISO 32000-1 Table 226), alongside the
+  three every field carries (Table 221).
 
   ## Fields
 

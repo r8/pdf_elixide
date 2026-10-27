@@ -398,7 +398,7 @@ fn ensure_text_state_measurable(editor: &OpenEditor) -> NifResult<()> {
 
         // The document reader sees at least what the editor's private one does,
         // so the guard can only over-refuse. A page whose content cannot be read
-        // is upstream's error to report, not this guard's to pre-empt.
+        // is upstream's error to report, not this guard's to preempt.
         let Ok(content) = editor.source().get_page_content_data(source) else {
             continue;
         };

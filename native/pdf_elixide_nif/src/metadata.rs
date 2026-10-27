@@ -250,10 +250,7 @@ fn too_long(TooLong { page }: TooLong) -> rustler::Error {
     )
 }
 
-// Returns one page's logical page label. Upstream has no single-label accessor
-// on `PdfDocument` — `Pdf::page_label` takes `&mut self` and is itself
-// `get_label(&self.page_labels()?, page)` — so the label ranges are extracted
-// per call, and `document_page_labels` remains the bulk path.
+// Extracts the label ranges per call; `document_page_labels` is the bulk path.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_page_label(
     resource: ResourceArc<DocumentResource>,

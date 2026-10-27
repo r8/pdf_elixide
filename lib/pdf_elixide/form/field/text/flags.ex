@@ -1,7 +1,7 @@
 defmodule PdfElixide.Form.Field.Text.Flags do
   @moduledoc """
   The `/Ff` field flags of a text field (ISO 32000-1 Table 228), alongside the
-  three every field carries (Table 226).
+  three every field carries (Table 221).
 
   ## Fields
 

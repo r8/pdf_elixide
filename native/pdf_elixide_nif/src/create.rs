@@ -189,12 +189,12 @@ fn blank_lines_drawn(content: &str) -> String {
         .join("\n")
 }
 
-// There is no `Closable` until the editor exists, so `warnings::drained`
-// contains a panic in the layout or the parse of its output.
 fn create(build: impl FnOnce() -> NifResult<Pdf>) -> NifResult<OpenedEditor> {
     create_from_bytes(|| build().map(Pdf::into_bytes))
 }
 
+// There is no `Closable` until the editor exists, so `warnings::drained`
+// contains a panic in the layout or the parse of its output.
 pub(crate) fn create_from_bytes(
     build: impl FnOnce() -> NifResult<Vec<u8>>,
 ) -> NifResult<OpenedEditor> {
@@ -207,8 +207,6 @@ pub(crate) fn create_from_bytes(
     opened(editor)
 }
 
-// Dirty because laying out a whole document and parsing the result is
-// CPU-bound; the only lock taken is the new handle's, which nothing else holds.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_from_markdown(content: &str, options: MarkupCreateOptionsNif) -> NifResult<OpenedEditor> {
     create(|| options.builder().from_markdown(content).map_err(to_nif_err))

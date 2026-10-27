@@ -255,8 +255,9 @@ has something to redact it with: a `/Redact` annotation of its own, or a region
 from `PdfElixide.Editor.add_redaction/3` that the pass could apply — see
 [Which pages the pass processes](#which-pages-the-pass-processes). A page that
 was only marked, with neither, keeps every annotation. To drop a page's
-annotations whatever it carries, reach for
-`PdfElixide.Editor.flatten_annotations/2` instead.
+annotations without redacting it, reach for
+`PdfElixide.Editor.flatten_annotations/2` instead, which removes them from any
+page where it can draw at least one.
 
 **This unlinks them; it does not erase them.** The `/Annots` entry goes, so a
 viewer stops showing the annotation and

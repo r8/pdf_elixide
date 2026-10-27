@@ -43,7 +43,12 @@ defmodule PdfElixide.DocGroupsTest do
   # need sections. A function missing its `@doc group:` lands in ExDoc's
   # ungrouped "Functions" bucket with no warning, the same silence as an
   # unplaced module.
-  @function_grouped_modules [PdfElixide.Document, PdfElixide.Editor, PdfElixide.Document.Page]
+  @function_grouped_modules [
+    PdfElixide.Document,
+    PdfElixide.Editor,
+    PdfElixide.Document.Page,
+    PdfElixide.Builder
+  ]
 
   defp function_groups do
     Mix.Project.config()

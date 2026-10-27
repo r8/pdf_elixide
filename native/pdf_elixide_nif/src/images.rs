@@ -36,9 +36,7 @@ pub struct ImageNif {
 }
 
 // The transformation in effect where the image was painted, `[a b c d e f]` —
-// every `cm` in scope composed, not one operator's operands. Named fields rather
-// than a bare six-tuple so the operand order is documented where the type is
-// declared; it still encodes as a six-tuple.
+// every `cm` in scope composed, not one operator's operands.
 #[derive(NifTuple, Debug)]
 pub struct MatrixNif {
     a: f32,

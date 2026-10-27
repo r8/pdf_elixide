@@ -207,7 +207,8 @@ defmodule PdfElixide.Compliance do
 
     * `:embed_fonts` — embed fonts the document uses without carrying them,
       using fonts installed on this machine. Output can vary by machine; see
-      the conversion guide before enabling it. Defaults to `false`.
+      [Embedded fonts](guides/pdf-a-conversion.md#embedded-fonts) before
+      enabling it. Defaults to `false`.
     * `:remove_javascript` — remove document-level JavaScript, including
       the open script. Defaults to `true`. See
       [What a report establishes](#module-what-a-report-establishes) for limits.

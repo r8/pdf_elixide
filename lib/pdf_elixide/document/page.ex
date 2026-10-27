@@ -252,7 +252,7 @@ defmodule PdfElixide.Document.Page do
   to OCR instead of treating the empty result as content.
 
   It is a **static probe, not an extraction** — no text is assembled and no
-  fonts are loaded — and it approximates towards `true`, so the two answers are
+  fonts are loaded — and it approximates toward `true`, so the two answers are
   not equally strong:
 
     * **`false` is reliable.** The page declares no fonts and no form XObjects,

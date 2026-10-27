@@ -747,7 +747,7 @@ defmodule PdfElixide.EditorTest do
       refute File.exists?(out_path)
     end
 
-    # The rewrite refusal must not pre-empt this one: an incremental update
+    # The rewrite refusal must not preempt this one: an incremental update
     # appends, so the metadata is not at risk and sanitizing would not help.
     test "an incremental save of the same source is refused for being encrypted",
          %{out_path: out_path} do
@@ -775,8 +775,8 @@ defmodule PdfElixide.EditorTest do
       out = Document.from_binary!(bytes)
       assert Document.page_count!(out) == 3
 
-      # Upstream's reader is null-blind too, so both sides answer alike rather
-      # than `{:ok, nil}`; the equality is what survives that being fixed.
+      # Compared with the source rather than pinned to `{:ok, nil}`: both read
+      # the null entry alike.
       src = Document.open!(@encrypted_null_metadata_pdf, password: "secret")
       assert Document.xmp_metadata(out) == Document.xmp_metadata(src)
       assert Document.metadata!(src).title == "Test Title"
@@ -3239,8 +3239,7 @@ defmodule PdfElixide.EditorTest do
       assert message =~ "not a content stream"
       refute Editor.modified?(editor)
 
-      # The refusal is the only thing standing between the mark and a pass that
-      # errors with both refusal flags already armed.
+      # The refused call queued nothing, so a pass has nothing to apply.
       assert {:ok, %PdfElixide.RedactionReport{regions: 0}} = Editor.apply_redactions(editor)
     end
 
@@ -3271,8 +3270,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@redact_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      # Upstream's bulk call marks raw output indices, so without the binding's
-      # per-page loop the surviving source page is left unmarked.
+      # After the deletion, output page 0 is source page 1.
       editor |> Editor.delete_page!(0) |> Editor.mark_redactions!()
 
       assert Editor.marked_for_redaction?(editor, 0)
@@ -3371,7 +3369,7 @@ defmodule PdfElixide.EditorTest do
       on_exit(fn -> Editor.close(editor) end)
 
       # The second annotation declares two /QuadPoints quads and still counts
-      # once; see the drift test for why.
+      # once.
       assert Editor.redaction_count!(editor, 0) == 2
       assert Editor.redaction_count!(editor, 1) == 0
     end
@@ -4133,7 +4131,6 @@ defmodule PdfElixide.EditorTest do
       assert refuses(editor, path) =~ "page deletions"
     end
 
-    # A full rewrite drains upstream's attachment list, but not the mirror.
     @tag :tmp_dir
     test "a full rewrite does not lift it for an attachment either", %{
       path: path,
@@ -4352,9 +4349,8 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@redact_qq_text_state_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      # Page 1 carries the same q/Q and a `Tf` after it. The guard compares the
-      # two readings rather than matching the pattern, which is the whole reason
-      # this page is not refused with page 0.
+      # Page 1 carries the same q/Q and a `Tf` after it, so its two readings
+      # agree and it is not refused with page 0.
       Editor.add_redaction!(editor, 1, @qq_tail)
 
       assert {:ok, %PdfElixide.RedactionReport{glyphs_removed: 4}} =
@@ -4418,8 +4414,6 @@ defmodule PdfElixide.EditorTest do
       assert page_text(editor, 0) == "Secret"
     end
 
-    # The other side of the same line: a region on that page puts it back in
-    # reach of the defect, so the refusal must return.
     test "a queued region on such a page is still refused" do
       editor = Editor.open!(@redact_qq_text_state_pdf)
       on_exit(fn -> Editor.close(editor) end)

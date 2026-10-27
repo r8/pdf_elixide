@@ -96,7 +96,8 @@ defmodule PdfElixide.MixProject do
   # Function groups within a module page. The order here is the order ExDoc
   # renders them; a module shows only the groups its functions carry.
   # `doc_groups_test.exs` pins that every documented function in `Document`,
-  # `Editor` and `Document.Page` carries one of these and that none is unused.
+  # `Editor`, `Document.Page` and `Builder` carries one of these and that none
+  # is unused.
   defp groups_for_docs do
     for group <- [
           "Opening and lifecycle",
@@ -117,7 +118,19 @@ defmodule PdfElixide.MixProject do
           "Redaction",
           "Attachments",
           "Document information",
-          "Flattening"
+          "Flattening",
+          "Pages and margins",
+          "Flowing text",
+          "Positioned text",
+          "Tables",
+          "Drawing",
+          "Images",
+          "Barcodes",
+          "Links and watermarks",
+          "Navigation and page furniture",
+          "Form fields",
+          "Scripts",
+          "Getting the PDF"
         ] do
       {group, &(&1[:group] == group)}
     end

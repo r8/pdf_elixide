@@ -98,9 +98,8 @@ fn signature_to_nif<'a>(
     })
 }
 
-// One struct per direction is avoidable here: `NifMap` derives both `Encoder`
-// and `Decoder`, and a `Binary` satisfies each, so `dss/1` encodes through the
-// same shape `pades_level/2` decodes back.
+// `NifMap` derives both directions, so `dss/1` encodes through the same shape
+// `pades_level/2` decodes back.
 #[derive(NifMap)]
 pub struct VriNif<'a> {
     signature_digest: String,

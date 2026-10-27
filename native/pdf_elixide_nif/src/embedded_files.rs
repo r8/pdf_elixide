@@ -88,7 +88,7 @@ pub fn embedded_file(
 // Reject populated name trees because the writer replaces rather than merges
 // them. `scrubbed` names the `/Names` entries a sanitization has already dropped
 // from the staged catalog the writer builds on: those cannot be lost twice, so
-// they do not count towards the refusal.
+// they do not count toward the refusal.
 pub fn ensure_no_name_tree(doc: &PdfDocument, scrubbed: &[&str]) -> NifResult<()> {
     let catalog = doc.catalog().map_err(to_nif_err)?;
     let Some(names) = catalog.as_dict().and_then(|dict| dict.get("Names")) else {

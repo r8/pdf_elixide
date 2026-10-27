@@ -54,6 +54,7 @@ defmodule PdfElixide.Form do
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
+  @typedoc "A document or editor to read form fields from."
   @type source :: Document.t() | Editor.t()
 
   @typedoc """
@@ -326,15 +327,14 @@ defmodule PdfElixide.Form do
   until the next full write: `PdfElixide.Editor.save/3` without `:incremental`,
   or `PdfElixide.Editor.to_binary/2`. An incremental save is refused once a page
   is marked, and because the mark cannot be removed it stays refused for the life
-  of the editor.
+  of the editor — reopen the source for an unflattened document.
 
   This also removes the document's AcroForm, and any signature field goes with
-  it — the dictionary stays in the file, but nothing references it any more, so
+  it — the dictionary stays in the file, but nothing references it anymore, so
   the document comes back unsigned. `flatten/2` keeps the ones whose widgets
   survive.
 
-  A document carrying no form is not an error. The mark cannot be removed —
-  reopen the source for an unflattened document.
+  A document carrying no form is not an error.
 
   **Refused on an encrypted source**; filling is unaffected. See
   [What an encrypted source cannot do](guides/encryption.md#what-an-encrypted-source-cannot-do).

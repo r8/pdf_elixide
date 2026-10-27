@@ -9,6 +9,8 @@ defmodule PdfElixide do
       version, text extraction).
     * `PdfElixide.Editor` — mutable, in-memory editor (open, or create
       from Markdown, HTML, plain text or images; mutate; save).
+    * `PdfElixide.Builder` — creates new PDFs with wrapped text, automatic
+      page breaks and custom fonts through a content pipeline.
     * `PdfElixide.Form` — AcroForm field access for both documents
       and editors.
     * `PdfElixide.Signature` — read-only: what a document's digital

@@ -33,7 +33,9 @@ defmodule PdfElixide.Editor do
   Markdown or HTML vocabulary is recognized. `from_images/2` places one JPEG or
   PNG image on each new page. See the
   [Creating documents](guides/creating-documents.md) guide for examples,
-  supported input and character limitations.
+  supported input and character limitations. `from_builder/1` lays out a
+  `PdfElixide.Builder` description; see
+  [Building documents](guides/building-documents.md).
 
   ## Page structure
 
@@ -146,8 +148,8 @@ defmodule PdfElixide.Editor do
   no editing operation changes it.
 
   `:source_path` is `nil` for an editor with no source file: one built with
-  `from_binary/2`, `from_markdown/2`, `from_html/2`, `from_plain_text/2` or
-  `from_images/2`.
+  `from_binary/2`, `from_markdown/2`, `from_html/2`, `from_plain_text/2`,
+  `from_images/2` or `from_builder/1`.
 
   `:ref` is an internal handle; do not read it or construct the struct directly.
   """
@@ -251,11 +253,9 @@ defmodule PdfElixide.Editor do
   end
 
   @typedoc """
-  A page size for `from_markdown/2`, `from_html/2`, `from_plain_text/2` and
-  `from_images/2`.
-
-  `:letter` is 612 × 792 points, `:a4` 595 × 842, `:legal` 612 × 1008 and `:a3`
-  842 × 1190. `{width, height}` gives any other size in points (1/72 inch).
+  A page size: `:letter` is 612 × 792 points, `:a4` 595 × 842, `:legal`
+  612 × 1008 and `:a3` 842 × 1190. `{width, height}` gives any other size in
+  points (1/72 inch).
   """
   @type page_size :: :letter | :a4 | :legal | :a3 | {number(), number()}
 
@@ -521,7 +521,7 @@ defmodule PdfElixide.Editor do
   Lays out a `PdfElixide.Builder` description and opens the result for editing.
 
   Use this when the document needs more work after it is built, such as
-  merging, attachments or form fields. To get the PDF straight away, use
+  merging, attachments or filling form fields. To get the PDF straight away, use
   `PdfElixide.Builder.to_binary/2` or `PdfElixide.Builder.save/3`, which
   close the editor for you.
 
@@ -556,8 +556,7 @@ defmodule PdfElixide.Editor do
   @doc group: "Opening and lifecycle"
   @doc """
   Returns the file path the editor was opened from, or `nil` if it has no
-  source file: one built with `from_binary/2`, `from_markdown/2`,
-  `from_html/2`, `from_plain_text/2` or `from_images/2`.
+  source file; see `t:t/0` for which editors have none.
   """
   @spec source_path(t()) :: Path.t() | nil
   def source_path(%__MODULE__{source_path: p}), do: p
@@ -786,10 +785,9 @@ defmodule PdfElixide.Editor do
 
   A full rewrite is the default. `incremental: true` returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` without writing if the editor
-  has no source file — it came from `from_binary/2`, `from_markdown/2`,
-  `from_html/2`, `from_plain_text/2` or `from_images/2` — or holds unsupported
-  changes. See [Saving edits](guides/editing.md#saving-edits) for supported
-  changes and recovery.
+  has no source file (see `t:t/0`) or holds unsupported changes. See
+  [Saving edits](guides/editing.md#saving-edits) for supported changes and
+  recovery.
 
   Writing does not consume the editor: you can keep editing and write again.
 
@@ -1274,7 +1272,7 @@ defmodule PdfElixide.Editor do
 
   `degrees` is a delta rather than an absolute angle, so `rotate_page_by(e, 0, 90)`
   takes a page already at `180` to `270`. It must be a multiple of 90 — anything
-  else raises `FunctionClauseError`. A negative delta turns anticlockwise and one
+  else raises `FunctionClauseError`. A negative delta turns counterclockwise and one
   past `360` wraps.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
@@ -1518,8 +1516,8 @@ defmodule PdfElixide.Editor do
   `modified?/1` is left as it was, but the page stops blocking an incremental
   `save/3`. **A region added with `add_redaction/3,4` is not withdrawn** — the
   page keeps it, `apply_redactions/1,2` still removes its content, and it goes on
-  blocking an incremental `save/3`. Nothing can withdraw a queued region; reopen
-  the source instead.
+  blocking an incremental `save/3`. See
+  [Queuing your own regions](guides/redaction.md#queuing-your-own-regions).
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
   not exist.
@@ -1707,7 +1705,7 @@ defmodule PdfElixide.Editor do
   discarded by a `q` … `Q` restore. **A font refusal can leave earlier pages
   rewritten: discard the editor and reopen the source.** The text-state check
   leaves the editor unchanged. See
-  [Refused pages](guides/redaction.md#refused-by-apply_redactions-1-2).
+  [Refused by `apply_redactions/1,2`](guides/redaction.md#refused-by-apply_redactions-1-2).
 
   ## Options
 

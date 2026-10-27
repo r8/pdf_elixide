@@ -496,7 +496,8 @@ defmodule PdfElixide.Document do
   Authenticates against the document's encryption with the given password.
 
   Returns `{:ok, true}` if authentication succeeded (or the PDF is not encrypted),
-  `{:ok, false}` if the password was wrong, or `{:error, reason}` on a PDF/crypto error.
+  `{:ok, false}` if the password was wrong, or `{:error, %PdfElixide.Error{}}` on
+  a PDF or decryption failure.
 
   This is a password *check*, so a wrong password is a normal `{:ok, false}`
   result — unlike `open/2`'s `:password` option, where it is an

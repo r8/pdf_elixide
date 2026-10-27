@@ -134,7 +134,7 @@ defmodule PdfElixide.SignatureTest do
 
   # Walked by tag rather than decoded: `:public_key`'s decoded CMS shape is not
   # stable across the OTP releases CI runs, so a test written against either
-  # shape passes on one leg and fails on the other. The tags did not move.
+  # shape passes on one leg and fails on the other.
   defp tlv(<<tag, len, rest::binary>>) when len < 0x80 do
     <<value::binary-size(^len), tail::binary>> = rest
 
@@ -1737,8 +1737,7 @@ defmodule PdfElixide.SignatureTest do
     end
 
     # Both blobs are real CMS that simply carries no timestamp attribute, which
-    # is what makes nil a finding here rather than a failure to look — the
-    # distinction the marker test below guards.
+    # is what makes nil a finding here rather than a failure to look.
     test "answers nil for a signature carrying no timestamp", %{b_b: b_b} do
       assert Signature.timestamp(b_b) == {:ok, nil}
 
