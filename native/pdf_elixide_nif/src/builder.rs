@@ -526,8 +526,8 @@ pub struct ListNif {
 pub enum MarkerNif {
     Bullet,
     Decimal,
-    LowerRoman,
-    LowerAlpha,
+    RomanLower,
+    AlphaLower,
 }
 
 impl From<MarkerNif> for Marker {
@@ -535,8 +535,8 @@ impl From<MarkerNif> for Marker {
         match marker {
             MarkerNif::Bullet => Marker::Bullet,
             MarkerNif::Decimal => Marker::Decimal,
-            MarkerNif::LowerRoman => Marker::LowerRoman,
-            MarkerNif::LowerAlpha => Marker::LowerAlpha,
+            MarkerNif::RomanLower => Marker::RomanLower,
+            MarkerNif::AlphaLower => Marker::AlphaLower,
         }
     }
 }

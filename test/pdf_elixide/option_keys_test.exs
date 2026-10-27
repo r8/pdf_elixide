@@ -508,7 +508,7 @@ defmodule PdfElixide.OptionKeysTest do
       )
 
       accepts_each!(
-        [font: :courier, font_size: 10, style: :lower_alpha, start: 3],
+        [font: :courier, font_size: 10, style: :alpha_lower, start: 3],
         &Builder.numbered_list(Builder.new(), ["a"], &1)
       )
 

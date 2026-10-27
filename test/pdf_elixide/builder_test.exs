@@ -715,8 +715,8 @@ defmodule PdfElixide.BuilderTest do
     end
 
     test "Roman and alphabetic numbering, from a start" do
-      roman = Builder.new() |> Builder.numbered_list(["a", "b"], style: :lower_roman, start: 4)
-      alpha = Builder.new() |> Builder.numbered_list(["a", "b"], style: :lower_alpha, start: 26)
+      roman = Builder.new() |> Builder.numbered_list(["a", "b"], style: :roman_lower, start: 4)
+      alpha = Builder.new() |> Builder.numbered_list(["a", "b"], style: :alpha_lower, start: 26)
 
       assert roman |> written() |> Document.text!() =~ ~r/iv\..*\n.*v\./s
       assert alpha |> written() |> Document.text!() =~ ~r/z\..*\n.*aa\./s
@@ -740,11 +740,11 @@ defmodule PdfElixide.BuilderTest do
       builder = Builder.new()
 
       assert_raise ArgumentError, ~r/3999/, fn ->
-        Builder.numbered_list(builder, ["a", "b"], style: :lower_roman, start: 3999)
+        Builder.numbered_list(builder, ["a", "b"], style: :roman_lower, start: 3999)
       end
 
-      assert_raise ArgumentError, ~r/:style/, fn ->
-        Builder.numbered_list(builder, ["a"], style: :upper_roman)
+      assert_raise ArgumentError, ~r/:style, expected one of .*:roman_lower/, fn ->
+        Builder.numbered_list(builder, ["a"], style: :lower_roman)
       end
 
       assert_raise ArgumentError, ~r/:start/, fn ->

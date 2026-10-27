@@ -419,8 +419,8 @@ pub enum Align {
 pub enum Marker {
     Bullet,
     Decimal,
-    LowerRoman,
-    LowerAlpha,
+    RomanLower,
+    AlphaLower,
 }
 
 impl Marker {
@@ -428,8 +428,8 @@ impl Marker {
         match self {
             Marker::Bullet => "\u{2022}".to_string(),
             Marker::Decimal => format!("{number}."),
-            Marker::LowerRoman => format!("{}.", roman(number)),
-            Marker::LowerAlpha => format!("{}.", alpha(number)),
+            Marker::RomanLower => format!("{}.", roman(number)),
+            Marker::AlphaLower => format!("{}.", alpha(number)),
         }
     }
 }

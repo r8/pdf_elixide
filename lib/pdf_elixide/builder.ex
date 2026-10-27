@@ -377,21 +377,22 @@ defmodule PdfElixide.Builder do
   Options accepted by `numbered_list/3`.
 
     * `:font`, `:font_size` — as for `paragraph/3`.
-    * `:style` — `:decimal` (1. 2. 3.), `:lower_roman` (i. ii. iii.) or
-      `:lower_alpha` (a. b. c., then aa. ab. …). Defaults to `:decimal`.
+    * `:style` — `:decimal` (1. 2. 3.), `:roman_lower` (i. ii. iii.) or
+      `:alpha_lower` (a. b. c., then aa. ab. …, unlike the page labels of
+      `t:label_style/0`). Defaults to `:decimal`.
     * `:start` — the number of the first item, a positive integer. Defaults
       to `1`. Numbers stop at 2147483647, and lower Roman numerals at 3999.
   """
   @type numbered_list_opts :: [
           font: font() | nil,
           font_size: number() | nil,
-          style: :decimal | :lower_roman | :lower_alpha,
+          style: :decimal | :roman_lower | :alpha_lower,
           start: pos_integer()
         ]
 
   @numbered_list_opts_keys [:font, :font_size, :style, :start]
 
-  @list_styles [:decimal, :lower_roman, :lower_alpha]
+  @list_styles [:decimal, :roman_lower, :alpha_lower]
 
   # The largest number a counter holds on every supported target, 32-bit
   # included.
@@ -1192,7 +1193,7 @@ defmodule PdfElixide.Builder do
   As `bullet_list/3`, with the numbers right-aligned so the items' text
   lines up. See `t:numbered_list_opts/0` for the options.
 
-      PdfElixide.Builder.numbered_list(builder, ["First", "Second"], style: :lower_roman)
+      PdfElixide.Builder.numbered_list(builder, ["First", "Second"], style: :roman_lower)
   """
   @spec numbered_list(t(), [text()], numbered_list_opts()) :: t()
   def numbered_list(%__MODULE__{} = builder, items, opts \\ [])
@@ -1201,7 +1202,7 @@ defmodule PdfElixide.Builder do
 
     last = start + length(items) - 1
 
-    if style == :lower_roman and last > 3999 do
+    if style == :roman_lower and last > 3999 do
       raise ArgumentError,
             "invalid :start, lower Roman numerals stop at 3999, and these items " <>
               "would reach #{last}"
