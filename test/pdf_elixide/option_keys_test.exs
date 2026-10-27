@@ -48,7 +48,8 @@ defmodule PdfElixide.OptionKeysTest do
     font: :times,
     font_size: 10.0,
     line_height: 1.2,
-    scripts: [open: "this.print();"]
+    scripts: [open: "this.print();"],
+    footnotes: [font: :courier, font_size: 8]
   ]
 
   @builder_output_opts [compress: false, garbage_collect: false, encryption: nil]
@@ -434,7 +435,8 @@ defmodule PdfElixide.OptionKeysTest do
           bold: true,
           italic: true,
           color: %PdfElixide.Color.RGB{r: 1.0, g: 0.0, b: 0.0},
-          link: "https://example.com"
+          link: "https://example.com",
+          footnote: "Note."
         ],
         &Builder.paragraph(Builder.new(), [{"Text", &1}])
       )

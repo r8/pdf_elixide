@@ -515,6 +515,17 @@ defmodule PdfElixide.BuilderTest do
   end
 
   describe "headings" do
+    test "refuses a heading that cannot share any page with the start of what follows" do
+      message =
+        Builder.new()
+        |> Builder.heading(1, "Figure")
+        |> Builder.image(Png.solid(20, 40, :rgb), height: 648)
+        |> refusal()
+
+      assert message =~ "op 0 on page 0"
+      assert message =~ "it would be left alone"
+    end
+
     test "a heading is set bold at a size scaled by its level" do
       for {level, size} <- [{1, 24.0}, {2, 18.0}, {3, 15.0}, {4, 13.2}] do
         [char | _] =
@@ -3992,6 +4003,304 @@ defmodule PdfElixide.BuilderTest do
     test "contents with no bookmarks is refused" do
       assert Builder.new() |> Builder.contents() |> refusal() =~
                "op 0: contents/2 lists the document's bookmarks, but it has none"
+    end
+  end
+
+  describe "footnotes" do
+    # Twelve-point body lines are 18 points tall; notes default to 9.6 points
+    # on 14.4-point lines, with one such line for the separator.
+    @note_size 9.6
+    @note_line 14.4
+
+    defp lines_of(count, prefix \\ "l"), do: Enum.map_join(1..count, "\n", &"#{prefix}#{&1}")
+
+    # Sizes come back as written, in single precision.
+    defp sized(doc, page, sizes) do
+      doc
+      |> Document.chars!(page)
+      |> Enum.filter(fn char -> Enum.any?(sizes, &(abs(char.font_size - &1) < 0.001)) end)
+    end
+
+    defp note_chars(doc, page), do: sized(doc, page, [@note_size])
+
+    defp body_chars(doc, page), do: sized(doc, page, [12])
+
+    defp note_text(doc, page) do
+      doc
+      |> sized(page, [@note_size, @note_size * 0.65])
+      |> Enum.sort_by(&{-Float.round(&1.bbox.y, 1), &1.bbox.x})
+      |> Enum.map_join(& &1.text)
+    end
+
+    test "sets the note at the foot of its page, its last line on the bottom margin" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(["Revenue ", {"rose", footnote: "Audited."}, " on the year."])
+        |> written()
+
+      assert Document.page_count!(doc) == 1
+
+      [note_baseline] =
+        doc |> note_chars(0) |> Enum.map(&Float.round(&1.bbox.y, 3)) |> Enum.uniq()
+
+      assert_in_delta note_baseline, baseline(72 + @note_line, @note_size), 0.001
+      assert note_text(doc, 0) =~ "1 Audited."
+
+      [rule] =
+        for %{operations: [{:move_to, x, y}, {:line_to, to, y}]} <- Document.paths!(doc, 0),
+            do: {x, to, y}
+
+      assert_in_delta elem(rule, 2), 72 + 1.5 * @note_line, 0.001
+      assert_in_delta elem(rule, 1), 72 + 468 / 3, 0.001
+    end
+
+    test "draws the mark smaller and raised after the run's text" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(["A ", {"claim", footnote: "Note."}, " here."])
+        |> written()
+
+      chars = Document.chars!(doc, 0)
+      body = Enum.find(chars, &(&1.text == "m"))
+      mark = Enum.find(chars, &(&1.text == "1" and &1.font_size < 12))
+      assert_in_delta mark.font_size, 12 * 0.65, 0.001
+      assert_in_delta mark.bbox.y, body.bbox.y + 12 * 0.33, 0.001
+      assert mark.bbox.x >= body.bbox.x + body.bbox.width - 0.001
+    end
+
+    test "moves a line whose notes do not fit below it to the next page, with them" do
+      text = [lines_of(35) <> "\n", {"l36", footnote: "Note."}]
+      doc = Builder.new() |> Builder.paragraph(text) |> written()
+
+      assert Document.page_count!(doc) == 2
+      assert length(baselines(doc, 0)) == 35
+      assert note_chars(doc, 0) == []
+      assert body_chars(doc, 1) |> Enum.map_join(& &1.text) == "l36"
+      assert note_text(doc, 1) =~ "1 Note."
+    end
+
+    test "keeps later lines above the notes already on the page" do
+      text = [{"first", footnote: "Note."}, "\n" <> lines_of(36)]
+      doc = Builder.new() |> Builder.paragraph(text) |> written()
+
+      # 648 points less two note lines hold 34 body lines.
+      floor = 72 + 2 * @note_line
+      assert Enum.all?(body_chars(doc, 0), &(&1.bbox.y + 12 * @descent / 1000 >= floor - 0.001))
+      assert body_chars(doc, 0) |> Enum.map(& &1.bbox.y) |> Enum.uniq() |> length() == 34
+    end
+
+    test "numbers marks across the document and stacks each page's notes in order" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph([{"a", footnote: "First."}, " and ", {"b", footnote: "Second."}])
+        |> Builder.page()
+        |> Builder.paragraph([{"c", footnote: "Third."}])
+        |> written()
+
+      assert note_text(doc, 0) == "1 First.2 Second."
+      assert note_text(doc, 1) == "3 Third."
+    end
+
+    test "wraps a long note within the margins" do
+      note = String.duplicate("word ", 120)
+      doc = Builder.new() |> Builder.paragraph([{"a", footnote: note}]) |> written()
+
+      chars = note_chars(doc, 0)
+      assert chars |> Enum.map(&Float.round(&1.bbox.y, 3)) |> Enum.uniq() |> length() > 1
+      assert Enum.all?(chars, &(&1.bbox.x >= 72 and &1.bbox.x + &1.bbox.width <= 540.001))
+    end
+
+    test "keeps a heading with the next line when the heading's note takes the room" do
+      doc =
+        Builder.new()
+        |> Builder.paragraph(lines_of(33))
+        |> Builder.heading(1, [{"Heading", footnote: "Note."}], font_size: 12)
+        |> Builder.paragraph("Next")
+        |> written()
+
+      assert body_chars(doc, 1) |> Enum.map_join(& &1.text) =~ "HeadingNext"
+      assert note_text(doc, 1) =~ "1 Note."
+    end
+
+    test "sets column notes across the page, below every column" do
+      paragraphs = [lines_of(30, "a"), [{"marked", footnote: String.duplicate("wide ", 30)}]]
+      doc = Builder.new() |> Builder.columns(paragraphs) |> written()
+
+      notes = note_chars(doc, 0)
+      assert Enum.any?(notes, &(&1.bbox.x > 306))
+      lowest_note = notes |> Enum.map(& &1.bbox.y) |> Enum.max()
+      lowest_body = body_chars(doc, 0) |> Enum.map(& &1.bbox.y) |> Enum.min()
+      assert lowest_body > lowest_note + @note_line
+    end
+
+    test "carries a split table row's notes onto the page each mark lands on" do
+      cell = [
+        {lines_of(1), footnote: "Early."},
+        "\n" <> lines_of(50, "m") <> "\n",
+        {"last", footnote: "Late."}
+      ]
+
+      doc = Builder.new() |> Builder.table([[cell]]) |> written()
+
+      assert Document.page_count!(doc) == 2
+      assert note_text(doc, 0) == "1 Early."
+      assert note_text(doc, 1) == "2 Late."
+    end
+
+    test "refuses a word and mark too wide for a cell rather than splitting the mark" do
+      nine = Enum.flat_map(1..9, &[{"n#{&1}", footnote: "Note #{&1}."}, " "])
+
+      message =
+        Builder.new(font: :courier)
+        |> Builder.paragraph(nine)
+        |> Builder.table([[[{"a", footnote: "Tenth note"}], "b"]],
+          column_widths: [20, {:weight, 1}]
+        )
+        |> refusal()
+
+      assert message =~ ~s("a10")
+      assert message =~ "row 0, column 0"
+    end
+
+    test "keeps a mark whole and with its word when a narrow cell splits the word" do
+      nine = Enum.flat_map(1..9, &[{"n#{&1}", footnote: "Note #{&1}."}, " "])
+
+      # 20 points of text hold "aa", then "a", then "a" with mark 10.
+      doc =
+        Builder.new(font: :courier)
+        |> Builder.paragraph(nine)
+        |> Builder.table([[[{"aaaa", footnote: "Tenth note"}], "b"]],
+          column_widths: [28, {:weight, 1}]
+        )
+        |> written()
+
+      assert length(String.split(note_text(doc, 0), "10 Tenth note")) == 2
+
+      chars = Document.chars!(doc, 0)
+      [last_a] = chars |> Enum.filter(&(&1.text == "a")) |> Enum.take(-1)
+      # Every mark drawn on the cell's lines, which are below the paragraph's.
+      marks =
+        Enum.filter(
+          chars,
+          &(abs(&1.font_size - 7.8) < 0.001 and abs(&1.bbox.y - last_a.bbox.y) < 6)
+        )
+
+      assert Enum.map(marks, & &1.text) == ["1", "0"]
+      assert Enum.all?(marks, &(abs(&1.bbox.y - (last_a.bbox.y + 12 * 0.33)) < 0.001))
+    end
+
+    test "carries a mark with the end of a split word onto the next page" do
+      # 78 Helvetica "x"s fill a line exactly, leaving no room for the mark.
+      text = [lines_of(35) <> "\n", {String.duplicate("x", 78), footnote: "Note."}]
+      doc = Builder.new() |> Builder.paragraph(text) |> written()
+
+      assert note_text(doc, 0) == ""
+      assert note_text(doc, 1) == "1 Note."
+
+      chars = Document.chars!(doc, 1)
+      [x | _] = Enum.filter(chars, &(&1.text == "x"))
+      mark = Enum.find(chars, &(&1.text == "1" and &1.font_size < 12))
+      assert_in_delta mark.bbox.y, x.bbox.y + 12 * 0.33, 0.001
+    end
+
+    test "sets notes in the font and size given to new/1" do
+      doc =
+        Builder.new(footnotes: [font: :times, font_size: 8])
+        |> Builder.paragraph([{"a", footnote: "Note."}])
+        |> written()
+
+      note = doc |> Document.chars!(0) |> Enum.find(&(&1.text == "N"))
+      assert_in_delta note.font_size, 8, 0.001
+      assert note.font =~ "Times"
+    end
+
+    test "chooses DejaVu Sans for :auto when only a note needs it" do
+      doc = Builder.new() |> Builder.paragraph([{"a", footnote: "Примечание"}]) |> written()
+
+      note = doc |> Document.chars!(0) |> Enum.find(&(&1.text == "П"))
+      assert note.font =~ "DejaVu"
+    end
+
+    test "refuses a heading whose next line and its notes cannot share a page with it" do
+      message =
+        Builder.new()
+        |> Builder.heading(1, "Heading", font_size: 12)
+        |> Builder.paragraph([{"a", footnote: lines_of(42, "n")}])
+        |> refusal()
+
+      assert message =~ "op 0 on page 0"
+      assert message =~ "it would be left alone"
+    end
+
+    test "keeps a heading with a list whose note falls on the item's second line" do
+      item = [{String.duplicate("x", 62), footnote: lines_of(42, "n")}]
+
+      doc =
+        Builder.new(font: :courier)
+        |> Builder.heading(1, "Heading", font_size: 12)
+        |> Builder.bullet_list([item])
+        |> written()
+
+      page = Document.text!(doc, 0)
+      assert page =~ "Heading"
+      assert page =~ String.duplicate("x", 60)
+      assert note_text(doc, 0) == ""
+      assert note_text(doc, 1) =~ "1 n1"
+      assert Document.text!(doc, 1) =~ "xx"
+    end
+
+    test "refuses a line whose notes cannot fit even on a page of their own" do
+      tall = String.duplicate("x\n", 60)
+
+      for builder <- [
+            Builder.paragraph(Builder.new(), [{"a", footnote: tall}]),
+            Builder.columns(Builder.new(), [[{"a", footnote: tall}]]),
+            Builder.table(Builder.new(), [[[{"a", footnote: tall}]]])
+          ] do
+        message = refusal(builder)
+        assert message =~ "footnotes it references need"
+        assert message =~ "648-point content height"
+      end
+    end
+
+    test "raises where a footnote cannot be set" do
+      note = [{"a", footnote: "Note."}]
+
+      for call <- [
+            fn -> Builder.text_at(Builder.new(), {72, 72}, note) end,
+            fn -> Builder.code_block(Builder.new(), note) end,
+            fn -> Builder.header(Builder.new(), left: note) end
+          ] do
+        assert_raise ArgumentError, ~r/footnotes are set only in paragraphs/, call
+      end
+
+      assert_raise ArgumentError, ~r/a header row repeats on every page/, fn ->
+        Builder.table(Builder.new(), [[note], ["b"]], header_rows: 1)
+      end
+
+      assert_raise ArgumentError, ~r/cannot have a footnote of its own/, fn ->
+        Builder.paragraph(Builder.new(), [{"a", footnote: note}])
+      end
+
+      assert_raise ArgumentError, ~r/must end in a character other than whitespace/, fn ->
+        Builder.paragraph(Builder.new(), [{"a ", footnote: "Note."}])
+      end
+
+      assert_raise ArgumentError, ~r/must end in a character other than whitespace/, fn ->
+        Builder.paragraph(Builder.new(), ["a", {"", footnote: "Note."}])
+      end
+
+      assert_raise ArgumentError, ~r/a note needs text other than whitespace/, fn ->
+        Builder.paragraph(Builder.new(), [{"a", footnote: " \n"}])
+      end
+
+      assert_raise ArgumentError, ~r/invalid :footnote, expected a string/, fn ->
+        Builder.paragraph(Builder.new(), [{"a", footnote: untyped(3)}])
+      end
+
+      assert_raise ArgumentError, ~r/invalid :footnotes, expected a keyword list/, fn ->
+        Builder.new(footnotes: untyped(:none))
+      end
     end
   end
 

@@ -3,8 +3,8 @@ use std::ops::Range;
 use pdf_oxide::elements::PathOperation;
 
 use super::{
-    side_by_side, wrap, Item, Layout, Refused, Run, Segment, Shape, Stroke, Within, FIT_TOLERANCE,
-    RULE_GRAY, RULE_WIDTH,
+    references, side_by_side, wrap, Item, Layout, Refused, Run, Segment, Shape, Stroke, Within,
+    FIT_TOLERANCE, RULE_GRAY, RULE_WIDTH,
 };
 
 pub struct Columns {
@@ -70,13 +70,17 @@ impl Layout<'_> {
             }
         }
         let gaps: Vec<f64> = lines.iter().map(|&(above, _)| above).collect();
+        let notes: Vec<Vec<usize>> = lines
+            .iter()
+            .map(|(_, segments)| references(segments).collect())
+            .collect();
         let line = block.line;
 
         let mut start = 0;
         while start < lines.len() {
             if !self.fresh {
                 let spaced = self.cursor - self.pending_space;
-                if self.fits(spaced, line) {
+                if self.fits(spaced, line + self.notes_height(op, &notes[start])?) {
                     self.cursor = spaced;
                 } else {
                     self.break_page();
@@ -86,12 +90,19 @@ impl Layout<'_> {
             self.resolve_anchors();
 
             let top = self.cursor;
-            let rest = &gaps[start..];
-            let available = top - self.margins.bottom;
-            let (mut filled, _) = fill(rest, line, count, available);
-            if *balance && filled.last().is_some_and(|column| column.end == rest.len()) {
-                (filled, _) = fill(rest, line, count, balanced(rest, line, count, available));
+            let available = top - self.floor();
+            let (take, cap) =
+                self.share(op, &gaps[start..], &notes[start..], line, count, available)?;
+            let rest = &gaps[start..start + take];
+            let (mut filled, _) = fill(rest, line, count, cap);
+            if *balance
+                && start + take == lines.len()
+                && filled.last().is_some_and(|column| column.end == rest.len())
+            {
+                (filled, _) = fill(rest, line, count, balanced(rest, line, count, cap));
             }
+            let placed = filled.last().map_or(0, |column| column.end);
+            let placed_notes: Vec<usize> = notes[start..start + placed].concat();
 
             let mut tallest: f64 = 0.0;
             for (column, range) in filled.iter().enumerate() {
@@ -127,9 +138,10 @@ impl Layout<'_> {
                 }
             }
 
+            self.reserve(op, tallest, &placed_notes)?;
             self.cursor = top - tallest;
             self.fresh = false;
-            start += filled.last().map_or(0, |column| column.end);
+            start += placed;
             if start < lines.len() {
                 self.break_page();
             }
@@ -137,6 +149,51 @@ impl Layout<'_> {
 
         self.pending_space = 0.5 * size;
         Ok(())
+    }
+
+    // How many of the remaining lines this page takes, and the column height
+    // they fill to above the notes they reference. Columns and notes both
+    // grow with the lines taken, so the most that fit is found by bisection.
+    fn share(
+        &self,
+        op: usize,
+        above: &[f64],
+        notes: &[Vec<usize>],
+        line: f64,
+        count: usize,
+        available: f64,
+    ) -> Result<(usize, f64), Refused> {
+        if notes.iter().all(Vec::is_empty) {
+            return Ok((above.len(), available));
+        }
+        let notes_for = |taken: usize| self.notes_height(op, &notes[..taken].concat());
+        let fits = |taken: usize| -> Result<bool, Refused> {
+            Ok(
+                least_height(&above[..taken], line, count) + notes_for(taken)?
+                    <= available + FIT_TOLERANCE,
+            )
+        };
+
+        if !fits(1)? {
+            // The page has turned already when the first line did not fit.
+            let needed = line + notes_for(1)?;
+            return Err(Refused::NotesTooTall {
+                op,
+                page: self.pages.len() - 1,
+                needed,
+                room: self.page().height - self.margins.top - self.margins.bottom,
+            });
+        }
+        let (mut low, mut high) = (1, above.len());
+        while low < high {
+            let middle = low + (high - low).div_ceil(2);
+            if fits(middle)? {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Ok((low, available - notes_for(low)?))
     }
 }
 
@@ -162,6 +219,25 @@ fn fill(above: &[f64], line: f64, count: usize, cap: f64) -> (Vec<Range<usize>>,
         start = end;
     }
     (columns, refused)
+}
+
+// The tallest column when `above`'s lines are balanced. A cap can exceed it:
+// the lower bound counts a gap that a column top drops.
+fn least_height(above: &[f64], line: f64, count: usize) -> f64 {
+    let (columns, _) = fill(
+        above,
+        line,
+        count,
+        balanced(above, line, count, f64::INFINITY),
+    );
+    columns
+        .iter()
+        .map(|column| {
+            above[column.start + 1..column.end]
+                .iter()
+                .fold(line, |used, space| used + space + line)
+        })
+        .fold(0.0, f64::max)
 }
 
 // Use fill's exact rejected heights so each step advances despite rounding.

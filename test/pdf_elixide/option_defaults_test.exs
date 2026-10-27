@@ -341,7 +341,8 @@ defmodule PdfElixide.OptionDefaultsTest do
                font: :auto,
                font_size: 12.0,
                line_height: 1.5,
-               scripts: %{open: nil}
+               scripts: %{open: nil},
+               footnotes: %{font: :auto, font_size: 9.6}
              }
     end
 
@@ -464,7 +465,8 @@ defmodule PdfElixide.OptionDefaultsTest do
                bold: false,
                italic: false,
                color: nil,
-               link: nil
+               link: nil,
+               footnote: nil
              }
     end
 

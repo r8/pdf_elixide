@@ -1,11 +1,10 @@
 use std::ops::Range;
 
 use pdf_oxide::elements::PathOperation;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    boxed_lines, wrap, Align, Item, Layout, PositionedLine, Refused, Rgb, Run, Segment, Shape,
-    Stroke, Within, FIT_TOLERANCE, NO_EXTENT,
+    boxed_lines, references, tokens, units, wrap, Align, Item, Layout, PositionedLine, Refused,
+    Rgb, Run, Segment, Shape, Stroke, Token, Within, FIT_TOLERANCE, NO_EXTENT,
 };
 
 pub struct Table {
@@ -70,6 +69,32 @@ impl Measured<'_> {
     fn unit_height(&self, unit: &Range<usize>) -> f64 {
         self.heights[unit.clone()].iter().sum()
     }
+
+    // The notes referenced from lines `lines` of every cell in `rows`.
+    fn notes_in(&self, rows: Range<usize>, lines: Range<usize>) -> Vec<usize> {
+        self.lines[rows]
+            .iter()
+            .flatten()
+            .flat_map(|cell| {
+                let end = lines.end.min(cell.len());
+                cell[lines.start.min(end)..end].iter()
+            })
+            .flat_map(|segments| references(segments))
+            .collect()
+    }
+
+    // The notes on the part of a unit that `least` counts.
+    fn lead_notes(&self, unit: &Range<usize>) -> Vec<usize> {
+        if self.least(unit) < self.unit_height(unit) {
+            self.notes_in(unit.clone(), 0..1)
+        } else {
+            self.notes_in(unit.clone(), 0..usize::MAX)
+        }
+    }
+
+    fn has_notes(&self, row: usize, from: usize) -> bool {
+        !self.notes_in(row..row + 1, from..usize::MAX).is_empty()
+    }
 }
 
 // What the table draws on one page, painted fills first and the grid last so
@@ -93,15 +118,16 @@ impl Layout<'_> {
             .map(|cell| cell.runs.as_slice())
             .collect();
         self.drawable(op, page, &texts, &[])?;
+        self.check_notes(op, &texts)?;
 
         let measured = self.measure(op, table)?;
-        let first = measured
-            .units
-            .first()
-            .map_or(0.0, |unit| measured.least(unit));
+        let (first, lead) = measured.units.first().map_or((0.0, Vec::new()), |unit| {
+            (measured.least(unit), measured.lead_notes(unit))
+        });
         if !self.fresh {
             let spaced = self.cursor - self.pending_space;
-            if self.fits(spaced, measured.header + first) {
+            let notes = self.notes_height(op, &lead)?;
+            if self.fits(spaced, measured.header + first + notes) {
                 self.cursor = spaced;
             } else {
                 self.break_page();
@@ -113,10 +139,14 @@ impl Layout<'_> {
         let mut drawn = Drawn::default();
         self.place_rows(&measured, 0..table.header_rows, &mut drawn);
         for unit in &measured.units {
-            if self.fits(self.cursor, measured.unit_height(unit)) {
+            let height = measured.unit_height(unit);
+            let notes = measured.notes_in(unit.clone(), 0..usize::MAX);
+            if self.fits(self.cursor, height + self.notes_height(op, &notes)?) {
+                self.reserve(op, height, &notes)?;
                 self.place_rows(&measured, unit.clone(), &mut drawn);
             } else if unit.len() > 1 {
                 self.turn_page(op, &measured, &mut drawn)?;
+                self.reserve(op, height, &notes)?;
                 self.place_rows(&measured, unit.clone(), &mut drawn);
             } else {
                 self.split_row(op, &measured, unit.start, &mut drawn)?;
@@ -130,17 +160,22 @@ impl Layout<'_> {
     }
 
     // What a heading before the table must keep with: the header rows and
-    // the start of the first body row. A table that will be refused counts
-    // as one row of one line.
-    pub(super) fn table_lead(&self, table: &Table) -> f64 {
+    // the start of the first body row, and the notes it references. A table
+    // that will be refused counts as one row of one line.
+    pub(super) fn table_lead(&self, table: &Table) -> (f64, Vec<usize>) {
         let fallback = table.size * self.line_height + 2.0 * table.padding;
-        self.measure(0, table).map_or(fallback, |measured| {
-            let first = measured
-                .units
-                .first()
-                .map_or(0.0, |unit| measured.least(unit));
-            measured.header + first
-        })
+        self.measure(0, table)
+            .map_or((fallback, Vec::new()), |measured| {
+                measured
+                    .units
+                    .first()
+                    .map_or((measured.header, Vec::new()), |unit| {
+                        (
+                            measured.header + measured.least(unit),
+                            measured.lead_notes(unit),
+                        )
+                    })
+            })
     }
 
     fn measure<'t>(&self, op: usize, table: &'t Table) -> Result<Measured<'t>, Refused> {
@@ -251,6 +286,45 @@ impl Layout<'_> {
             });
         }
 
+        // On a page of its own, each unit must take its notes, and a row that
+        // splits must take each next line with the notes it references, or
+        // the row would turn pages without placing anything.
+        let note_line = self.note_line();
+        for unit in &measured.units {
+            let parts: Vec<(f64, Vec<usize>)> = if unit.len() > 1 {
+                vec![(
+                    measured.unit_height(unit),
+                    measured.notes_in(unit.clone(), 0..usize::MAX),
+                )]
+            } else {
+                let longest = measured.lines[unit.start]
+                    .iter()
+                    .map(Vec::len)
+                    .max()
+                    .unwrap_or(0);
+                (0..longest)
+                    .map(|at| {
+                        (
+                            measured.line + 2.0 * padding,
+                            measured.notes_in(unit.clone(), at..at + 1),
+                        )
+                    })
+                    .collect()
+            };
+            for (height, notes) in parts {
+                let rows = self.note_rows(op, &notes, true)?;
+                let needed = measured.header + height + rows as f64 * note_line;
+                if rows > 0 && needed > page_room + FIT_TOLERANCE {
+                    return Err(Refused::NotesTooTall {
+                        op,
+                        page,
+                        needed,
+                        room: page_room,
+                    });
+                }
+            }
+        }
+
         Ok(measured)
     }
 
@@ -274,12 +348,13 @@ impl Layout<'_> {
                 let width: f64 = segments.iter().map(|segment| segment.width).sum();
                 natural[cell.column] = natural[cell.column].max(width);
             }
-            for run in &cell.runs {
-                for cluster in run.text.graphemes(true) {
-                    if !cluster.chars().all(char::is_whitespace) {
-                        let width = self.fonts.width(run.face, cluster, size);
-                        least[cell.column] = least[cell.column].max(width);
-                    }
+            // Measured as `split_word` breaks a word, so a mark counts with
+            // the character before it.
+            for token in tokens(&cell.runs) {
+                let Token::Word(pieces) = token else { continue };
+                for unit in units(&pieces) {
+                    let width: f64 = unit.iter().map(|span| span.width(self.fonts, size)).sum();
+                    least[cell.column] = least[cell.column].max(width);
                 }
             }
         }
@@ -357,6 +432,9 @@ impl Layout<'_> {
     ) -> Result<(), Refused> {
         let padding = 2.0 * measured.table.padding;
         let mut from = vec![0; measured.table.rows[row].len()];
+        // Lines placed from each cell, until a cell runs out.
+        let mut done = 0;
+        let mut turned = false;
         loop {
             // A row with no text is still drawn one line tall.
             let remaining = measured.lines[row]
@@ -366,19 +444,45 @@ impl Layout<'_> {
                 .max()
                 .unwrap_or(0)
                 .max(1);
-            let fit = ((self.cursor - self.margins.bottom - padding + FIT_TOLERANCE)
-                / measured.line)
-                .floor()
-                .max(0.0) as usize;
-
-            if fit >= remaining {
-                self.place_fragment(measured, row, &mut from, remaining, drawn);
-                return Ok(());
+            let room = self.cursor - self.floor() - padding + FIT_TOLERANCE;
+            let mut fit = (room / measured.line).floor().max(0.0) as usize;
+            if measured.has_notes(row, done) {
+                fit = fit.min(remaining);
+                while fit > 0 {
+                    let notes = measured.notes_in(row..row + 1, done..done + fit);
+                    if fit as f64 * measured.line + self.notes_height(op, &notes)? <= room {
+                        break;
+                    }
+                    fit -= 1;
+                }
             }
-            if fit > 0 {
-                self.place_fragment(measured, row, &mut from, fit, drawn);
+
+            let count = fit.min(remaining);
+            if count > 0 {
+                let notes = measured.notes_in(row..row + 1, done..done + count);
+                self.reserve(op, count as f64 * measured.line + padding, &notes)?;
+                self.place_fragment(measured, row, &mut from, count, drawn);
+                done += count;
+                if count == remaining {
+                    return Ok(());
+                }
+            } else if turned {
+                // `measure` has refused a line too tall with its notes for a
+                // page of its own; this keeps the loop finite regardless.
+                let notes = measured.notes_in(row..row + 1, done..done + 1);
+                let rows = self.note_rows(op, &notes, true)?;
+                return Err(Refused::NotesTooTall {
+                    op,
+                    page: self.pages.len() - 1,
+                    needed: measured.header
+                        + measured.line
+                        + padding
+                        + rows as f64 * self.note_line(),
+                    room: self.page().height - self.margins.top - self.margins.bottom,
+                });
             }
             self.turn_page(op, measured, drawn)?;
+            turned = true;
         }
     }
 

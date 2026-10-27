@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use pdf_oxide::{
     elements::PathOperation,
@@ -139,6 +142,7 @@ pub struct Run {
     pub color: Option<Rgb>,
     // Distinct link ids prevent separate input runs from merging.
     pub link: Option<usize>,
+    pub mark: Option<Mark>,
 }
 
 impl Run {
@@ -148,12 +152,60 @@ impl Run {
             face: self.face,
             color: self.color,
             link: self.link,
+            mark: self.mark,
         }
     }
 
     fn same_style(&self, other: &Run) -> bool {
-        self.face == other.face && self.color == other.color && self.link == other.link
+        self.face == other.face
+            && self.color == other.color
+            && self.link == other.link
+            && self.mark == other.mark
     }
+
+    fn width(&self, fonts: &Fonts, size: f64) -> f64 {
+        fonts.width(self.face, &self.text, drawn_size(self.mark, size))
+    }
+}
+
+// A footnote number, drawn smaller and raised.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Mark {
+    // In the text, naming the note at this index of `Footnotes::notes`.
+    Reference(usize),
+    // At the start of the note itself.
+    Label,
+}
+
+const MARK_SCALE: f64 = 0.65;
+const MARK_RISE: f64 = 0.33;
+
+fn drawn_size(mark: Option<Mark>, size: f64) -> f64 {
+    match mark {
+        Some(_) => size * MARK_SCALE,
+        None => size,
+    }
+}
+
+fn drawn_baseline(mark: Option<Mark>, size: f64, baseline: f64) -> f64 {
+    match mark {
+        Some(_) => baseline + size * MARK_RISE,
+        None => baseline,
+    }
+}
+
+// Each note's runs, its label first, in the order their marks were numbered.
+pub struct Footnotes {
+    pub notes: Vec<Vec<Run>>,
+    pub face: usize,
+    pub size: f64,
+}
+
+fn references(segments: &[Segment]) -> impl Iterator<Item = usize> + '_ {
+    segments.iter().filter_map(|segment| match segment.mark {
+        Some(Mark::Reference(note)) => Some(note),
+        _ => None,
+    })
 }
 
 pub enum Op {
@@ -635,6 +687,18 @@ pub enum Refused {
     ContentsUnsettled {
         op: usize,
     },
+    KeptTooTall {
+        op: usize,
+        page: usize,
+        needed: f64,
+        room: f64,
+    },
+    NotesTooTall {
+        op: usize,
+        page: usize,
+        needed: f64,
+        room: f64,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -650,6 +714,7 @@ pub enum Within {
     Box,
     Column,
     Cell { row: usize, column: usize },
+    Footnote,
 }
 
 // Text is drawn character by character in logical order, with no bidi
@@ -723,6 +788,7 @@ struct Guess {
 pub fn lay_out(
     fonts: &Fonts,
     margins: &Margins,
+    footnotes: &Footnotes,
     line_height: f64,
     first_page: (f64, f64),
     ops: &[Op],
@@ -737,7 +803,7 @@ pub fn lay_out(
     };
 
     for _ in 0..MAX_PASSES {
-        let mut layout = Layout::new(fonts, margins, line_height, first_page, &guess);
+        let mut layout = Layout::new(fonts, margins, footnotes, line_height, first_page, &guess);
         layout.run(ops)?;
         let ranges = layout.label_ranges(ops)?;
         let Some((_, contents)) = contents else {
@@ -868,6 +934,7 @@ enum FlowMark {
 struct Layout<'a> {
     fonts: &'a Fonts<'a>,
     margins: &'a Margins,
+    footnotes: &'a Footnotes,
     line_height: f64,
     first_page: (f64, f64),
     guess: &'a Guess,
@@ -886,12 +953,20 @@ struct Layout<'a> {
     // Each page-scoped op with the page it starts on, in op order.
     page_marks: Vec<(usize, usize)>,
     watermarks: Vec<Watermark>,
+    // Note lines, separator included, reserved above the current page's
+    // bottom margin.
+    reserved_rows: usize,
+    // Each note with the page its mark landed on and the op that placed it.
+    placed_notes: Vec<(usize, usize, usize)>,
+    // Each note's line count, by the content width it was wrapped to.
+    note_counts: RefCell<HashMap<(usize, u64), usize>>,
 }
 
 impl<'a> Layout<'a> {
     fn new(
         fonts: &'a Fonts<'a>,
         margins: &'a Margins,
+        footnotes: &'a Footnotes,
         line_height: f64,
         first_page: (f64, f64),
         guess: &'a Guess,
@@ -899,6 +974,7 @@ impl<'a> Layout<'a> {
         Layout {
             fonts,
             margins,
+            footnotes,
             line_height,
             first_page,
             guess,
@@ -912,6 +988,9 @@ impl<'a> Layout<'a> {
             bookmarks: HashMap::new(),
             page_marks: Vec::new(),
             watermarks: Vec::new(),
+            reserved_rows: 0,
+            placed_notes: Vec::new(),
+            note_counts: RefCell::new(HashMap::new()),
         }
     }
 
@@ -1017,7 +1096,7 @@ impl<'a> Layout<'a> {
         // A mark with no content after it names where the flow ends.
         self.ensure_page();
         self.resolve_anchors();
-        Ok(())
+        self.set_notes()
     }
 
     // Runs before any label is formatted: `format_label` adds in `u32` unchecked.
@@ -1304,6 +1383,7 @@ impl<'a> Layout<'a> {
         self.cursor = height - self.margins.top;
         self.fresh = true;
         self.pending_space = 0.0;
+        self.reserved_rows = 0;
     }
 
     fn break_page(&mut self) {
@@ -1373,6 +1453,7 @@ impl<'a> Layout<'a> {
                         face,
                         color: None,
                         link: Some(entry.link),
+                        mark: None,
                         width: label_width,
                     };
                     (right - label_width, segment)
@@ -1412,6 +1493,7 @@ impl<'a> Layout<'a> {
 
         self.precise(op, page_index, size, size.min(line))?;
         self.drawable(op, page_index, texts, extra)?;
+        self.check_notes(op, texts)?;
 
         Ok(Block {
             op,
@@ -1523,15 +1605,29 @@ impl<'a> Layout<'a> {
         runs: &[Run],
         face: usize,
         size: f64,
-        kept: Option<f64>,
+        kept: Option<(f64, Vec<usize>)>,
     ) -> Result<(), Refused> {
         let block = self.block(op, &[runs], &[], face, size)?;
         let left = self.margins.left;
         let width = self.content_width(op, block.page, left)?;
         let lines = self.wrapped(op, block.page, runs, size, width)?;
 
-        if let Some(kept) = kept {
-            let needed = lines.len() as f64 * block.line + kept;
+        if let Some((kept, mut notes)) = kept {
+            notes.extend(lines.iter().flat_map(|segments| references(segments)));
+            let group = lines.len() as f64 * block.line + kept;
+            // A group no page can hold would leave the heading alone wherever
+            // it went.
+            let alone = group + self.note_rows(op, &notes, true)? as f64 * self.note_line();
+            let room = self.page().height - self.margins.top - self.margins.bottom;
+            if alone > room + FIT_TOLERANCE {
+                return Err(Refused::KeptTooTall {
+                    op,
+                    page: block.page,
+                    needed: alone,
+                    room,
+                });
+            }
+            let needed = group + self.notes_height(op, &notes)?;
             if !self.fresh && !self.fits(self.cursor - self.pending_space, needed) {
                 self.break_page();
             }
@@ -1546,37 +1642,79 @@ impl<'a> Layout<'a> {
     }
 
     // Reserve following headings and spacing through the next content line,
-    // looking through blocks that draw nothing.
-    fn kept_after(&self, following: &[Op], size: f64) -> f64 {
+    // looking through blocks that draw nothing, with the notes those lines
+    // reference.
+    fn kept_after(&self, following: &[Op], size: f64) -> (f64, Vec<usize>) {
+        let width = self.page().width - self.margins.left - self.margins.right;
         let mut gap = 0.5 * size;
         let mut total = 0.0;
+        let mut notes = Vec::new();
         for op in following {
-            match op {
-                Op::Empty => {}
-                Op::Space(points) => gap += points,
+            let (height, lead) = match op {
+                Op::Empty => {
+                    continue;
+                }
+                Op::Space(points) => {
+                    gap += points;
+                    continue;
+                }
                 Op::Paragraph {
                     runs,
                     size,
                     keep_with_next: true,
                     ..
                 } => {
-                    total += gap + self.line_count(runs, *size) as f64 * size * self.line_height;
+                    let lines = self.lead_lines(runs, *size, width, usize::MAX);
+                    total += gap + lines.len().max(1) as f64 * size * self.line_height;
+                    notes.extend(lines.iter().flat_map(|segments| references(segments)));
                     gap = 0.5 * size;
+                    continue;
                 }
-                Op::Paragraph { size, .. }
-                | Op::List { size, .. }
-                | Op::Columns(Columns { size, .. }) => {
-                    return total + gap + size * self.line_height;
+                Op::Paragraph { runs, size, .. } => (
+                    size * self.line_height,
+                    self.lead_lines(runs, *size, width, 1),
+                ),
+                Op::List {
+                    items,
+                    face,
+                    size,
+                    marker,
+                    start,
+                } => (
+                    size * self.line_height,
+                    self.list_labels(*face, *size, *marker, *start, items.len())
+                        .zip(items.first())
+                        .map_or(Vec::new(), |((_, text_x), item)| {
+                            let width = self.page().width - text_x - self.margins.right;
+                            if width > 0.0 {
+                                self.lead_lines(item, *size, width, 1)
+                            } else {
+                                Vec::new()
+                            }
+                        }),
+                ),
+                Op::Columns(columns) => (
+                    columns.size * self.line_height,
+                    columns.paragraphs.first().map_or(Vec::new(), |paragraph| {
+                        let room = width - columns.gap * (columns.count - 1) as f64;
+                        let column = room / columns.count as f64;
+                        self.lead_lines(paragraph, columns.size, column, 1)
+                    }),
+                ),
+                Op::CodeBlock(code) => (
+                    code.size * self.line_height + 2.0 * code.padding,
+                    Vec::new(),
+                ),
+                Op::Rule { size } => (*size, Vec::new()),
+                Op::Contents(contents) => (contents.size * self.line_height, Vec::new()),
+                Op::Table(table) => {
+                    let (lead, table_notes) = self.table_lead(table);
+                    notes.extend(table_notes);
+                    (lead, Vec::new())
                 }
-                Op::CodeBlock(code) => {
-                    return total + gap + code.size * self.line_height + 2.0 * code.padding;
-                }
-                Op::Rule { size } => return total + gap + size,
-                Op::Contents(contents) => return total + gap + contents.size * self.line_height,
-                Op::Table(table) => return total + gap + self.table_lead(table),
-                Op::Image(image) => return total + gap + self.image_size(image).1,
-                Op::Barcode { height, .. } => return total + gap + height,
-                Op::Page { .. } => return total,
+                Op::Image(image) => (self.image_size(image).1, Vec::new()),
+                Op::Barcode { height, .. } => (*height, Vec::new()),
+                Op::Page { .. } => return (total, notes),
                 Op::Blank
                 | Op::TextAt { .. }
                 | Op::TextInRect { .. }
@@ -1591,17 +1729,43 @@ impl<'a> Layout<'a> {
                 | Op::PageScripts(_)
                 | Op::LinkInRect { .. }
                 | Op::Watermark { .. }
-                | Op::Field(_) => {}
-            }
+                | Op::Field(_) => {
+                    continue;
+                }
+            };
+            notes.extend(lead.iter().flat_map(|segments| references(segments)));
+            return (total + gap + height, notes);
         }
-        total
+        (total, notes)
     }
 
-    // A heading too wide to wrap is refused when it is placed; here it counts
-    // as one line.
-    fn line_count(&self, runs: &[Run], size: f64) -> usize {
-        let width = self.page().width - self.margins.left - self.margins.right;
-        wrap(self.fonts, runs, size, width).map_or(1, |lines| lines.len())
+    // Up to `count` lines `runs` wrap to. Text too wide to wrap is refused
+    // when it is placed; here it has no lines.
+    fn lead_lines(&self, runs: &[Run], size: f64, width: f64, count: usize) -> Vec<Vec<Segment>> {
+        wrap(self.fonts, runs, size, width)
+            .map(|lines| lines.into_iter().take(count).collect())
+            .unwrap_or_default()
+    }
+
+    // A list's labels and the x its text starts at; None when a number
+    // overflows.
+    fn list_labels(
+        &self,
+        face: usize,
+        size: f64,
+        marker: Marker,
+        start: usize,
+        count: usize,
+    ) -> Option<(Vec<String>, f64)> {
+        let labels = (0..count)
+            .map(|offset| start.checked_add(offset).map(|number| marker.label(number)))
+            .collect::<Option<Vec<String>>>()?;
+        let widest = labels
+            .iter()
+            .map(|label| self.fonts.width(face, label, size))
+            .fold(0.0, f64::max);
+        let text_x = self.margins.left + 1.5 * size + widest + 0.5 * size;
+        Some((labels, text_x))
     }
 
     fn list(
@@ -1614,9 +1778,8 @@ impl<'a> Layout<'a> {
         start: usize,
     ) -> Result<(), Refused> {
         self.ensure_page();
-        let labels = (0..items.len())
-            .map(|offset| start.checked_add(offset).map(|number| marker.label(number)))
-            .collect::<Option<Vec<String>>>()
+        let (labels, text_x) = self
+            .list_labels(face, size, marker, start, items.len())
             .ok_or(Refused::CounterOverflow {
                 op,
                 page: self.pages.len() - 1,
@@ -1626,11 +1789,6 @@ impl<'a> Layout<'a> {
         let block = self.block(op, &texts, &extra, face, size)?;
 
         let gap = 0.5 * size;
-        let widest = labels
-            .iter()
-            .map(|label| self.fonts.width(face, label, size))
-            .fold(0.0, f64::max);
-        let text_x = self.margins.left + 1.5 * size + widest + gap;
         let width = self.content_width(op, block.page, text_x)?;
 
         for (item, label) in items.iter().zip(labels) {
@@ -1640,6 +1798,7 @@ impl<'a> Layout<'a> {
                 face,
                 color: None,
                 link: None,
+                mark: None,
                 width: label_width,
             };
             let mut lines = self.wrapped(op, block.page, item, size, width)?.into_iter();
@@ -1762,9 +1921,11 @@ impl<'a> Layout<'a> {
             let mut pen = *x;
             for segment in segments {
                 let (ascent, descent) = self.fonts.ascent_descent(segment.face);
+                let drawn = drawn_size(segment.mark, size);
+                let raised = drawn_baseline(segment.mark, size, *baseline);
                 extent[0] = extent[0].min(pen);
-                extent[1] = extent[1].min(baseline + descent * size / 1000.0);
-                extent[3] = extent[3].max(baseline + ascent * size / 1000.0);
+                extent[1] = extent[1].min(raised + descent * drawn / 1000.0);
+                extent[3] = extent[3].max(raised + ascent * drawn / 1000.0);
                 pen = self.add_ink(&mut extent, segment, pen, *baseline, size);
             }
             if !segments.is_empty() {
@@ -1789,18 +1950,10 @@ impl<'a> Layout<'a> {
         for (x, baseline, segments) in lines {
             let mut at = x;
             for segment in segments {
-                page.items.push(Item::Text(Placed {
-                    x: at,
-                    baseline,
-                    width: segment.width,
-                    text: segment.text,
-                    face: segment.face,
-                    size,
-                    color: segment.color,
-                    link: segment.link,
-                    artifact,
-                }));
-                at += segment.width;
+                let width = segment.width;
+                page.items
+                    .push(Item::Text(segment.placed(at, baseline, size, artifact)));
+                at += width;
             }
         }
         Ok(())
@@ -1814,6 +1967,8 @@ impl<'a> Layout<'a> {
         baseline: f64,
         size: f64,
     ) -> f64 {
+        let baseline = drawn_baseline(segment.mark, size, baseline);
+        let size = drawn_size(segment.mark, size);
         for c in segment.text.chars() {
             if let Some([left, bottom, right, top]) = self.fonts.char_bounds(segment.face, c) {
                 extent[0] = extent[0].min(pen + left * size / 1000.0);
@@ -2008,7 +2163,8 @@ impl<'a> Layout<'a> {
                 face: run.face,
                 color: run.color,
                 link: run.link,
-                width: self.fonts.width(run.face, &run.text, size),
+                mark: run.mark,
+                width: run.width(self.fonts, size),
             })
             .collect();
         let advance: f64 = segments.iter().map(|segment| segment.width).sum();
@@ -2123,7 +2279,163 @@ impl<'a> Layout<'a> {
     }
 
     fn fits(&self, top: f64, line: f64) -> bool {
-        top - line >= self.margins.bottom - FIT_TOLERANCE
+        top - line >= self.floor() - FIT_TOLERANCE
+    }
+
+    // The bottom of the flow on the current page: above its notes.
+    fn floor(&self) -> f64 {
+        self.margins.bottom + self.reserved_rows as f64 * self.note_line()
+    }
+
+    fn note_line(&self) -> f64 {
+        self.footnotes.size * self.line_height
+    }
+
+    fn wrapped_note(
+        &self,
+        op: usize,
+        page: usize,
+        note: usize,
+    ) -> Result<Vec<Vec<Segment>>, Refused> {
+        let width = self.pages[page].width - self.margins.left - self.margins.right;
+        let runs = &self.footnotes.notes[note];
+        wrap(self.fonts, runs, self.footnotes.size, width).map_err(|(cluster, cluster_width)| {
+            Refused::ClusterTooWide {
+                op,
+                page,
+                cluster,
+                width: cluster_width,
+                room: width,
+                within: Within::Footnote,
+            }
+        })
+    }
+
+    // Lines for `notes` on the current page, with a separator line above
+    // them when they would be its first.
+    fn note_rows(&self, op: usize, notes: &[usize], first: bool) -> Result<usize, Refused> {
+        if notes.is_empty() {
+            return Ok(0);
+        }
+        let page = self.pages.len() - 1;
+        let width = self.page().width - self.margins.left - self.margins.right;
+        let mut rows = usize::from(first);
+        for &note in notes {
+            let key = (note, width.to_bits());
+            let cached = self.note_counts.borrow().get(&key).copied();
+            let count = match cached {
+                Some(count) => count,
+                None => {
+                    let count = self.wrapped_note(op, page, note)?.len();
+                    self.note_counts.borrow_mut().insert(key, count);
+                    count
+                }
+            };
+            rows += count;
+        }
+        Ok(rows)
+    }
+
+    fn notes_height(&self, op: usize, notes: &[usize]) -> Result<f64, Refused> {
+        let rows = self.note_rows(op, notes, self.reserved_rows == 0)?;
+        Ok(rows as f64 * self.note_line())
+    }
+
+    fn reserve(&mut self, op: usize, height: f64, notes: &[usize]) -> Result<(), Refused> {
+        if notes.is_empty() {
+            return Ok(());
+        }
+        let rows = self.note_rows(op, notes, self.reserved_rows == 0)?;
+        let needed = height + rows as f64 * self.note_line();
+        let page = self.pages.len() - 1;
+        if !self.fits(self.cursor, needed) {
+            return Err(Refused::NotesTooTall {
+                op,
+                page,
+                needed,
+                room: self.page().height - self.margins.top - self.margins.bottom,
+            });
+        }
+        self.reserved_rows += rows;
+        self.placed_notes
+            .extend(notes.iter().map(|&note| (page, note, op)));
+        Ok(())
+    }
+
+    fn check_notes(&self, op: usize, texts: &[&[Run]]) -> Result<(), Refused> {
+        let notes: Vec<&[Run]> = texts
+            .iter()
+            .flat_map(|runs| runs.iter())
+            .filter_map(|run| match run.mark {
+                Some(Mark::Reference(note)) => Some(self.footnotes.notes[note].as_slice()),
+                _ => None,
+            })
+            .collect();
+        if notes.is_empty() {
+            return Ok(());
+        }
+        let page = self.pages.len() - 1;
+        let size = self.footnotes.size;
+        self.precise(op, page, size, size.min(self.note_line()))?;
+        self.drawable(op, page, &notes, &[])
+    }
+
+    // A page's stack is known only once its last mark is placed. The notes
+    // sit in number order, the last line's box on the bottom margin.
+    fn set_notes(&mut self) -> Result<(), Refused> {
+        let mut placed = std::mem::take(&mut self.placed_notes);
+        if placed.is_empty() {
+            // With no notes, no face was resolved for them.
+            return Ok(());
+        }
+        placed.sort_unstable();
+        let line = self.note_line();
+        let (face, size) = (self.footnotes.face, self.footnotes.size);
+        let above_baseline = self.above_baseline(face, size, line);
+        let left = self.margins.left;
+
+        for notes in placed.chunk_by(|a, b| a.0 == b.0) {
+            let page = notes[0].0;
+            let mut stacked = Vec::with_capacity(notes.len());
+            let mut rows = 1;
+            for &(_, note, op) in notes {
+                let lines = self.wrapped_note(op, page, note)?;
+                rows += lines.len();
+                stacked.push((op, lines));
+            }
+
+            let mut top = self.margins.bottom + rows as f64 * line;
+            let width = self.pages[page].width - left - self.margins.right;
+            let y = (top - line / 2.0) as f32;
+            self.pages[page].items.push(Item::Path(Shape {
+                operations: vec![
+                    PathOperation::MoveTo(left as f32, y),
+                    PathOperation::LineTo((left + width / 3.0) as f32, y),
+                ],
+                stroke: Some(Stroke {
+                    color: [RULE_GRAY; 3],
+                    width: RULE_WIDTH,
+                    dash: None,
+                }),
+                fill: None,
+            }));
+            top -= line;
+
+            for (op, lines) in stacked {
+                let mut positioned: Vec<PositionedLine> = Vec::with_capacity(lines.len());
+                for segments in lines {
+                    positioned.push((left, top - above_baseline, segments));
+                    top -= line;
+                }
+                let spot = Spot {
+                    page,
+                    flowing: true,
+                    artifact: None,
+                };
+                self.place_positioned_on(spot, op, positioned, size, NO_EXTENT)?;
+            }
+        }
+        Ok(())
     }
 
     fn place_line(
@@ -2134,17 +2446,19 @@ impl<'a> Layout<'a> {
         x: f64,
         marker: Option<(f64, Segment)>,
     ) -> Result<(), Refused> {
+        let notes: Vec<usize> = references(&segments).collect();
         if !self.fresh {
             let spaced = self.cursor - self.pending_space;
             self.pending_space = 0.0;
             // A page never breaks before its first line, so a line the refusal
             // above let through always lands somewhere.
-            if self.fits(spaced, block.line) {
+            if self.fits(spaced, block.line + self.notes_height(block.op, &notes)?) {
                 self.cursor = spaced;
             } else {
                 self.break_page();
             }
         }
+        self.reserve(block.op, block.line, &notes)?;
         self.resolve_anchors();
 
         let baseline = self.cursor - block.above_baseline;
@@ -2192,17 +2506,8 @@ impl<'a> Layout<'a> {
 
         let page = self.page_mut();
         for (at, segment) in placed {
-            page.items.push(Item::Text(Placed {
-                x: at,
-                baseline,
-                width: segment.width,
-                text: segment.text,
-                face: segment.face,
-                size,
-                color: segment.color,
-                link: segment.link,
-                artifact: None,
-            }));
+            page.items
+                .push(Item::Text(segment.placed(at, baseline, size, None)));
         }
         Ok(())
     }
@@ -2311,7 +2616,24 @@ struct Segment {
     face: usize,
     color: Option<Rgb>,
     link: Option<usize>,
+    mark: Option<Mark>,
     width: f64,
+}
+
+impl Segment {
+    fn placed(self, x: f64, baseline: f64, size: f64, artifact: Option<Artifact>) -> Placed {
+        Placed {
+            x,
+            baseline: drawn_baseline(self.mark, size, baseline),
+            width: self.width,
+            text: self.text,
+            face: self.face,
+            size: drawn_size(self.mark, size),
+            color: self.color,
+            link: self.link,
+            artifact,
+        }
+    }
 }
 
 // An extent that holds nothing yet, so only what is drawn is measured.
@@ -2346,13 +2668,13 @@ fn boxed_lines(
     placed
 }
 
-enum Token {
+pub(super) enum Token {
     Word(Vec<Run>),
     Space(Run),
     Break,
 }
 
-fn tokens(runs: &[Run]) -> Vec<Token> {
+pub(super) fn tokens(runs: &[Run]) -> Vec<Token> {
     let mut out = Vec::new();
     let mut word: Vec<Run> = Vec::new();
 
@@ -2410,7 +2732,7 @@ struct Line {
 
 impl Line {
     fn push(&mut self, fonts: &Fonts, piece: Run, size: f64) {
-        self.width += fonts.width(piece.face, &piece.text, size);
+        self.width += piece.width(fonts, size);
         match self.pieces.last_mut() {
             Some(last) if last.same_style(&piece) => last.text.push_str(&piece.text),
             _ => self.pieces.push(piece),
@@ -2421,11 +2743,12 @@ impl Line {
         self.pieces
             .into_iter()
             .map(|piece| Segment {
-                width: fonts.width(piece.face, &piece.text, size),
+                width: piece.width(fonts, size),
                 text: piece.text,
                 face: piece.face,
                 color: piece.color,
                 link: piece.link,
+                mark: piece.mark,
             })
             .collect()
     }
@@ -2461,13 +2784,8 @@ fn wrap(
                 }
             }
             Token::Word(pieces) => {
-                let width: f64 = pieces
-                    .iter()
-                    .map(|p| fonts.width(p.face, &p.text, size))
-                    .sum();
-                let space_width = space
-                    .as_ref()
-                    .map_or(0.0, |run| fonts.width(run.face, &run.text, size));
+                let width: f64 = pieces.iter().map(|p| p.width(fonts, size)).sum();
+                let space_width = space.as_ref().map_or(0.0, |run| run.width(fonts, size));
 
                 if !line.pieces.is_empty() && line.width + space_width + width <= limit {
                     if let Some(run) = space.take() {
@@ -2507,26 +2825,20 @@ fn wrap(
     Ok(lines)
 }
 
-fn split_word(
-    fonts: &Fonts,
-    pieces: Vec<Run>,
-    size: f64,
-    max_width: f64,
-) -> Result<Vec<Vec<Run>>, TooWide> {
-    // Clusters are found across the whole word, since a style change can fall
-    // inside one; each cluster keeps its styled spans together.
+// A word's grapheme clusters, each with its styled spans. Clusters are found
+// across the whole word, since a style change can fall inside one. A
+// footnote mark is joined to the cluster before it, so it is never split or
+// left at the start of a line.
+pub(super) fn units(pieces: &[Run]) -> Vec<Vec<Run>> {
     let word: String = pieces.iter().map(|piece| piece.text.as_str()).collect();
     let mut starts = Vec::with_capacity(pieces.len());
     let mut offset = 0;
-    for piece in &pieces {
+    for piece in pieces {
         starts.push(offset);
         offset += piece.text.len();
     }
 
-    let mut chunks: Vec<Vec<Run>> = Vec::new();
-    let mut chunk: Vec<Run> = Vec::new();
-    let mut width = 0.0;
-
+    let mut units: Vec<Vec<Run>> = Vec::new();
     // Clusters only advance, so a piece wholly behind one stays behind.
     let mut first = 0;
 
@@ -2535,7 +2847,7 @@ fn split_word(
         while first < pieces.len() && starts[first] + pieces[first].text.len() <= cluster_start {
             first += 1;
         }
-        let spans: Vec<Run> = pieces[first..]
+        let spans = pieces[first..]
             .iter()
             .zip(&starts[first..])
             .take_while(|&(_, &start)| start < cluster_end)
@@ -2543,22 +2855,47 @@ fn split_word(
                 let from = cluster_start.max(start);
                 let to = cluster_end.min(start + piece.text.len());
                 (from < to).then(|| piece.styled(&word[from..to]))
-            })
-            .collect();
-        let cluster_width: f64 = spans
-            .iter()
-            .map(|span| fonts.width(span.face, &span.text, size))
-            .sum();
+            });
 
-        if cluster_width > max_width {
-            return Err((cluster.to_string(), cluster_width));
+        let marked = pieces[first].mark.is_some();
+        match units.last_mut() {
+            Some(unit) if marked => {
+                for span in spans {
+                    match unit.last_mut() {
+                        Some(last) if last.same_style(&span) => last.text.push_str(&span.text),
+                        _ => unit.push(span),
+                    }
+                }
+            }
+            _ => units.push(spans.collect()),
         }
-        if !chunk.is_empty() && width + cluster_width > max_width {
+    }
+    units
+}
+
+fn split_word(
+    fonts: &Fonts,
+    pieces: Vec<Run>,
+    size: f64,
+    max_width: f64,
+) -> Result<Vec<Vec<Run>>, TooWide> {
+    let mut chunks: Vec<Vec<Run>> = Vec::new();
+    let mut chunk: Vec<Run> = Vec::new();
+    let mut width = 0.0;
+
+    for unit in units(&pieces) {
+        let unit_width: f64 = unit.iter().map(|span| span.width(fonts, size)).sum();
+
+        if unit_width > max_width {
+            let text = unit.iter().map(|span| span.text.as_str()).collect();
+            return Err((text, unit_width));
+        }
+        if !chunk.is_empty() && width + unit_width > max_width {
             chunks.push(std::mem::take(&mut chunk));
             width = 0.0;
         }
-        width += cluster_width;
-        for span in spans {
+        width += unit_width;
+        for span in unit {
             match chunk.last_mut() {
                 Some(last) if last.same_style(&span) => last.text.push_str(&span.text),
                 _ => chunk.push(span),
@@ -2662,7 +2999,8 @@ mod tests {
     use pdf_oxide::{fonts::bundled::DEJAVU_SANS, writer::EmbeddedFont};
 
     use super::{
-        lay_out, substitute, unordered, Embedded, Face, Fonts, Margins, Op, Refused, Run, Unordered,
+        lay_out, substitute, unordered, Embedded, Face, Fonts, Footnotes, Margins, Op, Refused,
+        Run, Unordered,
     };
 
     // DejaVu Sans with its cmap cut down to `covered`, as a font with no space
@@ -2686,13 +3024,27 @@ mod tests {
                 face: 0,
                 color: None,
                 link: None,
+                mark: None,
             }],
             face: 0,
             size: 12.0,
             keep_with_next: false,
         };
 
-        lay_out(&fonts, &margins, 1.5, (612.0, 792.0), &[paragraph]).map(|_| ())
+        let footnotes = Footnotes {
+            notes: Vec::new(),
+            face: 0,
+            size: 10.0,
+        };
+        lay_out(
+            &fonts,
+            &margins,
+            &footnotes,
+            1.5,
+            (612.0, 792.0),
+            &[paragraph],
+        )
+        .map(|_| ())
     }
 
     #[test]

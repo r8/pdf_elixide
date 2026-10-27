@@ -26,9 +26,9 @@ use crate::{
     error::{tagged_err, to_nif_err},
     flow::{
         self, embedded_key, Align, Artifact, Barcode, Caption, Cell, CodeBlock, Columns, Contents,
-        Embedded, Entry, EntryTarget, Face, Fit, FlowImage, Fonts, Item, LabelKind, Margins,
-        Marker, Op, PageScripts, Picture, Placed, Plan, Refused, Rgb, Run, Running, Shape, Stroke,
-        Table, Unordered, Watermark, Width, Within,
+        Embedded, Entry, EntryTarget, Face, Fit, FlowImage, Fonts, Footnotes, Item, LabelKind,
+        Margins, Mark, Marker, Op, PageScripts, Picture, Placed, Plan, Refused, Rgb, Run, Running,
+        Shape, Stroke, Table, Unordered, Watermark, Width, Within,
     },
     open_editor::OpenEditor,
     page_label::MAX_LETTERED,
@@ -48,6 +48,7 @@ pub struct BuildNif<'a> {
     margin_right: f64,
     line_height: f64,
     scripts: DocumentScriptsNif,
+    footnotes: FootnotesNif,
     families: Vec<FamilyNif<'a>>,
     images: Vec<Binary<'a>>,
     ops: Vec<OpNif<'a>>,
@@ -56,6 +57,12 @@ pub struct BuildNif<'a> {
 #[derive(NifMap)]
 pub struct DocumentScriptsNif {
     open: Option<String>,
+}
+
+#[derive(NifMap, Clone, Copy)]
+pub struct FootnotesNif {
+    font: FontNif,
+    font_size: f64,
 }
 
 #[derive(NifMap)]
@@ -295,11 +302,20 @@ enum Target {
     Bookmark(usize),
 }
 
-#[derive(Default)]
 struct Tables {
     links: Vec<Link>,
     fields: Vec<FieldNif>,
     bookmarks: Vec<Bookmark>,
+    notes: Notes,
+}
+
+struct Notes {
+    font: FontNif,
+    size: f64,
+    // The footnote face, resolved with the first note so that a document
+    // with none needs no face for them.
+    face: Option<usize>,
+    notes: Vec<Vec<Run>>,
 }
 
 struct Bookmark {
@@ -560,6 +576,7 @@ pub struct RunNif {
     italic: bool,
     color: Option<RgbNif>,
     link: Option<LinkNif>,
+    footnote: Option<Vec<RunNif>>,
 }
 
 #[derive(NifTaggedEnum, Clone, Copy)]
@@ -796,7 +813,7 @@ fn family_of(font: FontNif, auto: Family) -> Family {
     }
 }
 
-fn auto_family(ops: &[OpNif<'_>]) -> Family {
+fn auto_family(ops: &[OpNif<'_>], footnote_font: FontNif) -> Family {
     let helvetica = base14::face("Helvetica").expect("Helvetica is a base-14 face");
     let auto_running = ops.iter().any(|op| {
         matches!(
@@ -832,6 +849,27 @@ fn auto_family(ops: &[OpNif<'_>]) -> Family {
             _ => None,
         })
         .flat_map(str::chars);
+    // Notes are set in the footnote font, whatever their op's is.
+    let auto_notes = ops
+        .iter()
+        .filter(|_| matches!(footnote_font, FontNif::Auto))
+        .flat_map(|op| -> Vec<&Vec<RunNif>> {
+            match op {
+                OpNif::Paragraph(ParagraphNif { runs, .. })
+                | OpNif::Heading(ParagraphNif { runs, .. }) => vec![runs],
+                OpNif::List(ListNif { items, .. })
+                | OpNif::Columns(ColumnsNif {
+                    paragraphs: items, ..
+                }) => items.iter().collect(),
+                OpNif::Table(TableNif { rows, .. }) => {
+                    rows.iter().flatten().map(|cell| &cell.runs).collect()
+                }
+                _ => Vec::new(),
+            }
+        })
+        .flatten()
+        .filter_map(|run| run.footnote.as_ref())
+        .flatten();
     let needs_unicode = ops
         .iter()
         .filter_map(|op| match op {
@@ -904,6 +942,7 @@ fn auto_family(ops: &[OpNif<'_>]) -> Family {
         .flatten()
         .flat_map(|run| run.text.chars())
         .chain(drawn_text)
+        .chain(auto_notes.flat_map(|run| run.text.chars()))
         .any(|c| !c.is_whitespace() && helvetica.width(c).is_none());
 
     if needs_unicode {
@@ -921,22 +960,82 @@ fn runs(
     faces: &mut Faces<'_, '_>,
     links: &mut Vec<Link>,
 ) -> NifResult<Vec<Run>> {
+    styled_runs(op, runs, font, auto, faces, links, None)
+}
+
+// Runs whose footnotes are numbered into `notes`; the Elixir side refuses a
+// footnote anywhere else.
+fn noted_runs(
+    op: usize,
+    runs: Vec<RunNif>,
+    font: FontNif,
+    auto: Family,
+    faces: &mut Faces<'_, '_>,
+    (links, notes): (&mut Vec<Link>, &mut Notes),
+) -> NifResult<Vec<Run>> {
+    styled_runs(op, runs, font, auto, faces, links, Some(notes))
+}
+
+fn styled_runs(
+    op: usize,
+    input: Vec<RunNif>,
+    font: FontNif,
+    auto: Family,
+    faces: &mut Faces<'_, '_>,
+    links: &mut Vec<Link>,
+    mut notes: Option<&mut Notes>,
+) -> NifResult<Vec<Run>> {
     let family = family_of(font, auto);
     let from_auto = matches!(font, FontNif::Auto);
 
-    runs.into_iter()
-        .filter(|run| !run.text.is_empty())
-        .map(|run| {
-            // DejaVu Sans has no italic, so `:auto` sets it upright.
-            let italic = run.italic && !(from_auto && family == Family::DejaVu);
-            Ok(Run {
-                face: faces.face(op, family, Style::of(run.bold, italic))?,
-                color: run.color.map(Into::into),
-                link: run.link.map(|target| linked(links, op, target)),
-                text: run.text,
-            })
-        })
-        .collect()
+    let mut styled = Vec::with_capacity(input.len());
+    for run in input.into_iter().filter(|run| !run.text.is_empty()) {
+        // DejaVu Sans has no italic, so `:auto` sets it upright.
+        let italic = run.italic && !(from_auto && family == Family::DejaVu);
+        let color = run.color.map(Into::into);
+        styled.push(Run {
+            face: faces.face(op, family, Style::of(run.bold, italic))?,
+            color,
+            link: run.link.map(|target| linked(links, op, target)),
+            text: run.text,
+            mark: None,
+        });
+
+        let Some(note) = run.footnote else { continue };
+        let notes = notes.as_deref_mut().ok_or(rustler::Error::BadArg)?;
+        let index = notes.notes.len();
+        let number = (index + 1).to_string();
+        let note_family = family_of(notes.font, auto);
+        let note_face = faces.face(op, note_family, Style::Regular)?;
+        notes.face.get_or_insert(note_face);
+        let mut note_runs = vec![
+            Run {
+                text: number.clone(),
+                face: note_face,
+                color: None,
+                link: None,
+                mark: Some(Mark::Label),
+            },
+            Run {
+                text: " ".to_string(),
+                face: note_face,
+                color: None,
+                link: None,
+                mark: None,
+            },
+        ];
+        note_runs.extend(runs(op, note, notes.font, auto, faces, links)?);
+        notes.notes.push(note_runs);
+
+        styled.push(Run {
+            text: number,
+            face: faces.face(op, family, Style::Regular)?,
+            color,
+            link: None,
+            mark: Some(Mark::Reference(index)),
+        });
+    }
+    Ok(styled)
 }
 
 fn blank(runs: &[RunNif]) -> bool {
@@ -1001,6 +1100,7 @@ fn contents_entries(
                     face: contents.face,
                     color: None,
                     link: Some(link),
+                    mark: None,
                 }],
                 level: bookmark.level,
                 target: match &bookmark.to {
@@ -1038,11 +1138,12 @@ fn ops(
     pictures: &mut Pictures<'_, '_>,
     tables: &mut Tables,
 ) -> NifResult<Vec<Op>> {
-    let auto = auto_family(&ops);
+    let auto = auto_family(&ops, tables.notes.font);
     let Tables {
         links,
         fields,
         bookmarks,
+        notes,
     } = tables;
 
     let mut ops = ops
@@ -1077,14 +1178,28 @@ fn ops(
             }
             OpNif::Paragraph(paragraph) => Ok(Op::Paragraph {
                 face: faces.face(index, family_of(paragraph.font, auto), Style::Regular)?,
-                runs: runs(index, paragraph.runs, paragraph.font, auto, faces, links)?,
+                runs: noted_runs(
+                    index,
+                    paragraph.runs,
+                    paragraph.font,
+                    auto,
+                    faces,
+                    (links, notes),
+                )?,
                 size: paragraph.font_size,
                 keep_with_next: false,
             }),
             // A heading's runs arrive bold, and its line box is the bold face's.
             OpNif::Heading(heading) => Ok(Op::Paragraph {
                 face: faces.face(index, family_of(heading.font, auto), Style::Bold)?,
-                runs: runs(index, heading.runs, heading.font, auto, faces, links)?,
+                runs: noted_runs(
+                    index,
+                    heading.runs,
+                    heading.font,
+                    auto,
+                    faces,
+                    (links, notes),
+                )?,
                 size: heading.font_size,
                 keep_with_next: true,
             }),
@@ -1093,7 +1208,7 @@ fn ops(
                 items: list
                     .items
                     .into_iter()
-                    .map(|item| runs(index, item, list.font, auto, faces, links))
+                    .map(|item| noted_runs(index, item, list.font, auto, faces, (links, notes)))
                     .collect::<NifResult<_>>()?,
                 size: list.font_size,
                 marker: list.marker.into(),
@@ -1113,7 +1228,9 @@ fn ops(
                     .paragraphs
                     .into_iter()
                     .filter(|paragraph| !blank(paragraph))
-                    .map(|paragraph| runs(index, paragraph, columns.font, auto, faces, links))
+                    .map(|paragraph| {
+                        noted_runs(index, paragraph, columns.font, auto, faces, (links, notes))
+                    })
                     .collect::<NifResult<_>>()?,
                 size: columns.font_size,
                 count: columns.count,
@@ -1140,7 +1257,7 @@ fn ops(
                 align: text.align.into(),
             }),
             OpNif::Path(shape) => Ok(Op::Path(shape.into())),
-            OpNif::Table(table) => table_op(index, table, auto, faces, links),
+            OpNif::Table(table) => table_op(index, table, auto, faces, (links, notes)),
             OpNif::Image(image) => Ok(Op::Image(FlowImage {
                 pixels: pictures.pixels(index, image.image)?,
                 image: image.image,
@@ -1267,7 +1384,7 @@ fn table_op(
     table: TableNif,
     auto: Family,
     faces: &mut Faces<'_, '_>,
-    links: &mut Vec<Link>,
+    (links, notes): (&mut Vec<Link>, &mut Notes),
 ) -> NifResult<Op> {
     let font = table.font;
     let rows = table
@@ -1278,7 +1395,7 @@ fn table_op(
                 .into_iter()
                 .map(|cell| {
                     Ok(Cell {
-                        runs: runs(index, cell.runs, font, auto, faces, links)?,
+                        runs: noted_runs(index, cell.runs, font, auto, faces, (links, notes))?,
                         column: cell.column,
                         colspan: cell.colspan,
                         rowspan: cell.rowspan,
@@ -1396,6 +1513,40 @@ fn refused(refusal: Refused) -> rustler::Error {
         } => format!(
             "op {op} starting on page {page}: {cluster:?} is {width} points wide, wider than \
              the {room}-point column; reduce the font size, the number of columns or the gap"
+        ),
+        Refused::ClusterTooWide {
+            op,
+            page,
+            cluster,
+            width,
+            room,
+            within: Within::Footnote,
+        } => format!(
+            "op {op} on page {page}: {cluster:?} in a footnote is {width} points wide, wider \
+             than the {room}-point line; reduce the footnote font size or the left and right \
+             margins"
+        ),
+        Refused::KeptTooTall {
+            op,
+            page,
+            needed,
+            room,
+        } => format!(
+            "op {op} on page {page}: the heading needs {needed} points to stay on one page \
+             with the start of what follows it and the footnotes they reference, more than \
+             the {room}-point content height, so it would be left alone; shorten the heading \
+             or what follows it, or its footnotes"
+        ),
+        Refused::NotesTooTall {
+            op,
+            page,
+            needed,
+            room,
+        } => format!(
+            "op {op} on page {page}: a line and the footnotes it references need {needed} \
+             points on one page, more than the {room}-point content height; a footnote is set \
+             whole on the page of its mark, so shorten the notes or reduce the footnote font \
+             size"
         ),
         Refused::TableTooTall {
             op,
@@ -1639,6 +1790,7 @@ fn emit(
         links,
         fields,
         bookmarks,
+        ..
     } = tables;
     check_targets(&plan, links, bookmarks).map_err(refused)?;
 
@@ -2286,6 +2438,7 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
     };
     let page_size = build.page_size;
     let line_height = build.line_height;
+    let footnotes = build.footnotes;
     let families = &build.families;
     let images = &build.images;
     let op_nifs = build.ops;
@@ -2302,11 +2455,34 @@ fn editor_from_builder<'a>(build: BuildNif<'a>) -> NifResult<OpenedEditor> {
             sources: images,
             decoded: vec![None; images.len()],
         };
-        let mut tables = Tables::default();
+        let mut tables = Tables {
+            links: Vec::new(),
+            fields: Vec::new(),
+            bookmarks: Vec::new(),
+            notes: Notes {
+                font: footnotes.font,
+                size: footnotes.font_size,
+                face: None,
+                notes: Vec::new(),
+            },
+        };
         let ops = ops(op_nifs, &mut faces, &mut pictures, &mut tables)?;
         keep_apart(pictures.decoded.iter_mut().flatten());
-        let plan =
-            flow::lay_out(&faces.fonts, &margins, line_height, page_size, &ops).map_err(refused)?;
+        let notes = std::mem::take(&mut tables.notes.notes);
+        let footnotes = Footnotes {
+            face: tables.notes.face.unwrap_or_default(),
+            size: tables.notes.size,
+            notes,
+        };
+        let plan = flow::lay_out(
+            &faces.fonts,
+            &margins,
+            &footnotes,
+            line_height,
+            page_size,
+            &ops,
+        )
+        .map_err(refused)?;
 
         emit(
             meta,
@@ -2544,6 +2720,32 @@ mod tests {
 
         assert_eq!(doc.page_count().expect("counts"), 1);
         assert!(chars.iter().any(|c| c.bbox.y < 72.0));
+    }
+
+    // Notes sit at a fixed 8 pt just above y = 72, wherever the text is, and
+    // the mark falls on the line below the text it marks.
+    #[test]
+    fn upstream_still_sets_footnotes_over_the_flow() {
+        let mut builder = DocumentBuilder::new();
+        builder
+            .page(PageSize::Letter)
+            .at(72.0, 80.0)
+            .text("Claim")
+            .footnote("*", "Source")
+            .done();
+        let doc = PdfDocument::from_bytes(builder.build().expect("builds")).expect("parses");
+        let chars = doc.extract_chars(0).expect("extracts");
+        let baseline_of = |wanted: char| {
+            let found = chars.iter().find(|c| c.char == wanted).expect("drawn");
+            (found.bbox.y, found.font_size)
+        };
+
+        let (claim, _) = baseline_of('C');
+        let (mark, _) = baseline_of('*');
+        let (note, note_size) = baseline_of('S');
+        assert!(mark < claim);
+        assert!((note - 73.6).abs() < 0.01);
+        assert!((note_size - 8.0).abs() < 0.01);
     }
 
     // A row under a span still names every column.

@@ -25,6 +25,11 @@ defmodule PdfElixide.Builder do
   [Tables](guides/building-documents.md#tables) for columns, spans and header
   rows.
 
+  ## Footnotes
+
+  Give a run a `:footnote` to add a numbered note; see
+  [Footnotes](guides/building-documents.md#footnotes).
+
   ## Drawing
 
   Draw shapes and paths outside the text flow. See
@@ -111,6 +116,7 @@ defmodule PdfElixide.Builder do
     :font_size,
     :line_height,
     :scripts,
+    :footnotes,
     :current_page_size,
     :anchors,
     :field_names,
@@ -140,6 +146,7 @@ defmodule PdfElixide.Builder do
           font_size: float(),
           line_height: float(),
           scripts: %{open: String.t() | nil},
+          footnotes: %{font: font(), font_size: float()},
           current_page_size: {float(), float()},
           anchors: MapSet.t(String.t()),
           field_names: MapSet.t(String.t()),
@@ -170,6 +177,11 @@ defmodule PdfElixide.Builder do
       Defaults to `nil`, which is black.
     * `:link` — a `t:link/0` the run's text points to. Defaults to `nil`, no
       link. A linked run must contain text other than whitespace.
+    * `:footnote` — a `t:text/0` set as a numbered note at the foot of the
+      page. The run must end in a character other than whitespace. Defaults
+      to `nil`, no note. Accepted in `paragraph/3`, `heading/4`, list items,
+      `columns/3` and the body rows of `table/3`; see
+      [Footnotes](#module-footnotes).
 
   Runs are joined as they are written, so a space between two runs belongs
   in one of them.
@@ -212,10 +224,11 @@ defmodule PdfElixide.Builder do
           bold: boolean(),
           italic: boolean(),
           color: RGB.t() | nil,
-          link: link() | nil
+          link: link() | nil,
+          footnote: text() | nil
         ]
 
-  @run_opts_keys [:bold, :italic, :color, :link]
+  @run_opts_keys [:bold, :italic, :color, :link, :footnote]
 
   @typedoc """
   JavaScript a viewer runs for the whole document, given to `new/1`.
@@ -255,6 +268,7 @@ defmodule PdfElixide.Builder do
       Defaults to `1.5`.
     * `:scripts` — `t:document_scripts/0` a viewer runs. Defaults to `[]`,
       none.
+    * `:footnotes` — `t:footnotes_opts/0` setting footnotes. Defaults to `[]`.
 
   Sizes must be positive, with each page side at most 1.0e18 points, and
   margins non-negative, leaving room on the page. A `:title`, `:author`,
@@ -275,7 +289,8 @@ defmodule PdfElixide.Builder do
           font: font(),
           font_size: number(),
           line_height: number(),
-          scripts: document_scripts()
+          scripts: document_scripts(),
+          footnotes: footnotes_opts()
         ]
 
   @new_opts_keys [
@@ -291,8 +306,22 @@ defmodule PdfElixide.Builder do
     :font,
     :font_size,
     :line_height,
-    :scripts
+    :scripts,
+    :footnotes
   ]
+
+  @typedoc """
+  How footnotes are set, given to `new/1`.
+
+    * `:font` — the notes' `t:font/0`. Defaults to the document's `:font`.
+    * `:font_size` — the notes' text size in points. Defaults to four fifths
+      of the document's `:font_size`.
+
+  See [Footnotes](#module-footnotes).
+  """
+  @type footnotes_opts :: [font: font(), font_size: number()]
+
+  @footnotes_opts_keys [:font, :font_size]
 
   @typedoc """
   Options accepted by `paragraph/3`.
@@ -1090,7 +1119,7 @@ defmodule PdfElixide.Builder do
   @spec paragraph(t(), text(), paragraph_opts()) :: t()
   def paragraph(%__MODULE__{} = builder, text, opts \\ [])
       when (is_binary(text) or is_list(text)) and is_list(opts) do
-    runs = runs!(text)
+    runs = runs!(text, :flow)
     %{font: font, font_size: font_size} = build_paragraph_options(opts)
     font_size = font_size || builder.font_size
     validate_line_fits!(builder, font_size)
@@ -1111,7 +1140,7 @@ defmodule PdfElixide.Builder do
   @spec heading(t(), 1..4, text(), heading_opts()) :: t()
   def heading(%__MODULE__{} = builder, level, text, opts \\ [])
       when level in 1..4 and (is_binary(text) or is_list(text)) and is_list(opts) do
-    runs = text |> runs!() |> Enum.map(&%{&1 | bold: true})
+    runs = text |> runs!(:flow) |> Enum.map(&%{&1 | bold: true})
     %{font: font, font_size: font_size, bookmark: bookmark} = build_heading_options(opts)
     font_size = font_size || builder.font_size * Map.fetch!(@heading_scales, level)
     validate_line_fits!(builder, font_size)
@@ -1371,7 +1400,7 @@ defmodule PdfElixide.Builder do
   """
   @spec cell(text(), cell_opts()) :: cell_spec()
   def cell(text, opts \\ []) when (is_binary(text) or is_list(text)) and is_list(opts) do
-    {:cell, runs!(text), build_cell_options(opts)}
+    {:cell, runs!(text, :flow), build_cell_options(opts)}
   end
 
   @doc """
@@ -1428,6 +1457,12 @@ defmodule PdfElixide.Builder do
   end
 
   defp resolve_cell(cell, header?, aligns) do
+    if header? and Enum.any?(cell.runs, & &1.footnote) do
+      raise ArgumentError,
+            "invalid :footnote, a header row repeats on every page, so it cannot carry a " <>
+              "footnote"
+    end
+
     runs = if header?, do: Enum.map(cell.runs, &%{&1 | bold: true}), else: cell.runs
     %{cell | runs: runs, align: cell.align || Enum.at(aligns, cell.column)}
   end
@@ -1441,7 +1476,7 @@ defmodule PdfElixide.Builder do
   defp table_cell!({:cell, runs, %{colspan: _} = options}) when is_list(runs), do: {runs, options}
 
   defp table_cell!(text) when is_binary(text) or is_list(text),
-    do: {runs!(text), build_cell_options([])}
+    do: {runs!(text, :flow), build_cell_options([])}
 
   defp table_cell!(other) do
     raise ArgumentError,
@@ -1769,7 +1804,7 @@ defmodule PdfElixide.Builder do
       if options.text do
         font_size = options.font_size || builder.font_size
         validate_line_precise!(builder, font_size)
-        run = run!({encoded.text, color: options.color})
+        run = run!({encoded.text, color: options.color}, :elsewhere)
 
         {%{runs: [run], font: options.font || builder.font, font_size: font_size},
          font_size * builder.line_height}
@@ -2775,10 +2810,13 @@ defmodule PdfElixide.Builder do
   @doc false
   @spec __native__(t()) :: map()
   def __native__(%__MODULE__{} = builder) do
-    {ops, %{families: {families, _}, images: {images, _}}} =
+    {ops, acc} =
       builder.ops
       |> Enum.reverse()
       |> Enum.map_reduce(%{families: {[], %{}}, images: {[], %{}}}, &native_op/2)
+
+    {{:footnotes, footnotes}, %{families: {families, _}, images: {images, _}}} =
+      native_op({:footnotes, builder.footnotes}, acc)
 
     faces = fn family -> Map.take(family, [:regular, :bold, :italic, :bold_italic]) end
 
@@ -2798,6 +2836,7 @@ defmodule PdfElixide.Builder do
     ])
     |> Map.merge(%{
       ops: ops,
+      footnotes: footnotes,
       families: families |> Enum.reverse() |> Enum.map(faces),
       images: Enum.reverse(images)
     })
@@ -3023,17 +3062,34 @@ defmodule PdfElixide.Builder do
         {key, non_negative!(key, Keyword.get(opts, key, 72))}
       end)
 
+    font = font!(Keyword.get(opts, :font, :auto))
+    font_size = positive!(:font_size, Keyword.get(opts, :font_size, 12))
+
     Map.merge(margins, %{
       title: text!(:title, Keyword.get(opts, :title)),
       author: text!(:author, Keyword.get(opts, :author)),
       subject: text!(:subject, Keyword.get(opts, :subject)),
       creator: text!(:creator, Keyword.get(opts, :creator)),
       page_size: page_size!(Keyword.get(opts, :page_size, :letter)),
-      font: font!(Keyword.get(opts, :font, :auto)),
-      font_size: positive!(:font_size, Keyword.get(opts, :font_size, 12)),
+      font: font,
+      font_size: font_size,
       line_height: positive!(:line_height, Keyword.get(opts, :line_height, 1.5)),
-      scripts: scripts!(Keyword.get(opts, :scripts, []), [:open], [:open])
+      scripts: scripts!(Keyword.get(opts, :scripts, []), [:open], [:open]),
+      footnotes: footnotes!(Keyword.get(opts, :footnotes, []), font, font_size)
     })
+  end
+
+  defp footnotes!(opts, font, font_size) when is_list(opts) do
+    opts = Keyword.validate!(opts, @footnotes_opts_keys)
+
+    %{
+      font: font!(Keyword.get(opts, :font, font)),
+      font_size: positive!(:font_size, Keyword.get(opts, :font_size, font_size * 4 / 5))
+    }
+  end
+
+  defp footnotes!(other, _font, _font_size) do
+    raise ArgumentError, "invalid :footnotes, expected a keyword list: #{inspect(other)}"
   end
 
   defp build_numbered_list_options(opts) do
@@ -3236,6 +3292,15 @@ defmodule PdfElixide.Builder do
         case Keyword.get(opts, :link) do
           nil -> nil
           link -> link!(link)
+        end,
+      footnote:
+        case Keyword.get(opts, :footnote) do
+          note when is_nil(note) or is_binary(note) or is_list(note) ->
+            note
+
+          other ->
+            raise ArgumentError,
+                  "invalid :footnote, expected a string or a list of runs: #{inspect(other)}"
         end
     }
   end
@@ -3574,13 +3639,13 @@ defmodule PdfElixide.Builder do
             "PdfElixide.Builder.FontFamily: #{inspect(font)}"
   end
 
-  defp item!(text) when is_binary(text) or is_list(text), do: runs!(text)
+  defp item!(text) when is_binary(text) or is_list(text), do: runs!(text, :flow)
 
   defp item!(other) do
     raise ArgumentError, "invalid item, expected a string or a list of runs: #{inspect(other)}"
   end
 
-  defp paragraph!(text) when is_binary(text) or is_list(text), do: runs!(text)
+  defp paragraph!(text) when is_binary(text) or is_list(text), do: runs!(text, :flow)
 
   defp paragraph!(other) do
     raise ArgumentError,
@@ -3665,12 +3730,13 @@ defmodule PdfElixide.Builder do
             inspect(other)
   end
 
-  defp runs!(text) when is_binary(text), do: [run!(text)]
-  defp runs!(runs), do: Enum.map(runs, &run!/1)
+  defp runs!(text, place \\ :elsewhere)
+  defp runs!(text, place) when is_binary(text), do: [run!(text, place)]
+  defp runs!(runs, place), do: Enum.map(runs, &run!(&1, place))
 
-  defp run!(text) when is_binary(text), do: run!({text, []})
+  defp run!(text, place) when is_binary(text), do: run!({text, []}, place)
 
-  defp run!({text, opts}) when is_binary(text) and is_list(opts) do
+  defp run!({text, opts}, place) when is_binary(text) and is_list(opts) do
     run = opts |> build_run_options() |> Map.put(:text, LayoutOptions.utf8!("text", text))
 
     if run.link != nil and String.trim(run.text) == "" do
@@ -3678,12 +3744,40 @@ defmodule PdfElixide.Builder do
             "invalid run, a linked run needs text other than whitespace: #{inspect(text)}"
     end
 
-    run
+    %{run | footnote: footnote!(run.footnote, run.text, place)}
   end
 
-  defp run!(other) do
+  defp run!(other, _place) do
     raise ArgumentError,
           "invalid run, expected a string or a {string, opts} tuple: #{inspect(other)}"
+  end
+
+  defp footnote!(nil, _text, _place), do: nil
+
+  defp footnote!(note, text, :flow) do
+    if not String.match?(text, ~r/\S\z/u) do
+      raise ArgumentError,
+            "invalid run, a footnote's number follows the run's text, so the run must end " <>
+              "in a character other than whitespace: #{inspect(text)}"
+    end
+
+    runs = runs!(note, :note)
+
+    if Enum.all?(runs, &(String.trim(&1.text) == "")) do
+      raise ArgumentError, "invalid :footnote, a note needs text other than whitespace"
+    end
+
+    runs
+  end
+
+  defp footnote!(_note, _text, :note) do
+    raise ArgumentError, "invalid :footnote, a footnote cannot have a footnote of its own"
+  end
+
+  defp footnote!(_note, _text, :elsewhere) do
+    raise ArgumentError,
+          "invalid :footnote, footnotes are set only in paragraphs, headings, list items, " <>
+            "columns and the body rows of tables"
   end
 
   defp boolean!(_key, value) when is_boolean(value), do: value

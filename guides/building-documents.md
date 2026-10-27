@@ -84,7 +84,9 @@ such a line is refused when the document is built.
 face of its font; `t:PdfElixide.Builder.heading_opts/0` lists the text sizes.
 A heading is never left alone at the bottom of a page: if it does not fit there
 with the first line of what follows, it starts the next page. Consecutive
-headings move together.
+headings move together. A heading that cannot fit on one page with the start
+of what follows, and any footnotes they reference, is refused when the document
+is built.
 
 `Builder.bullet_list/3` and `Builder.numbered_list/3` take one text per item.
 An item that wraps continues under its own text rather than under its marker,
@@ -456,7 +458,47 @@ Builder.paragraph(builder, [
 `:bold` and `:italic` choose the face of the run's font family, and `:color`
 takes RGB components from `0.0` to `1.0`. Runs are joined exactly as written,
 so the space between two runs belongs inside one of them. A run can also be a
-link; see [Links](#links).
+link; see [Links](#links), or carry a footnote; see [Footnotes](#footnotes).
+
+## Footnotes
+
+Give a run a `:footnote` to set a note at the foot of the page:
+
+```elixir
+Builder.new(footnotes: [font_size: 9])
+|> Builder.paragraph([
+  "Revenue ",
+  {"rose", footnote: ["Audited figures; see the ", {"annual report", italic: true}, "."]},
+  " on the year."
+])
+```
+
+The note is a `t:PdfElixide.Builder.text/0`, styled like any other text,
+but it cannot carry a footnote of its own. Notes are numbered from 1 through
+the whole document, in the order their runs are added. The number is drawn
+smaller and raised right after the run's text, in the regular face of the
+run's font, so the run must end in a character other than whitespace.
+
+A note is set on the page its number lands on, below a short rule, with the
+page's notes stacked in number order so the last line sits on the bottom
+margin. Notes span the width between the margins and wrap within it, and
+take the document's line height. `new/1`'s `:footnotes` sets their font and
+size; see `t:PdfElixide.Builder.footnotes_opts/0` for the defaults.
+
+The page's text stops above its notes. A note is never split across pages:
+when a line and the notes it references do not fit on the rest of a page, the
+line moves to the next page with its notes. A line whose notes do not fit even
+on a page of their own is refused when the document is built. For headings,
+see [Flowing text](#flowing-text).
+
+Footnotes can be set in paragraphs, headings, list items, `columns/3` and
+the body rows of a table; anywhere else, including table header rows, they
+raise `ArgumentError`. In columns, the page's notes span every column below
+the columns. In a table, a row split across pages takes each note to the page
+of the line that references it.
+
+Text extraction reads a number back as digits after its word, or on a line of
+its own, and reads a page's notes after the rest of its text.
 
 ## Links
 
@@ -841,6 +883,11 @@ The builder refuses content it cannot draw faithfully:
 - **A Roman page label past 3999, or a lettered one past 26000.** Start
   another range before that page.
 - **Contents in a document with no bookmarks.**
+- **A line whose footnotes do not fit on a page with it**, even a page of
+  their own; see [Footnotes](#footnotes).
+- **A heading that cannot fit on one page with the start of what follows**,
+  such as a heading before a full-page image, since it would be left alone;
+  see [Flowing text](#flowing-text).
 - **A barcode caption wider than its symbol**; see [Barcodes](#barcodes).
 
 The barcode operations draw the symbologies `t:PdfElixide.Builder.symbology/0`
