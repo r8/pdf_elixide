@@ -4,14 +4,14 @@ Two different operations share the word. One paints a box over content and
 leaves it in the file; the other deletes it. `PdfElixide.Editor` offers both,
 and choosing the wrong one is the mistake this guide exists to prevent.
 
-| | `mark_redactions/1,2` | `apply_redactions/1,2` |
+| | [`mark_redactions/1,2`](`PdfElixide.Editor.mark_redactions/1`) | [`apply_redactions/1,2`](`PdfElixide.Editor.apply_redactions/1`) |
 |---|---|---|
 | when it happens | at the next full write | immediately, on the call |
 | what it does | paints an opaque box | removes the covered text, then paints a box |
 | the text afterwards | still extractable | gone from the file |
 | images and graphics afterwards | still there | still there |
-| reversible | yes, `unmark_redactions/2` | no |
-| what it acts on | the page's `/Redact` annotations | those plus `add_redaction/3,4` regions |
+| reversible | yes, `PdfElixide.Editor.unmark_redactions/2` | no |
+| what it acts on | the page's `/Redact` annotations | those plus [`add_redaction/3,4`](`PdfElixide.Editor.add_redaction/3`) regions |
 
 **Only `PdfElixide.Editor.apply_redactions/1` and
 `PdfElixide.Editor.apply_redactions/2` remove covered page text.** If the point
@@ -65,7 +65,8 @@ unmarked; see [Saving edits](editing.md#saving-edits).
 refusal — and `PdfElixide.Editor.marked_for_redaction?/2` reports it.
 
 **A mark is cosmetic.** Covered content remains extractable. Use
-`PdfElixide.Editor.apply_redactions/1,2` for text removal, subject to the limits in
+[`PdfElixide.Editor.apply_redactions/1,2`](`PdfElixide.Editor.apply_redactions/1`)
+for text removal, subject to the limits in
 [It removes text, and only the text the page draws itself](#it-removes-text-and-only-the-text-the-page-draws-itself).
 
 ## Removing content

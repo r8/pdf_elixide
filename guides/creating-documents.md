@@ -1,7 +1,8 @@
 # Creating documents
 
-`PdfElixide.Editor.from_markdown/2`, `from_html/2` and `from_plain_text/2`
-lay text out in a new PDF, and `from_images/2` places images on new pages.
+`PdfElixide.Editor.from_markdown/2`, `PdfElixide.Editor.from_html/2` and
+`PdfElixide.Editor.from_plain_text/2` lay text out in a new PDF, and
+`PdfElixide.Editor.from_images/2` places images on new pages.
 Each returns an editor. You can edit it further, write it to a file, or return
 it as a binary:
 

@@ -79,9 +79,9 @@ could reach, so a successful list can still be partial. Signature reads are
 stricter; see
 [Damaged documents are refused, not stepped over](signatures.md#damaged-documents-are-refused-not-stepped-over).
 
-`PdfElixide.Form.flatten/1,2` only records a mark and checks nothing, so on a
-form you do not trust, read its fields first and let a hierarchy problem surface
-there.
+[`PdfElixide.Form.flatten/1,2`](`PdfElixide.Form.flatten/1`) only records a
+mark and checks nothing, so on a form you do not trust, read its fields first
+and let a hierarchy problem surface there.
 
 ## Field kinds and flags
 
@@ -306,12 +306,12 @@ see [Form fields](building-documents.md#form-fields).
 Some text would be read back as different characters, so writing it raises
 `ArgumentError`:
 
-- a nonbreaking space (U+00A0) or a soft hyphen (U+00AD);
-- a control character other than tab, line feed and carriage return;
-- text starting with `"þÿ"`, `"ÿþ"` or `"ï»¿"`, which a reader takes for a
-  byte-order mark;
-- text made only of characters up to U+00FF whose bytes, one per character,
-  spell other UTF-8 text: `"Â£"` would read back as `"£"`.
+  * a nonbreaking space (U+00A0) or a soft hyphen (U+00AD);
+  * a control character other than tab, line feed and carriage return;
+  * text starting with `"þÿ"`, `"ÿþ"` or `"ï»¿"`, which a reader takes for a
+    byte-order mark;
+  * text made only of characters up to U+00FF whose bytes, one per character,
+    spell other UTF-8 text: `"Â£"` would read back as `"£"`.
 
 Use a plain space for a nonbreaking space, and leave the others out. The same
 rule applies to the names, values, options, captions and tooltips of fields made
