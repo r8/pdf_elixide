@@ -5,6 +5,67 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.24.0](https://github.com/r8/pdf_elixide/compare/v0.23.0...v0.24.0) (2026-10-28)
+
+
+
+
+### Features:
+
+* add footnotes to the document builder by [@r8](https://github.com/r8)
+
+* add multi-column text to the document builder by [@r8](https://github.com/r8)
+
+* add JavaScript support for document, page, link, and form field actions by [@r8](https://github.com/r8)
+
+* add code blocks to the document builder by [@r8](https://github.com/r8)
+
+* add bookmarks, contents, page labels, headers and footers to the document builder by [@r8](https://github.com/r8)
+
+* add vector barcodes and QR codes to the document builder by [@r8](https://github.com/r8)
+
+* add form fields to the document builder by [@r8](https://github.com/r8)
+
+* add links, anchors and watermarks to the document builder by [@r8](https://github.com/r8)
+
+* add flowing and positioned images to document builder by [@r8](https://github.com/r8)
+
+* add tables to the builder by [@r8](https://github.com/r8)
+
+* wrap builder text within a box by [@r8](https://github.com/r8)
+
+* ask search for no result limit with nil rather than 0 by [@r8](https://github.com/r8)
+
+* name the failing page when whole-document extraction stops on it by [@r8](https://github.com/r8)
+
+* draw lines, rectangles, circles, arcs and paths with the document builder by [@r8](https://github.com/r8)
+
+* add positioned text to the document builder by [@r8](https://github.com/r8)
+
+* add headings, lists, spacing, and horizontal rules to the document builder by [@r8](https://github.com/r8)
+
+* support embedded font families and styled text runs in the document builder by [@r8](https://github.com/r8)
+
+* lay out flowing paragraphs into new PDFs with a document builder by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* spell numbered list styles like page label styles by [@r8](https://github.com/r8)
+
+* reject consistently form field names that are not valid UTF-8 by [@r8](https://github.com/r8)
+
+* refuse invalid builder output options before laying out the document. by [@r8](https://github.com/r8)
+
+* consistently escape invisible characters in field text errors by [@r8](https://github.com/r8)
+
+* refuse page boxes whose corners cannot be saved readably by [@r8](https://github.com/r8)
+
+* reject text that is not UTF-8 where the builder and document creation receive it by [@r8](https://github.com/r8)
+
+* name the field and value when a single form write is given an invalid value by [@r8](https://github.com/r8)
+
+* stop embedding an AGPL colour profile in PDF/A conversions and add third-party licence notices by [@r8](https://github.com/r8)
+
 ## [v0.23.0](https://github.com/r8/pdf_elixide/compare/v0.22.0...v0.23.0) (2026-10-16)
 
 
