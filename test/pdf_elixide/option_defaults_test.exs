@@ -138,8 +138,6 @@ defmodule PdfElixide.OptionDefaultsTest do
     test "words/2,3" do
       assert Document.__option_defaults__(:words) == %{
                include_artifacts: true,
-               word_gap_threshold: nil,
-               profile: nil,
                region: nil,
                region_mode: :intersects
              }
@@ -148,9 +146,6 @@ defmodule PdfElixide.OptionDefaultsTest do
     test "text_lines/2,3" do
       assert Document.__option_defaults__(:text_lines) == %{
                include_artifacts: true,
-               word_gap_threshold: nil,
-               line_gap_threshold: nil,
-               profile: nil,
                region: nil,
                region_mode: :intersects
              }

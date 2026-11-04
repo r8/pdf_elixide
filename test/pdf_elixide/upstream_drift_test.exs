@@ -65,7 +65,6 @@ defmodule PdfElixide.UpstreamDriftTest do
   @missing_endobj_pdf Path.join(@fixtures, "warnings_missing_endobj.pdf")
   @stream_cr_pdf Path.join(@fixtures, "warnings_stream_cr.pdf")
 
-  @columns 0
   @artifacts 1
   @ruleless 3
   @kerned 4
@@ -176,110 +175,8 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  describe "deprecated word and line knobs" do
+  describe "words and text_lines" do
     setup do: %{doc: open(@extraction_pdf)}
-
-    # Page 1 has /Rotate 270 and a rotated "Sideways" run.
-    test ":profile still takes a route that skips the rotated-frame mapping" do
-      doc = open(@rotated_run_pdf)
-      sideways = fn items -> Enum.find(items, &(&1.text == "Sideways")) end
-
-      assert %{rotation: 90.0} = mapped_word = sideways.(Document.words!(doc, 1))
-      assert mapped_line = sideways.(Document.text_lines!(doc, 1))
-      assert raw_word = sideways.(Document.words!(doc, 1, profile: :conservative))
-      assert raw_line = sideways.(Document.text_lines!(doc, 1, profile: :conservative))
-
-      assert origin(raw_word) == {300.0, 200.0}
-      assert origin(raw_line) == {300.0, 200.0}
-      refute origin(mapped_word) == origin(raw_word)
-      refute origin(mapped_line) == origin(raw_line)
-    end
-
-    test "a profile still shifts a box on an upright page", %{doc: doc} do
-      default = Document.words!(doc, @kerned)
-      profiled = Document.words!(doc, @kerned, profile: :conservative)
-
-      assert texts(default) == texts(profiled)
-
-      assert beta = Enum.find(default, &(&1.text == "Beta"))
-      assert raw_beta = Enum.find(profiled, &(&1.text == "Beta"))
-      refute_same(beta.bbox, raw_beta.bbox)
-    end
-
-    test "every profile name still resolves", %{doc: doc} do
-      profiles = [
-        :conservative,
-        :tj_heavy,
-        :aggressive,
-        :balanced,
-        :academic,
-        :policy,
-        :form,
-        :government,
-        :scanned_ocr,
-        :adaptive
-      ]
-
-      for profile <- profiles do
-        assert is_list(Document.words!(doc, @columns, profile: profile))
-      end
-    end
-
-    test ":word_gap_threshold still reaches the clusterer, and text_lines keeps the split",
-         %{doc: doc} do
-      # On this fixture, words rejoin upright glyph splits; text_lines keeps them.
-      cells = [
-        "Region",
-        "Units",
-        "Total",
-        "North",
-        "12",
-        "480",
-        "South",
-        "31",
-        "930",
-        "East",
-        "7",
-        "210"
-      ]
-
-      assert texts(Document.words!(doc, @ruleless)) == cells
-      assert texts(Document.words!(doc, @ruleless, word_gap_threshold: -1.0)) == cells
-      assert texts(Document.text_lines!(doc, @ruleless)) == cells
-
-      assert texts(Document.text_lines!(doc, @ruleless, word_gap_threshold: -1.0)) ==
-               [
-                 "R e g i o n",
-                 "U n i t s",
-                 "T o t a l",
-                 "N o r t h",
-                 "1 2",
-                 "4 8 0",
-                 "S o u t h",
-                 "3 1",
-                 "9 3 0",
-                 "E a s t",
-                 "7",
-                 "2 1 0"
-               ]
-    end
-
-    test "a rotated run keeps a threshold split that words/3 otherwise undoes" do
-      doc = open(@rotated_run_pdf)
-
-      # "Sideways" is rotated; "Level" is the upright control on the same page.
-      assert ["Level", "S", "i", "d", "e", "w", "a", "y", "s"] =
-               texts(Document.words!(doc, 1, word_gap_threshold: -1.0))
-
-      assert ["Level", "Sideways"] = texts(Document.words!(doc, 1))
-    end
-
-    test ":line_gap_threshold still decides line grouping", %{doc: doc} do
-      default = Document.text_lines!(doc, @ruleless)
-      merged = Document.text_lines!(doc, @ruleless, line_gap_threshold: 100.0)
-
-      assert length(merged) < length(default)
-    end
 
     test ":include_artifacts still filters, and still defaults to keeping them", %{doc: doc} do
       assert "Running" in texts(Document.words!(doc, @artifacts))

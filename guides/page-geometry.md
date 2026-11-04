@@ -87,12 +87,6 @@ do not all report in the same frame**:
     everything, while a `90`- or `270`-degree page maps only text whose own text
     matrix is rotated, leaving a horizontal run raw.
 
-Passing the deprecated `:profile` option to
-[`PdfElixide.Document.words/2,3`](`PdfElixide.Document.words/2`) or
-[`PdfElixide.Document.text_lines/2,3`](`PdfElixide.Document.text_lines/2`)
-opts out of the mapping and returns raw user space on every page. See the
-"Legacy extraction controls" section of `t:PdfElixide.Document.words_opts/0`.
-
 For a span's physical extent, use its `:page_bbox`; it is in the same frame as
 that span's `:bbox`. See the "`:bbox` and `:page_bbox`" section of
 `PdfElixide.Document.Span`.

@@ -189,13 +189,6 @@ defmodule PdfElixide.ExtractionOptionsTest do
   describe "text_lines/3" do
     setup do: %{doc: open(@extraction_pdf)}
 
-    test ":line_gap_threshold merges lines when raised", %{doc: doc} do
-      default = Document.text_lines!(doc, @ruleless)
-      merged = Document.text_lines!(doc, @ruleless, line_gap_threshold: 100.0)
-
-      assert length(merged) < length(default)
-    end
-
     test ":include_artifacts false drops the running header line", %{doc: doc} do
       assert Enum.any?(Document.text_lines!(doc, @artifacts), &(&1.text =~ "Running"))
 

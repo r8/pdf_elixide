@@ -2105,26 +2105,6 @@ defmodule PdfElixide.Document do
   end
 
   @typedoc """
-  A span-extraction tuning preset. A profile changes the TJ-offset and
-  word-margin thresholds used to turn glyphs into spans, before any word
-  clustering happens.
-
-  Passing one also changes how a rotated page's geometry is reported — see the
-  "Legacy extraction controls" section of `t:words_opts/0`.
-  """
-  @type extraction_profile ::
-          :conservative
-          | :tj_heavy
-          | :aggressive
-          | :balanced
-          | :academic
-          | :policy
-          | :form
-          | :government
-          | :scanned_ocr
-          | :adaptive
-
-  @typedoc """
   Options accepted by the `words` and `words!` functions.
 
     * `:include_artifacts` — keep spans tagged `/Artifact` (running
@@ -2135,39 +2115,14 @@ defmodule PdfElixide.Document do
       inside it. Defaults to `nil`.
     * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
       Defaults to `:intersects`.
-    * `:word_gap_threshold` — the inter-glyph gap in points that starts a
-      new word. `nil` computes it adaptively from page
-      statistics (median character width × 0.3). Defaults to `nil`.
-    * `:profile` — a `t:extraction_profile/0`, or `nil` for none.
-      Defaults to `nil`.
-
-  ## Legacy extraction controls
-
-  `:word_gap_threshold` and `:profile` are retained for compatibility but are
-  deprecated. Prefer leaving them at `nil`.
-
-    * `:word_gap_threshold` may have no visible effect because `words/2,3` can
-      merge adjacent pieces again. `text_lines/2,3` preserves those word
-      boundaries; see `t:text_lines_opts/0`.
-
-    * `:profile` may change word order and bounding boxes, even when set to
-      `:conservative`: a box shifts slightly on any page, and on a rotated one
-      it comes back in raw user space rather than the displayed frame — see
-      [Rotated pages and extracted
-      geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
-
-  `:region` composes with everything else here: it is applied after
-  extraction, so it does not discard the thresholds or the profile.
   """
   @type words_opts :: [
           include_artifacts: boolean(),
           region: Rect.t() | nil,
-          region_mode: region_mode(),
-          word_gap_threshold: number() | nil,
-          profile: extraction_profile() | nil
+          region_mode: region_mode()
         ]
 
-  @words_opts_keys [:include_artifacts, :region, :region_mode, :word_gap_threshold, :profile]
+  @words_opts_keys [:include_artifacts, :region, :region_mode]
 
   @doc group: "Text extraction"
   @doc """
@@ -2253,37 +2208,18 @@ defmodule PdfElixide.Document do
 
     %{
       include_artifacts: Keyword.get(opts, :include_artifacts, true),
-      word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
-      profile: Keyword.get(opts, :profile),
       region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode)
     }
   end
 
   @typedoc """
-  Options accepted by the `text_lines` and `text_lines!` functions.
-
-  The same options as `t:words_opts/0` — including the legacy controls
-  `:word_gap_threshold` and `:profile` documented there — plus:
-
-    * `:line_gap_threshold` — the vertical gap in points that starts a new
-      line. `nil` computes it automatically. Defaults to `nil`; like the other
-      two legacy controls, prefer leaving it unset.
-
-  `:word_gap_threshold` behaves differently here than it does on `words/2,3`:
-  nothing re-joins the words a line is built from, so the threshold decides
-  the boundaries within a run that a space has not already fixed.
+  Options accepted by the `text_lines` and `text_lines!` functions: the same
+  as `t:words_opts/0`.
   """
-  @type text_lines_opts :: [
-          include_artifacts: boolean(),
-          region: Rect.t() | nil,
-          region_mode: region_mode(),
-          word_gap_threshold: number() | nil,
-          line_gap_threshold: number() | nil,
-          profile: extraction_profile() | nil
-        ]
+  @type text_lines_opts :: words_opts()
 
-  @text_lines_opts_keys [:line_gap_threshold | @words_opts_keys]
+  @text_lines_opts_keys @words_opts_keys
 
   @doc group: "Text extraction"
   @doc """
@@ -2371,9 +2307,6 @@ defmodule PdfElixide.Document do
 
     %{
       include_artifacts: Keyword.get(opts, :include_artifacts, true),
-      word_gap_threshold: Keyword.get(opts, :word_gap_threshold),
-      line_gap_threshold: Keyword.get(opts, :line_gap_threshold),
-      profile: Keyword.get(opts, :profile),
       region: region!(opts),
       region_mode: validate_region_mode!(opts, :region_mode)
     }

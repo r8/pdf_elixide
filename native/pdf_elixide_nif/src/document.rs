@@ -601,18 +601,12 @@ fn extract_words_page(
     page_index: usize,
     options: &WordsOptions,
 ) -> Result<Vec<pdf_oxide::layout::Word>> {
+    // Only the threshold variants have a no-artifacts form; the threshold and
+    // profile arguments are deprecated upstream and stay `None`.
     let words = if options.include_artifacts {
-        doc.extract_words_with_thresholds(
-            page_index,
-            options.word_gap_threshold,
-            options.profile.clone(),
-        )?
+        doc.extract_words_with_thresholds(page_index, None, None)?
     } else {
-        doc.extract_words_with_thresholds_no_artifacts(
-            page_index,
-            options.word_gap_threshold,
-            options.profile.clone(),
-        )?
+        doc.extract_words_with_thresholds_no_artifacts(page_index, None, None)?
     };
     Ok(apply_region(words, &options.region))
 }
@@ -658,20 +652,11 @@ fn extract_text_lines_page(
     page_index: usize,
     options: &LinesOptions,
 ) -> Result<Vec<pdf_oxide::layout::TextLine>> {
+    // As in `extract_words_page`.
     let lines = if options.include_artifacts {
-        doc.extract_text_lines_with_thresholds(
-            page_index,
-            options.word_gap_threshold,
-            options.line_gap_threshold,
-            options.profile.clone(),
-        )?
+        doc.extract_text_lines_with_thresholds(page_index, None, None, None)?
     } else {
-        doc.extract_text_lines_with_thresholds_no_artifacts(
-            page_index,
-            options.word_gap_threshold,
-            options.line_gap_threshold,
-            options.profile.clone(),
-        )?
+        doc.extract_text_lines_with_thresholds_no_artifacts(page_index, None, None, None)?
     };
     Ok(apply_region(lines, &options.region))
 }

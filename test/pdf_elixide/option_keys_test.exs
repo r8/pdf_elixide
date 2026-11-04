@@ -164,12 +164,10 @@ defmodule PdfElixide.OptionKeysTest do
   @words_opts [
     include_artifacts: true,
     region: @rect,
-    region_mode: :intersects,
-    word_gap_threshold: 2.0,
-    profile: :conservative
+    region_mode: :intersects
   ]
 
-  @text_lines_opts [{:line_gap_threshold, 2.0} | @words_opts]
+  @text_lines_opts @words_opts
 
   @chars_opts [
     region: @rect,

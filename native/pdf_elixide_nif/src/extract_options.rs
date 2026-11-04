@@ -2,7 +2,6 @@
 // unspecified fields continue to inherit their upstream values.
 
 use pdf_oxide::{
-    config::ExtractionProfile,
     converters::{ConversionOptions, ReadingOrderMode},
     document::ReadingOrder,
     extractors::{AdaptiveThresholdConfig, SpanMergingConfig},
@@ -73,40 +72,6 @@ fn region_filter(region: Option<RectNif>, mode: RectFilterModeNif) -> Option<Reg
         rect: rect_from_nif(rect),
         mode: mode.into(),
     })
-}
-
-// The span-extraction tuning preset, named after the upstream
-// `ExtractionProfile` consts. Mapped to the consts directly rather than
-// through `ExtractionProfile::by_name`, which has no entry for `TJ_HEAVY`.
-#[derive(NifUnitEnum, Debug)]
-pub enum ExtractionProfileNif {
-    Conservative,
-    TjHeavy,
-    Aggressive,
-    Balanced,
-    Academic,
-    Policy,
-    Form,
-    Government,
-    ScannedOcr,
-    Adaptive,
-}
-
-impl From<ExtractionProfileNif> for ExtractionProfile {
-    fn from(profile: ExtractionProfileNif) -> Self {
-        match profile {
-            ExtractionProfileNif::Conservative => ExtractionProfile::CONSERVATIVE,
-            ExtractionProfileNif::TjHeavy => ExtractionProfile::TJ_HEAVY,
-            ExtractionProfileNif::Aggressive => ExtractionProfile::AGGRESSIVE,
-            ExtractionProfileNif::Balanced => ExtractionProfile::BALANCED,
-            ExtractionProfileNif::Academic => ExtractionProfile::ACADEMIC,
-            ExtractionProfileNif::Policy => ExtractionProfile::POLICY,
-            ExtractionProfileNif::Form => ExtractionProfile::FORM,
-            ExtractionProfileNif::Government => ExtractionProfile::GOVERNMENT,
-            ExtractionProfileNif::ScannedOcr => ExtractionProfile::SCANNED_OCR,
-            ExtractionProfileNif::Adaptive => ExtractionProfile::ADAPTIVE,
-        }
-    }
 }
 
 // Shared atom vocabulary for span extraction and document converters.
@@ -461,8 +426,6 @@ impl From<CharsOptionsNif> for CharsOptions {
 #[derive(NifMap, Debug)]
 pub struct WordsOptionsNif {
     pub include_artifacts: bool,
-    pub word_gap_threshold: Option<f32>,
-    pub profile: Option<ExtractionProfileNif>,
     pub region: Option<RectNif>,
     pub region_mode: RectFilterModeNif,
 }
@@ -475,8 +438,6 @@ impl WordsOptionsNif {
 
 pub struct WordsOptions {
     pub include_artifacts: bool,
-    pub word_gap_threshold: Option<f32>,
-    pub profile: Option<ExtractionProfile>,
     pub region: Option<RegionFilter>,
 }
 
@@ -484,8 +445,6 @@ impl From<WordsOptionsNif> for WordsOptions {
     fn from(o: WordsOptionsNif) -> Self {
         WordsOptions {
             include_artifacts: o.include_artifacts,
-            word_gap_threshold: o.word_gap_threshold,
-            profile: o.profile.map(Into::into),
             region: region_filter(o.region, o.region_mode),
         }
     }
@@ -495,9 +454,6 @@ impl From<WordsOptionsNif> for WordsOptions {
 #[derive(NifMap, Debug)]
 pub struct LinesOptionsNif {
     pub include_artifacts: bool,
-    pub word_gap_threshold: Option<f32>,
-    pub line_gap_threshold: Option<f32>,
-    pub profile: Option<ExtractionProfileNif>,
     pub region: Option<RectNif>,
     pub region_mode: RectFilterModeNif,
 }
@@ -510,9 +466,6 @@ impl LinesOptionsNif {
 
 pub struct LinesOptions {
     pub include_artifacts: bool,
-    pub word_gap_threshold: Option<f32>,
-    pub line_gap_threshold: Option<f32>,
-    pub profile: Option<ExtractionProfile>,
     pub region: Option<RegionFilter>,
 }
 
@@ -520,9 +473,6 @@ impl From<LinesOptionsNif> for LinesOptions {
     fn from(o: LinesOptionsNif) -> Self {
         LinesOptions {
             include_artifacts: o.include_artifacts,
-            word_gap_threshold: o.word_gap_threshold,
-            line_gap_threshold: o.line_gap_threshold,
-            profile: o.profile.map(Into::into),
             region: region_filter(o.region, o.region_mode),
         }
     }
