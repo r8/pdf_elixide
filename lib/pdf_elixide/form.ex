@@ -33,8 +33,8 @@ defmodule PdfElixide.Form do
   [Check boxes and radio groups](guides/forms.md#check-boxes-and-radio-groups).
 
   Operations that read the field hierarchy reject cycles and excessive depth
-  or size. Deferred `flatten/1,2` marks do not validate that hierarchy; see
-  [Field hierarchy errors](guides/forms.md#field-hierarchy-errors).
+  or size, and so does `flatten/2`. `flatten/1` does not validate that
+  hierarchy; see [Field hierarchy errors](guides/forms.md#field-hierarchy-errors).
 
   Which lock a call takes follows its source: a shared read on a
   `PdfElixide.Document`, and the editor's exclusive lock on a
@@ -374,8 +374,9 @@ defmodule PdfElixide.Form do
   `flatten/1`.
 
   Returns the editor, or `{:error, %PdfElixide.Error{reason: :out_of_range}}` if
-  the page does not exist. See the "Flattening" section of the
-  [Forms](guides/forms.md) guide.
+  the page does not exist. Validates the field hierarchy before marking; see
+  [Field hierarchy errors](guides/forms.md#field-hierarchy-errors). See the
+  "Flattening" section of the [Forms](guides/forms.md) guide.
   """
   @spec flatten(Editor.t(), non_neg_integer()) :: {:ok, Editor.t()} | {:error, Error.t()}
   def flatten(%Editor{ref: ref} = editor, page_index)

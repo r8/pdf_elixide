@@ -1424,6 +1424,22 @@ defmodule PdfElixide.FormTest do
 
       assert {:ok, 1} = Document.page_count(doc)
     end
+
+    test "is refused when one page is marked for flattening, leaving the editor writable" do
+      editor = Editor.open!(@cyclic_pdf)
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Form.flatten(editor, 0)
+      refute Editor.modified?(editor)
+      assert {:ok, _} = Editor.to_binary(editor)
+    end
+
+    test "can still be removed by flattening every page" do
+      editor = Editor.open!(@cyclic_pdf)
+
+      {:ok, flattened} = editor |> Form.flatten!() |> Editor.to_binary()
+
+      assert {:ok, []} = flattened |> Document.from_binary!() |> Form.fields()
+    end
   end
 
   describe "flatten/1" do

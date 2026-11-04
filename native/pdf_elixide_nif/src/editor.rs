@@ -1210,6 +1210,8 @@ fn editor_flatten_forms_on_page(
         // Inside the guard, per `Closable::with_lock`.
         ensure_editor_page_in_range(editor, page_index)?;
         ensure_source_is_not_encrypted(editor, "Flattening form fields")?;
+        // Validate before marking: a cyclic hierarchy can overflow the stack during writing.
+        editor.resolved_fields()?;
 
         editor
             .flatten_forms_on_page(page_index)

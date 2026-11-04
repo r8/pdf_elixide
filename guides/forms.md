@@ -79,9 +79,8 @@ could reach, so a successful list can still be partial. Signature reads are
 stricter; see
 [Damaged documents are refused, not stepped over](signatures.md#damaged-documents-are-refused-not-stepped-over).
 
-[`PdfElixide.Form.flatten/1,2`](`PdfElixide.Form.flatten/1`) only records a
-mark and checks nothing, so on a form you do not trust, read its fields first
-and let a hierarchy problem surface there.
+`PdfElixide.Form.flatten/2` validates the hierarchy when marking a page and
+returns the errors above. `PdfElixide.Form.flatten/1` skips hierarchy validation.
 
 ## Field kinds and flags
 
