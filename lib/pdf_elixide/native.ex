@@ -53,6 +53,8 @@ defmodule PdfElixide.Native do
   def document_structured(_doc, _page_index, _options), do: err()
   def document_all_structured(_doc, _options), do: err()
   def document_running_regions(_doc, _options), do: err()
+  def document_classify(_doc, _page_index), do: err()
+  def document_all_classify(_doc), do: err()
   def document_tables(_doc, _page_index, _options), do: err()
   def document_all_tables(_doc, _options), do: err()
   def table_to_markdown(_table, _options), do: err()

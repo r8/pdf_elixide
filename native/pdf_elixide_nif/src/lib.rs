@@ -5,6 +5,7 @@ mod binary;
 mod builder;
 mod certificate_files;
 mod char;
+mod classification;
 mod color;
 mod compliance;
 mod create;

@@ -32,6 +32,7 @@ defmodule PdfElixide.Document.Page do
   alias PdfElixide.Document.Char
   alias PdfElixide.Document.Font
   alias PdfElixide.Document.Image
+  alias PdfElixide.Document.PageClassification
   alias PdfElixide.Document.RenderedPage
   alias PdfElixide.Document.SearchMatch
   alias PdfElixide.Document.SeparationPlate
@@ -264,6 +265,9 @@ defmodule PdfElixide.Document.Page do
   One asymmetry is worth knowing: a page with no fonts whose sole XObject is
   an *image* answers `false`. Text drawn in invisible render mode (`Tr 3`) is
   not considered either way.
+
+  `classify/1` answers the fuller question: it measures the page's text and
+  images and says whether to extract, OCR, or both.
   """
   @spec has_text_layer(t()) :: {:ok, boolean()} | {:error, Error.t()}
   def has_text_layer(%__MODULE__{doc: %Document{ref: ref}, index: index}) do
@@ -506,6 +510,26 @@ defmodule PdfElixide.Document.Page do
   @spec structured!(t(), Document.structured_opts()) :: StructuredPage.t()
   def structured!(page, opts \\ []) when is_list(opts) do
     structured(page, opts) |> Wrap.unwrap!()
+  end
+
+  @doc group: "Text extraction"
+  @doc """
+  Classifies the page by how its text should be obtained, as a
+  `PdfElixide.Document.PageClassification`. See
+  `PdfElixide.Document.classify/1`.
+  """
+  @spec classify(t()) :: {:ok, PageClassification.t()} | {:error, Error.t()}
+  def classify(%__MODULE__{doc: doc, index: index}) do
+    Document.classify(doc, index)
+  end
+
+  @doc group: "Text extraction"
+  @doc """
+  Classifies the page, raising an error if it fails.
+  """
+  @spec classify!(t()) :: PageClassification.t()
+  def classify!(page) do
+    classify(page) |> Wrap.unwrap!()
   end
 
   @doc group: "Text extraction"

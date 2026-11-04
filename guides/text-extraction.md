@@ -69,7 +69,12 @@ it fell.** Where `PdfElixide.Document.text/2` rejoins `in-` and `dex` into
 matters more than paragraph shape.
 
 Neither function performs OCR. An image-only scanned page normally returns an
-empty string; supply an OCR text layer before using either extractor.
+empty string; supply an OCR text layer before using either extractor. Use
+`PdfElixide.Document.classify/1` to select pages that need OCR:
+
+```elixir
+for %{needs_ocr?: true, page: index} <- Document.classify!(doc), do: index
+```
 
 ## A tagged PDF collapses the difference
 

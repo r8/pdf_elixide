@@ -22,7 +22,8 @@ defmodule PdfElixide.Document do
   `text_lines/1`, `spans/1`, `tables/1`, `paths/1`, `rects/1`, `lines/1`,
   `images/1`, `fonts/1` and `annotations/1` return one flat list, as does
   `search/2`; `structured/1` returns one `PdfElixide.Document.StructuredPage`
-  per page; `text/1`, `to_markdown/1`, `to_html/1` and `to_plain_text/1`
+  per page and `classify/1` one `PdfElixide.Document.PageClassification`;
+  `text/1`, `to_markdown/1`, `to_html/1` and `to_plain_text/1`
   return a single string with the pages joined. Each shape walks all pages
   inside a **single** native call, so its cost scales with the whole document
   rather than with what the caller keeps. As the call returns, the result exists
@@ -64,7 +65,8 @@ defmodule PdfElixide.Document do
 
   Concatenating per-page results reproduces the list-returning extractors apart
   from fresh image, font and table handles. `Enum.map(doc, &Page.structured!/1)`
-  reproduces `structured/1`. The ones that return a single string do **not**,
+  reproduces `structured/1`, and `Enum.map(doc, &Page.classify!/1)`
+  reproduces `classify/1`. The ones that return a single string do **not**,
   since each joins pages itself: `text/1` separates them with a form feed and
   applies `:on_page_error` (see `t:text_opts/0`), `to_markdown/1` and
   `to_plain_text/1` each join with a `---` break, and `to_html/1` wraps each
@@ -79,7 +81,7 @@ defmodule PdfElixide.Document do
   unreadable page; if it reaches one, it fails. See `t:search_opts/0`.
 
   `text/1`, `chars/1`, `words/1`, `text_lines/1`, `spans/1`, `tables/1`,
-  `structured/1`, `paths/1`, `rects/1`, `lines/1`, `images/1`,
+  `structured/1`, `classify/1`, `paths/1`, `rects/1`, `lines/1`, `images/1`,
   `annotations/1` and `prepare_search/1` start that error's message with the
   failing page's zero-based index, as in `page 2: …`.
 
@@ -163,6 +165,7 @@ defmodule PdfElixide.Document do
   alias PdfElixide.Document.Metadata
   alias PdfElixide.Document.OutlineItem
   alias PdfElixide.Document.Page
+  alias PdfElixide.Document.PageClassification
   alias PdfElixide.Document.PageLabelRange
   alias PdfElixide.Document.Permissions
   alias PdfElixide.Document.RenderedPage
@@ -2859,6 +2862,65 @@ defmodule PdfElixide.Document do
     opts = Keyword.validate!(opts, @structured_opts_keys)
 
     %{column_mode: Keyword.get(opts, :column_mode, :auto)}
+  end
+
+  @doc group: "Text extraction"
+  @doc """
+  Classifies every page by how its text should be obtained: extracted, read by
+  OCR, both, or neither.
+
+  Returns one `PdfElixide.Document.PageClassification` per page, in page
+  order. Use `needs_ocr?` to select pages for OCR; the [Text
+  extraction](guides/text-extraction.md) guide has an example.
+
+  Classifying a page costs about as much as extracting its text, and this
+  walks every page — see the "Whole-document extraction and memory" section of
+  `PdfElixide.Document` for working a page at a time instead. A document
+  that needs a password fails with `:encrypted` until `authenticate/2`
+  succeeds, unlike `text/1`, which returns empty text for it.
+
+  `PdfElixide.Document.Page.has_text_layer?/1` is the cheaper question when
+  all you need to know is whether a page has text at all.
+  """
+  @spec classify(t()) :: {:ok, [PageClassification.t()]} | {:error, Error.t()}
+  def classify(%__MODULE__{ref: ref}) do
+    with {:ok, pages} <- Wrap.call(fn -> Native.document_all_classify(ref) end) do
+      {:ok, Enum.map(pages, &PageClassification.from_nif/1)}
+    end
+  end
+
+  @doc group: "Text extraction"
+  @doc """
+  Classifies every page, raising an error if it fails.
+  """
+  @spec classify!(t()) :: [PageClassification.t()]
+  def classify!(%__MODULE__{} = doc) do
+    classify(doc) |> Wrap.unwrap!()
+  end
+
+  @doc group: "Text extraction"
+  @doc """
+  Classifies the page at the given zero-based index by how its text should be
+  obtained. See `classify/1`.
+  """
+  @spec classify(t(), non_neg_integer()) ::
+          {:ok, PageClassification.t()} | {:error, Error.t()}
+  def classify(%__MODULE__{ref: ref}, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    with {:ok, page} <- Wrap.call(fn -> Native.document_classify(ref, page_index) end) do
+      {:ok, PageClassification.from_nif(page)}
+    end
+  end
+
+  @doc group: "Text extraction"
+  @doc """
+  Classifies the page at the given zero-based index, raising an error if it
+  fails.
+  """
+  @spec classify!(t(), non_neg_integer()) :: PageClassification.t()
+  def classify!(doc, page_index)
+      when is_integer(page_index) and page_index >= 0 do
+    classify(doc, page_index) |> Wrap.unwrap!()
   end
 
   @typedoc """

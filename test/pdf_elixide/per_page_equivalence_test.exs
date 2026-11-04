@@ -9,7 +9,7 @@ defmodule PdfElixide.PerPageEquivalenceTest do
 
   @fixtures_dir Path.join([__DIR__, "..", "fixtures"])
 
-  @fixtures ~w(sample.pdf extraction.pdf table.pdf annotations.pdf image.pdf fonts.pdf markdown.pdf vector_shapes.pdf)
+  @fixtures ~w(sample.pdf extraction.pdf table.pdf annotations.pdf image.pdf fonts.pdf markdown.pdf vector_shapes.pdf classification.pdf)
 
   @plain [:chars, :words, :text_lines, :spans, :paths, :rects, :lines, :annotations]
 
@@ -73,6 +73,15 @@ defmodule PdfElixide.PerPageEquivalenceTest do
       end
 
     assert Enum.sum(found) > 0, "no fixture exercises structured/1"
+  end
+
+  test "classify/1 equals one Page.classify!/1 per page" do
+    for fixture <- @fixtures do
+      doc = open!(fixture)
+
+      assert Document.classify!(doc) == Enum.map(doc, &Page.classify!/1),
+             "classify/1 and Page.classify/1 disagree on #{fixture}"
+    end
   end
 
   test "the handled extractors really do carry a distinct handle per extraction" do
