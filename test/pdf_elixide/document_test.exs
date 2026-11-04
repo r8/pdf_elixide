@@ -2314,7 +2314,7 @@ defmodule PdfElixide.DocumentTest do
       assert is_nil(image.bbox) or match?(%Rect{}, image.bbox)
       assert is_atom(image.color_space)
       assert is_integer(image.bits_per_component)
-      assert is_integer(image.rotation_degrees)
+      assert is_integer(image.rotation)
       assert {_a, _b, _c, _d, _e, _f} = image.matrix
     end
 
@@ -2625,7 +2625,7 @@ defmodule PdfElixide.DocumentTest do
       assert {:ok, [%Table{} = table]} = Document.tables(doc, 0)
 
       assert table.page == 0
-      assert table.col_count == 4
+      assert table.column_count == 4
       assert length(table.rows) == 5
       assert table.real_grid?
       assert is_boolean(table.has_header?)
@@ -2702,7 +2702,7 @@ defmodule PdfElixide.DocumentTest do
   describe "tables!/1" do
     test "returns the flat table list of the whole document" do
       doc = Document.open!(@table_pdf)
-      assert [%Table{col_count: 4}] = Document.tables!(doc)
+      assert [%Table{column_count: 4}] = Document.tables!(doc)
     end
   end
 
@@ -2758,7 +2758,7 @@ defmodule PdfElixide.DocumentTest do
       assert %Table.Cell{text: "A", colspan: 2} = Table.cell(table, 0, 0)
       assert %Table.Cell{text: "B"} = Table.cell(table, 0, 1)
       assert Table.cell(table, 0, 2) == nil
-      assert table.col_count == 3
+      assert table.column_count == 3
     end
   end
 
@@ -2881,7 +2881,7 @@ defmodule PdfElixide.DocumentTest do
       table = %Table{
         page: 2,
         bbox: nil,
-        col_count: 3,
+        column_count: 3,
         has_header?: true,
         real_grid?: true,
         rows: [],
@@ -3701,7 +3701,7 @@ defmodule PdfElixide.DocumentTest do
       {:ok, annotations} = Document.annotations(doc, 0)
 
       text = Enum.find(annotations, &(&1.subtype == :text))
-      assert %Annotation{type: "Annot", raw_subtype: "Text"} = text
+      assert %Annotation{raw_subtype: "Text"} = text
       assert text.contents == "Hello note"
       assert text.author == "Alice"
       assert text.creation_date == "D:20240101000000Z"
@@ -4452,7 +4452,7 @@ defmodule PdfElixide.DocumentTest do
     %Table{
       page: 0,
       bbox: nil,
-      col_count: 3,
+      column_count: 3,
       has_header?: false,
       real_grid?: true,
       rows: [%Table.Row{header?: false, cells: cells}],

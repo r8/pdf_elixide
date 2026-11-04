@@ -12,7 +12,6 @@ use crate::{
 #[derive(NifMap, Debug)]
 pub struct AnnotationNif {
     page: usize,
-    annotation_type: String,
     subtype: SubtypeNif,
     raw_subtype: Option<String>,
     contents: Option<String>,
@@ -231,7 +230,6 @@ fn flags_to_nif(flags: AnnotationFlags) -> FlagsNif {
 pub fn annotation_to_nif(annotation: Annotation, page: usize) -> AnnotationNif {
     AnnotationNif {
         page,
-        annotation_type: annotation.annotation_type,
         subtype: annotation.subtype_enum.into(),
         raw_subtype: annotation.subtype,
         contents: annotation.contents,

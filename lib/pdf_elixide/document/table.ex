@@ -29,7 +29,7 @@ defmodule PdfElixide.Document.Table do
   row's `:cells` — so they reach exactly what `Enum.at/2` would. The detector
   drops the cells a merge covers without leaving a placeholder, so a row
   containing a `:colspan` or `:rowspan` greater than one stores fewer cells than
-  `:col_count`, and positions after the merge no longer line up with the visual
+  `:column_count`, and positions after the merge no longer line up with the visual
   column.
 
   A table is also enumerable over its rows, and each row over its cells, so the
@@ -65,14 +65,14 @@ defmodule PdfElixide.Document.Table do
   alias PdfElixide.Native
   alias PdfElixide.Native.Wrap
 
-  @enforce_keys [:page, :bbox, :col_count, :has_header?, :real_grid?, :rows, :ref]
+  @enforce_keys [:page, :bbox, :column_count, :has_header?, :real_grid?, :rows, :ref]
 
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           page: non_neg_integer(),
           bbox: Rect.t() | nil,
-          col_count: non_neg_integer(),
+          column_count: non_neg_integer(),
           has_header?: boolean(),
           real_grid?: boolean(),
           rows: [Row.t()],
@@ -265,7 +265,7 @@ defmodule PdfElixide.Document.Table do
   def from_nif(%{
         page: page,
         bbox: bbox,
-        col_count: col_count,
+        column_count: column_count,
         has_header: has_header,
         real_grid: real_grid,
         rows: rows,
@@ -274,7 +274,7 @@ defmodule PdfElixide.Document.Table do
     %__MODULE__{
       page: page,
       bbox: bbox,
-      col_count: col_count,
+      column_count: column_count,
       has_header?: has_header,
       real_grid?: real_grid,
       rows: Enum.map(rows, &Row.from_nif/1),
@@ -292,7 +292,7 @@ defmodule PdfElixide.Document.Table do
         " ",
         to_string(length(table.rows)),
         "x",
-        to_string(table.col_count),
+        to_string(table.column_count),
         if(table.has_header?, do: " (header)", else: ""),
         ">"
       ])

@@ -106,7 +106,6 @@ defmodule PdfElixide.Document.Annotation do
 
   @enforce_keys [
     :page,
-    :type,
     :subtype,
     :raw_subtype,
     :contents,
@@ -136,7 +135,6 @@ defmodule PdfElixide.Document.Annotation do
 
   @type t :: %__MODULE__{
           page: non_neg_integer(),
-          type: String.t(),
           subtype: atom(),
           raw_subtype: String.t() | nil,
           contents: String.t() | nil,
@@ -166,7 +164,6 @@ defmodule PdfElixide.Document.Annotation do
   @spec from_nif(map()) :: t()
   def from_nif(%{
         page: page,
-        annotation_type: type,
         subtype: subtype,
         raw_subtype: raw_subtype,
         contents: contents,
@@ -193,7 +190,6 @@ defmodule PdfElixide.Document.Annotation do
       }) do
     %__MODULE__{
       page: page,
-      type: type,
       subtype: subtype,
       raw_subtype: raw_subtype,
       contents: contents,

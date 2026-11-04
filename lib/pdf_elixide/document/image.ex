@@ -29,8 +29,8 @@ defmodule PdfElixide.Document.Image do
   `:matrix` is the transformation the image was drawn under (`t:matrix/0`). For
   an image the page paints directly, `:bbox` is that matrix applied to the unit
   square and squared up to the axes — so for a rotated or skewed image the box is
-  looser than the placement — and `:rotation_degrees` is the angle the matrix
-  turns through. An image painted inside a Form XObject is the exception, and
+  looser than the placement — and `:rotation` is the angle, in whole degrees,
+  the matrix turns through. An image painted inside a Form XObject is the exception, and
   `t:matrix/0` says how the three disagree there.
 
   `data/1`, `to_binary/2` and `save/3` take the handle's lock shared and
@@ -85,7 +85,7 @@ defmodule PdfElixide.Document.Image do
     :ref,
     :color_space,
     :bits_per_component,
-    :rotation_degrees,
+    :rotation,
     :matrix
   ]
 
@@ -141,7 +141,7 @@ defmodule PdfElixide.Document.Image do
   form's own frame, not of the page.** The form's `/Matrix` and the `cm`
   operators inside it are included; the `cm` that preceded the form's own
   painting is not. `:bbox` does include it, so for such an image `:matrix` and
-  `:bbox` describe different frames and `:rotation_degrees` is the angle within
+  `:bbox` describe different frames and `:rotation` is the angle within
   the form. `:bbox` is the one to trust for where the image lands on the page.
   """
   @type matrix :: {float(), float(), float(), float(), float(), float()}
@@ -164,7 +164,7 @@ defmodule PdfElixide.Document.Image do
           ref: reference(),
           color_space: color_space(),
           bits_per_component: non_neg_integer(),
-          rotation_degrees: integer(),
+          rotation: integer(),
           matrix: matrix()
         }
 
@@ -179,7 +179,7 @@ defmodule PdfElixide.Document.Image do
         resource: ref,
         color_space: color_space,
         bits_per_component: bits_per_component,
-        rotation_degrees: rotation_degrees,
+        rotation: rotation,
         matrix: matrix
       }) do
     %__MODULE__{
@@ -191,7 +191,7 @@ defmodule PdfElixide.Document.Image do
       ref: ref,
       color_space: color_space,
       bits_per_component: bits_per_component,
-      rotation_degrees: rotation_degrees,
+      rotation: rotation,
       matrix: matrix
     }
   end

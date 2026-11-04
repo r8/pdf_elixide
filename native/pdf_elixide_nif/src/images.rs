@@ -31,7 +31,7 @@ pub struct ImageNif {
     resource: ResourceArc<ImageResource>,
     color_space: ColorSpaceNif,
     bits_per_component: u8,
-    rotation_degrees: i32,
+    rotation: i32,
     matrix: MatrixNif,
 }
 
@@ -137,7 +137,7 @@ pub fn image_to_nif(image: PdfImage, page: usize) -> ImageNif {
         format: image.data().into(),
         color_space: (*image.color_space()).into(),
         bits_per_component: image.bits_per_component(),
-        rotation_degrees: image.rotation_degrees(),
+        rotation: image.rotation_degrees(),
         matrix: MatrixNif { a, b, c, d, e, f },
         resource: ResourceArc::new(ImageResource {
             image: Closable::new("Image", image),

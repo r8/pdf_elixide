@@ -19,7 +19,7 @@ use crate::{
 pub struct TableNif {
     page: usize,
     bbox: Option<RectNif>,
-    col_count: usize,
+    column_count: usize,
     has_header: bool,
     real_grid: bool,
     rows: Vec<TableRowNif>,
@@ -51,7 +51,7 @@ pub fn table_to_nif(table: Table, page: usize) -> TableNif {
     TableNif {
         page,
         bbox: table.bbox.map(rect_to_nif),
-        col_count: table.col_count,
+        column_count: table.col_count,
         has_header: table.has_header,
         real_grid: table.is_real_grid(),
         rows: table

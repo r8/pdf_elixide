@@ -9,7 +9,7 @@ defmodule PdfElixide.Document.Table.Row do
 
   `cell/2` and `cell_text/2` reach the same cells by position, so they agree
   with `Enum.at/2`. A row whose detection merged cells stores fewer cells than
-  the table's `:col_count` — see `PdfElixide.Document.Table` for what that means
+  the table's `:column_count` — see `PdfElixide.Document.Table` for what that means
   for indices.
   """
   alias PdfElixide.Document.Table.Cell

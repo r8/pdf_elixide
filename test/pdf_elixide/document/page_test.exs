@@ -1042,7 +1042,7 @@ defmodule PdfElixide.Document.PageTest do
       {:ok, via_doc} = Document.tables(doc, 0)
       assert Enum.map(via_page, & &1.rows) == Enum.map(via_doc, & &1.rows)
       assert Enum.map(via_page, & &1.page) == Enum.map(via_doc, & &1.page)
-      assert {:ok, [%Table{page: 0, col_count: 4}]} = Page.tables(page)
+      assert {:ok, [%Table{page: 0, column_count: 4}]} = Page.tables(page)
     end
 
     test "returns {:ok, []} for a page with no table" do
