@@ -4792,14 +4792,14 @@ defmodule PdfElixide.EditorTest do
                  relationship: :data,
                  size: nil,
                  checksum: nil,
-                 created: nil,
-                 modified: nil
+                 creation_date: nil,
+                 modification_date: nil
                }
              ] = Editor.embedded_files!(editor)
 
       Editor.to_binary!(editor)
 
-      assert [%EmbeddedFile{size: nil, checksum: nil, created: nil, modified: nil}] =
+      assert [%EmbeddedFile{size: nil, checksum: nil, creation_date: nil, modification_date: nil}] =
                Editor.embedded_files!(editor)
     end
 
@@ -4937,17 +4937,17 @@ defmodule PdfElixide.EditorTest do
     end
   end
 
-  describe "set_creation_date/2 and set_mod_date/2" do
+  describe "set_creation_date/2 and set_modification_date/2" do
     test "formats a UTC DateTime as a PDF date, dropping fractional seconds" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
       assert {:ok, ^editor} = Editor.set_creation_date(editor, ~U[2024-01-15 12:00:00.123Z])
-      Editor.set_mod_date!(editor, ~U[2024-02-29 23:59:59Z])
+      Editor.set_modification_date!(editor, ~U[2024-02-29 23:59:59Z])
 
       assert %Document.Metadata{
                creation_date: "D:20240115120000Z",
-               mod_date: "D:20240229235959Z"
+               modification_date: "D:20240229235959Z"
              } = editor |> Editor.to_binary!() |> saved_metadata()
     end
 
@@ -4960,11 +4960,11 @@ defmodule PdfElixide.EditorTest do
       east = %{utc | utc_offset: 19_800, time_zone: "Asia/Kolkata", zone_abbr: "IST"}
       west = %{utc | utc_offset: -18_000, time_zone: "America/New_York", zone_abbr: "EST"}
 
-      editor |> Editor.set_creation_date!(east) |> Editor.set_mod_date!(west)
+      editor |> Editor.set_creation_date!(east) |> Editor.set_modification_date!(west)
 
       assert %Document.Metadata{
                creation_date: "D:20240115120000+05'30'",
-               mod_date: "D:20240115120000-05'00'"
+               modification_date: "D:20240115120000-05'00'"
              } = Editor.metadata!(editor)
     end
 
@@ -4986,11 +4986,11 @@ defmodule PdfElixide.EditorTest do
       on_exit(fn -> Editor.close(editor) end)
 
       Editor.set_creation_date!(editor, "D:20240115120000+02'00'")
-      Editor.set_mod_date!(editor, "D:2024")
+      Editor.set_modification_date!(editor, "D:2024")
 
       assert %Document.Metadata{
                creation_date: "D:20240115120000+02'00'",
-               mod_date: "D:2024"
+               modification_date: "D:2024"
              } = editor |> Editor.to_binary!() |> saved_metadata()
     end
 
@@ -5011,7 +5011,9 @@ defmodule PdfElixide.EditorTest do
           Editor.set_creation_date(editor, bad)
         end
 
-        assert_raise ArgumentError, ~r/:mod_date/, fn -> Editor.set_mod_date!(editor, bad) end
+        assert_raise ArgumentError, ~r/:modification_date/, fn ->
+          Editor.set_modification_date!(editor, bad)
+        end
       end
 
       refute Editor.modified?(editor)

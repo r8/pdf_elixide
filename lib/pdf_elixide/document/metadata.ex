@@ -30,7 +30,7 @@ defmodule PdfElixide.Document.Metadata do
       the split list, when available, is on the XMP `:subjects` field).
     * `:creator` — the application that created the original document.
     * `:producer` — the application that produced the PDF.
-    * `:creation_date`, `:mod_date` — the raw PDF date strings (e.g.
+    * `:creation_date`, `:modification_date` — the raw PDF date strings (e.g.
       `"D:20230101120000+00'00'"`); not parsed into `DateTime`.
     * `:trapped` — the `/Trapped` value (`"True"`, `"False"`, or `"Unknown"`).
   """
@@ -43,7 +43,7 @@ defmodule PdfElixide.Document.Metadata do
     :creator,
     :producer,
     :creation_date,
-    :mod_date,
+    :modification_date,
     :trapped
   ]
 
@@ -57,7 +57,7 @@ defmodule PdfElixide.Document.Metadata do
           creator: String.t() | nil,
           producer: String.t() | nil,
           creation_date: String.t() | nil,
-          mod_date: String.t() | nil,
+          modification_date: String.t() | nil,
           trapped: String.t() | nil
         }
 
@@ -71,7 +71,7 @@ defmodule PdfElixide.Document.Metadata do
         creator: creator,
         producer: producer,
         creation_date: creation_date,
-        mod_date: mod_date,
+        modification_date: modification_date,
         trapped: trapped
       }) do
     %__MODULE__{
@@ -82,7 +82,7 @@ defmodule PdfElixide.Document.Metadata do
       creator: creator,
       producer: producer,
       creation_date: creation_date,
-      mod_date: mod_date,
+      modification_date: modification_date,
       trapped: trapped
     }
   end

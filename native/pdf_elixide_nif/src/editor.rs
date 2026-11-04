@@ -323,7 +323,7 @@ pub enum InfoFieldNif {
     Creator,
     Producer,
     CreationDate,
-    ModDate,
+    ModificationDate,
 }
 
 fn info_slot(info: &mut MetadataNif, field: InfoFieldNif) -> &mut Option<String> {
@@ -335,7 +335,7 @@ fn info_slot(info: &mut MetadataNif, field: InfoFieldNif) -> &mut Option<String>
         InfoFieldNif::Creator => &mut info.creator,
         InfoFieldNif::Producer => &mut info.producer,
         InfoFieldNif::CreationDate => &mut info.creation_date,
-        InfoFieldNif::ModDate => &mut info.mod_date,
+        InfoFieldNif::ModificationDate => &mut info.modification_date,
     }
 }
 
@@ -357,7 +357,10 @@ fn editor_set_info_field(
     field: InfoFieldNif,
     value: Option<String>,
 ) -> NifResult<Atom> {
-    if matches!(field, InfoFieldNif::CreationDate | InfoFieldNif::ModDate) {
+    if matches!(
+        field,
+        InfoFieldNif::CreationDate | InfoFieldNif::ModificationDate
+    ) {
         if let Some(date) = value.as_deref().filter(|date| !writable_pdf_date(date)) {
             return Err(tagged_err(
                 atoms::other(),
@@ -393,7 +396,7 @@ fn editor_info(resource: ResourceArc<EditorResource>) -> NifResult<MetadataNif> 
                 creator: normalize_text(info.creator),
                 producer: normalize_text(info.producer),
                 creation_date: normalize_text(info.creation_date),
-                mod_date: normalize_text(info.mod_date),
+                modification_date: normalize_text(info.modification_date),
                 trapped: info.trapped,
             },
             None => read_metadata(editor.source()),
@@ -1384,7 +1387,7 @@ mod tests {
             "upstream now strips PDF 2.0's UTF-8 BOM from /Info"
         );
 
-        assert_eq!(ours.mod_date, None);
+        assert_eq!(ours.modification_date, None);
         assert_eq!(
             theirs.mod_date.as_deref(),
             Some("   "),

@@ -178,8 +178,8 @@ struct FileSpec {
     relationship: Option<RelationshipNif>,
     size: Option<i64>,
     checksum: Option<Vec<u8>>,
-    created: Option<String>,
-    modified: Option<String>,
+    creation_date: Option<String>,
+    modification_date: Option<String>,
 }
 
 #[derive(NifMap)]
@@ -191,8 +191,8 @@ pub struct EmbeddedFileNif<'a> {
     relationship: Option<RelationshipNif>,
     size: Option<i64>,
     checksum: Option<Term<'a>>,
-    created: Option<String>,
-    modified: Option<String>,
+    creation_date: Option<String>,
+    modification_date: Option<String>,
 }
 
 fn text(doc: &PdfDocument, value: Option<&Object>) -> Option<String> {
@@ -331,8 +331,8 @@ fn file_spec(doc: &PdfDocument, spec: &Object) -> Option<FileSpec> {
             .and_then(|s| s.as_integer())
             .filter(|size| *size >= 0),
         checksum: params.and_then(|p| bytes(doc, p.get("CheckSum"))),
-        created: params.and_then(|p| text(doc, p.get("CreationDate"))),
-        modified: params.and_then(|p| text(doc, p.get("ModDate"))),
+        creation_date: params.and_then(|p| text(doc, p.get("CreationDate"))),
+        modification_date: params.and_then(|p| text(doc, p.get("ModDate"))),
     })
 }
 
@@ -346,8 +346,8 @@ pub fn pending_to_nif<'a>(env: Env<'a>, file: &EmbeddedFile) -> NifResult<Embedd
         relationship: file.af_relationship.map(relationship_to_nif),
         size: None,
         checksum: None,
-        created: None,
-        modified: None,
+        creation_date: None,
+        modification_date: None,
     })
 }
 
@@ -408,8 +408,8 @@ pub fn read_embedded_files<'a>(
                     .checksum
                     .map(|bytes| binary_term(env, &bytes, "embedded file checksum"))
                     .transpose()?,
-                created: spec.created,
-                modified: spec.modified,
+                creation_date: spec.creation_date,
+                modification_date: spec.modification_date,
             })
         })
         .collect()

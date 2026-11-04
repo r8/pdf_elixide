@@ -32,8 +32,9 @@ defmodule PdfElixide.Document.EmbeddedFile do
     * `:checksum` — the raw MD5 digest of the file contents the entry declares,
       or `nil`. Unverified, and MD5 is not a defense against deliberate
       tampering.
-    * `:created`, `:modified` — the entry's declared timestamps, as raw PDF date
-      strings (`"D:20260101120000+00'00'"`), or `nil`.
+    * `:creation_date`, `:modification_date` — the entry's declared
+      timestamps, as raw PDF date strings (`"D:20260101120000+00'00'"`), or
+      `nil`.
   """
 
   @typedoc """
@@ -61,8 +62,8 @@ defmodule PdfElixide.Document.EmbeddedFile do
     :relationship,
     :size,
     :checksum,
-    :created,
-    :modified
+    :creation_date,
+    :modification_date
   ]
 
   defstruct @enforce_keys
@@ -75,8 +76,8 @@ defmodule PdfElixide.Document.EmbeddedFile do
           relationship: relationship() | nil,
           size: non_neg_integer() | nil,
           checksum: binary() | nil,
-          created: String.t() | nil,
-          modified: String.t() | nil
+          creation_date: String.t() | nil,
+          modification_date: String.t() | nil
         }
 
   @doc false
@@ -89,8 +90,8 @@ defmodule PdfElixide.Document.EmbeddedFile do
         relationship: relationship,
         size: size,
         checksum: checksum,
-        created: created,
-        modified: modified
+        creation_date: creation_date,
+        modification_date: modification_date
       }) do
     %__MODULE__{
       name: name,
@@ -100,8 +101,8 @@ defmodule PdfElixide.Document.EmbeddedFile do
       relationship: relationship,
       size: size,
       checksum: checksum,
-      created: created,
-      modified: modified
+      creation_date: creation_date,
+      modification_date: modification_date
     }
   end
 end

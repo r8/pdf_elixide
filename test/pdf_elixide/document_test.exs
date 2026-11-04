@@ -3834,7 +3834,7 @@ defmodule PdfElixide.DocumentTest do
       assert meta.creator == "pdf_elixide test"
       assert meta.producer == "pdf_elixide"
       assert meta.creation_date == "D:20240115120000Z"
-      assert meta.mod_date == nil
+      assert meta.modification_date == nil
       assert meta.trapped == "True"
     end
 
@@ -3860,7 +3860,7 @@ defmodule PdfElixide.DocumentTest do
 
       assert meta.creation_date == "D:20240115120000Z"
       # A whitespace-only value is nil, same as an absent one…
-      assert meta.mod_date == nil
+      assert meta.modification_date == nil
       # …and a name still falls back to its text.
       assert meta.trapped == "Unknown"
     end
@@ -3879,7 +3879,7 @@ defmodule PdfElixide.DocumentTest do
                  creator: nil,
                  producer: nil,
                  creation_date: nil,
-                 mod_date: nil,
+                 modification_date: nil,
                  trapped: nil
                }
     end
@@ -4072,8 +4072,8 @@ defmodule PdfElixide.DocumentTest do
                relationship: :data,
                size: 8,
                checksum: :erlang.md5("a,b\n1,2\n"),
-               created: "D:20260101120000Z",
-               modified: "D:20260102130000Z"
+               creation_date: "D:20260101120000Z",
+               modification_date: "D:20260102130000Z"
              }
 
       assert notes == %EmbeddedFile{
@@ -4084,8 +4084,8 @@ defmodule PdfElixide.DocumentTest do
                relationship: nil,
                size: nil,
                checksum: nil,
-               created: nil,
-               modified: nil
+               creation_date: nil,
+               modification_date: nil
              }
 
       assert resume.name == "résumé.txt"

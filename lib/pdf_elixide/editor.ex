@@ -94,8 +94,9 @@ defmodule PdfElixide.Editor do
   ## Document information
 
   `set_title/2`, `set_author/2`, `set_subject/2`, `set_keywords/2`,
-  `set_creator/2`, `set_producer/2`, `set_creation_date/2` and `set_mod_date/2`
-  change the `/Info` dictionary; `metadata/1` reads it with pending changes.
+  `set_creator/2`, `set_producer/2`, `set_creation_date/2` and
+  `set_modification_date/2` change the `/Info` dictionary; `metadata/1` reads
+  it with pending changes.
   See [Document information](guides/editing.md#document-information) for what
   writes preserve and how text, dates, XMP and document identifiers behave.
 
@@ -2066,7 +2067,7 @@ defmodule PdfElixide.Editor do
   This reflects pending edits: an attachment added with `embed_file/4` appears
   here before any save, in the order a full write will place it, and a
   `sanitize/1,2` that removed the attachments empties the list. Its `:size`,
-  `:checksum`, `:created` and `:modified` remain `nil`, even after a save. Read
+  `:checksum`, `:creation_date` and `:modification_date` remain `nil`, even after a save. Read
   those fields with `PdfElixide.Document.embedded_files/1` on the written
   document.
 
@@ -2093,7 +2094,8 @@ defmodule PdfElixide.Editor do
 
   @typedoc """
   A `DateTime` or complete PDF date string for `set_creation_date/2` and
-  `set_mod_date/2`. See [Dates](guides/editing.md#dates) for formatting details.
+  `set_modification_date/2`. See [Dates](guides/editing.md#dates) for
+  formatting details.
   """
   @type info_date :: DateTime.t() | String.t()
 
@@ -2271,18 +2273,18 @@ defmodule PdfElixide.Editor do
   Takes a `t:info_date/0` or `nil`, which removes the entry. A malformed date
   string, or anything else, raises `ArgumentError`.
   """
-  @spec set_mod_date(t(), info_date() | nil) :: {:ok, t()} | {:error, Error.t()}
-  def set_mod_date(%__MODULE__{} = editor, date) do
-    set_info_field(editor, :mod_date, pdf_date(:mod_date, date))
+  @spec set_modification_date(t(), info_date() | nil) :: {:ok, t()} | {:error, Error.t()}
+  def set_modification_date(%__MODULE__{} = editor, date) do
+    set_info_field(editor, :modification_date, pdf_date(:modification_date, date))
   end
 
   @doc group: "Document information"
   @doc """
   Sets the document's `/ModDate`, raising an error if it fails.
   """
-  @spec set_mod_date!(t(), info_date() | nil) :: t()
-  def set_mod_date!(%__MODULE__{} = editor, date) do
-    editor |> set_mod_date(date) |> Wrap.unwrap!()
+  @spec set_modification_date!(t(), info_date() | nil) :: t()
+  def set_modification_date!(%__MODULE__{} = editor, date) do
+    editor |> set_modification_date(date) |> Wrap.unwrap!()
   end
 
   defp set_info_field(%__MODULE__{ref: ref} = editor, field, value) do

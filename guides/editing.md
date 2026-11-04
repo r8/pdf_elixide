@@ -358,16 +358,16 @@ reads one when another producer declared it, but this editor cannot set one.
 `PdfElixide.Editor.set_title/2`, `PdfElixide.Editor.set_author/2`,
 `PdfElixide.Editor.set_subject/2`, `PdfElixide.Editor.set_keywords/2`,
 `PdfElixide.Editor.set_creator/2`, `PdfElixide.Editor.set_producer/2`,
-`PdfElixide.Editor.set_creation_date/2` and `PdfElixide.Editor.set_mod_date/2`
-change the `/Info` dictionary, and `PdfElixide.Editor.metadata/1` reads it with
-pending changes applied:
+`PdfElixide.Editor.set_creation_date/2` and
+`PdfElixide.Editor.set_modification_date/2` change the `/Info` dictionary, and
+`PdfElixide.Editor.metadata/1` reads it with pending changes applied:
 
 ```elixir
 "path/to/report.pdf"
 |> Editor.open!()
 |> Editor.set_title!("Quarterly report")
 |> Editor.set_author!("Ada Lovelace")
-|> Editor.set_mod_date!(DateTime.utc_now())
+|> Editor.set_modification_date!(DateTime.utc_now())
 |> Editor.save!("titled.pdf")
 |> Editor.close()
 #=> :ok
@@ -406,8 +406,9 @@ produced.
 
 ### Dates
 
-`PdfElixide.Editor.set_creation_date/2` and `PdfElixide.Editor.set_mod_date/2`
-take a `DateTime` or a PDF date string.
+`PdfElixide.Editor.set_creation_date/2` and
+`PdfElixide.Editor.set_modification_date/2` take a `DateTime` or a PDF date
+string.
 
 A `DateTime` is written as `D:YYYYMMDDHHMMSS` followed by `Z` for UTC or by the
 offset as `+HH'mm'` / `-HH'mm'`. Fractional seconds are dropped. An offset that

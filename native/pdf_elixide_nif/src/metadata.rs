@@ -30,7 +30,7 @@ pub(crate) struct MetadataNif {
     pub(crate) creator: Option<String>,
     pub(crate) producer: Option<String>,
     pub(crate) creation_date: Option<String>,
-    pub(crate) mod_date: Option<String>,
+    pub(crate) modification_date: Option<String>,
     pub(crate) trapped: Option<String>,
 }
 
@@ -46,7 +46,7 @@ impl MetadataNif {
             creator: None,
             producer: None,
             creation_date: None,
-            mod_date: None,
+            modification_date: None,
             trapped: None,
         }
     }
@@ -74,7 +74,7 @@ pub(crate) fn to_document_info(info: &MetadataNif) -> DocumentInfo {
         creator: encode(&info.creator),
         producer: encode(&info.producer),
         creation_date: encode(&info.creation_date),
-        mod_date: encode(&info.mod_date),
+        mod_date: encode(&info.modification_date),
     }
 }
 
@@ -88,7 +88,7 @@ pub(crate) fn has_info_text(info: &MetadataNif) -> bool {
         &info.creator,
         &info.producer,
         &info.creation_date,
-        &info.mod_date,
+        &info.modification_date,
     ]
     .into_iter()
     .any(Option::is_some)
@@ -122,7 +122,7 @@ pub(crate) fn read_metadata(doc: &PdfDocument) -> MetadataNif {
         creator: get("Creator"),
         producer: get("Producer"),
         creation_date: get("CreationDate"),
-        mod_date: get("ModDate"),
+        modification_date: get("ModDate"),
         trapped: get("Trapped"),
     }
 }
@@ -362,7 +362,7 @@ mod tests {
             creator: Some("Créateur".into()),
             producer: Some("pdf_elixide ✓".into()),
             creation_date: Some("D:20240115120000Z".into()),
-            mod_date: None,
+            modification_date: None,
             trapped: Some("True".into()),
         };
 
@@ -399,13 +399,13 @@ mod tests {
             creator: None,
             producer: None,
             creation_date: None,
-            mod_date: None,
+            modification_date: None,
             trapped: Some("True".into()),
         };
         assert!(!has_info_text(&empty));
 
         let dated = MetadataNif {
-            mod_date: Some("D:2024".into()),
+            modification_date: Some("D:2024".into()),
             trapped: None,
             ..empty
         };
