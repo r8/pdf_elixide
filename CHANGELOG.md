@@ -5,6 +5,25 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.25.0](https://github.com/r8/pdf_elixide/compare/v0.24.0...v0.25.0) (2026-11-04)
+
+
+
+
+### Features:
+
+* classify pages for text extraction and OCR by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* validate the field hierarchy before flattening the page by [@r8](https://github.com/r8)
+
+* remove the deprecated word and line segmentation options by [@r8](https://github.com/r8)
+
+* standardize date field names and setters by [@r8](https://github.com/r8)
+
+* reword table column count and image rotation and drop the constant annotation type by [@r8](https://github.com/r8)
+
 ## [v0.24.0](https://github.com/r8/pdf_elixide/compare/v0.23.0...v0.24.0) (2026-10-28)
 
 
