@@ -123,6 +123,54 @@ defmodule PdfElixide.PathContractTest do
       assert doc.page_count == 3
     end
 
+    test "Editor.save/3 refuses an incremental save of one in place", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, @bad_name)
+      File.cp!(@valid_pdf, path)
+      original = File.read!(path)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.open!(path) |> Editor.save(path, incremental: true)
+
+      assert message =~ "not valid UTF-8"
+      assert File.read!(path) == original
+    end
+
+    test "Editor.save/3 does not append to a file with the U+FFFD name", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, @bad_name)
+      decoy = Path.join(tmp_dir, "\uFFFD.pdf")
+      out = Path.join(tmp_dir, "out.pdf")
+      File.cp!(@valid_pdf, path)
+      File.cp!(@mergeable_pdf, decoy)
+      decoy_bytes = File.read!(decoy)
+
+      assert {:error, %Error{reason: :unsupported}} =
+               Editor.open!(path) |> Editor.save(out, incremental: true)
+
+      refute File.exists?(out)
+      assert File.read!(decoy) == decoy_bytes
+    end
+
+    test "the incremental refusal names the path rather than the pending edits",
+         %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, @bad_name)
+      File.cp!(@valid_pdf, path)
+      editor = Editor.open!(path) |> Editor.delete_page!(0)
+
+      assert {:error, %Error{reason: :unsupported, message: message}} =
+               Editor.save(editor, Path.join(tmp_dir, "out.pdf"), incremental: true)
+
+      assert message =~ "not valid UTF-8"
+      refute message =~ "page deletions"
+    end
+
+    test "Editor.save/3 rewrites one in place", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, @bad_name)
+      File.cp!(@valid_pdf, path)
+
+      assert {:ok, %Editor{}} = Editor.open!(path) |> Editor.delete_page!(0) |> Editor.save(path)
+      assert Document.open!(path).page_count == 2
+    end
+
     test "Builder.save/3 writes one, and it reopens", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "built-" <> @bad_name)
 

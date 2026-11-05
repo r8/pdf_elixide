@@ -63,6 +63,11 @@ None of them has a source file to copy, so `incremental: true` returns
 field values. Use `PdfElixide.Editor.open/2` for incremental saving, or write a
 full rewrite.
 
+**An editor opened from a path that is not valid UTF-8 cannot save
+incrementally.** The call returns
+`{:error, %PdfElixide.Error{reason: :unsupported}}` and writes no file. Write a
+full rewrite, or reopen the file under a UTF-8 name.
+
 **An editor that has merged another document, or been converted to PDF/A, cannot
 save incrementally.** Both rebuild the editor from the resulting document, which
 has no source file to append to; see

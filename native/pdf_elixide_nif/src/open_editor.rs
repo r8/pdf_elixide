@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     ops::{Deref, DerefMut, Range},
+    path::Path,
     sync::OnceLock,
 };
 
@@ -78,6 +79,9 @@ pub(crate) struct OpenEditor {
     // The replaced editor's flatten warnings, which upstream offers no way to
     // hand to its successor.
     carried_warnings: Vec<String>,
+    // Set when the source path is not valid UTF-8, which an incremental save
+    // cannot reopen.
+    source_path_lossy: bool,
     // Upstream's flatten warnings from a snapshot that did not land, which
     // upstream never clears and the next write reports again.
     discarded_warnings: Vec<Range<usize>>,
@@ -178,7 +182,19 @@ impl OpenEditor {
             pdf_a: None,
             carried_warnings: Vec::new(),
             discarded_warnings: Vec::new(),
+            source_path_lossy: false,
         }
+    }
+
+    pub(crate) fn from_path(editor: DocumentEditor, path: &Path) -> Self {
+        Self {
+            source_path_lossy: path.to_str().is_none(),
+            ..Self::new(editor)
+        }
+    }
+
+    pub(crate) fn source_path_lossy(&self) -> bool {
+        self.source_path_lossy
     }
 
     pub(crate) fn modified(&self) -> bool {

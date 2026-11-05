@@ -243,16 +243,30 @@ pub(crate) fn ensure_incremental_is_not_encrypted(
 // which clears the source path while Elixir keeps it, so this message would
 // contradict `Editor.source_path/1` on that handle.
 pub(crate) fn ensure_incremental_has_a_source(
-    editor: &DocumentEditor,
+    editor: &OpenEditor,
     options: &SaveOptionsNif,
 ) -> NifResult<()> {
-    if options.incremental && editor.source_path().is_empty() {
+    if !options.incremental {
+        return Ok(());
+    }
+
+    if editor.source_path().is_empty() {
         return Err(tagged_err(
             atoms::unsupported(),
             "This editor was built from a binary, which an incremental save cannot \
              append to: the update is written after a verbatim copy of the file the \
              editor was opened from, and this editor has no such file. Nothing has \
              been written. Save a full rewrite instead.",
+        ));
+    }
+
+    if editor.source_path_lossy() {
+        return Err(tagged_err(
+            atoms::unsupported(),
+            "This editor was opened from a path that is not valid UTF-8, which an \
+             incremental save cannot reopen to copy the original file. Nothing has \
+             been written. Save a full rewrite instead, or open the file under a \
+             UTF-8 name.",
         ));
     }
 

@@ -787,7 +787,8 @@ defmodule PdfElixide.Editor do
 
   A full rewrite is the default. `incremental: true` returns
   `{:error, %PdfElixide.Error{reason: :unsupported}}` without writing if the editor
-  has no source file (see `t:t/0`) or holds unsupported changes. See
+  has no source file (see `t:t/0`), was opened from a path that is not valid
+  UTF-8, or holds unsupported changes. See
   [Saving edits](guides/editing.md#saving-edits) for supported changes and
   recovery.
 

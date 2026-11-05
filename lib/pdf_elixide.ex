@@ -56,7 +56,9 @@ defmodule PdfElixide do
   A path is whatever the operating system calls one, handed to it unchanged. On
   Unix that means an opaque byte string, so a filename with no UTF-8 spelling
   works here just as it does with `File.read/1`, and a path that cannot be
-  opened or written is an `:io` error like any other.
+  opened or written is an `:io` error like any other. An editor opened from
+  such a path cannot save incrementally; see
+  [Saving edits](guides/editing.md#saving-edits).
 
   **On Windows a path must be valid UTF-8**, and one that is not raises
   `ArgumentError` before the filesystem is touched — see the "Errors versus

@@ -51,9 +51,9 @@ fn cached_version(resource: &EditorResource) -> NifResult<(u8, u8)> {
     resource.editor.with_read(|editor| Ok(editor.version()))
 }
 
-pub(crate) fn opened(editor: DocumentEditor) -> NifResult<OpenedEditor> {
+pub(crate) fn opened(editor: OpenEditor) -> NifResult<OpenedEditor> {
     let resource = ResourceArc::new(EditorResource {
-        editor: Closable::new("Editor", OpenEditor::new(editor)),
+        editor: Closable::new("Editor", editor),
     });
     let version = cached_version(&resource)?;
 
@@ -103,7 +103,7 @@ fn editor_open(path: Binary, options: OpenOptionsNif<'_>) -> NifResult<OpenedEdi
         Err(e) => Err(to_nif_err(e)),
     })?;
 
-    opened(editor)
+    opened(OpenEditor::from_path(editor, &path))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -129,7 +129,7 @@ fn editor_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<Op
             },
         )?;
 
-    opened(editor)
+    opened(OpenEditor::new(editor))
 }
 
 // Shared and live because the native call takes `&self` and may change over time.

@@ -21,6 +21,7 @@ use crate::{
     atoms,
     editor::{opened, OpenedEditor},
     error::{tagged_err, to_nif_err},
+    open_editor::OpenEditor,
     warnings,
 };
 
@@ -204,7 +205,7 @@ pub(crate) fn create_from_bytes(
         DocumentEditor::from_bytes(bytes).map_err(to_nif_err)
     })?;
 
-    opened(editor)
+    opened(OpenEditor::new(editor))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
