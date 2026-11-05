@@ -393,7 +393,23 @@ fn cms_blob(contents: Option<&[u8]>) -> NifResult<&[u8]> {
     Ok(trim_der_padding(contents_of(contents)?))
 }
 
-fn signed_bytes(pdf_data: &[u8], byte_range: &[i64]) -> NifResult<Vec<u8>> {
+struct Covered {
+    bytes: Vec<u8>,
+    hole_is_contents: bool,
+}
+
+impl Covered {
+    // Apply only to verdicts; malformed signatures must retain their errors.
+    fn judge(&self, verdict: Atom) -> Atom {
+        if self.hole_is_contents {
+            verdict
+        } else {
+            atoms::invalid()
+        }
+    }
+}
+
+fn signed_bytes(pdf_data: &[u8], byte_range: &[i64], contents: &[u8]) -> NifResult<Covered> {
     let Ok(range) = <[i64; 4]>::try_from(byte_range) else {
         return Err(tagged_err(
             atoms::invalid_pdf(),
@@ -414,7 +430,47 @@ fn signed_bytes(pdf_data: &[u8], byte_range: &[i64]) -> NifResult<Vec<u8>> {
         ));
     }
 
-    ByteRangeCalculator::extract_signed_bytes(pdf_data, &range).map_err(to_nif_err)
+    let bytes = ByteRangeCalculator::extract_signed_bytes(pdf_data, &range).map_err(to_nif_err)?;
+
+    Ok(Covered {
+        bytes,
+        hole_is_contents: hole_is_contents(&range, contents, pdf_data),
+    })
+}
+
+// Decode the entire gap; matching its width alone permits injected keys.
+fn hole_is_contents(range: &[i64; 4], contents: &[u8], pdf_data: &[u8]) -> bool {
+    let [offset1, length1, offset2, _] = *range;
+    let (Ok(offset1), Ok(length1), Ok(end)) = (
+        usize::try_from(offset1),
+        usize::try_from(length1),
+        usize::try_from(offset2),
+    ) else {
+        return false;
+    };
+    let Some(hex) = offset1
+        .checked_add(length1)
+        .and_then(|start| pdf_data.get(start..end))
+        .and_then(|hole| hole.strip_prefix(b"<"))
+        .and_then(|hole| hole.strip_suffix(b">"))
+    else {
+        return false;
+    };
+
+    contents.len().checked_mul(2) == Some(hex.len())
+        && hex
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(contents)
+            .all(|(pair, &byte)| hex_pair(*pair) == Some(byte))
+}
+
+fn hex_pair([high, low]: [u8; 2]) -> Option<u8> {
+    let digit = |c: u8| char::from(c).to_digit(16);
+    let (high, low) = (digit(high)?, digit(low)?);
+
+    u8::try_from(high << 4 | low).ok()
 }
 
 // Guard upstream's unchecked i64-to-usize cast: a negative span can wrap past
@@ -475,12 +531,12 @@ fn signature_verify_detached(
     pdf_data: Binary,
 ) -> NifResult<Atom> {
     contain_panic(|| {
-        let blob = cms_blob(contents.as_deref())?;
-        let signed = signed_bytes(&pdf_data, &byte_range)?;
+        let contents = contents_of(contents.as_deref())?;
+        let blob = trim_der_padding(contents);
+        let covered = signed_bytes(&pdf_data, &byte_range, contents)?;
+        let verdict = verify_signer_detached(blob, &covered.bytes).map_err(to_nif_err)?;
 
-        verify_signer_detached(blob, &signed)
-            .map(verdict_atom)
-            .map_err(to_nif_err)
+        Ok(covered.judge(verdict_atom(verdict)))
     })
 }
 
@@ -494,22 +550,26 @@ fn signature_verify_pkcs7_sha1(
     pdf_data: Binary,
 ) -> NifResult<Atom> {
     contain_panic(|| {
-        let blob = cms_blob(contents.as_deref())?;
-        let covered = signed_bytes(&pdf_data, &byte_range)?;
+        let contents = contents_of(contents.as_deref())?;
+        let blob = trim_der_padding(contents);
+        let covered = signed_bytes(&pdf_data, &byte_range, contents)?;
         let signed = signed_data_of(blob)
             .map_err(|MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason))?;
 
-        let Some(digest) = encapsulated_sha1_digest(&signed) else {
-            return Ok(atoms::unknown());
+        let verdict = match encapsulated_sha1_digest(&signed) {
+            None => atoms::unknown(),
+            Some(digest) => match verify_signer_detached(blob, digest).map_err(to_nif_err)? {
+                SignerVerify::Valid
+                    if digest_matches(HashAlgorithm::Sha1, &covered.bytes, digest) =>
+                {
+                    atoms::valid()
+                }
+                SignerVerify::Valid => atoms::invalid(),
+                other => verdict_atom(other),
+            },
         };
 
-        match verify_signer_detached(blob, digest).map_err(to_nif_err)? {
-            SignerVerify::Valid if digest_matches(HashAlgorithm::Sha1, &covered, digest) => {
-                Ok(atoms::valid())
-            }
-            SignerVerify::Valid => Ok(atoms::invalid()),
-            other => Ok(verdict_atom(other)),
-        }
+        Ok(covered.judge(verdict))
     })
 }
 
@@ -901,29 +961,14 @@ fn covers_whole_file(range: &[i64; 4], contents: &[u8], pdf_data: &[u8]) -> bool
         return false;
     }
 
-    let [offset1, length1, offset2, length2] = *range;
+    let [offset1, _, offset2, length2] = *range;
     let Ok(size) = i64::try_from(pdf_data.len()) else {
         return false;
     };
 
     // `byte_range_fits` proved both spans are non-negative and end within the
-    // file, so neither sum here can overflow.
-    if offset1 != 0 || offset2 + length2 != size {
-        return false;
-    }
-
-    let Some(hole) = contents.len().checked_mul(2).and_then(|n| n.checked_add(2)) else {
-        return false;
-    };
-    let (Ok(start), Ok(end)) = (usize::try_from(length1), usize::try_from(offset2)) else {
-        return false;
-    };
-
-    // `hole` is at least two, so the `end - 1` below cannot underflow once the
-    // first comparison has held.
-    end.checked_sub(start) == Some(hole)
-        && pdf_data.get(start) == Some(&b'<')
-        && pdf_data.get(end - 1) == Some(&b'>')
+    // file, so the sum here cannot overflow.
+    offset1 == 0 && offset2 + length2 == size && hole_is_contents(range, contents, pdf_data)
 }
 
 // Require the RFC 3161 CMS shape: SignedData containing `id-ct-TSTInfo` and at
@@ -1140,10 +1185,11 @@ fn signature_verify_document_timestamp(
     pdf_data: Binary,
 ) -> NifResult<Atom> {
     contain_panic(|| {
-        let timestamp = parse_timestamp(contents_of(contents.as_deref())?)?;
-        let covered = signed_bytes(&pdf_data, &byte_range)?;
+        let contents = contents_of(contents.as_deref())?;
+        let timestamp = parse_timestamp(contents)?;
+        let covered = signed_bytes(&pdf_data, &byte_range, contents)?;
 
-        Ok(attachment_verdict(&timestamp, &covered))
+        Ok(covered.judge(attachment_verdict(&timestamp, &covered.bytes)))
     })
 }
 
@@ -1892,6 +1938,37 @@ mod tests {
         // other run of bytes the same size as this `/Contents`.
         let plain = vec![b'x'; 300];
         assert!(!covers_whole_file(&[0, 100, 200, 100], &contents, &plain));
+    }
+
+    #[test]
+    fn accepts_a_hole_only_when_it_is_the_contents_in_hex() {
+        let contents = vec![0xAB; 49];
+        let pdf = file_with_hex_hole(&contents, 300);
+
+        assert!(hole_is_contents(&[0, 100, 200, 100], &contents, &pdf));
+        assert!(hole_is_contents(&[0, 100, 200, 50], &contents, &pdf));
+
+        let lower = String::from_utf8(pdf.clone()).unwrap().to_lowercase();
+        assert!(hole_is_contents(
+            &[0, 100, 200, 100],
+            &contents,
+            lower.as_bytes()
+        ));
+
+        let mut other = pdf.clone();
+        other[101] = b'0';
+        assert!(!hole_is_contents(&[0, 100, 200, 100], &contents, &other));
+
+        let mut injected = pdf.clone();
+        let tail = b"> /Reason (x) <AB";
+        injected[150..150 + tail.len()].copy_from_slice(tail);
+        assert!(!hole_is_contents(&[0, 100, 200, 100], &contents, &injected));
+
+        let mut spaced = pdf.clone();
+        spaced[150] = b' ';
+        assert!(!hole_is_contents(&[0, 100, 200, 100], &contents, &spaced));
+
+        assert!(!hole_is_contents(&[0, 200, 100, 100], &contents, &pdf));
     }
 
     #[test]

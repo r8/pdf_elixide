@@ -112,11 +112,15 @@ using another permitted salt length is reported `:invalid` rather than
 `:unknown`.
 
 `{:ok, :valid}` means the signature from the certificate embedded in the blob
-is authentic and the content digest matches the bytes in `:byte_range`. It does
-not establish any of these:
+is authentic, the content digest matches the bytes in `:byte_range`, and the
+gap between the ranges holds only `:contents`, encoded as one unbroken
+hexadecimal string. Any other gap answers `{:ok, :invalid}`.
 
-  * **That the whole file is intact.** Bytes outside the declared range are not
-    checked. Use `PdfElixide.Signature.covers_whole_document?/2` separately.
+`{:ok, :valid}` does not establish any of these:
+
+  * **That the whole file is intact.** Bytes after the end of the declared range
+    are not checked. Use `PdfElixide.Signature.covers_whole_document?/2`
+    separately.
   * **That the signer is trusted.** No certificate chain, revocation status or
     validity window is checked. Use `PdfElixide.Signature.certificate/1` and
     make that decision with a certificate library and roots you trust.

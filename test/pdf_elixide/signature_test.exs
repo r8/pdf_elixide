@@ -123,6 +123,25 @@ defmodule PdfElixide.SignatureTest do
                      "7420545341"
                  )
 
+  # Replace only zero padding so signed bytes and offsets stay unchanged.
+  defp inject_into_hole(path, key) do
+    bytes = File.read!(path)
+    {:ok, [%Signature{byte_range: [0, start, stop, _]}]} = Signature.list(open(path))
+    hole = stop - start
+    hex = binary_part(bytes, start + 1, div(hole - 3 - byte_size(key), 2) * 2)
+    written = "<" <> hex <> "> " <> key
+    padded = written <> String.duplicate(" ", hole - byte_size(written))
+
+    forged =
+      binary_part(bytes, 0, start) <> padded <> binary_part(bytes, stop, byte_size(bytes) - stop)
+
+    doc = Document.from_binary!(forged)
+    {:ok, [signature]} = Signature.list(doc)
+    :ok = Document.close(doc)
+
+    {signature, forged}
+  end
+
   # Flip a byte of the imprint the authority signed over. The token keeps its
   # length and still parses, so only the signature across it can report this.
   defp tamper(%Timestamp{token: token, message_imprint: imprint}) do
@@ -616,6 +635,43 @@ defmodule PdfElixide.SignatureTest do
 
       assert_raise Error, fn -> Signature.verify!(unsigned, bytes) end
       assert_raise Error, fn -> Signature.verify_signer!(unsigned) end
+    end
+  end
+
+  describe "a hole holding more than the signature value" do
+    test "reads the injected key and still covers the whole file" do
+      {signature, forged} = inject_into_hole(@cms_pdf, "/ContactInfo (Call Mallory)")
+
+      assert signature.contact_info == "Call Mallory"
+      assert Signature.covers_whole_document?(signature, byte_size(forged))
+      assert Signature.verify_signer(signature) == {:ok, :valid}
+    end
+
+    test "is reported invalid by verify/2" do
+      {signature, forged} = inject_into_hole(@cms_pdf, "/ContactInfo (Call Mallory)")
+
+      assert Signature.verify(signature, forged) == {:ok, :invalid}
+    end
+
+    test "is reported invalid by verify/2 on adbe.pkcs7.sha1" do
+      {signature, forged} = inject_into_hole(@pkcs7_sha1_pdf, "/Reason (Forged)")
+
+      assert signature.reason == "Forged"
+      assert Signature.verify(signature, forged) == {:ok, :invalid}
+    end
+
+    test "is reported invalid by verify_timestamp/2 on a document timestamp" do
+      {signature, forged} = inject_into_hole(@doctimestamp_covering_pdf, "/Reason (Forged)")
+
+      assert signature.reason == "Forged"
+      assert Signature.verify_timestamp(signature, forged) == {:ok, :invalid}
+    end
+
+    test "still reports a malformed signature as an error" do
+      {signature, forged} = inject_into_hole(@cms_pdf, "/ContactInfo (Call Mallory)")
+
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.verify(%{signature | contents: <<0, 1, 2>>}, forged)
     end
   end
 

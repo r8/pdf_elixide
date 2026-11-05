@@ -313,6 +313,9 @@ defmodule PdfElixide.Signature do
   `{:ok, :valid}` is not "this file is unchanged": pair it with
   `covers_whole_document?/2`. See [Verifying one](guides/signatures.md#verifying-one).
 
+  The gap between the ranges must contain only `:contents`, encoded as one
+  unbroken hexadecimal string; otherwise the verdict is `{:ok, :invalid}`.
+
   For `:pkcs7_sha1`, `{:ok, :valid}` means both that the signer signed the
   encapsulated SHA-1 digest and that it matches the covered bytes. A blob with no
   such digest answers `{:ok, :unknown}`.
@@ -478,7 +481,8 @@ defmodule PdfElixide.Signature do
       over the bytes its `:byte_range` covers.
 
   `pdf_bytes` is used only for an `:rfc3161` signature. A B-T signature carries
-  everything the check needs, so the argument is ignored for that shape.
+  everything the check needs, so the argument is ignored for that shape. The
+  `:rfc3161` gap must also satisfy the contents check described in `verify/2`.
 
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
       PdfElixide.Signature.verify_timestamp(signature, File.read!("signed.pdf"))
@@ -698,8 +702,8 @@ defmodule PdfElixide.Signature do
   Whether the signature covers the whole of a file `size` bytes long.
 
   `true` means a structurally valid byte range starts at byte zero and ends at
-  `size`. This checks coverage only; `verify/2` checks the signature, and
-  answers only about the range this reports on.
+  `size`. This checks coverage only; use `verify/2` to check the signature and
+  the gap between its ranges.
 
   `size` is the length of the file being checked — `File.stat!/1` for a path,
   `Kernel.byte_size/1` for a binary. The check reads the struct alone and
