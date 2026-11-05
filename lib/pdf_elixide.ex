@@ -51,6 +51,13 @@ defmodule PdfElixide do
   including the exact exceptions, is the [Concurrency](guides/concurrency.md)
   guide.
 
+  ## Untrusted documents
+
+  Excessively nested documents can terminate the operating-system process
+  running the VM instead of returning an error, even from a small compressed
+  file. Process untrusted documents in a separate operating-system process,
+  such as a node started with `:peer`, to protect your application.
+
   ## File paths
 
   A path is whatever the operating system calls one, handed to it unchanged. On

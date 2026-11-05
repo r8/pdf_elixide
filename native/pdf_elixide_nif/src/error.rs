@@ -6,7 +6,7 @@ use std::{
 use pdf_oxide::Error as PdfError;
 use rustler::{Atom, Error, NifResult};
 
-use crate::atoms;
+use crate::{atoms, deep_stack::on_deep_stack};
 
 // The NIF returns this as `{:error, {reason, message}}`; the Elixir side
 // (`PdfElixide.Native.Wrap`) turns it into a `%PdfElixide.Error{}` struct so
@@ -50,7 +50,8 @@ pub fn lock_err() -> Error {
 // `:nif_panicked`. `AssertUnwindSafe` deliberately keeps whatever the closure
 // touched alive.
 pub fn contain_panic<R>(f: impl FnOnce() -> NifResult<R>) -> NifResult<R> {
-    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|payload| Err(panic_err(&*payload)))
+    catch_unwind(AssertUnwindSafe(|| on_deep_stack(f)))
+        .unwrap_or_else(|payload| Err(panic_err(&*payload)))
 }
 
 pub fn panic_err(payload: &(dyn Any + Send)) -> Error {

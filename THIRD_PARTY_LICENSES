@@ -12,10 +12,10 @@ those direct dependencies, with the shortest chain that pulls it in.
 
 Crates on the targets the precompiled binaries are built for:
 
-  Direct dependencies:                          22
-  Reached only through the upstream libraries:  151
-  Reached through at least one other:           70
-  Total:                                        243
+  Direct dependencies:                          23
+  Reached only through the upstream libraries:  150
+  Reached through at least one other:           72
+  Total:                                        245
 
 Where a crate offers a choice of licences, it is used under the one named
 after "Used under". The Elixir packages this library depends on are not
@@ -175,7 +175,7 @@ bytes 1.12.1 — MIT — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> bytes
 cbc 0.2.0 — MIT (of MIT OR Apache-2.0) — direct dependency — [6]
   pdf_elixide_nif -> cbc
-cfg-if 1.0.4 — MIT (of MIT OR Apache-2.0) — via cbc, des, hmac, image, office_oxide (upstream), pdf_oxide (upstream), pkcs12, pkcs5, rc2, rustler, sha1, sha2 — [6]
+cfg-if 1.0.4 — MIT (of MIT OR Apache-2.0) — via cbc, des, hmac, image, office_oxide (upstream), pdf_oxide (upstream), pkcs12, pkcs5, rc2, rustler, sha1, sha2, stacker — [6]
   pdf_elixide_nif -> sha1 -> cfg-if
 chacha20 0.10.1 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> p12-keystore -> rand -> chacha20
@@ -325,7 +325,7 @@ kurbo 0.12.0 — MIT (of Apache-2.0 OR MIT) — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> subsetter -> kurbo
 lazy_static 1.5.0 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> x509-parser -> lazy_static
-libc 0.2.186 — MIT (of MIT OR Apache-2.0) — via cbc, des, hmac, pdf_oxide (upstream), pkcs12, pkcs5, rc2, sha1, sha2 — [6]
+libc 0.2.186 — MIT (of MIT OR Apache-2.0) — via cbc, des, hmac, pdf_oxide (upstream), pkcs12, pkcs5, rc2, sha1, sha2, stacker — [6]
   pdf_elixide_nif -> pdf_oxide -> libc
 libloading 0.9.0 — ISC — via rustler — [5]
   pdf_elixide_nif -> rustler -> libloading
@@ -405,6 +405,8 @@ primeorder 0.14.0 — MIT (of Apache-2.0 OR MIT) — via pdf_oxide (upstream) �
   pdf_elixide_nif -> pdf_oxide -> p256 -> primeorder
 proc-macro2 1.0.106 — MIT (of MIT OR Apache-2.0) — via cms, der, image, office_oxide (upstream), pdf_oxide (upstream), pkcs12, pkcs5, rustler — [6]
   pdf_elixide_nif -> der -> der_derive -> proc-macro2
+psm 0.1.24 — MIT (of MIT OR Apache-2.0) — via stacker — [6]
+  pdf_elixide_nif -> stacker -> psm
 pxfm 0.1.29 — Apache-2.0 (of BSD-3-Clause OR Apache-2.0) — via image, pdf_oxide (upstream) — [1]
   pdf_elixide_nif -> image -> moxcms -> pxfm
 qcms 0.3.0 — MIT — via pdf_oxide (upstream) — [6]
@@ -489,6 +491,8 @@ smallvec 1.16.1 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — 
   pdf_elixide_nif -> pdf_oxide -> smallvec
 spki 0.8.0 — MIT (of Apache-2.0 OR MIT) — via cms, pdf_oxide (upstream), pkcs12, pkcs5 — [6]
   pdf_elixide_nif -> cms -> spki
+stacker 0.1.25 — MIT (of MIT OR Apache-2.0) — direct dependency — [6]
+  pdf_elixide_nif -> stacker
 strict-num 0.1.1 — MIT — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> tiny-skia -> tiny-skia-path -> strict-num
 stringprep 0.1.5 — MIT (of MIT/Apache-2.0) — via pdf_oxide (upstream) — [6]
@@ -559,14 +563,14 @@ windows-implement 0.60.2 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstr
   pdf_elixide_nif -> pdf_oxide -> chrono -> iana-time-zone -> windows-core -> windows-implement
 windows-interface 0.59.3 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [11]
   pdf_elixide_nif -> pdf_oxide -> chrono -> iana-time-zone -> windows-core -> windows-interface
-windows-link 0.2.1 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream), rustler — [11]
+windows-link 0.2.1 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream), rustler, stacker — [11]
   pdf_elixide_nif -> pdf_oxide -> chrono -> windows-link
 windows-result 0.4.1 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [11]
   pdf_elixide_nif -> pdf_oxide -> chrono -> iana-time-zone -> windows-core -> windows-result
 windows-strings 0.5.1 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [11]
   pdf_elixide_nif -> pdf_oxide -> chrono -> iana-time-zone -> windows-core -> windows-strings
-windows-sys 0.61.2 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [11]
-  pdf_elixide_nif -> pdf_oxide -> env_logger -> anstream -> anstyle-query -> windows-sys
+windows-sys 0.61.2 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream), stacker — [11]
+  pdf_elixide_nif -> stacker -> windows-sys
 wnaf 0.14.0 — MIT (of Apache-2.0 OR MIT) — via pdf_oxide (upstream) — [6]
   pdf_elixide_nif -> pdf_oxide -> p256 -> primeorder -> wnaf
 write-fonts 0.43.0 — MIT (of MIT OR Apache-2.0) — via pdf_oxide (upstream) — [6]
@@ -1043,6 +1047,7 @@ THIS SOFTWARE.
   primefield 0.14.0: Copyright (c) 2024-2026 RustCrypto Developers
   primeorder 0.14.0: Copyright (c) 2020-2023 RustCrypto Developers
   proc-macro2 1.0.106
+  psm 0.1.24: Copyright © 2018, Simonas Kazlauskas
   qcms 0.3.0: Copyright (c) Jeff Muizelaar, Benoit Girard, Andrew Osmond
   qrcode 0.14.1: Copyright (c) 2016 kennytm
   quick-error 2.0.1: Copyright (c) 2015 The quick-error Developers
@@ -1082,6 +1087,7 @@ THIS SOFTWARE.
   skrifa 0.37.0: Copyright (c) 2019 Colin Rothfels
   smallvec 1.16.1: Copyright (c) 2018 The Servo Project Developers
   spki 0.8.0: Copyright (c) 2021-2026 The RustCrypto Project Developers
+  stacker 0.1.25: Copyright (c) 2014 Alex Crichton
   strict-num 0.1.1: Copyright (c) 2022 Yevhenii Reizner
   stringprep 0.1.5: Copyright (c) 2017 The rust-stringprep Developers
   subsetter 0.2.3

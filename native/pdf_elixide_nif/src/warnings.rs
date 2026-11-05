@@ -9,7 +9,7 @@ use std::{
 use pdf_oxide::extractors::warnings::{drain_global_warnings, Warning, WarningCategory};
 use rustler::{NifMap, NifResult, NifUnitEnum};
 
-use crate::{error::contain_panic, ring::Ring};
+use crate::{deep_stack::on_deep_stack, error::contain_panic, ring::Ring};
 
 #[derive(NifUnitEnum, Debug)]
 enum WarningCategoryNif {
@@ -130,7 +130,7 @@ pub(crate) fn on_own_stack<T: Send>(
         thread::Builder::new()
             .stack_size(stack_size)
             .spawn_scoped(scope, || {
-                let result = panic::catch_unwind(panic::AssertUnwindSafe(work));
+                let result = panic::catch_unwind(panic::AssertUnwindSafe(|| on_deep_stack(work)));
                 collect_global();
 
                 result

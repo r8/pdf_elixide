@@ -38,6 +38,8 @@ ttf-parser = "0.25"
 # RFC 3161 message-imprint hashing.
 sha1 = "0.11"
 sha2 = "0.11"
+# Larger stacks for deeply nested PDFs.
+stacker = "0.1"
 # Bidi classes, so right-to-left text the layout cannot order is refused.
 unicode-bidi = "0.3"
 unicode-normalization = "0.1"

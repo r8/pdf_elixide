@@ -9,6 +9,7 @@ mod classification;
 mod color;
 mod compliance;
 mod create;
+mod deep_stack;
 mod document;
 mod editor;
 mod embedded_files;

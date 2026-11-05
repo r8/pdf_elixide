@@ -8,6 +8,7 @@ use pdf_oxide::{extractors::PdfImage, fonts::FontInfo, structure::table_extracto
 use rustler::NifResult;
 
 use crate::{
+    deep_stack::drop_deep,
     error::{closed_err, contain_panic, lock_err},
     open_document::OpenDocument,
     open_editor::OpenEditor,
@@ -88,7 +89,9 @@ impl<T> Closable<T> {
     // Release is infallible and idempotent, so recover a poisoned lock.
     pub fn close(&self) {
         let mut guard = self.value.write().unwrap_or_else(|e| e.into_inner());
-        *guard = None;
+        let value = guard.take();
+        drop(guard);
+        drop_deep(value);
     }
 
     // Like `close`, this must remain infallible after lock poisoning.
@@ -97,6 +100,17 @@ impl<T> Closable<T> {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .is_none()
+    }
+}
+
+impl<T> Drop for Closable<T> {
+    fn drop(&mut self) {
+        let value = self
+            .value
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        drop_deep(value);
     }
 }
 
