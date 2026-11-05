@@ -207,6 +207,76 @@ defmodule PdfElixide.BuilderTest do
       assert_in_delta two - four, 36, 0.01
     end
 
+    test "every line break starts one new line" do
+      for ending <- ["\r", "\r\n", "\u0085", "\u2028", "\u2029"] do
+        doc = Builder.new() |> Builder.paragraph("one#{ending}two") |> written()
+
+        assert [one, two] = baselines(doc, 0), inspect(ending)
+        assert_in_delta one - two, 18, 0.01
+      end
+    end
+
+    # Forty-five `a`s leave room for `10` and not for `10 km` on the line.
+    test "a no-break space keeps the words beside it on one line" do
+      filler = Enum.join(List.duplicate("a", 45), " ")
+
+      for {space, same_line?} <- [{" ", false}, {"\u00A0", true}] do
+        doc = Builder.new() |> Builder.paragraph(filler <> " 10" <> space <> "km") |> written()
+        y = Map.new(Document.chars!(doc, 0), &{&1.text, &1.bbox.y})
+
+        assert y["1"] == y["k"] == same_line?, inspect(space)
+      end
+    end
+
+    test "no-break spaces are drawn as spaces and do not collapse" do
+      for {text, gap} <- [{"a\u00A0\u00A0b", 2}, {"a\u202Fb", 1}, {"a  b", 1}] do
+        doc = Builder.new() |> Builder.paragraph(text) |> written()
+        x = Map.new(Document.chars!(doc, 0), &{&1.text, &1.bbox.x})
+
+        # Helvetica at 12 points: `a` 6.672, a space 3.336.
+        assert_in_delta x["b"] - x["a"], 6.672 + gap * 3.336, 0.01, inspect(text)
+      end
+    end
+
+    test "a soft hyphen is not drawn" do
+      doc = Builder.new() |> Builder.paragraph("co\u00ADop") |> written()
+
+      assert Enum.map(Document.chars!(doc, 0), & &1.text) == ["c", "o", "o", "p"]
+    end
+
+    test "a soft hyphen between CR and LF leaves one line break, in its run or its own" do
+      for add <- [&Builder.paragraph/2, &Builder.code_block/2] do
+        one_break = Builder.new() |> add.("a\nb") |> written() |> baselines(0)
+
+        for text <- ["a\r\u00AD\nb", ["a\r", {"\u00AD", bold: true}, "\nb"]] do
+          doc = Builder.new() |> add.(text) |> written()
+
+          assert baselines(doc, 0) == one_break, inspect({add, text})
+        end
+      end
+    end
+
+    test "a run of soft hyphens needs no face" do
+      regular_only = FontFamily.new(regular: font("font_truetype.ttf"))
+
+      doc =
+        Builder.new(font: regular_only)
+        |> Builder.paragraph(["a", {"\u00AD", italic: true}, {"\u00AD\u00AD", bold: true}, "b"])
+        |> written()
+
+      assert Enum.map(Document.chars!(doc, 0), & &1.text) == ["a", "b"]
+    end
+
+    test "a paragraph of a no-break space keeps its line, one of a soft hyphen does not" do
+      for {text, lines} <- [{"\u00A0", 1}, {"\u00AD", 0}] do
+        doc = Builder.new() |> Builder.paragraph(text) |> Builder.paragraph("b") |> written()
+        b = Enum.find(Document.chars!(doc, 0), &(&1.text == "b"))
+
+        # One line box and the paragraph's gap of half the font size.
+        assert_in_delta b.bbox.y, baseline(792 - 72, 12) - lines * 24, 0.01
+      end
+    end
+
     test "a word wider than the line is split without losing a character" do
       word = String.duplicate("W", 200)
       doc = Builder.new() |> Builder.paragraph(word) |> written()
@@ -935,8 +1005,10 @@ defmodule PdfElixide.BuilderTest do
     test "malformed arguments raise" do
       builder = Builder.new()
 
-      assert_raise ArgumentError, ~r/one line/, fn ->
-        Builder.text_at(builder, {72, 72}, "a\nb")
+      for text <- ["a\nb", "a\rb", "a\u2028b"] do
+        assert_raise ArgumentError, ~r/one line, so it cannot contain a line break/, fn ->
+          Builder.text_at(builder, {72, 72}, text)
+        end
       end
 
       assert_raise ArgumentError, ~r/invalid point,/, fn ->
@@ -1201,6 +1273,20 @@ defmodule PdfElixide.BuilderTest do
       doc = coded("a  \r\nb\t\rc\n   ")
 
       assert code_lines(doc, 0) == [[{"a", 0}], [{"b", 0}], [{"c", 0}]]
+    end
+
+    test "ends lines at every line break, and does not draw a soft hyphen" do
+      doc = coded("a\u0085b\u2028c\u2029d\u00ADe")
+
+      assert code_lines(doc, 0) == [[{"a", 0}], [{"b", 0}], [{"c", 0}], [{"d", 0}, {"e", 1}]]
+    end
+
+    # The TrueType fixture has no soft hyphen glyph.
+    test "a soft hyphen needs no glyph" do
+      family = FontFamily.new(regular: font("font_truetype.ttf"))
+      doc = Builder.new() |> Builder.code_block("a\u00ADb", font: family) |> written()
+
+      assert Enum.map(Document.chars!(doc, 0), & &1.text) == ["a", "b"]
     end
 
     test "a line break is a line however it is written" do
@@ -4317,8 +4403,14 @@ defmodule PdfElixide.BuilderTest do
         Builder.paragraph(Builder.new(), ["a", {"", footnote: "Note."}])
       end
 
-      assert_raise ArgumentError, ~r/a note needs text other than whitespace/, fn ->
-        Builder.paragraph(Builder.new(), [{"a", footnote: " \n"}])
+      assert_raise ArgumentError, ~r/must end in a character other than whitespace/, fn ->
+        Builder.paragraph(Builder.new(), [{"a\u00AD", footnote: "Note."}])
+      end
+
+      for note <- [" \n", "\u00AD"] do
+        assert_raise ArgumentError, ~r/a note needs text other than whitespace/, fn ->
+          Builder.paragraph(Builder.new(), [{"a", footnote: note}])
+        end
       end
 
       assert_raise ArgumentError, ~r/invalid :footnote, expected a string/, fn ->
@@ -4553,8 +4645,10 @@ defmodule PdfElixide.BuilderTest do
         Builder.header(Builder.new(), font_size: 9)
       end
 
-      assert_raise ArgumentError, ~r/^invalid :left, a header or footer part is one line/, fn ->
-        Builder.footer(Builder.new(), left: "a\nb")
+      for text <- ["a\nb", "a\u2029b"] do
+        assert_raise ArgumentError, ~r/^invalid :left, a header or footer part is one line/, fn ->
+          Builder.footer(Builder.new(), left: text)
+        end
       end
 
       assert_raise ArgumentError,
@@ -4702,8 +4796,10 @@ defmodule PdfElixide.BuilderTest do
         paragraph.({:anchor, ""})
       end
 
-      assert_raise ArgumentError, ~r/^invalid run, a linked run needs text other than/, fn ->
-        Builder.paragraph(Builder.new(), ["x", {" ", link: "https://example.com"}])
+      for text <- [" ", "\u00AD"] do
+        assert_raise ArgumentError, ~r/^invalid run, a linked run needs text other than/, fn ->
+          Builder.paragraph(Builder.new(), ["x", {text, link: "https://example.com"}])
+        end
       end
 
       assert_raise ArgumentError, ~r/^invalid rect, it lies outside the 612.0 × 792.0 page/, fn ->

@@ -165,6 +165,8 @@ defmodule PdfElixide.Builder do
 
   @fonts [:auto, :helvetica, :times, :courier, :dejavu_sans]
 
+  @line_breaks ["\n", "\r", "\u0085", "\u2028", "\u2029"]
+
   defguardp is_point(point)
             when is_tuple(point) and tuple_size(point) == 2 and is_number(elem(point, 0)) and
                    is_number(elem(point, 1))
@@ -178,11 +180,12 @@ defmodule PdfElixide.Builder do
     * `:color` — a `PdfElixide.Color.RGB` with components from `0.0` to `1.0`.
       Defaults to `nil`, which is black.
     * `:link` — a `t:link/0` the run's text points to. Defaults to `nil`, no
-      link. A linked run must contain text other than whitespace.
+      link. A linked run must contain text other than whitespace and soft
+      hyphens.
     * `:footnote` — a `t:text/0` set as a numbered note at the foot of the
-      page. The run must end in a character other than whitespace. Defaults
-      to `nil`, no note. Accepted in `paragraph/3`, `heading/4`, list items,
-      `columns/3` and the body rows of `table/3`; see
+      page. The run must end in a character other than whitespace or a soft
+      hyphen. Defaults to `nil`, no note. Accepted in `paragraph/3`,
+      `heading/4`, list items, `columns/3` and the body rows of `table/3`; see
       [Footnotes](#module-footnotes).
 
   Runs are joined as they are written, so a space between two runs belongs
@@ -1335,9 +1338,10 @@ defmodule PdfElixide.Builder do
   neither move it nor make room for it. If no page has started yet, the first
   one starts here.
 
-  `text` is a `t:text/0` without `\\n`; a run of whitespace is laid out as one
-  space. Text extending beyond the page edge is refused when the document
-  is built. See `t:text_at_opts/0` for the options.
+  `text` is a `t:text/0` without line breaks, spaced as
+  [flowing text](guides/building-documents.md#flowing-text).
+  Text extending beyond the page edge is refused when the document is built.
+  See `t:text_at_opts/0` for the options.
 
       PdfElixide.Builder.text_at(builder, {72, 36}, "Confidential", font_size: 9)
   """
@@ -2141,10 +2145,10 @@ defmodule PdfElixide.Builder do
   defp part_runs!(part, text, color) when is_binary(text) or is_list(text) do
     runs = text |> runs!() |> Enum.map(&%{&1 | color: &1.color || color})
 
-    if Enum.any?(runs, &String.contains?(&1.text, "\n")) do
+    if Enum.any?(runs, &String.contains?(&1.text, @line_breaks)) do
       raise ArgumentError,
             "invalid #{inspect(part)}, a header or footer part is one line, so it cannot " <>
-              "contain \"\\n\""
+              "contain a line break"
     end
 
     runs
@@ -3061,7 +3065,7 @@ defmodule PdfElixide.Builder do
   defp label_prefix!(prefix) do
     prefix = LayoutOptions.field_text!(:prefix, prefix, "a page label")
 
-    if String.contains?(prefix, ["\n", "\r", "\u2028", "\u2029"]) do
+    if String.contains?(prefix, @line_breaks) do
       raise ArgumentError,
             "invalid :prefix, a page label is one line, so it cannot contain a line break: " <>
               inspect(prefix)
@@ -3788,9 +3792,10 @@ defmodule PdfElixide.Builder do
   defp run!({text, opts}, place) when is_binary(text) and is_list(opts) do
     run = opts |> build_run_options() |> Map.put(:text, LayoutOptions.utf8!("text", text))
 
-    if run.link != nil and String.trim(run.text) == "" do
+    if run.link != nil and not drawn?(run.text) do
       raise ArgumentError,
-            "invalid run, a linked run needs text other than whitespace: #{inspect(text)}"
+            "invalid run, a linked run needs text other than whitespace and soft hyphens: " <>
+              inspect(text)
     end
 
     %{run | footnote: footnote!(run.footnote, run.text, place)}
@@ -3801,19 +3806,22 @@ defmodule PdfElixide.Builder do
           "invalid run, expected a string or a {string, opts} tuple: #{inspect(other)}"
   end
 
+  defp drawn?(text), do: text |> String.replace("\u00AD", "") |> String.trim() != ""
+
   defp footnote!(nil, _text, _place), do: nil
 
   defp footnote!(note, text, :flow) do
-    if not String.match?(text, ~r/\S\z/u) do
+    if not String.match?(text, ~r/[^\s\x{AD}]\z/u) do
       raise ArgumentError,
             "invalid run, a footnote's number follows the run's text, so the run must end " <>
-              "in a character other than whitespace: #{inspect(text)}"
+              "in a character other than whitespace or a soft hyphen: #{inspect(text)}"
     end
 
     runs = runs!(note, :note)
 
-    if Enum.all?(runs, &(String.trim(&1.text) == "")) do
-      raise ArgumentError, "invalid :footnote, a note needs text other than whitespace"
+    if not Enum.any?(runs, &drawn?(&1.text)) do
+      raise ArgumentError,
+            "invalid :footnote, a note needs text other than whitespace and soft hyphens"
     end
 
     runs
@@ -3911,9 +3919,9 @@ defmodule PdfElixide.Builder do
   end
 
   defp validate_one_line!(runs) do
-    if Enum.any?(runs, &String.contains?(&1.text, "\n")) do
+    if Enum.any?(runs, &String.contains?(&1.text, @line_breaks)) do
       raise ArgumentError,
-            "invalid text, text_at/4 draws one line, so it cannot contain \"\\n\"; " <>
+            "invalid text, text_at/4 draws one line, so it cannot contain a line break; " <>
               "use paragraph/3 or text_in_rect/4 for text that breaks"
     end
   end

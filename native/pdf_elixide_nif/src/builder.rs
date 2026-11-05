@@ -989,7 +989,9 @@ fn styled_runs(
     let from_auto = matches!(font, FontNif::Auto);
 
     let mut styled = Vec::with_capacity(input.len());
-    for run in input.into_iter().filter(|run| !run.text.is_empty()) {
+    // A run of only soft hyphens draws nothing, so it needs no face.
+    let drawn = |run: &RunNif| !run.text.chars().all(|c| c == flow::SOFT_HYPHEN);
+    for run in input.into_iter().filter(drawn) {
         // DejaVu Sans has no italic, so `:auto` sets it upright.
         let italic = run.italic && !(from_auto && family == Family::DejaVu);
         let color = run.color.map(Into::into);

@@ -1549,9 +1549,8 @@ impl<'a> Layout<'a> {
         }
 
         // A base-14 font would draw `?` and an embedded one an empty box.
-        // Whitespace is drawn as a space in its run's face, and `\n` not at all.
         if let Some((face, character)) = drawn()
-            .filter(|&(_, c)| c != '\n')
+            .filter(|&(_, c)| drawn_char(c))
             .map(|(face, c)| (face, if c.is_whitespace() { ' ' } else { c }))
             .find(|&(face, c)| !self.fonts.covers(face, c))
         {
@@ -2677,6 +2676,7 @@ pub(super) enum Token {
 pub(super) fn tokens(runs: &[Run]) -> Vec<Token> {
     let mut out = Vec::new();
     let mut word: Vec<Run> = Vec::new();
+    let mut after_cr = false;
 
     let flush = |word: &mut Vec<Run>, out: &mut Vec<Token>| {
         if !word.is_empty() {
@@ -2686,15 +2686,26 @@ pub(super) fn tokens(runs: &[Run]) -> Vec<Token> {
 
     for run in runs {
         for c in run.text.chars() {
-            if c == '\n' {
+            // Preserve CRLF pairing across omitted soft hyphens.
+            if c == SOFT_HYPHEN {
+                continue;
+            }
+            let crlf = after_cr && c == '\n';
+            after_cr = c == '\r';
+            if crlf {
+                continue;
+            }
+
+            if is_line_break(c) {
                 flush(&mut word, &mut out);
                 out.push(Token::Break);
-            } else if c.is_whitespace() {
+            } else if collapses(c) {
                 flush(&mut word, &mut out);
                 if !matches!(out.last(), Some(Token::Space(_))) {
                     out.push(Token::Space(run.styled(" ")));
                 }
             } else {
+                let c = if c.is_whitespace() { ' ' } else { c };
                 match word.last_mut() {
                     Some(piece) if piece.same_style(run) => piece.text.push(c),
                     _ => word.push(run.styled(c)),
@@ -2707,21 +2718,35 @@ pub(super) fn tokens(runs: &[Run]) -> Vec<Token> {
     out
 }
 
-// `wrap` makes a line of every word and every `\n`, at any width, so text
-// with neither draws nothing.
+fn is_line_break(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
+// No-break spaces stay inside their word.
+fn collapses(c: char) -> bool {
+    c.is_whitespace() && !matches!(c, '\u{A0}' | '\u{2007}' | '\u{202F}')
+}
+
+pub(crate) const SOFT_HYPHEN: char = '\u{AD}';
+
+fn drawn_char(c: char) -> bool {
+    !is_line_break(c) && c != SOFT_HYPHEN
+}
+
+// Words and line breaks reserve a line even without visible glyphs.
 pub fn draws_nothing<'t>(texts: impl IntoIterator<Item = &'t str>) -> bool {
     texts
         .into_iter()
         .flat_map(str::chars)
-        .all(|c| c != '\n' && c.is_whitespace())
+        .all(|c| c == SOFT_HYPHEN || (!is_line_break(c) && collapses(c)))
 }
 
-// `source_lines` ends a line at `\r` too, where `wrap` draws it as a space.
+// `source_lines` trims a no-break space like any other, where `tokens` keeps it.
 pub fn code_draws_nothing<'t>(texts: impl IntoIterator<Item = &'t str>) -> bool {
     texts
         .into_iter()
         .flat_map(str::chars)
-        .all(|c| c != '\n' && c != '\r' && c.is_whitespace())
+        .all(|c| c == SOFT_HYPHEN || (!is_line_break(c) && c.is_whitespace()))
 }
 
 #[derive(Default)]
@@ -2963,12 +2988,16 @@ fn source_lines(runs: &[Run], tab_width: usize) -> Vec<Vec<Run>> {
 
     for run in runs {
         for c in run.text.chars() {
+            // Preserve CRLF pairing across omitted soft hyphens.
+            if c == SOFT_HYPHEN {
+                continue;
+            }
             let crlf = after_cr && c == '\n';
             after_cr = c == '\r';
             if crlf {
                 continue;
             }
-            if c == '\n' || c == '\r' {
+            if is_line_break(c) {
                 end(&mut line, &mut lines);
                 stop = 0;
                 since_stop.clear();

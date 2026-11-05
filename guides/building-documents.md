@@ -73,8 +73,12 @@ Paragraphs, headings and lists flow from the top margin down. Each line takes
 a box `font_size × line_height` points tall, with the text centered in it, and
 lines wrap at the right margin. A line that would cross the bottom margin
 starts a new page of the same size; nothing is drawn over the margins. A word
-wider than the whole line is split between characters, and `\n` starts a new
-line within a paragraph. Runs of spaces are laid out as one space.
+wider than the whole line is split between characters.
+
+`\n`, `\r\n`, `\r`, U+0085, U+2028 and U+2029 start a new line within a
+paragraph. Runs of spaces collapse to one. No-break spaces (U+00A0, U+2007,
+U+202F) render as spaces without collapsing or separating words. Soft hyphens
+(U+00AD) are omitted.
 
 A paragraph is followed by space half its font size tall.
 `PdfElixide.Builder.space/2` adds more before the next block. Both are dropped
@@ -174,9 +178,9 @@ Builder.new()
 ```
 
 Positioned text can sit in the margins; flowing text does not make room for
-it. It does not wrap, and text containing `\n` raises; for text that wraps,
-see [Text in a box](#text-in-a-box). At build time, the whole line must fit on
-the page, including accents and italic overhangs.
+it. It does not wrap, and text containing a line break raises; for text that
+wraps, see [Text in a box](#text-in-a-box). At build time, the whole line must
+fit on the page, including accents and italic overhangs.
 
 ## Text in a box
 
@@ -228,10 +232,10 @@ Builder.new()
 
 Unlike a paragraph, a code block keeps its spacing. Spaces are not collapsed,
 blank lines keep their height, and each tab moves to the next stop, every
-`:tab_width` characters from the start of its line. `\r\n` and `\r` end a
-line as `\n` does, and whitespace at the end of a line is dropped. A line
-wider than the block breaks at the character that would cross its edge, not
-between words, and continues at the block's left edge.
+`:tab_width` characters from the start of its line. Line breaks and soft
+hyphens follow [Flowing text](#flowing-text); trailing whitespace is dropped.
+A line wider than the block breaks at the character that would cross its
+edge, not between words, and continues at the block's left edge.
 
 The background fills the width between the margins. Line height and spacing
 follow paragraphs; see [Flowing text](#flowing-text). A block holding only
@@ -551,7 +555,8 @@ The note is a `t:PdfElixide.Builder.text/0`, styled like any other text,
 but it cannot carry a footnote of its own. Notes are numbered from 1 through
 the whole document, in the order their runs are added. The number is drawn
 smaller and raised right after the run's text, in the regular face of the
-run's font, so the run must end in a character other than whitespace.
+run's font, so the run must end in a character other than whitespace or a
+soft hyphen.
 
 A note is set on the page its number lands on, below a short rule, with the
 page's notes stacked in number order so the last line sits on the bottom
@@ -606,7 +611,7 @@ A link points to one of:
 
 The clickable area follows each line of text. A run that wraps is one link
 per page. Separate runs stay separate links, even with the same target. A
-linked run must contain text other than whitespace.
+linked run must contain text other than whitespace and soft hyphens.
 
 To make an image or a drawn shape clickable, give its rect to
 `PdfElixide.Builder.link_in_rect/3`:
