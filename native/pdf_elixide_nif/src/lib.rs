@@ -34,6 +34,7 @@ mod pages;
 mod paths;
 mod redaction;
 mod rendering;
+mod replace_file;
 mod resource;
 mod ring;
 mod running_regions;

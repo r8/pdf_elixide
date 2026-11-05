@@ -67,5 +67,19 @@ defmodule PdfElixide do
 
   Only the binary form of `Path.t()` is accepted; a charlist raises
   `FunctionClauseError`.
+
+  ### Writing a file
+
+  A failed save leaves an existing regular file unchanged. Successful saves
+  replace it and require a writable directory.
+
+    * Other hard links keep the old contents.
+    * Symbolic links are followed and kept in place.
+    * On Unix, permission bits are preserved; ownership goes to the user
+      running the VM.
+
+  Pipes, devices and descriptor paths such as `/dev/stdout` are written to
+  directly. Images can be saved to pipes; PDFs return an `:io` error and leave
+  the pipe in place.
   """
 end

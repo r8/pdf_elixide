@@ -29,6 +29,7 @@ use crate::{
     open_document::OpenOptionsNif,
     open_editor::{Marked, OpenEditor, OutOfRange, PageError, Rebuild},
     redaction::draws_redactions,
+    replace_file::replace_file,
     resource::{Closable, EditorResource},
     save::{
         ensure_edits_survive_save, ensure_incremental_has_a_source,
@@ -297,15 +298,26 @@ fn editor_save(
         // Report destructive edits and a missing source before omitted changes.
         ensure_edits_survive_save(editor, &options)?;
 
+        // Resupplying source data can mark an untouched editor as modified.
+        let modified = editor.modified();
         if !options.incremental {
             editor.resupply_embedded().map_err(to_nif_err)?;
         }
         editor.resupply_info().map_err(to_nif_err)?;
 
         let incremental = options.incremental;
-        editor
-            .save_with_options(&path, options.into())
-            .map_err(to_nif_err)?;
+        let mut written = false;
+        let saved = replace_file(&path, |staged| {
+            editor
+                .save_with_options(staged, options.into())
+                .map_err(to_nif_err)?;
+            written = true;
+            Ok(())
+        });
+        if saved.is_err() && written && modified {
+            editor.record_unpublished_write();
+        }
+        saved?;
         if !incremental {
             editor.record_full_write();
         }

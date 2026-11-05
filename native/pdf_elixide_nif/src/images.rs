@@ -17,6 +17,7 @@ use crate::{
     error::{tagged_err, to_nif_err},
     fs_path::path_arg,
     geometry::{finite, rect_to_nif, RectNif},
+    replace_file::replace_file,
     resource::{Closable, ImageResource},
 };
 
@@ -181,17 +182,19 @@ fn image_save(
     let path = path_arg(path)?;
 
     resource.image.with_read(|image| {
-        if let Some(pixels) = ccitt_pixels(image) {
-            let bytes = encode_gray(image, pixels?, &format)?;
-            std::fs::write(&path, bytes).map_err(|e| to_nif_err(PdfError::Io(e)))?;
+        replace_file(&path, |staged| {
+            if let Some(pixels) = ccitt_pixels(image) {
+                let bytes = encode_gray(image, pixels?, &format)?;
 
-            return Ok(atoms::ok());
-        }
+                return std::fs::write(staged, bytes).map_err(|e| to_nif_err(PdfError::Io(e)));
+            }
 
-        match format {
-            OutputFormatNif::Png => image.save_as_png(&path).map_err(to_nif_err)?,
-            OutputFormatNif::Jpeg => image.save_as_jpeg(&path).map_err(to_nif_err)?,
-        }
+            match format {
+                OutputFormatNif::Png => image.save_as_png(staged),
+                OutputFormatNif::Jpeg => image.save_as_jpeg(staged),
+            }
+            .map_err(to_nif_err)
+        })?;
 
         Ok(atoms::ok())
     })

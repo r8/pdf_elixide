@@ -610,7 +610,8 @@ defmodule PdfElixide.Editor do
   A full rewrite clears it again, so `save/3` and `to_binary/2` both leave the
   editor unmodified — `to_binary/2` included, even though it writes no file. An
   incremental `save/3` does not: after `save(editor, path, incremental: true)`
-  the flag stays `true`. A refused save changes nothing at all.
+  the flag stays `true`. Refused saves change nothing; failed saves never clear
+  the flag.
   """
   @spec modified?(t()) :: boolean()
   def modified?(%__MODULE__{ref: ref}) do

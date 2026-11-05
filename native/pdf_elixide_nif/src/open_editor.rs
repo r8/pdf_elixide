@@ -70,6 +70,8 @@ pub(crate) struct OpenEditor {
     // The replacement starts unmodified; this reports the rebuild until a full
     // write carries it.
     rebuild_unsaved: bool,
+    // Preserve modified state if writing succeeds but publishing fails.
+    write_unpublished: bool,
     // The PDF/A level a conversion declared. A merge keeps the catalog, and so
     // the declaration, unless a scrub had already removed it.
     pdf_a: Option<PdfALevel>,
@@ -172,6 +174,7 @@ impl OpenEditor {
             xmp_scrubbed: false,
             rebuilt: None,
             rebuild_unsaved: false,
+            write_unpublished: false,
             pdf_a: None,
             carried_warnings: Vec::new(),
             discarded_warnings: Vec::new(),
@@ -179,16 +182,21 @@ impl OpenEditor {
     }
 
     pub(crate) fn modified(&self) -> bool {
-        self.editor.is_modified() || self.rebuild_unsaved
+        self.editor.is_modified() || self.rebuild_unsaved || self.write_unpublished
     }
 
     pub(crate) fn rebuilt(&self) -> Option<Rebuild> {
         self.rebuilt
     }
 
-    // Only a successful full write carries a rebuild.
+    // Only a successful full write clears pending changes.
     pub(crate) fn record_full_write(&mut self) {
         self.rebuild_unsaved = false;
+        self.write_unpublished = false;
+    }
+
+    pub(crate) fn record_unpublished_write(&mut self) {
+        self.write_unpublished = true;
     }
 
     pub(crate) fn all_flatten_warnings(&self) -> Vec<String> {

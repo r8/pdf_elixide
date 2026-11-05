@@ -2518,8 +2518,51 @@ defmodule PdfElixide.DocumentTest do
     end
   end
 
+  # Replacing the FIFO can strand cat; kill it on timeout.
+  defp read_pipe(fifo) do
+    port =
+      Port.open({:spawn_executable, System.find_executable("cat")}, [
+        :binary,
+        :exit_status,
+        args: [fifo]
+      ])
+
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
+    {port, os_pid, ""}
+  end
+
+  defp drain({port, os_pid, acc}) do
+    receive do
+      {^port, {:data, data}} -> drain({port, os_pid, acc <> data})
+      {^port, {:exit_status, 0}} -> acc
+    after
+      5_000 ->
+        System.cmd("kill", [Integer.to_string(os_pid)])
+        flunk("nothing was written into the pipe")
+    end
+  end
+
   describe "Image.save/3" do
     @describetag :tmp_dir
+
+    @tag skip: match?({:win32, _}, :os.type()) and "Windows has no named pipes on disk"
+    test "writes into a named pipe rather than replacing it", %{tmp_dir: tmp_dir} do
+      [image | _] = Document.open!(@image_pdf) |> Document.images!(0)
+      fifo = Path.join(tmp_dir, "out.png")
+      {_, 0} = System.cmd("mkfifo", [fifo])
+
+      reader = read_pipe(fifo)
+      assert :ok = Document.Image.save(image, fifo)
+      assert <<137, 80, 78, 71, _::binary>> = drain(reader)
+
+      reader = read_pipe(fifo)
+      editor = PdfElixide.Editor.open!(@valid_pdf)
+      assert {:error, %Error{reason: :io}} = PdfElixide.Editor.save(editor, fifo)
+      PdfElixide.Editor.close(editor)
+      drain(reader)
+
+      assert {:ok, %File.Stat{type: :other}} = File.lstat(fifo)
+    end
 
     test "infers PNG from a .png path", %{tmp_dir: tmp_dir} do
       [image | _] = Document.open!(@image_pdf) |> Document.images!(0)

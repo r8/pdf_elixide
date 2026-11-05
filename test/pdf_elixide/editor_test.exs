@@ -380,6 +380,97 @@ defmodule PdfElixide.EditorTest do
     end
   end
 
+  describe "save/3 over an existing file" do
+    @describetag :tmp_dir
+
+    # Missing startxref permits opening but fails after incremental writing begins.
+    setup %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "source.pdf")
+      File.write!(path, @valid_pdf |> File.read!() |> String.replace("startxref", "startxreX"))
+
+      %{path: path, original: File.read!(path)}
+    end
+
+    test "leaves the file untouched when an in-place incremental save fails", %{
+      path: path,
+      original: original,
+      tmp_dir: tmp_dir
+    } do
+      editor = open_editor(path) |> Editor.set_title!("Changed")
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Editor.save(editor, path, incremental: true)
+      assert File.read!(path) == original
+      assert File.ls!(tmp_dir) == ["source.pdf"]
+    end
+
+    test "replaces the file when a save succeeds", %{path: path, tmp_dir: tmp_dir} do
+      editor = open_editor(path) |> Editor.set_title!("Changed")
+
+      assert {:ok, ^editor} = Editor.save(editor, path)
+      assert Document.metadata!(open(path)).title == "Changed"
+      assert File.ls!(tmp_dir) == ["source.pdf"]
+    end
+
+    @tag skip: match?({:win32, _}, :os.type()) and "Windows has no file mode or symlinks to keep"
+    test "keeps the file's mode and writes through a symlink", %{path: path, tmp_dir: tmp_dir} do
+      File.chmod!(path, 0o640)
+      link = Path.join(tmp_dir, "link.pdf")
+      File.ln_s!(path, link)
+
+      editor = open_editor(path) |> Editor.set_title!("Changed")
+      assert {:ok, ^editor} = Editor.save(editor, link)
+
+      assert {:ok, %File.Stat{type: :symlink}} = File.lstat(link)
+      assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o640
+      assert Document.metadata!(open(path)).title == "Changed"
+      assert Enum.sort(File.ls!(tmp_dir)) == ["link.pdf", "source.pdf"]
+    end
+
+    @tag skip: match?({:win32, _}, :os.type()) and "Windows has no file mode or symlinks to keep"
+    test "creates the file a dangling symlink points at", %{path: path, tmp_dir: tmp_dir} do
+      link = Path.join(tmp_dir, "link.pdf")
+      File.ln_s!("intended.pdf", link)
+
+      editor = open_editor(path)
+      assert {:ok, ^editor} = Editor.save(editor, link)
+
+      assert {:ok, %File.Stat{type: :symlink}} = File.lstat(link)
+      assert {:ok, %Editor{}} = Editor.from_binary(File.read!(Path.join(tmp_dir, "intended.pdf")))
+    end
+
+    test "stays modified when the written file cannot be put in place", %{
+      path: path,
+      tmp_dir: tmp_dir
+    } do
+      in_the_way = Path.join(tmp_dir, "in_the_way.pdf")
+      File.mkdir!(in_the_way)
+      editor = open_editor(path) |> Editor.set_title!("Changed")
+
+      assert {:error, %Error{reason: :io}} = Editor.save(editor, in_the_way)
+      assert Editor.modified?(editor)
+      assert Enum.sort(File.ls!(tmp_dir)) == ["in_the_way.pdf", "source.pdf"]
+
+      assert {:ok, ^editor} = Editor.save(editor, Path.join(tmp_dir, "saved.pdf"))
+      refute Editor.modified?(editor)
+    end
+
+    # Resupplying the source's /Info must not count as a user edit.
+    test "stays unmodified when an unmodified editor's file cannot be put in place", %{
+      path: path,
+      tmp_dir: tmp_dir
+    } do
+      in_the_way = Path.join(tmp_dir, "in_the_way.pdf")
+      File.mkdir!(in_the_way)
+
+      for source <- [path, @metadata_pdf] do
+        editor = open_editor(source)
+
+        assert {:error, %Error{reason: :io}} = Editor.save(editor, in_the_way)
+        refute Editor.modified?(editor), "#{Path.basename(source)} reads as modified"
+      end
+    end
+  end
+
   describe ":encryption on a write" do
     setup do
       path =
