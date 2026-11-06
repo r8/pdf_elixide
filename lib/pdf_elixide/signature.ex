@@ -315,6 +315,8 @@ defmodule PdfElixide.Signature do
 
   The gap between the ranges must contain only `:contents`, encoded as one
   unbroken hexadecimal string; otherwise the verdict is `{:ok, :invalid}`.
+  Any signing-certificate attribute must match the embedded certificate, or the
+  verdict is also `{:ok, :invalid}`.
 
   For `:pkcs7_sha1`, `{:ok, :valid}` means both that the signer signed the
   encapsulated SHA-1 digest and that it matches the covered bytes. A blob with no
@@ -325,8 +327,8 @@ defmodule PdfElixide.Signature do
 
   Reports `%PdfElixide.Error{reason: :invalid_pdf}` rather than a verdict when
   the signature has no `:contents`, its `:byte_range` is not four non-negative
-  integers, that range reaches past `pdf_bytes`, or `:contents` is not a CMS
-  blob.
+  integers, that range reaches past `pdf_bytes`, `:contents` is not a CMS blob,
+  or its signing-certificate attribute cannot be read.
   """
   @spec verify(t(), binary()) :: {:ok, verdict()} | {:error, Error.t()}
   # A timestamp signs its own token rather than the byte range, so the digest in
@@ -358,11 +360,10 @@ defmodule PdfElixide.Signature do
   @doc """
   Verifies the signature blob on its own, without the document.
 
-  This checks that the signed attributes inside `:contents` carry an authentic
-  signature from the certificate embedded beside them. It does not compare the
-  content digest those attributes carry against any document, so a file altered
-  after signing answers `{:ok, :valid}` here while `verify/2` answers
-  `{:ok, :invalid}` for the same signature.
+  Checks the signature and any signing-certificate attribute in `:contents`
+  against the embedded certificate. It does not compare the signed content
+  digest with the document, so an altered file can still answer `{:ok, :valid}`
+  here while `verify/2` answers `{:ok, :invalid}`.
 
   It is meaningful for every `t:sub_filter/0`, including the one `verify/2`
   declines to check. Prefer `verify/2` when the covered bytes are available.

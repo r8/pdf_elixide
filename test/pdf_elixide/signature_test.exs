@@ -142,6 +142,23 @@ defmodule PdfElixide.SignatureTest do
     {signature, forged}
   end
 
+  # Preserve length, issuer and serial so only certificate binding detects the swap.
+  defp swap_certificate(path) do
+    bytes = File.read!(path)
+    {:ok, [signature]} = Signature.list(open(path))
+    {:ok, %Certificate{der: der, subject_common_name: name}} = Signature.certificate(signature)
+    {offset, _size} = der |> :binary.matches(name) |> List.last()
+    <<head::binary-size(^offset), letter, tail::binary>> = der
+    other = head <> <<if(letter == ?M, do: ?N, else: ?M)>> <> tail
+
+    forged =
+      Enum.reduce([:upper, :lower], bytes, fn case, acc ->
+        :binary.replace(acc, Base.encode16(der, case: case), Base.encode16(other, case: case))
+      end)
+
+    {%{signature | contents: :binary.replace(signature.contents, der, other)}, forged}
+  end
+
   # Flip a byte of the imprint the authority signed over. The token keeps its
   # length and still parses, so only the signature across it can report this.
   defp tamper(%Timestamp{token: token, message_imprint: imprint}) do
@@ -672,6 +689,24 @@ defmodule PdfElixide.SignatureTest do
 
       assert {:error, %Error{reason: :invalid_pdf}} =
                Signature.verify(%{signature | contents: <<0, 1, 2>>}, forged)
+    end
+  end
+
+  describe "a certificate the signer did not name" do
+    test "is reported invalid when the signer committed to its certificate" do
+      {:ok, [original]} = Signature.list(open(@pades_pdf))
+      {signature, forged} = swap_certificate(@pades_pdf)
+
+      assert Signature.certificate!(signature).der != Signature.certificate!(original).der
+      assert Signature.verify(signature, forged) == {:ok, :invalid}
+      assert Signature.verify_signer(signature) == {:ok, :invalid}
+    end
+
+    test "is not detected when the signer committed to none" do
+      {signature, forged} = swap_certificate(@cms_pdf)
+
+      assert Signature.verify(signature, forged) == {:ok, :valid}
+      assert Signature.verify_signer(signature) == {:ok, :valid}
     end
   end
 

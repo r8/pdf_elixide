@@ -122,7 +122,9 @@ Three limits apply whatever the algorithm:
 `{:ok, :valid}` means the signature from the certificate embedded in the blob
 is authentic, the content digest matches the bytes in `:byte_range`, and the
 gap between the ranges holds only `:contents`, encoded as one unbroken
-hexadecimal string. Any other gap answers `{:ok, :invalid}`.
+hexadecimal string. Any signing-certificate attribute (used by PAdES) must also
+match the embedded certificate. A mismatched certificate or any other gap
+answers `{:ok, :invalid}`.
 
 `{:ok, :valid}` does not establish any of these:
 
@@ -192,10 +194,10 @@ Enum.any?(mine, &(&1.der == certificate.der))
 #=> true
 ```
 
-Matching DER identifies the embedded certificate; use `verify/2` to check the
-signature over the document. Verification proves use of the certificate's key,
-so another certificate with the same key also verifies. Neither verification
-nor chain validation proves that the signer chose this specific certificate.
+Matching DER identifies the embedded certificate; `verify/2` checks the document
+signature. Without a signing-certificate attribute, another certificate with
+the same key also verifies; neither verification nor chain validation proves
+which certificate the signer chose.
 
 `PdfElixide.Signature.Certificate.valid_at?/2` checks the certificate's validity
 window at a caller-supplied instant. The signer's

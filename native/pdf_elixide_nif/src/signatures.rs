@@ -6,6 +6,7 @@ use cms::{
     cert::{
         x509::{
             name::{Name, RdnSequence, RelativeDistinguishedName},
+            spki::AlgorithmIdentifierOwned,
             time::Time,
             Certificate,
         },
@@ -15,9 +16,11 @@ use cms::{
     signed_data::{SignedData, SignerIdentifier},
 };
 use der::{
-    asn1::{BmpString, Ia5StringRef, PrintableStringRef, TeletexStringRef, Utf8StringRef},
+    asn1::{
+        BmpString, Ia5StringRef, OctetString, PrintableStringRef, TeletexStringRef, Utf8StringRef,
+    },
     oid::ObjectIdentifier,
-    Any, Decode, Encode, SliceReader, Tag, Tagged,
+    Any, Decode, Encode, Sequence, SliceReader, Tag, Tagged,
 };
 use pdf_oxide::{
     object::{Object, ObjectRef},
@@ -535,6 +538,7 @@ fn signature_verify_detached(
         let blob = trim_der_padding(contents);
         let covered = signed_bytes(&pdf_data, &byte_range, contents)?;
         let verdict = verify_signer_detached(blob, &covered.bytes).map_err(to_nif_err)?;
+        let verdict = bound_to_certificate(blob, verdict)?;
 
         Ok(covered.judge(verdict_atom(verdict)))
     })
@@ -558,27 +562,36 @@ fn signature_verify_pkcs7_sha1(
 
         let verdict = match encapsulated_sha1_digest(&signed) {
             None => atoms::unknown(),
-            Some(digest) => match verify_signer_detached(blob, digest).map_err(to_nif_err)? {
-                SignerVerify::Valid
-                    if digest_matches(HashAlgorithm::Sha1, &covered.bytes, digest) =>
-                {
-                    atoms::valid()
-                }
-                SignerVerify::Valid => atoms::invalid(),
-                other => verdict_atom(other),
-            },
+            Some(digest) => verdict_atom(legacy_verdict(
+                verify_signer_detached(blob, digest).map_err(to_nif_err)?,
+                || digest_matches(HashAlgorithm::Sha1, &covered.bytes, digest),
+                |verdict| bound_to_certificate(blob, verdict),
+            )?),
         };
 
         Ok(covered.judge(verdict))
     })
 }
 
+// A document digest mismatch must take precedence over an unknown ESS hash.
+fn legacy_verdict(
+    signer: SignerVerify,
+    covers_document: impl FnOnce() -> bool,
+    bind: impl FnOnce(SignerVerify) -> NifResult<SignerVerify>,
+) -> NifResult<SignerVerify> {
+    match signer {
+        SignerVerify::Valid if !covers_document() => Ok(SignerVerify::Invalid),
+        verdict => bind(verdict),
+    }
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn signature_verify_signer(contents: Option<Binary>) -> NifResult<Atom> {
     contain_panic(|| {
         let blob = cms_blob(contents.as_deref())?;
+        let verdict = verify_signer(blob).map_err(to_nif_err)?;
 
-        verify_signer(blob).map(verdict_atom).map_err(to_nif_err)
+        bound_to_certificate(blob, verdict).map(verdict_atom)
     })
 }
 
@@ -765,8 +778,10 @@ fn days_in_month(year: u32, month: u32) -> u32 {
 // Match upstream verification's private signer selection. Its
 // `SubjectKeyIdentifier` path falls back to the first certificate.
 fn signer_certificate(cms: &[u8]) -> Result<Certificate, MalformedCms> {
-    let signed = signed_data_of(cms)?;
+    signer_certificate_in(&signed_data_of(cms)?)
+}
 
+fn signer_certificate_in(signed: &SignedData) -> Result<Certificate, MalformedCms> {
     let signer = signed
         .signer_infos
         .0
@@ -803,6 +818,151 @@ fn as_certificate(choice: &CertificateChoices) -> Option<&Certificate> {
         CertificateChoices::Certificate(cert) => Some(cert),
         _ => None,
     }
+}
+
+const OID_SIGNING_CERTIFICATE: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.12");
+const OID_SIGNING_CERTIFICATE_V2: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.47");
+
+#[derive(Sequence)]
+struct SigningCertificate {
+    certs: Vec<EssCertId>,
+    #[asn1(optional = "true")]
+    policies: Option<Any>,
+}
+
+// v1 forbids hash_algorithm; v2 permits it.
+#[derive(Sequence)]
+struct EssCertId {
+    #[asn1(optional = "true")]
+    hash_algorithm: Option<AlgorithmIdentifierOwned>,
+    cert_hash: OctetString,
+    #[asn1(optional = "true")]
+    issuer_serial: Option<Any>,
+}
+
+// Ordered by precedence: one mismatching attribute decides the verdict.
+#[derive(Debug, PartialEq, PartialOrd)]
+enum CertificateBinding {
+    Absent,
+    Matches,
+    UnknownHash,
+    Mismatch,
+}
+
+// The first `ESSCertID` names the signer's certificate (RFC 5035 §5.4).
+fn certificate_binding(
+    signed: &SignedData,
+    certificate: &Certificate,
+) -> Result<CertificateBinding, MalformedCms> {
+    let Some(attributes) = signed
+        .signer_infos
+        .0
+        .iter()
+        .next()
+        .and_then(|signer| signer.signed_attrs.as_ref())
+    else {
+        return Ok(CertificateBinding::Absent);
+    };
+
+    let mut binding = CertificateBinding::Absent;
+    let mut seen = Vec::with_capacity(2);
+    for attribute in attributes.iter() {
+        let v1 = if attribute.oid == OID_SIGNING_CERTIFICATE {
+            true
+        } else if attribute.oid == OID_SIGNING_CERTIFICATE_V2 {
+            false
+        } else {
+            continue;
+        };
+        if seen.contains(&attribute.oid) {
+            return Err(MalformedCms("signing-certificate attribute is repeated"));
+        }
+        seen.push(attribute.oid);
+        let [value] = attribute.values.as_slice() else {
+            return Err(MalformedCms(
+                "signing-certificate attribute does not have exactly one value",
+            ));
+        };
+        let named = value
+            .decode_as::<SigningCertificate>()
+            .ok()
+            .and_then(|value| value.certs.into_iter().next())
+            .ok_or(MalformedCms(
+                "signing-certificate attribute names no certificate",
+            ))?;
+        let algorithm = match (v1, named.hash_algorithm) {
+            (true, None) => HashAlgorithm::Sha1,
+            (true, Some(_)) => {
+                return Err(MalformedCms(
+                    "signing-certificate attribute names a hash algorithm",
+                ));
+            }
+            (false, None) => HashAlgorithm::Sha256,
+            (false, Some(id)) => hash_algorithm_of(id.oid),
+        };
+        let der = certificate
+            .to_der()
+            .map_err(|_| MalformedCms("signer certificate cannot be re-encoded"))?;
+
+        let found = if algorithm == HashAlgorithm::Unknown {
+            CertificateBinding::UnknownHash
+        } else if digest_matches(algorithm, &der, named.cert_hash.as_bytes()) {
+            CertificateBinding::Matches
+        } else {
+            CertificateBinding::Mismatch
+        };
+        if found > binding {
+            binding = found;
+        }
+    }
+
+    Ok(binding)
+}
+
+const HASH_ALGORITHMS: [(ObjectIdentifier, HashAlgorithm); 4] = [
+    (
+        ObjectIdentifier::new_unwrap("1.3.14.3.2.26"),
+        HashAlgorithm::Sha1,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
+        HashAlgorithm::Sha256,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2"),
+        HashAlgorithm::Sha384,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3"),
+        HashAlgorithm::Sha512,
+    ),
+];
+
+fn hash_algorithm_of(oid: ObjectIdentifier) -> HashAlgorithm {
+    HASH_ALGORITHMS
+        .iter()
+        .find(|(known, _)| *known == oid)
+        .map_or(HashAlgorithm::Unknown, |&(_, algorithm)| algorithm)
+}
+
+fn bound_to_certificate(blob: &[u8], verdict: SignerVerify) -> NifResult<SignerVerify> {
+    if verdict != SignerVerify::Valid {
+        return Ok(verdict);
+    }
+
+    let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
+    let signed = signed_data_of(blob).map_err(malformed)?;
+    let certificate = signer_certificate_in(&signed).map_err(malformed)?;
+
+    Ok(
+        match certificate_binding(&signed, &certificate).map_err(malformed)? {
+            CertificateBinding::Absent | CertificateBinding::Matches => SignerVerify::Valid,
+            CertificateBinding::UnknownHash => SignerVerify::Unknown,
+            CertificateBinding::Mismatch => SignerVerify::Invalid,
+        },
+    )
 }
 
 #[derive(NifMap)]
@@ -1309,7 +1469,7 @@ mod tests {
 
     use cms::{
         cert::x509::{
-            attr::AttributeTypeAndValue,
+            attr::{Attribute, AttributeTypeAndValue},
             certificate::Rfc5280,
             name::{RdnSequence, RelativeDistinguishedName},
             serial_number::SerialNumber,
@@ -1745,6 +1905,224 @@ mod tests {
         out.extend_from_slice(&body[tbs.len()..]);
 
         reseal(out)
+    }
+
+    fn binding_of(signed: &SignedData, certificate: &Certificate) -> CertificateBinding {
+        certificate_binding(signed, certificate).expect("a readable binding")
+    }
+
+    #[test]
+    fn binds_a_pades_signature_to_its_certificate() {
+        let signed = signed_data_of(&signature_blob("form_signature_pades.pdf")).expect("CMS");
+        let certificate = signer_certificate_in(&signed).expect("the signer");
+
+        assert_eq!(
+            binding_of(&signed, &certificate),
+            CertificateBinding::Matches
+        );
+    }
+
+    #[test]
+    fn finds_no_binding_in_a_signature_without_the_attribute() {
+        let signed = signed_data_of(&signature_blob("form_signature_cms.pdf")).expect("CMS");
+        let certificate = signer_certificate_in(&signed).expect("the signer");
+
+        assert_eq!(
+            binding_of(&signed, &certificate),
+            CertificateBinding::Absent
+        );
+    }
+
+    #[test]
+    fn refuses_another_certificate_over_the_signers_key() {
+        let signed = signed_data_of(&signature_blob("form_signature_pades.pdf")).expect("CMS");
+        let certificate = signer_certificate_in(&signed).expect("the signer");
+        let subject =
+            common_name_of(Any::new(Tag::Utf8String, b"Mallory".to_vec()).expect("a UTF8String"));
+        let other = Certificate::from_der(&certificate_with_subject(&certificate, &subject))
+            .expect("the spliced certificate decodes");
+
+        assert_eq!(
+            other.tbs_certificate().subject_public_key_info(),
+            certificate.tbs_certificate().subject_public_key_info()
+        );
+        assert_eq!(binding_of(&signed, &other), CertificateBinding::Mismatch);
+    }
+
+    fn with_ess_attributes(
+        build: impl FnOnce(&Certificate) -> Vec<Attribute>,
+    ) -> (SignedData, Certificate) {
+        let mut signed = signed_data_of(&signature_blob("form_signature_pades.pdf")).expect("CMS");
+        let certificate = signer_certificate_in(&signed).expect("the signer");
+        let mut signer = signed.signer_infos.0.get(0).expect("a signer").clone();
+        let mut attributes = signer
+            .signed_attrs
+            .take()
+            .expect("signed attributes")
+            .into_vec();
+        let before = attributes.len();
+        attributes.retain(|attribute| attribute.oid != OID_SIGNING_CERTIFICATE_V2);
+        assert_eq!(
+            before - attributes.len(),
+            1,
+            "the fixture carries one signingCertificateV2"
+        );
+        attributes.extend(build(&certificate));
+
+        signer.signed_attrs = Some(SetOfVec::try_from(attributes).expect("a set"));
+        signed.signer_infos = SignerInfos(SetOfVec::try_from(vec![signer]).expect("a set"));
+
+        (signed, certificate)
+    }
+
+    fn with_signing_certificate(ess: &SigningCertificate) -> (SignedData, Certificate) {
+        with_ess_attributes(|_| vec![ess_attribute(OID_SIGNING_CERTIFICATE_V2, &[ess])])
+    }
+
+    fn ess_attribute(oid: ObjectIdentifier, values: &[&SigningCertificate]) -> Attribute {
+        let values: Vec<_> = values
+            .iter()
+            .map(|ess| Any::encode_from(*ess).expect("encodes"))
+            .collect();
+
+        Attribute {
+            oid,
+            values: SetOfVec::try_from(values).expect("a set"),
+        }
+    }
+
+    fn naming(hash_algorithm: Option<ObjectIdentifier>, cert_hash: &[u8]) -> SigningCertificate {
+        SigningCertificate {
+            certs: vec![EssCertId {
+                hash_algorithm: hash_algorithm.map(|oid| AlgorithmIdentifierOwned {
+                    oid,
+                    parameters: None,
+                }),
+                cert_hash: OctetString::new(cert_hash).expect("an OCTET STRING"),
+                issuer_serial: None,
+            }],
+            policies: None,
+        }
+    }
+
+    fn sha256_of(certificate: &Certificate) -> Vec<u8> {
+        Sha256::digest(certificate.to_der().expect("encodes")).to_vec()
+    }
+
+    #[test]
+    fn binds_a_v1_and_a_v2_attribute_together() {
+        let (signed, certificate) = with_ess_attributes(|certificate| {
+            let sha1 = Sha1::digest(certificate.to_der().expect("encodes"));
+            vec![
+                ess_attribute(OID_SIGNING_CERTIFICATE, &[&naming(None, &sha1)]),
+                ess_attribute(
+                    OID_SIGNING_CERTIFICATE_V2,
+                    &[&naming(None, &sha256_of(certificate))],
+                ),
+            ]
+        });
+
+        assert_eq!(
+            binding_of(&signed, &certificate),
+            CertificateBinding::Matches
+        );
+    }
+
+    #[test]
+    fn refuses_an_attribute_with_two_values() {
+        let (signed, certificate) = with_ess_attributes(|certificate| {
+            let matching = naming(None, &sha256_of(certificate));
+            let other = naming(None, &[0; 32]);
+            vec![ess_attribute(
+                OID_SIGNING_CERTIFICATE_V2,
+                &[&matching, &other],
+            )]
+        });
+
+        assert_eq!(
+            certificate_binding(&signed, &certificate),
+            Err(MalformedCms(
+                "signing-certificate attribute does not have exactly one value"
+            ))
+        );
+    }
+
+    #[test]
+    fn refuses_a_repeated_attribute() {
+        let (signed, certificate) = with_ess_attributes(|certificate| {
+            vec![
+                ess_attribute(
+                    OID_SIGNING_CERTIFICATE_V2,
+                    &[&naming(None, &sha256_of(certificate))],
+                ),
+                ess_attribute(OID_SIGNING_CERTIFICATE_V2, &[&naming(None, &[0; 32])]),
+            ]
+        });
+
+        assert_eq!(
+            certificate_binding(&signed, &certificate),
+            Err(MalformedCms("signing-certificate attribute is repeated"))
+        );
+    }
+
+    #[test]
+    fn refuses_a_hash_algorithm_in_a_v1_attribute() {
+        let sha256 = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
+        let (signed, certificate) = with_ess_attributes(|certificate| {
+            vec![ess_attribute(
+                OID_SIGNING_CERTIFICATE,
+                &[&naming(Some(sha256), &sha256_of(certificate))],
+            )]
+        });
+
+        assert_eq!(
+            certificate_binding(&signed, &certificate),
+            Err(MalformedCms(
+                "signing-certificate attribute names a hash algorithm"
+            ))
+        );
+    }
+
+    #[test]
+    fn cannot_check_a_certificate_hashed_with_an_unknown_algorithm() {
+        let (signed, certificate) = with_signing_certificate(&naming(
+            Some(ObjectIdentifier::new_unwrap("1.2.3.4")),
+            &[0; 32],
+        ));
+
+        assert_eq!(
+            binding_of(&signed, &certificate),
+            CertificateBinding::UnknownHash
+        );
+    }
+
+    #[test]
+    fn judges_a_legacy_document_before_the_certificate_binding() {
+        let unreadable = |_| Ok(SignerVerify::Unknown);
+
+        assert_eq!(
+            legacy_verdict(SignerVerify::Valid, || false, unreadable).expect("a verdict"),
+            SignerVerify::Invalid
+        );
+        assert_eq!(
+            legacy_verdict(SignerVerify::Valid, || true, unreadable).expect("a verdict"),
+            SignerVerify::Unknown
+        );
+    }
+
+    #[test]
+    fn refuses_an_attribute_naming_no_certificate() {
+        let (signed, certificate) = with_signing_certificate(&SigningCertificate {
+            certs: vec![],
+            policies: None,
+        });
+
+        assert_eq!(
+            certificate_binding(&signed, &certificate),
+            Err(MalformedCms(
+                "signing-certificate attribute names no certificate"
+            ))
+        );
     }
 
     // Compare only values this binding still takes from upstream.
