@@ -335,10 +335,11 @@ The grid is drawn around every cell unless `stroke_color: nil`.
 
 Without `:column_widths`, the columns share the content width equally. A
 table with no weighted column is as wide as its columns, from the left
-margin. When `:auto` columns would make the table wider than the content
-width, they shrink toward the width of their widest character so that it fits.
-If they still do not fit, or the weighted columns are left no room for text,
-the table is refused when the document is built.
+margin; when its `:auto` columns would make it wider than the content width,
+they shrink toward the width of their widest character so that it fits.
+`:auto` columns do not shrink to make room for weighted ones. The table is
+refused when the document is built if its columns still do not fit, or if a
+weighted column is left no room for text.
 
 ### Spans
 
