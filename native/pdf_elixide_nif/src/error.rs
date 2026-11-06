@@ -96,7 +96,18 @@ fn classify(e: &PdfError) -> Atom {
         | PdfError::UnsupportedFilter(_) => atoms::unsupported(),
         PdfError::ObjectNotFound(_, _) => atoms::not_found(),
         PdfError::Io(_) => atoms::io(),
-        _ => atoms::other(),
+        PdfError::Utf8Error(_)
+        | PdfError::Decode(_)
+        | PdfError::Encode(_)
+        | PdfError::Font(_)
+        | PdfError::Image(_)
+        | PdfError::CircularReference(_)
+        | PdfError::RecursionLimitExceeded(_)
+        | PdfError::InvalidOperation(_)
+        | PdfError::LayoutAnalysis(_)
+        | PdfError::Barcode(_)
+        | PdfError::OcrUnavailable { .. }
+        | PdfError::Type4Runtime(_) => atoms::other(),
     }
 }
 
