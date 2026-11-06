@@ -111,6 +111,14 @@ Anything else — another curve, an Ed25519 key, RSA-PSS over SHA-1 — is
 using another permitted salt length is reported `:invalid` rather than
 `:unknown`.
 
+Three limits apply whatever the algorithm:
+
+  * Only the first signer in the blob is checked.
+  * The content type in the signed attributes is not compared with the signed
+    content.
+  * Signatures over signed attributes in an order other than DER order are
+    reported `:invalid`.
+
 `{:ok, :valid}` means the signature from the certificate embedded in the blob
 is authentic, the content digest matches the bytes in `:byte_range`, and the
 gap between the ranges holds only `:contents`, encoded as one unbroken
@@ -184,8 +192,10 @@ Enum.any?(mine, &(&1.der == certificate.der))
 #=> true
 ```
 
-Matching DER shows only that the certificates are identical; use `verify/2` to
-check the signature over the document.
+Matching DER identifies the embedded certificate; use `verify/2` to check the
+signature over the document. Verification proves use of the certificate's key,
+so another certificate with the same key also verifies. Neither verification
+nor chain validation proves that the signer chose this specific certificate.
 
 `PdfElixide.Signature.Certificate.valid_at?/2` checks the certificate's validity
 window at a caller-supplied instant. The signer's
