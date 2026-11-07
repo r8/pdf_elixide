@@ -514,7 +514,7 @@ defmodule PdfElixide.OptionDefaultsTest do
       linear = %{
         color: black,
         background: nil,
-        quiet_zone: 10.0,
+        quiet_zone: 11.0,
         text: false,
         font: nil,
         font_size: nil

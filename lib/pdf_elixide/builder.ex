@@ -561,7 +561,7 @@ defmodule PdfElixide.Builder do
     * `:background` — a `PdfElixide.Color.RGB` painted behind the whole
       symbol. Defaults to `nil`, none, so the page shows through.
     * `:quiet_zone` — the blank margin on each side of the bars, in module
-      widths. It is part of the symbol's width. Defaults to `10`.
+      widths. It is part of the symbol's width. Defaults to `11`.
     * `:text` — whether to print the encoded data, with any computed check
       digit, as one centered line under the bars. Defaults to `false`.
     * `:font`, `:font_size` — the caption's font and size, as for
@@ -3268,7 +3268,7 @@ defmodule PdfElixide.Builder do
     opts
     |> Keyword.take([:font, :font_size])
     |> build_paragraph_options()
-    |> Map.merge(symbol_options(opts, 10))
+    |> Map.merge(symbol_options(opts, 11))
     |> Map.put(:text, boolean!(:text, Keyword.get(opts, :text, false)))
   end
 

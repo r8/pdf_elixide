@@ -2579,7 +2579,7 @@ defmodule PdfElixide.BuilderTest do
       rounded(path.operations)
     end
 
-    defp ean13_rect, do: %Rect{x: 72.0, y: 600.0, width: 230.0, height: 50.0}
+    defp ean13_rect, do: %Rect{x: 72.0, y: 600.0, width: 234.0, height: 50.0}
 
     test "barcode_in_rect/5 fills the rect, quiet zones included, with one bar per run" do
       doc =
@@ -2587,11 +2587,11 @@ defmodule PdfElixide.BuilderTest do
         |> Builder.barcode_in_rect(ean13_rect(), :ean13, "5901234123457")
         |> written()
 
-      # 95 modules and two 10-module quiet zones across 230 points: 2 points each.
+      # 95 modules and two 11-module quiet zones across 234 points: 2 points each.
       bars = bars(doc)
       assert length(bars) == 30
-      assert hd(bars) == [92.0, 600.0, 2.0, 50.0]
-      assert List.last(bars) == [280.0, 600.0, 2.0, 50.0]
+      assert hd(bars) == [94.0, 600.0, 2.0, 50.0]
+      assert List.last(bars) == [282.0, 600.0, 2.0, 50.0]
       assert Enum.all?(bars, fn [_x, y, _width, height] -> {y, height} == {600.0, 50.0} end)
     end
 
@@ -2611,7 +2611,7 @@ defmodule PdfElixide.BuilderTest do
 
       left = chars |> Enum.map(& &1.bbox.x) |> Enum.min()
       right = chars |> Enum.map(&(&1.bbox.x + &1.bbox.width)) |> Enum.max()
-      assert_in_delta (left + right) / 2, 72 + 230 / 2, 0.5
+      assert_in_delta (left + right) / 2, 72 + 234 / 2, 0.5
     end
 
     test "a caption keeps every space of the encoded data" do
@@ -2628,10 +2628,10 @@ defmodule PdfElixide.BuilderTest do
       [a, b] = origins.("A  B")
       assert_in_delta b - a, (667 + 2 * 278) * 12 / 1000, 0.01
 
-      # Centered on x = 187 with the spaces counted.
-      assert_in_delta hd(origins.("A")), 187 - 667 * 12 / 2000, 0.01
-      assert_in_delta hd(origins.("A ")), 187 - (667 + 278) * 12 / 2000, 0.01
-      assert_in_delta hd(origins.(" A")), 187 - (667 + 278) * 12 / 2000 + 278 * 12 / 1000, 0.01
+      # Centered on x = 189 with the spaces counted.
+      assert_in_delta hd(origins.("A")), 189 - 667 * 12 / 2000, 0.01
+      assert_in_delta hd(origins.("A ")), 189 - (667 + 278) * 12 / 2000, 0.01
+      assert_in_delta hd(origins.(" A")), 189 - (667 + 278) * 12 / 2000 + 278 * 12 / 1000, 0.01
     end
 
     test "the background is painted behind the whole symbol, before the bars" do
@@ -2644,7 +2644,7 @@ defmodule PdfElixide.BuilderTest do
         |> written()
         |> Document.paths!(0)
 
-      assert background.operations == [{:rectangle, 72.0, 600.0, 230.0, 50.0}]
+      assert background.operations == [{:rectangle, 72.0, 600.0, 234.0, 50.0}]
       assert {background.fill_color, background.stroke_color} == {@yellow, nil}
       assert {bars.fill_color, bars.stroke_color} == {@crimson, nil}
     end
@@ -2688,8 +2688,8 @@ defmodule PdfElixide.BuilderTest do
         |> Builder.barcode(:ean13, "590123412345", align: :center)
         |> written()
 
-      assert hd(bars(doc, 0)) == [82.0, 720.0 - 18 - 6 - 36, 1.0, 36.0]
-      assert hd(bars(doc, 1)) == [72 + 468 / 2 - 115 / 2 + 10, 720.0 - 36, 1.0, 36.0]
+      assert hd(bars(doc, 0)) == [83.0, 720.0 - 18 - 6 - 36, 1.0, 36.0]
+      assert hd(bars(doc, 1)) == [72 + 468 / 2 - 117 / 2 + 11, 720.0 - 36, 1.0, 36.0]
     end
 
     test "qr_code/3 flows at two points per module by default" do
