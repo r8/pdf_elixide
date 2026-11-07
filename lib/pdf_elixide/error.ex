@@ -21,13 +21,15 @@ defmodule PdfElixide.Error do
       the password given to `PdfElixide.Signature.Certificate.parse_pkcs12/2`
       does not open the file. `PdfElixide.Document.authenticate/2` reports a
       rejected password as `{:ok, false}` instead.
-    * `:invalid_pdf` — malformed or unparseable PDF data.
+    * `:invalid_pdf` — malformed or unparseable PDF data, signature blobs,
+      certificates or timestamp tokens.
     * `:invalid_pattern` — the search pattern could not be compiled. Comes from
       `PdfElixide.Document.search/2` and friends.
-    * `:unsupported` — an input or operation this library does not support:
-      a PDF version, feature or filter, bytes of an unsupported format, or a
-      call refused in the handle's current state, such as an incremental save
-      after a merge. `message` says which, and what to do instead.
+    * `:unsupported` — unsupported PDF versions, features, filters or input
+      formats; operations refused in the handle's current state, such as an
+      incremental save after a merge; or a `PdfElixide.Builder` description
+      that cannot be built, such as text that does not fit or a link to a
+      missing anchor. `message` says what failed and what to change.
     * `:not_found` — a referenced object was not found; no form field carries
       the name given to `PdfElixide.Form.field/2`, `PdfElixide.Form.value/2`,
       `PdfElixide.Form.put_value/3`, `PdfElixide.Form.put_values/2` or
