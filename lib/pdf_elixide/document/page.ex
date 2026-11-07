@@ -298,7 +298,7 @@ defmodule PdfElixide.Document.Page do
 
   This is the human-facing page number the PDF may define, independent of the
   zero-based physical index. Pages outside any declared label range fall back to
-  their decimal page number. Lettered labels follow
+  their decimal page number. For numbering styles and limits, see
   `PdfElixide.Document.page_labels/1`.
 
   Every call re-reads the document's label ranges, so use

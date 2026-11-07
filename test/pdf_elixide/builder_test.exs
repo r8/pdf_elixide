@@ -3879,6 +3879,46 @@ defmodule PdfElixide.BuilderTest do
       assert {:error, %Error{reason: :unsupported}} = doc |> Document.page!(0) |> Page.label()
     end
 
+    test "a Roman label past 1000000 cannot be read, and one at the limit can" do
+      roman = fn start ->
+        bytes =
+          Builder.new()
+          |> Builder.page_labels(:decimal, start: start)
+          |> Builder.paragraph("a")
+          |> Builder.to_binary!(compress: false)
+
+        roman = String.replace(bytes, "/S /D/St #{start}", "/S /R/St #{start}")
+        assert roman != bytes
+        doc = Document.from_binary!(roman)
+        on_exit(fn -> Document.close(doc) end)
+        doc
+      end
+
+      assert Document.page_labels!(roman.(1_000_000)) == [String.duplicate("M", 1000)]
+
+      doc = roman.(1_000_001)
+      assert {:error, %Error{reason: :unsupported, message: message}} = Document.page_labels(doc)
+      assert message =~ "the label of page 0 counts past 1000000 in Roman numerals"
+      assert {:error, %Error{reason: :unsupported}} = doc |> Document.page!(0) |> Page.label()
+    end
+
+    test "a decimal label counts on past 4294967295" do
+      bytes =
+        Builder.new()
+        |> Builder.page_labels(:decimal, start: 2_147_483_646)
+        |> Builder.paragraph("a")
+        |> Builder.page()
+        |> Builder.paragraph("b")
+        |> Builder.to_binary!(compress: false)
+
+      largest = String.replace(bytes, "/St 2147483646", "/St 4294967295")
+      assert largest != bytes
+      doc = Document.from_binary!(largest)
+      on_exit(fn -> Document.close(doc) end)
+
+      assert Document.page_labels!(doc) == ["4294967295", "4294967296"]
+    end
+
     test "a label past 2147483647 is refused, and one at the limit is not" do
       at_limit = fn -> Builder.new() |> Builder.page_labels(:decimal, start: 2_147_483_647) end
 

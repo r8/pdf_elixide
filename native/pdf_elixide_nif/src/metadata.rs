@@ -14,7 +14,7 @@ use rustler::{NifMap, NifResult, NifUnitEnum, ResourceArc};
 use crate::{
     atoms,
     error::{tagged_err, to_nif_err},
-    page_label::{self, TooLong, MAX_LETTERED},
+    page_label::{self, TooLong, MAX_LETTERED, MAX_ROMAN_READ},
     pages::ensure_page_in_range,
     resource::DocumentResource,
     text_string::{decode_pdf_text_string, encode_pdf_text_string},
@@ -240,12 +240,16 @@ fn document_page_labels(resource: ResourceArc<DocumentResource>) -> NifResult<Ve
     })
 }
 
-fn too_long(TooLong { page }: TooLong) -> rustler::Error {
+fn too_long(refusal: TooLong) -> rustler::Error {
+    let (page, limit, counting) = match refusal {
+        TooLong::Letters { page } => (page, MAX_LETTERED, "letters"),
+        TooLong::Roman { page } => (page, MAX_ROMAN_READ, "Roman numerals"),
+    };
     tagged_err(
         atoms::unsupported(),
         format!(
-            "the label of page {page} counts past {MAX_LETTERED} in letters, which would take \
-             over 1000 of them; this library reads labels in letters up to {MAX_LETTERED}"
+            "the label of page {page} counts past {limit} in {counting}, which would take \
+             over 1000 characters; this library reads labels in {counting} up to {limit}"
         ),
     )
 }
