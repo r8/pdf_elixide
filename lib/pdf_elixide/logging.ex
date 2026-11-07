@@ -51,12 +51,11 @@ defmodule PdfElixide.Logging do
   Some tolerated conditions are recorded as `t:PdfElixide.Warning.t/0`
   values, independently of capture and without explicit enablement.
   `PdfElixide.Document.structured_warnings/1` lists per-document warnings;
-  `structured_warnings/0` and `take_structured_warnings/0` read the process-wide
+  `structured_warnings/0` and `take_structured_warnings/0` read the VM-wide
   feed. Which feed a warning reaches depends on the call that raised it; see
   "Which feed a warning reaches" in `PdfElixide.Warning`.
 
-  Under concurrent use an entry may come from any handle in the VM; see the
-  [Concurrency](guides/concurrency.md) guide.
+  See [Concurrency](guides/concurrency.md) for reading warnings across processes.
   """
 
   require Logger
@@ -130,8 +129,7 @@ defmodule PdfElixide.Logging do
   end
 
   @doc """
-  Lists the warnings recorded process-wide, oldest first, without emptying the
-  list.
+  Lists VM-wide warnings, oldest first, without emptying the list.
 
   See `PdfElixide.Warning` for which conditions are recorded and which feed
   each one reaches.
@@ -142,18 +140,15 @@ defmodule PdfElixide.Logging do
   end
 
   @doc """
-  Returns the warnings recorded process-wide, oldest first, and empties the
-  list.
+  Returns VM-wide warnings, oldest first, and empties the list.
 
-  The list is bounded and discards the oldest entries when full. If it
-  overflowed since it was last emptied, a single `Logger` warning
-  reports how many entries were discarded, so a truncated list cannot be
-  mistaken for a complete one.
+  The list discards the oldest entries when full. If it overflowed since the
+  last take, a single `Logger` warning reports how many entries were discarded.
   """
   @spec take_structured_warnings() :: [Warning.t()]
   def take_structured_warnings do
     {warnings, dropped} = Native.warnings_take()
-    report_discarded(dropped, "the process-wide list")
+    report_discarded(dropped, "the VM-wide list")
 
     Enum.map(warnings, &Warning.from_nif/1)
   end

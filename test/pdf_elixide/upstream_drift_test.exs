@@ -1678,11 +1678,8 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
-  # Async modules may add unrelated entries to the process-wide feed.
   describe "which sink a structured warning reaches" do
-    # A call outside the claiming set must leave the condition where the
-    # process-wide feed can still report it.
-    test "a call that is not an extraction leaves the condition process-wide" do
+    test "a call that is not an extraction leaves the condition VM-wide" do
       doc = open(@stream_cr_pdf)
       Document.search!(doc, "Warned")
 
@@ -1694,7 +1691,6 @@ defmodule PdfElixide.UpstreamDriftTest do
              end)
     end
 
-    # The other half of the same rule: extraction does claim it.
     test "an extraction claims the condition for its document" do
       doc = open(@stream_cr_pdf)
       Document.text!(doc, 0)

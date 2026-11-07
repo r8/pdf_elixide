@@ -11,22 +11,17 @@ defmodule PdfElixide.Warning do
   Which feed a warning reaches depends on the call that raised it, not on its
   category.
 
-  `PdfElixide.Document.structured_warnings/1` lists what one document handle
-  recorded: conditions always tied to the document — an object that ran into
-  the end of the file, a page with no text layer — and reader-level ones met
-  during `PdfElixide.Document.text/2`, `PdfElixide.Document.to_markdown/2` or
-  `PdfElixide.Document.to_html/2` at any arity, which attribute what they meet
-  to the document being read. `:exclude_layers` and `:exclude_inks` are the
-  exception: either sends `PdfElixide.Document.text/3` down a different route,
-  which does not.
+  `PdfElixide.Document.structured_warnings/1` lists document-specific
+  conditions and reader-level conditions raised by
+  `PdfElixide.Document.text/2`, `PdfElixide.Document.to_markdown/2` or
+  `PdfElixide.Document.to_html/2` at any arity. The exception is
+  `PdfElixide.Document.text/3` with `:exclude_layers` or `:exclude_inks`, whose
+  reader-level warnings go to the VM-wide feed.
 
-  `PdfElixide.Logging.structured_warnings/0` lists everything else — the same
-  reader-level conditions met during **any other call**,
-  `PdfElixide.Document.to_plain_text/2` included, and those raised by a parse
-  with no handle behind it at all. So the same `:spec_violation` on the same
-  file reaches the document's feed after `PdfElixide.Document.text/2` and the
-  process-wide one after `PdfElixide.Document.search/2`. Read both if you need
-  every condition a call met.
+  `PdfElixide.Logging.structured_warnings/0` lists reader-level conditions
+  from all other calls, including `PdfElixide.Document.to_plain_text/2` and
+  parsing without a document handle. This feed is VM-wide. Read both feeds
+  if you need every recorded condition a call met.
 
   ## Fields
 
@@ -82,7 +77,7 @@ defmodule PdfElixide.Warning do
       operator limit, so the rest of that page's content is missing.
     * `:glyph_dropped` — a font painted nothing for a glyph while still
       advancing the cursor, so the page renders with a gap that reads as
-      whitespace. Raised only while rendering, so always process-wide.
+      whitespace. Raised only while rendering, so always VM-wide.
 
   Two categories are defined but produced by no condition: `:xref_recovery`
   and `:font`.

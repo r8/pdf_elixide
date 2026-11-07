@@ -1,7 +1,6 @@
 defmodule PdfElixide.WarningsTest do
   @moduledoc false
 
-  # Exact process-wide assertions require isolation from async modules.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
@@ -233,10 +232,7 @@ defmodule PdfElixide.WarningsTest do
     end
   end
 
-  describe "process-wide" do
-    # Which feed a reader-level condition reaches depends on the call, not the
-    # category: extraction and conversion attribute what they meet to the
-    # document, every other call leaves it here.
+  describe "VM-wide" do
     test "a parser condition lands here when no extraction claimed it" do
       doc = open(@stream_cr)
       assert Document.search!(doc, "Warned") != []
@@ -263,8 +259,6 @@ defmodule PdfElixide.WarningsTest do
       assert Logging.structured_warnings() == []
     end
 
-    # The set `PdfElixide.Warning`'s "Which feed a warning reaches" promises,
-    # at every arity, because each arity is a separate upstream scope.
     for route <- [:text, :text_region, :text_all, :markdown, :markdown_all, :html, :html_all] do
       test "#{route} claims the condition for its document" do
         doc = open(@stream_cr)
@@ -286,7 +280,7 @@ defmodule PdfElixide.WarningsTest do
           :search,
           :render
         ] do
-      test "#{route} leaves the condition process-wide" do
+      test "#{route} leaves the condition VM-wide" do
         doc = open(@stream_cr)
         route(doc, unquote(route))
 
