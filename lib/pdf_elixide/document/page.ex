@@ -628,7 +628,7 @@ defmodule PdfElixide.Document.Page do
   @spec search(t(), String.t(), Document.search_opts()) ::
           {:ok, [SearchMatch.t()]} | {:error, Error.t()}
   def search(%__MODULE__{doc: doc, index: index}, pattern, opts \\ [])
-      when is_binary(pattern) and is_list(opts) do
+      when is_binary(pattern) and pattern != "" and is_list(opts) do
     Document.search(doc, pattern, index, opts)
   end
 
@@ -638,7 +638,8 @@ defmodule PdfElixide.Document.Page do
   fails.
   """
   @spec search!(t(), String.t(), Document.search_opts()) :: [SearchMatch.t()]
-  def search!(page, pattern, opts \\ []) when is_binary(pattern) and is_list(opts) do
+  def search!(page, pattern, opts \\ [])
+      when is_binary(pattern) and pattern != "" and is_list(opts) do
     search(page, pattern, opts) |> Wrap.unwrap!()
   end
 
@@ -770,7 +771,7 @@ defmodule PdfElixide.Document.Page do
   what `:deep` costs, and which colorants never appear.
   """
   @spec inks(t(), Document.inks_opts()) :: {:ok, [String.t()]} | {:error, Error.t()}
-  def inks(%__MODULE__{doc: doc, index: index}, opts \\ []) do
+  def inks(%__MODULE__{doc: doc, index: index}, opts \\ []) when is_list(opts) do
     Document.inks(doc, index, opts)
   end
 
@@ -780,7 +781,7 @@ defmodule PdfElixide.Document.Page do
   error if it fails.
   """
   @spec inks!(t(), Document.inks_opts()) :: [String.t()]
-  def inks!(page, opts \\ []) do
+  def inks!(page, opts \\ []) when is_list(opts) do
     inks(page, opts) |> Wrap.unwrap!()
   end
 

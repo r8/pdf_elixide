@@ -4757,6 +4757,16 @@ defmodule PdfElixide.BuilderTest do
       end
 
       assert %Builder{} = Builder.new(page_size: {14_400, 14_400}) |> Builder.paragraph("a")
+
+      assert_raise ArgumentError, ~r/too large to place 12.0-point text/, fn ->
+        Builder.new(page_size: {612, 1.0e9}) |> Builder.rule()
+      end
+    end
+
+    test "a rule taller than the content area" do
+      assert_raise ArgumentError, ~r/a rule takes 12.0 points .* than the 8.0-point/, fn ->
+        Builder.new() |> Builder.page({300, 152}) |> Builder.rule()
+      end
     end
 
     test "the check uses the current page's size" do

@@ -1269,6 +1269,7 @@ defmodule PdfElixide.Builder do
               ":font_size), more than the #{room}-point content height"
     end
 
+    validate_precise!(builder, builder.font_size)
     %{builder | ops: [{:rule, builder.font_size} | builder.ops]}
   end
 

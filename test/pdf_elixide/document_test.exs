@@ -4290,6 +4290,12 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       assert_raise FunctionClauseError, fn -> Document.inks(doc, -1) end
     end
+
+    test "raises FunctionClauseError for options that are not a list" do
+      doc = Document.open!(@valid_pdf)
+      assert_raise FunctionClauseError, fn -> Document.inks(doc, 0, untyped(:deep)) end
+      assert_raise FunctionClauseError, fn -> Document.inks!(doc, 0, untyped(:deep)) end
+    end
   end
 
   describe "inks!/2,3" do

@@ -13,6 +13,8 @@ defmodule PdfElixide.Document.PageTest do
   alias PdfElixide.Document.TextLine
   alias PdfElixide.Document.Word
   alias PdfElixide.Error
+
+  import PdfElixide.Untyped
   alias PdfElixide.Geometry.Rect
 
   @fixtures Path.join([__DIR__, "..", "..", "fixtures"])
@@ -879,6 +881,12 @@ defmodule PdfElixide.Document.PageTest do
       doc = Document.open!(@valid_pdf)
       assert {:error, _reason} = Page.search(%Page{doc: doc, index: 99}, "Page")
     end
+
+    test "raises FunctionClauseError for an empty pattern" do
+      page = @valid_pdf |> Document.open!() |> Document.page!(0)
+      assert_raise FunctionClauseError, ~r/Page.search\/3/, fn -> Page.search(page, "") end
+      assert_raise FunctionClauseError, ~r/Page.search!\/3/, fn -> Page.search!(page, "") end
+    end
   end
 
   describe "search!/2,3" do
@@ -983,6 +991,18 @@ defmodule PdfElixide.Document.PageTest do
     test "returns {:error, reason} for an out-of-range page" do
       doc = Document.open!(@valid_pdf)
       assert {:error, _reason} = Page.inks(%Page{doc: doc, index: 99})
+    end
+
+    test "raises FunctionClauseError for options that are not a list" do
+      page = @valid_pdf |> Document.open!() |> Document.page!(0)
+
+      assert_raise FunctionClauseError, ~r/Page.inks\/2/, fn ->
+        Page.inks(page, untyped(:deep))
+      end
+
+      assert_raise FunctionClauseError, ~r/Page.inks!\/2/, fn ->
+        Page.inks!(page, untyped(:deep))
+      end
     end
   end
 

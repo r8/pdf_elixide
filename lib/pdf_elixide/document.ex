@@ -812,7 +812,7 @@ defmodule PdfElixide.Document do
   @spec inks(t(), non_neg_integer(), inks_opts()) ::
           {:ok, [String.t()]} | {:error, Error.t()}
   def inks(%__MODULE__{ref: ref}, page_index, opts \\ [])
-      when is_integer(page_index) and page_index >= 0 do
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
     options = build_inks_options(opts)
     Wrap.call(fn -> Native.document_page_inks(ref, page_index, options) end)
   end
@@ -823,7 +823,7 @@ defmodule PdfElixide.Document do
   """
   @spec inks!(t(), non_neg_integer(), inks_opts()) :: [String.t()]
   def inks!(doc, page_index, opts \\ [])
-      when is_integer(page_index) and page_index >= 0 do
+      when is_integer(page_index) and page_index >= 0 and is_list(opts) do
     inks(doc, page_index, opts) |> Wrap.unwrap!()
   end
 
