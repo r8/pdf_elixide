@@ -1021,7 +1021,7 @@ impl<'a> Layout<'a> {
                 Op::CodeBlock(code) => self.code_block(index, code)?,
                 Op::Columns(columns) => self.columns(index, columns)?,
                 Op::Space(points) => self.space(*points),
-                Op::Rule { size } => self.rule(*size),
+                Op::Rule { size } => self.rule(*size)?,
                 Op::TextAt { runs, size, x, y } => {
                     self.positioned();
                     self.text_at(index, runs, *size, *x, *y)?
@@ -1389,6 +1389,23 @@ impl<'a> Layout<'a> {
     fn break_page(&mut self) {
         let (width, height) = (self.page().width, self.page().height);
         self.new_page(width, height);
+    }
+
+    // Keep `needed` lazy: measuring footnotes can refuse.
+    fn advance(
+        &mut self,
+        needed: impl FnOnce(&Self) -> Result<f64, Refused>,
+    ) -> Result<(), Refused> {
+        if !self.fresh {
+            let spaced = self.cursor - self.pending_space;
+            if self.fits(spaced, needed(self)?) {
+                self.cursor = spaced;
+            } else {
+                self.break_page();
+            }
+        }
+        self.pending_space = 0.0;
+        Ok(())
     }
 
     // Resolve only after the next flow content's page-break decision.
@@ -2068,14 +2085,7 @@ impl<'a> Layout<'a> {
             });
         }
 
-        if !self.fresh {
-            let spaced = self.cursor - self.pending_space;
-            if self.fits(spaced, height) {
-                self.cursor = spaced;
-            } else {
-                self.break_page();
-            }
-        }
+        self.advance(|_| Ok(height))?;
         self.resolve_anchors();
 
         let left = self.margins.left;
@@ -2243,17 +2253,9 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn rule(&mut self, size: f64) {
+    fn rule(&mut self, size: f64) -> Result<(), Refused> {
         self.ensure_page();
-        if !self.fresh {
-            let spaced = self.cursor - self.pending_space;
-            if self.fits(spaced, size) {
-                self.cursor = spaced;
-            } else {
-                self.break_page();
-            }
-        }
-        self.pending_space = 0.0;
+        self.advance(|_| Ok(size))?;
         self.resolve_anchors();
 
         let (left, right) = (self.margins.left, self.margins.right);
@@ -2275,6 +2277,7 @@ impl<'a> Layout<'a> {
 
         self.cursor -= size;
         self.fresh = false;
+        Ok(())
     }
 
     fn fits(&self, top: f64, line: f64) -> bool {
@@ -2446,17 +2449,7 @@ impl<'a> Layout<'a> {
         marker: Option<(f64, Segment)>,
     ) -> Result<(), Refused> {
         let notes: Vec<usize> = references(&segments).collect();
-        if !self.fresh {
-            let spaced = self.cursor - self.pending_space;
-            self.pending_space = 0.0;
-            // A page never breaks before its first line, so a line the refusal
-            // above let through always lands somewhere.
-            if self.fits(spaced, block.line + self.notes_height(block.op, &notes)?) {
-                self.cursor = spaced;
-            } else {
-                self.break_page();
-            }
-        }
+        self.advance(|layout| Ok(block.line + layout.notes_height(block.op, &notes)?))?;
         self.reserve(block.op, block.line, &notes)?;
         self.resolve_anchors();
 
@@ -2551,15 +2544,7 @@ impl<'a> Layout<'a> {
 
         let mut lines = lines.into_iter().peekable();
         while lines.peek().is_some() {
-            if !self.fresh {
-                let spaced = self.cursor - self.pending_space;
-                self.pending_space = 0.0;
-                if self.fits(spaced, line + 2.0 * padding) {
-                    self.cursor = spaced;
-                } else {
-                    self.break_page();
-                }
-            }
+            self.advance(|_| Ok(line + 2.0 * padding))?;
             self.resolve_anchors();
 
             let top = self.cursor;

@@ -78,15 +78,7 @@ impl Layout<'_> {
 
         let mut start = 0;
         while start < lines.len() {
-            if !self.fresh {
-                let spaced = self.cursor - self.pending_space;
-                if self.fits(spaced, line + self.notes_height(op, &notes[start])?) {
-                    self.cursor = spaced;
-                } else {
-                    self.break_page();
-                }
-            }
-            self.pending_space = 0.0;
+            self.advance(|layout| Ok(line + layout.notes_height(op, &notes[start])?))?;
             self.resolve_anchors();
 
             let top = self.cursor;

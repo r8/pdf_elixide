@@ -124,16 +124,7 @@ impl Layout<'_> {
         let (first, lead) = measured.units.first().map_or((0.0, Vec::new()), |unit| {
             (measured.least(unit), measured.lead_notes(unit))
         });
-        if !self.fresh {
-            let spaced = self.cursor - self.pending_space;
-            let notes = self.notes_height(op, &lead)?;
-            if self.fits(spaced, measured.header + first + notes) {
-                self.cursor = spaced;
-            } else {
-                self.break_page();
-            }
-        }
-        self.pending_space = 0.0;
+        self.advance(|layout| Ok(measured.header + first + layout.notes_height(op, &lead)?))?;
         self.resolve_anchors();
 
         let mut drawn = Drawn::default();
