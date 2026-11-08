@@ -71,6 +71,9 @@ defmodule PdfElixide.Error do
       cannot name a file in arbitrary bytes, raises here; see the "File paths"
       section of `PdfElixide`.
 
+  Malformed arguments always raise. Do not rely on the exception type or
+  message remaining stable across releases.
+
   Build option lists with `Keyword.merge/2` rather than `++`, since a duplicated
   key is rejected instead of resolved to the first occurrence. So nothing about
   the *caller* arrives as a `%PdfElixide.Error{}`; if you get one, the arguments
