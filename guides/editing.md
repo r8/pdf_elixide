@@ -415,9 +415,11 @@ produced.
 string.
 
 A `DateTime` is written as `D:YYYYMMDDHHMMSS` followed by `Z` for UTC or by the
-offset as `+HH'mm'` / `-HH'mm'`. Fractional seconds are dropped. An offset that
-is not a whole number of minutes cannot be spelled, so such a value is written
-in UTC and the instant is preserved rather than the wall clock.
+offset as `+HH'mm'` / `-HH'mm'`. Fractional seconds are dropped. Values with
+sub-minute offsets are written in UTC, preserving the instant.
+`DateTime` values must use `Calendar.ISO`, and the written year must be in
+`0..9999`; otherwise `ArgumentError` is raised. Use `DateTime.convert/2` to
+convert other calendars.
 
 A string must be a well-formed PDF date in full; a value read from
 `PdfElixide.Editor.metadata/1` qualifies. A malformed string, or one with

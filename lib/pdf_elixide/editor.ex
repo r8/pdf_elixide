@@ -1651,7 +1651,7 @@ defmodule PdfElixide.Editor do
           {:ok, t()} | {:error, Error.t()}
   def add_redaction(%__MODULE__{ref: ref} = editor, page_index, %Rect{} = rect, fill \\ nil)
       when is_integer(page_index) and page_index >= 0 and (is_struct(fill, RGB) or is_nil(fill)) do
-    rect = LayoutOptions.rect!("region", rect)
+    rect = LayoutOptions.rect!("rect", rect)
     LayoutOptions.rgb!("fill", fill)
 
     case Wrap.call(fn -> Native.editor_add_redaction(ref, page_index, rect, fill) end) do
@@ -1925,11 +1925,11 @@ defmodule PdfElixide.Editor do
   end
 
   defp page_box!(rect) do
-    box = LayoutOptions.rect!("region", rect)
+    box = LayoutOptions.rect!("rect", rect)
 
     if not writable_box?(box) do
       raise ArgumentError,
-            "invalid region, expected corners of at most " <>
+            "invalid rect, expected corners of at most " <>
               "#{LayoutOptions.max_written()} points: #{inspect(rect)}"
     end
 
@@ -2305,12 +2305,23 @@ defmodule PdfElixide.Editor do
   # A PDF date offset has minute resolution, so a sub-minute offset keeps the
   # instant rather than the wall clock.
   defp pdf_date(key, %DateTime{calendar: Calendar.ISO} = datetime) do
-    datetime =
+    written =
       if rem(datetime.utc_offset + datetime.std_offset, 60) == 0,
         do: datetime,
-        else: datetime |> DateTime.to_unix() |> DateTime.from_unix!()
+        else: DateTime.shift_zone!(datetime, "Etc/UTC")
 
-    validate_date!(key, Calendar.strftime(datetime, "D:%Y%m%d%H%M%S") <> pdf_offset(datetime))
+    if written.year not in 0..9999 do
+      raise ArgumentError,
+            "invalid #{inspect(key)}, expected a year from 0 to 9999: #{inspect(datetime)}"
+    end
+
+    validate_date!(key, Calendar.strftime(written, "D:%Y%m%d%H%M%S") <> pdf_offset(written))
+  end
+
+  defp pdf_date(key, %DateTime{calendar: calendar}) do
+    raise ArgumentError,
+          "invalid #{inspect(key)}, a DateTime must use Calendar.ISO, not " <>
+            "#{inspect(calendar)}; convert it with DateTime.convert/2"
   end
 
   defp pdf_date(key, date) when is_binary(date), do: validate_date!(key, date)

@@ -2705,7 +2705,7 @@ defmodule PdfElixide.EditorTest do
             %Rect{x: -1.0e20, y: 0, width: 2.0e20, height: 792},
             %Rect{x: 1.0e18, y: 0, width: 1.0e18, height: 792}
           ] do
-        assert_raise ArgumentError, ~r/^invalid region, expected corners of at most 1.0e18/, fn ->
+        assert_raise ArgumentError, ~r/^invalid rect, expected corners of at most 1.0e18/, fn ->
           Editor.set_media_box(editor, 0, rect)
         end
       end
@@ -2799,7 +2799,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      assert_raise ArgumentError, ~r/^invalid region, expected corners of at most 1.0e18/, fn ->
+      assert_raise ArgumentError, ~r/^invalid rect, expected corners of at most 1.0e18/, fn ->
         Editor.set_crop_box(editor, 0, %Rect{x: 0, y: -1.0e20, width: 612, height: 2.0e20})
       end
 
@@ -3530,9 +3530,11 @@ defmodule PdfElixide.EditorTest do
 
       overflowing = %Rect{x: 2.0e38, y: 0.0, width: 2.0e38, height: 10.0}
 
-      assert_raise ArgumentError, ~r/32-bit float/, fn ->
-        Editor.add_redaction(editor, 1, overflowing)
-      end
+      assert_raise ArgumentError,
+                   ~r/^invalid rect, expected corners that fit a 32-bit float/,
+                   fn ->
+                     Editor.add_redaction(editor, 1, overflowing)
+                   end
 
       refute Editor.modified?(editor)
     end
@@ -5104,6 +5106,37 @@ defmodule PdfElixide.EditorTest do
           Editor.set_modification_date!(editor, bad)
         end
       end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a year a PDF date cannot spell, showing the DateTime given" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      far = DateTime.new!(Date.new!(10_000, 1, 1), ~T[00:00:00], "Etc/UTC")
+      lmt = %{~U[0000-01-01 00:00:00Z] | utc_offset: 1_172, time_zone: "Europe/Amsterdam"}
+
+      for date <- [far, ~U[-0001-12-31 12:00:00Z], lmt] do
+        error = assert_raise ArgumentError, fn -> Editor.set_creation_date(editor, date) end
+
+        assert Exception.message(error) ==
+                 "invalid :creation_date, expected a year from 0 to 9999: #{inspect(date)}"
+      end
+
+      refute Editor.modified?(editor)
+    end
+
+    test "raises for a DateTime in another calendar, naming it" do
+      editor = Editor.open!(@valid_pdf)
+      on_exit(fn -> Editor.close(editor) end)
+
+      other = %{~U[2024-01-15 12:00:00Z] | calendar: Calendar.Julian}
+
+      assert_raise ArgumentError,
+                   "invalid :modification_date, a DateTime must use Calendar.ISO, not " <>
+                     "Calendar.Julian; convert it with DateTime.convert/2",
+                   fn -> Editor.set_modification_date!(editor, other) end
 
       refute Editor.modified?(editor)
     end
