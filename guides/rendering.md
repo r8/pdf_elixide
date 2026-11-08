@@ -325,6 +325,15 @@ pages typically cost more memory than text pages at the same DPI. The fixed
 limit under [Sizing the output](#sizing-the-output) applies per page, not to the
 document as a whole.
 
+Page images are staged in the system temporary directory. On Unix, only the
+OS user running the node can access the staging directory. If an existing
+staging path cannot be removed, the call returns
+`{:error, %PdfElixide.Error{reason: :io}}`; remove the path named in the error
+or set `TMPDIR` to a directory of your own.
+
+On Windows, the staging directory inherits its parent's permissions. Keep
+`TEMP` private to prevent other users from reading the page images.
+
 ```elixir
 :ok = Document.close(doc)
 ```

@@ -1,4 +1,9 @@
-use std::{collections::HashSet, path::PathBuf, sync::Mutex};
+use std::{
+    collections::HashSet,
+    io,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use image::{codecs::jpeg::JpegEncoder, ExtendedColorType, ImageEncoder};
 use pdf_oxide::{
@@ -659,6 +664,28 @@ fn flatten_temp_dir() -> PathBuf {
     std::env::temp_dir().join(format!("pdf_oxide_flatten_{}", std::process::id()))
 }
 
+// Replace existing entries without following links; never reuse an untrusted directory.
+fn claim_staging_dir(dir: &Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(dir) {
+        Ok(found) if found.is_dir() => std::fs::remove_dir_all(dir)?,
+        Ok(_) => std::fs::remove_file(dir)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    create_private_dir(dir)
+}
+
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> io::Result<()> {
+    std::fs::create_dir(dir)
+}
+
 // `DirtyCpu` rather than `DirtyIo` despite the temporary files: the work is a
 // full-document render and the writes are incidental to it.
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -684,6 +711,17 @@ fn document_rasterize(
             ensure_upstream_budget(page_w, page_h, options.dpi, "lower :dpi")?;
         }
 
+        let dir = flatten_temp_dir();
+        claim_staging_dir(&dir).map_err(|e| {
+            tagged_err(
+                atoms::io(),
+                format!(
+                    "cannot prepare the private directory {} for the rendered pages: {e}; \
+                     remove it, or point the temporary directory elsewhere",
+                    dir.display()
+                ),
+            )
+        })?;
         let bytes = flatten_to_images(doc, options.dpi).map_err(to_nif_err)?;
 
         owned_binary(&bytes, "rasterized document")
@@ -1210,6 +1248,24 @@ mod tests {
             differs_from_right,
             "the raster's two edges match, so the assertion above proves nothing"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_staging_directory_is_recreated_empty_and_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("pdf_elixide_claim_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("page_0.png"), b"stale").unwrap();
+
+        let claimed = claim_staging_dir(&dir).map(|()| std::fs::read_dir(&dir).unwrap().count());
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(claimed.ok(), Some(0));
+        assert_eq!(mode, 0o700);
     }
 
     // Justifies the cleanup in `document_rasterize`.
