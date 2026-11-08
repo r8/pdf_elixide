@@ -927,9 +927,9 @@ defmodule PdfElixide.Builder do
   @type cell :: text() | cell_spec()
 
   @typedoc """
-  A cell with options. Make it with `cell/2` rather than constructing it.
+  A cell with options, made by `cell/2`. Its contents are internal.
   """
-  @type cell_spec :: {:cell, [map()], map()}
+  @opaque cell_spec :: {:cell, [map()], map()}
 
   @typedoc """
   Options accepted by `cell/2`.

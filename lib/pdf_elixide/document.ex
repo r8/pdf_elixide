@@ -2728,8 +2728,8 @@ defmodule PdfElixide.Document do
 
   See `t:structured_opts/0` for the available options.
   """
-  @spec structured(t(), structured_opts() | non_neg_integer()) ::
-          {:ok, [StructuredPage.t()] | StructuredPage.t()} | {:error, Error.t()}
+  @spec structured(t(), structured_opts()) :: {:ok, [StructuredPage.t()]} | {:error, Error.t()}
+  @spec structured(t(), non_neg_integer()) :: {:ok, StructuredPage.t()} | {:error, Error.t()}
   def structured(doc, page_index_or_opts \\ [])
 
   def structured(%__MODULE__{ref: ref}, opts) when is_list(opts) do
@@ -2749,8 +2749,8 @@ defmodule PdfElixide.Document do
   @doc """
   Reads pages as typed regions, raising an error if it fails.
   """
-  @spec structured!(t(), structured_opts() | non_neg_integer()) ::
-          [StructuredPage.t()] | StructuredPage.t()
+  @spec structured!(t(), structured_opts()) :: [StructuredPage.t()]
+  @spec structured!(t(), non_neg_integer()) :: StructuredPage.t()
   def structured!(doc, page_index_or_opts \\ [])
 
   def structured!(%__MODULE__{} = doc, opts) when is_list(opts) do
