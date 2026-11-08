@@ -7,8 +7,9 @@ defmodule PdfElixide.Signature do
   from either source (`t:source/0`), a read-only `PdfElixide.Document` or a
   `PdfElixide.Editor`. `unsigned_fields/1` reports signature fields still waiting
   for one. `verify/2` checks a signature against the bytes it covers;
-  `certificate/1`, `timestamp/1`, `pades_level/1,2,3` and `dss/1` expose the
-  certificate, timestamp and long-term-validation material around it.
+  `algorithms/1` reports the algorithms it declares, and `certificate/1`,
+  `timestamp/1`, `pades_level/1,2,3` and `dss/1` expose the certificate,
+  timestamp and long-term-validation material around it.
 
       {:ok, doc} = PdfElixide.Document.open("signed.pdf")
       {:ok, [signature]} = PdfElixide.Signature.list(doc)
@@ -65,6 +66,20 @@ defmodule PdfElixide.Signature do
   compute. Treat it as unverified either way.
   """
   @type verdict :: :valid | :invalid | :unknown
+
+  @typedoc """
+  The declared signing algorithm's family, or `:unknown` if unrecognized.
+
+  A recognized family does not guarantee verification support: ECDSA over
+  P-521 is `:ecdsa` here but `:unknown` to `verify/2`.
+  """
+  @type signature_algorithm :: :rsa_pkcs1 | :rsa_pss | :ecdsa | :unknown
+
+  @typedoc "The algorithms a signature declares, as `algorithms/1` reports them."
+  @type algorithms :: %{
+          digest: Timestamp.hash_algorithm(),
+          signature: signature_algorithm()
+        }
 
   @typedoc """
   The PAdES baseline level a signature reaches. Each value below names the
@@ -419,6 +434,35 @@ defmodule PdfElixide.Signature do
   """
   @spec certificate!(t()) :: Certificate.t()
   def certificate!(signature), do: signature |> certificate() |> Wrap.unwrap!()
+
+  @doc """
+  The digest and signature algorithms the signature declares.
+
+      {:ok, %{digest: :sha256, signature: :rsa_pkcs1}} =
+        PdfElixide.Signature.algorithms(signature)
+
+  `:digest` hashes the signed content; `:signature` names the signing algorithm's
+  family (`t:signature_algorithm/0`). Both describe the first signer, as checked
+  by `verify/2`, without verifying it. Unrecognized algorithms are `:unknown`.
+
+  For digest policies, including the separate file digests in `:pkcs7_sha1` and
+  `:rfc3161`, see [Algorithm policies](guides/signatures.md#algorithm-policies).
+  Read key size and ECDSA curve from the `:der` returned by `certificate/1`.
+
+  Reports `%PdfElixide.Error{reason: :invalid_pdf}` when `:contents` is absent or
+  malformed, or the blob names no signer.
+  """
+  @spec algorithms(t()) :: {:ok, algorithms()} | {:error, Error.t()}
+  def algorithms(%__MODULE__{contents: contents}) do
+    Wrap.call(fn -> Native.signature_algorithms(contents) end)
+  end
+
+  @doc """
+  Returns the digest and signature algorithms the signature declares, raising
+  an error if it fails.
+  """
+  @spec algorithms!(t()) :: algorithms()
+  def algorithms!(signature), do: signature |> algorithms() |> Wrap.unwrap!()
 
   @doc """
   The RFC 3161 timestamp the signature carries, or `nil` when it carries none.

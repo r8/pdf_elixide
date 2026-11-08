@@ -824,6 +824,25 @@ defmodule PdfElixide.SignatureTest do
       end
     end
 
+    test "algorithms/1 reports what each fixture is named for", %{signed: signed} do
+      reported =
+        Map.new(signed, fn {field, {signature, _bytes, _der}} ->
+          {field, Signature.algorithms!(signature)}
+        end)
+
+      assert reported == %{
+               "rsa_pss_sha256" => %{digest: :sha256, signature: :rsa_pss},
+               "rsa_pss_sha384" => %{digest: :sha384, signature: :rsa_pss},
+               "rsa_pss_sha512" => %{digest: :sha512, signature: :rsa_pss},
+               "rsa_pss_saltlen" => %{digest: :sha256, signature: :rsa_pss},
+               "rsa_pkcs1_sha384" => %{digest: :sha384, signature: :rsa_pkcs1},
+               "rsa_pkcs1_sha512" => %{digest: :sha512, signature: :rsa_pkcs1},
+               "ecdsa_p256" => %{digest: :sha256, signature: :ecdsa},
+               "ecdsa_p384" => %{digest: :sha384, signature: :ecdsa},
+               "ecdsa_p521" => %{digest: :sha512, signature: :ecdsa}
+             }
+    end
+
     test "accepts the bytes each signature was made over", %{signed: signed} do
       verdicts =
         Map.new(signed, fn {field, {signature, bytes, _der}} ->
@@ -917,6 +936,54 @@ defmodule PdfElixide.SignatureTest do
       for {_field, {signature, _bytes, _der}} <- signed do
         assert %Certificate{} = Signature.certificate!(signature)
       end
+    end
+  end
+
+  describe "algorithms/1" do
+    setup do
+      {:ok, [signature]} = Signature.list(open(@cms_pdf))
+      %{signature: signature}
+    end
+
+    test "reads the declared algorithms out of the blob", %{signature: signature} do
+      assert Signature.algorithms(signature) == {:ok, %{digest: :sha256, signature: :rsa_pkcs1}}
+    end
+
+    test "reports the signer's digest on adbe.pkcs7.sha1" do
+      {:ok, [signature]} = Signature.list(open(@pkcs7_sha1_pdf))
+
+      assert signature.sub_filter == :pkcs7_sha1
+      assert Signature.algorithms(signature) == {:ok, %{digest: :sha1, signature: :rsa_pkcs1}}
+    end
+
+    test "reports the authority's algorithms for a timestamp token" do
+      {:ok, [b_t]} = Signature.list(open(@pades_t_pdf))
+      {:ok, timestamp} = Signature.timestamp(b_t)
+
+      assert {:ok, %{digest: :sha256, signature: :rsa_pkcs1}} =
+               Signature.algorithms(%{b_t | contents: timestamp.token, sub_filter: :rfc3161})
+    end
+
+    test "refuses a signature carrying no contents", %{signature: signature} do
+      assert {:error, %Error{reason: :invalid_pdf}} =
+               Signature.algorithms(%{signature | contents: nil})
+    end
+
+    test "refuses a marker fixture's contents" do
+      {:ok, [signature]} = Signature.list(open(@signature_pdf))
+      assert signature.contents == @deadbeef
+
+      assert {:error, %Error{reason: :invalid_pdf}} = Signature.algorithms(signature)
+    end
+
+    test "raises on a value the NIF cannot decode", %{signature: signature} do
+      assert_raise ArgumentError, fn -> Signature.algorithms(%{signature | contents: 42}) end
+    end
+
+    test "algorithms!/1 unwraps or raises", %{signature: signature} do
+      assert %{digest: :sha256} = Signature.algorithms!(signature)
+
+      assert_raise Error, fn -> Signature.algorithms!(%{signature | contents: nil}) end
     end
   end
 

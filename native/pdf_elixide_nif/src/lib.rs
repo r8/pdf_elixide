@@ -68,8 +68,10 @@ pub(crate) mod atoms {
         valid, invalid, unknown,
         // PAdES baseline levels (see signatures.rs / PdfElixide.Signature.pades_level/2)
         b_b, b_t, b_lt,
-        // Timestamp hash algorithms (see signatures.rs / PdfElixide.Signature.Timestamp)
+        // Hash algorithms (see signatures.rs)
         sha1, sha256, sha384, sha512,
+        // Signature algorithm families (see signatures.rs)
+        rsa_pkcs1, rsa_pss, ecdsa,
         // Error reason tags (see error.rs / PdfElixide.Error)
         encrypted, wrong_password, invalid_pdf, invalid_pattern, unsupported,
         not_found, out_of_range, io, lock_poisoned, panic, closed, other

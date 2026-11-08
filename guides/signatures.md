@@ -143,6 +143,30 @@ internally consistent and needs no document bytes. It cannot detect appended
 document changes: the altered document above still answers `:valid` because its
 signature blob did not change. Use `verify/2` whenever the file is available.
 
+## Algorithm policies
+
+To restrict algorithms, read `PdfElixide.Signature.algorithms/1` and reject
+`:unknown`. Verification alone does not enforce your policy.
+
+Check both the signer's `:digest` and the file digest. For `:pkcs7_sha1`, the
+file digest is always SHA-1. For `:rfc3161`, `:digest` describes the timestamp
+authority's signature; the token's `:hash_algorithm`, read through
+`PdfElixide.Signature.timestamp/1`, hashes the file:
+
+```elixir
+strong = [:sha256, :sha384, :sha512]
+{:ok, %{digest: digest, signature: family}} = Signature.algorithms(signature)
+
+file_digest =
+  case signature.sub_filter do
+    :pkcs7_sha1 -> :sha1
+    :rfc3161 -> Signature.timestamp!(signature).hash_algorithm
+    _ -> digest
+  end
+
+digest in strong and file_digest in strong and family in [:rsa_pkcs1, :rsa_pss, :ecdsa]
+```
+
 ## Whether it covers the whole file
 
 A verdict covers only the bytes in `:byte_range`. Check

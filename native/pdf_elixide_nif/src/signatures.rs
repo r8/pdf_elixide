@@ -609,6 +609,107 @@ fn signature_certificate<'a>(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SignatureFamily {
+    RsaPkcs1,
+    RsaPss,
+    Ecdsa,
+    Unknown,
+}
+
+// Keep these OIDs aligned with the verifier's dispatch.
+const SIGNATURE_ALGORITHMS: [(ObjectIdentifier, SignatureFamily); 9] = [
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1"),
+        SignatureFamily::RsaPkcs1,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.5"),
+        SignatureFamily::RsaPkcs1,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11"),
+        SignatureFamily::RsaPkcs1,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.12"),
+        SignatureFamily::RsaPkcs1,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.13"),
+        SignatureFamily::RsaPkcs1,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.10"),
+        SignatureFamily::RsaPss,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2"),
+        SignatureFamily::Ecdsa,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3"),
+        SignatureFamily::Ecdsa,
+    ),
+    (
+        ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.4"),
+        SignatureFamily::Ecdsa,
+    ),
+];
+
+fn signature_family_of(oid: ObjectIdentifier) -> SignatureFamily {
+    SIGNATURE_ALGORITHMS
+        .iter()
+        .find(|(known, _)| *known == oid)
+        .map_or(SignatureFamily::Unknown, |&(_, family)| family)
+}
+
+fn signature_family_atom(family: SignatureFamily) -> Atom {
+    match family {
+        SignatureFamily::RsaPkcs1 => atoms::rsa_pkcs1(),
+        SignatureFamily::RsaPss => atoms::rsa_pss(),
+        SignatureFamily::Ecdsa => atoms::ecdsa(),
+        SignatureFamily::Unknown => atoms::unknown(),
+    }
+}
+
+fn signer_algorithms(
+    signed: &SignedData,
+) -> Result<(HashAlgorithm, SignatureFamily), MalformedCms> {
+    let signer = signed
+        .signer_infos
+        .0
+        .iter()
+        .next()
+        .ok_or(MalformedCms("signature /Contents carries no SignerInfo"))?;
+
+    Ok((
+        hash_algorithm_of(signer.digest_alg.oid),
+        signature_family_of(signer.signature_algorithm.oid),
+    ))
+}
+
+#[derive(NifMap)]
+pub struct AlgorithmsNif {
+    digest: Atom,
+    signature: Atom,
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn signature_algorithms(contents: Option<Binary>) -> NifResult<AlgorithmsNif> {
+    contain_panic(|| {
+        let malformed = |MalformedCms(reason)| tagged_err(atoms::invalid_pdf(), reason);
+
+        let signed = signed_data_of(cms_blob(contents.as_deref())?).map_err(malformed)?;
+        let (digest, family) = signer_algorithms(&signed).map_err(malformed)?;
+
+        Ok(AlgorithmsNif {
+            digest: hash_algorithm_atom(digest),
+            signature: signature_family_atom(family),
+        })
+    })
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn certificate_parse<'a>(env: Env<'a>, der: Binary) -> NifResult<CertificateNif<'a>> {
     contain_panic(|| {
@@ -1474,7 +1575,7 @@ mod tests {
             name::{RdnSequence, RelativeDistinguishedName},
             serial_number::SerialNumber,
         },
-        signed_data::SignerInfos,
+        signed_data::{SignerInfo, SignerInfos},
     };
     use der::{asn1::SetOfVec, Any, Tag};
     use pdf_oxide::signatures::{extract_signer_certificate_der, SigningCredentials};
@@ -1905,6 +2006,40 @@ mod tests {
         out.extend_from_slice(&body[tbs.len()..]);
 
         reseal(out)
+    }
+
+    fn with_first_signer(edit: impl FnOnce(&mut SignerInfo)) -> SignedData {
+        let mut signed = signed_data_of(&signature_blob("form_signature_cms.pdf")).expect("CMS");
+        let mut signer = signed.signer_infos.0.get(0).expect("a signer").clone();
+        edit(&mut signer);
+        signed.signer_infos = SignerInfos(SetOfVec::try_from(vec![signer]).expect("a set"));
+
+        signed
+    }
+
+    #[test]
+    fn reports_an_unrecognized_algorithm_as_unknown() {
+        let signed = with_first_signer(|signer| {
+            // sha224WithRSAEncryption over SHA-224.
+            signer.signature_algorithm.oid = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.14");
+            signer.digest_alg.oid = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.4");
+        });
+
+        assert_eq!(
+            signer_algorithms(&signed),
+            Ok((HashAlgorithm::Unknown, SignatureFamily::Unknown))
+        );
+    }
+
+    #[test]
+    fn refuses_algorithms_without_a_signer() {
+        let mut signed = signed_data_of(&signature_blob("form_signature_cms.pdf")).expect("CMS");
+        signed.signer_infos = SignerInfos(Default::default());
+
+        assert_eq!(
+            signer_algorithms(&signed),
+            Err(MalformedCms("signature /Contents carries no SignerInfo"))
+        );
     }
 
     fn binding_of(signed: &SignedData, certificate: &Certificate) -> CertificateBinding {
