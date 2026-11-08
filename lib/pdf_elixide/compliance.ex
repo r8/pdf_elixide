@@ -38,6 +38,10 @@ defmodule PdfElixide.Compliance do
   (`/ID`), both of which PDF/A requires. A PDF/A-1 report does not check that
   the XMP metadata is stored uncompressed, which PDF/A-1 also requires.
 
+  PDF/A validation does not flag transparency (forbidden in PDF/A-1) or missing
+  annotation appearance streams. Conversion fixes neither, so both can remain
+  even with `compliant?: true`.
+
   A PDF/A report flags the JavaScript a document runs when it is opened, and
   its document-level scripts. It does not flag JavaScript run by a page, a
   link or a form field, and conversion does not remove it.
