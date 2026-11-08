@@ -43,6 +43,19 @@ defmodule PdfElixide do
       |> PdfElixide.Editor.save!("filled.pdf")
       |> PdfElixide.Editor.close()
 
+  Paired functions return `{:ok, value}` or `{:error, %PdfElixide.Error{}}`;
+  their `!` variants return the value or raise. The value is the result, such
+  as text or PDF bytes, or the editor for mutations and `PdfElixide.Editor.save/3`.
+  `PdfElixide.Editor` lists the mutations that return a report instead.
+  Calls without a result, such as `PdfElixide.Builder.save/3` and search-index
+  preparation or clearing, return bare `:ok` on success from both variants.
+
+  Builder operations, constructors and accessors such as
+  `PdfElixide.Document.source_path/1` return values directly, without tuples.
+  Predicates ending in `?` return booleans and generally raise when they cannot
+  answer; see `PdfElixide.Error` for exceptions. Closing a handle returns `:ok`
+  and cannot fail, so it has no `!` variant.
+
   ## Concurrency
 
   Every handle this library returns may be passed to other processes. Documents,

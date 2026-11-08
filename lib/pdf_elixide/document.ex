@@ -631,6 +631,7 @@ defmodule PdfElixide.Document do
 
   See also `PdfElixide.Document.Page.label/1` for a single page's label, and
   `page_label_ranges/1` for the declared numbering schemes behind these strings.
+  To number the pages of a new document, use `PdfElixide.Builder.page_labels/3`.
   """
   @spec page_labels(t()) :: {:ok, [String.t()]} | {:error, Error.t()}
   def page_labels(%__MODULE__{ref: ref}) do

@@ -164,7 +164,8 @@ Builder.new(font: noto)
 Only `:regular` is required; bold italic needs its own `:bold_italic` face.
 Use single-face TrueType (`.ttf`) or OpenType (`.otf`) fonts; extract a face
 from a collection (`.ttc`) before passing it. Each face is embedded once,
-with only the characters used in the document.
+with only the characters used in the document. Reuse the same family value:
+constructing another from identical font bytes embeds duplicate fonts.
 
 ## Text at a position
 

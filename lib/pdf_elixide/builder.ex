@@ -2026,7 +2026,8 @@ defmodule PdfElixide.Builder do
   prints in a `header/2` or `footer/2`. The range starts on the page the next
   content lands on; see [Page labels](guides/building-documents.md#page-labels)
   for where exactly, and for an example. See `t:label_style/0` for the styles
-  and `t:page_labels_opts/0` for the options.
+  and `t:page_labels_opts/0` for the options. To read the labels of an existing
+  document, use `PdfElixide.Document.page_labels/1`.
 
       PdfElixide.Builder.page_labels(builder, :roman_lower)
   """
