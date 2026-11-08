@@ -5114,7 +5114,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      far = DateTime.new!(Date.new!(10_000, 1, 1), ~T[00:00:00], "Etc/UTC")
+      far = %{~U[9999-01-01 00:00:00Z] | year: 10_000}
       lmt = %{~U[0000-01-01 00:00:00Z] | utc_offset: 1_172, time_zone: "Europe/Amsterdam"}
 
       for date <- [far, ~U[-0001-12-31 12:00:00Z], lmt] do
