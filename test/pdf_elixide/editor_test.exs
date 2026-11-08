@@ -284,9 +284,19 @@ defmodule PdfElixide.EditorTest do
       assert {:ok, %Editor{}} = Editor.from_binary(bytes)
     end
 
-    test "to_binary/2 with incremental: true returns {:error, reason}" do
+    test "to_binary/2 with incremental: true raises, and accepts incremental: false" do
       editor = Editor.open!(@form_pdf)
-      assert {:error, _reason} = Editor.to_binary(editor, incremental: true)
+      on_exit(fn -> Editor.close(editor) end)
+
+      assert_raise ArgumentError, ~r/^invalid :incremental, to_binary\/2 writes a whole/, fn ->
+        Editor.to_binary(editor, incremental: true)
+      end
+
+      assert_raise ArgumentError, ~r/^invalid :incremental/, fn ->
+        Editor.to_binary!(editor, incremental: true)
+      end
+
+      assert {:ok, _bytes} = Editor.to_binary(editor, incremental: false)
     end
 
     test "to_binary/2 with a non-boolean option raises, naming the option" do
@@ -4237,13 +4247,13 @@ defmodule PdfElixide.EditorTest do
     end
 
     @tag :tmp_dir
-    test "to_binary/2 still answers :invalid_pdf" do
+    test "to_binary/2 still raises" do
       editor = Editor.open!(@valid_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
       Editor.delete_page!(editor, 1)
 
-      assert {:error, %Error{reason: :invalid_pdf}} = Editor.to_binary(editor, incremental: true)
+      assert_raise ArgumentError, fn -> Editor.to_binary(editor, incremental: true) end
     end
 
     @tag :tmp_dir
@@ -4552,18 +4562,6 @@ defmodule PdfElixide.EditorTest do
                Editor.to_binary(editor, garbage_collect: false)
     end
 
-    test "outranks to_binary/2's refusal of an incremental request" do
-      editor = Editor.open!(@sanitize_objstm_pdf)
-      on_exit(fn -> Editor.close(editor) end)
-
-      Editor.sanitize!(editor)
-
-      assert {:error, %Error{reason: :unsupported, message: message}} =
-               Editor.to_binary(editor, incremental: true, garbage_collect: false)
-
-      assert message =~ "garbage_collect"
-    end
-
     test "allows it before one" do
       editor = Editor.open!(@sanitize_objstm_pdf)
       on_exit(fn -> Editor.close(editor) end)
@@ -4740,7 +4738,7 @@ defmodule PdfElixide.EditorTest do
       Editor.to_binary!(editor)
       refute Editor.modified?(editor)
 
-      assert {:error, %Error{reason: :invalid_pdf}} = Editor.to_binary(editor, incremental: true)
+      assert_raise ArgumentError, fn -> Editor.to_binary(editor, incremental: true) end
       refute Editor.modified?(editor)
     end
 

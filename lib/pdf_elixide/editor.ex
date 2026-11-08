@@ -839,11 +839,8 @@ defmodule PdfElixide.Editor do
   The result is a fully self-contained PDF that can be written to disk,
   stored in a database, or streamed over HTTP.
 
-  Accepts the same `t:save_opts/0` keyword list as `save/3`, except
-  `incremental: true`, which returns
-  `{:error, %PdfElixide.Error{reason: :invalid_pdf}}`: an incremental update is an
-  append to the original file, so there is nothing to append to in memory. Use
-  `save/3` for an incremental write; see
+  Accepts the same `t:save_opts/0` as `save/3`, except that `incremental: true`
+  raises `ArgumentError`. Use `save/3` for incremental writes; see
   [Saving edits](guides/editing.md#saving-edits).
 
   That includes `:encryption`, which encrypts the returned binary exactly as it
@@ -860,6 +857,13 @@ defmodule PdfElixide.Editor do
   @spec to_binary(t(), save_opts()) :: {:ok, binary()} | {:error, Error.t()}
   def to_binary(%__MODULE__{ref: ref}, opts \\ []) when is_list(opts) do
     options = build_save_options(opts)
+
+    if options.incremental do
+      raise ArgumentError,
+            "invalid :incremental, to_binary/2 writes a whole document; " <>
+              "use save/3 for an incremental write"
+    end
+
     Wrap.call(fn -> Native.editor_to_bytes(ref, options) end)
   end
 

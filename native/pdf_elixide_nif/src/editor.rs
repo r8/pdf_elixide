@@ -255,14 +255,11 @@ fn editor_to_bytes(
     options: SaveOptionsNif,
 ) -> NifResult<OwnedBinary> {
     resource.editor.with_lock(|editor| {
-        // Upstream refuses incremental output here on its own, so only the guards
-        // that also apply to a full rewrite remain.
         ensure_scrub_survives_save(editor, &options)?;
         ensure_metadata_survives_save(editor, &options)?;
         ensure_write_keeps_conversion(editor, &options)?;
 
-        // Incremental output is refused below before writing, so resupplying
-        // for it would only move the modified flag.
+        // Resupplying must not mark a refused write as modified.
         if !options.incremental {
             editor.resupply_embedded().map_err(to_nif_err)?;
             editor.resupply_info().map_err(to_nif_err)?;

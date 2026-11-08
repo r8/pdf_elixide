@@ -84,11 +84,10 @@ run, `incremental: true` is refused because it would leave removed content
 readable. A write with `garbage_collect: false` after a sanitize is also
 refused. See [What is refused, and why](redaction.md#what-is-refused-and-why).
 
-`PdfElixide.Editor.to_binary/2` refuses `incremental: true` with
-`{:error, %PdfElixide.Error{reason: :invalid_pdf}}` regardless of pending edits.
-After `PdfElixide.Editor.sanitize/1`, requesting `garbage_collect: false`
-takes precedence and returns `:unsupported` instead. Neither writing function
-accepts encryption with `incremental: true`; see [Encryption](encryption.md).
+`PdfElixide.Editor.to_binary/2` raises `ArgumentError` for `incremental: true`,
+so use `PdfElixide.Editor.save/3` for incremental writes. Neither writing
+function accepts encryption with `incremental: true`; see
+[Encryption](encryption.md).
 
 ## Page structure
 
