@@ -7,11 +7,15 @@ Each returns an editor. You can edit it further, write it to a file, or return
 it as a binary:
 
 ```elixir
+alias PdfElixide.Editor
+
 "# Report\n\nAll **good**."
-|> PdfElixide.Editor.from_markdown!(title: "Report")
-|> PdfElixide.Editor.save!("report.pdf")
-|> PdfElixide.Editor.close()
+|> Editor.from_markdown!(title: "Report")
+|> Editor.save!("report.pdf")
+|> Editor.close()
 ```
+
+The examples below use this `Editor` alias and open their own editors.
 
 The text functions are simple typesetters, not the reverse of the document
 conversion functions. Lines are not wrapped, so break long lines in the
@@ -82,9 +86,9 @@ page, in list order:
 ```elixir
 ["page1.jpg", "page2.png"]
 |> Enum.map(&File.read!/1)
-|> PdfElixide.Editor.from_images!(page_size: :a4)
-|> PdfElixide.Editor.save!("scans.pdf")
-|> PdfElixide.Editor.close()
+|> Editor.from_images!(page_size: :a4)
+|> Editor.save!("scans.pdf")
+|> Editor.close()
 ```
 
 Every page has the size given by `:page_size`. Each image is scaled, up or
@@ -99,13 +103,19 @@ resolution you want it to have, with every margin set to zero. At 300 dots
 per inch, a 2480 × 3508 pixel scan is 595.2 × 841.92 points:
 
 ```elixir
-PdfElixide.Editor.from_images!([scan],
-  page_size: {2480 * 72 / 300, 3508 * 72 / 300},
-  margin_top: 0,
-  margin_bottom: 0,
-  margin_left: 0,
-  margin_right: 0
-)
+scan = File.read!("scan.png")
+
+editor =
+  Editor.from_images!([scan],
+    page_size: {2480 * 72 / 300, 3508 * 72 / 300},
+    margin_top: 0,
+    margin_bottom: 0,
+    margin_left: 0,
+    margin_right: 0
+  )
+
+Editor.save!(editor, "scan.pdf")
+Editor.close(editor)
 ```
 
 Because one page size applies to the whole list, images of different shapes

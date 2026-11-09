@@ -40,9 +40,8 @@ impl<T> Closable<T> {
     // Pre-flight checks whose answer the work depends on belong inside the
     // closure: run outside, they can straddle a writer that invalidates them.
     pub fn with_lock<R>(&self, f: impl FnOnce(&mut T) -> NifResult<R>) -> NifResult<R> {
-        // The guard is bound here, in the caller's frame, and the panic caught
-        // inside its scope, so it drops without a panic in flight and the lock
-        // is never poisoned.
+        // The guard is bound here, outside `contain_panic`, so it drops without
+        // a panic in flight and the lock is never poisoned.
         let mut guard = self.lock()?;
         let result = contain_panic(|| f(&mut guard));
         self.run_hook(&guard);
@@ -141,9 +140,6 @@ impl<T> Deref for SharedGuard<'_, T> {
         self.0.as_ref().expect("guard implies an open resource")
     }
 }
-
-// Every resource wraps its value in a `Closable`, which owns the locking and
-// supports releasing the value early (see the `*_close` NIFs).
 
 pub(crate) struct DocumentResource {
     pub(crate) doc: Closable<OpenDocument>,

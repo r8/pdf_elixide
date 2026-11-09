@@ -4,8 +4,8 @@ defmodule PdfElixide.Compliance.Conversion do
 
     * `:report` — the converted document validated against the requested
       level, as a `PdfElixide.Compliance.Report`. It describes what a full
-      write of the editor now produces. Whether the conversion succeeded is
-      `report.compliant?`.
+      write of the editor now produces. `report.compliant?` is `true` when
+      validation found no errors; conversion can succeed with findings left.
     * `:actions` — what the conversion changed, as
       `PdfElixide.Compliance.Conversion.Action` structs, in the order they were
       made.

@@ -177,7 +177,8 @@ fn document_classify(
     })
 }
 
-// Classify each page to preserve failures; authenticate first to avoid a page prefix.
+// Classify page by page so a failing page is an error. An unauthenticated
+// document is refused before the loop, so the error is not reported as page 0's.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_classify(
     resource: ResourceArc<DocumentResource>,

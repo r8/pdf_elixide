@@ -94,61 +94,29 @@ defmodule PdfElixide.Document do
   ## Choosing an extractor for search and matching
 
   `text/1` reads a page as it is laid out, inferring word breaks from where
-  glyphs sit, so runs separated by only a narrow gap can still be joined.
-
-  `:extract_tables`, which defaults to `true`, controls how a recognized table
-  is laid out, not whether its values are returned. With it on, detected cells
-  are rendered as column-aligned rows; with it off, their values appear as
-  ordinary flow text. A table aligned only by whitespace is flow text either
-  way. See `t:text_opts/0` and "Tables inside a text result" in the [Text
-  extraction](guides/text-extraction.md) guide.
+  glyphs sit, so runs separated by only a narrow gap can still be joined, and
+  renders a detected table from its cells, one row per line, unless
+  `:extract_tables` is off (see `t:text_opts/0`). `to_plain_text/2` reads the same page as prose
+  paragraphs instead; the [Text extraction](guides/text-extraction.md) guide
+  compares the two.
 
   **To find or match tokens rather than read the page, use `words/2`.** It
   clusters characters by their own advance widths and returns a bounding box
   for every word. Prefer `search/2` when the query is known in advance.
 
-  `to_plain_text/2` is a third reading of the same page — prose paragraphs
-  rather than the page's visual lines. The [Text
-  extraction](guides/text-extraction.md) guide says when it is the one you
-  want.
-
   ## Page boxes and the coordinate origin
 
   Raw page coordinates use PDF points with y increasing upward. Page boxes are
-  unrotated; some extracted boxes use a displayed frame instead. See [Page
-  geometry](guides/page-geometry.md) for origins and page boxes.
-
-  ### What the crop box hides from extraction
-
-  Text-family extractors omit cropped-away runs; `chars/2` does not. See [What
-  the crop box hides from
-  extraction](guides/page-geometry.md#what-the-crop-box-hides-from-extraction).
-
-  ### Which ancestor an inherited box comes from
-
-  Page boxes and rotation inherit from the nearest declaring ancestor. See
-  [Which ancestor an inherited box comes
-  from](guides/page-geometry.md#which-ancestor-an-inherited-box-comes-from).
+  unrotated and inherit from the nearest declaring ancestor. Text-family
+  extractors omit cropped-away runs; `chars/2` does not. See
+  [Page geometry](guides/page-geometry.md) for origins, inheritance and cropping.
 
   ## Rotated pages and extracted geometry
 
   Extractors can report different coordinate frames on the same rotated page.
-  See [Rotated pages and extracted
-  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry) before
-  combining their boxes or using them for editing or rendering.
-
-  ### Telling which frame a box is in
-
-  The frame depends on the extractor, page rotation and run rotation. See
-  [Telling which frame a box is
-  in](guides/page-geometry.md#telling-which-frame-a-box-is-in).
-
-  ### Bringing boxes into one frame
-
   Convert displayed boxes to raw user space before editing or region rendering.
-  See [Bringing boxes into one
-  frame](guides/page-geometry.md#bringing-boxes-into-one-frame) for the
-  conversion calls and a search-match example.
+  The [Page geometry](guides/page-geometry.md#bringing-boxes-into-one-frame)
+  guide explains which boxes need conversion and gives a search-match example.
   """
 
   # `PdfElixide.Document.Path` — the vector-path struct — is deliberately left
@@ -465,8 +433,6 @@ defmodule PdfElixide.Document do
     Wrap.call!(fn -> Native.document_is_encrypted(ref) end)
   end
 
-  # Validate the semantic range here so it raises the same `ArgumentError` as
-  # other bad option values; the NIF keeps the same check as defense in depth.
   # A region is decoded as 32-bit floats and compared through its corners; see
   # `PdfElixide.LayoutOptions.rect!/2`. Anything but a rect is left to the decoder.
   defp region!(opts), do: LayoutOptions.rect!(:region, Keyword.get(opts, :region))
@@ -481,6 +447,8 @@ defmodule PdfElixide.Document do
     end
   end
 
+  # Validate the semantic range here so it raises the same `ArgumentError` as
+  # other bad option values; the NIF keeps the same check as defense in depth.
   defp validate_region_mode!(opts, key) do
     case Keyword.get(opts, key, :intersects) do
       {:min_overlap, ratio} when is_number(ratio) and (ratio < 0.0 or ratio > 1.0) ->
@@ -1232,9 +1200,8 @@ defmodule PdfElixide.Document do
   @typedoc """
   Options accepted by the `text` and `text!` functions.
 
-    * `:extract_tables` — detect tables and render them inline as
-      space-padded, column-aligned rows, the padding collapsed to single
-      spaces. Defaults to `true`; with it off, a recognized table's values
+    * `:extract_tables` — detect tables and render each inline from its
+      cells, one row per line with cells separated by single spaces. Defaults to `true`; with it off, a recognized table's values
       come back as ordinary flow text. See "Tables inside a text result" in
       the [Text extraction](guides/text-extraction.md) guide.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
@@ -1243,8 +1210,12 @@ defmodule PdfElixide.Document do
       detector; see `t:text_table_detection_opts/0`. Only consulted when
       `:extract_tables` is `true`. Defaults to `nil`.
     * `:region` — a `PdfElixide.Geometry.Rect` keeping only the text inside
-      it. An extracted `bbox` can be handed straight back in. Defaults to
-      `nil`.
+      it, matched in the frame `words/1` reports in. A `bbox` from
+      `words/1` or `text_lines/1` can be handed straight back in; on a
+      rotated page one from `chars/1` or `spans/1` may first need mapping,
+      as "Bringing boxes into one frame" in the
+      [Page geometry](guides/page-geometry.md#bringing-boxes-into-one-frame)
+      guide describes. Defaults to `nil`.
     * `:region_mode` — how `:region` matches; see `t:region_mode/0`.
       Defaults to `:intersects`.
     * `:exclude_regions` — a list of rects whose text is dropped. Applied
@@ -1283,16 +1254,15 @@ defmodule PdfElixide.Document do
 
   ## Layer and ink filtering is exclusive with the other options
 
-  When `:exclude_layers` or `:exclude_inks` is non-empty, **only `:region`
-  and `:region_mode` can be combined with it**. Giving `:extract_tables`,
+  When `:exclude_layers` or `:exclude_inks` is non-empty, **only `:region`,
+  `:region_mode` and `:on_page_error` can be combined with it**. Giving `:extract_tables`,
   `:expand_ligatures`, `:table_detection`, `:exclude_regions` or
   `:exclude_regions_mode` a value other than its default raises
   `ArgumentError` naming the key.
 
-  `:reading_order`, `:include_form_fields` and
-  `:strip_running_headers_footers` are valid for `to_markdown/2` but have no
-  effect here, so they are not accepted; passing one raises `ArgumentError`, as
-  any other undeclared key does.
+  `to_markdown/2`'s `:reading_order`, `:include_form_fields` and
+  `:strip_running_headers_footers` are not options here; like any undeclared
+  key they raise `ArgumentError`.
 
   There is a second way to read a page as text — `to_plain_text/2`, which
   returns reflowed paragraphs rather than the page's visual lines and takes a
@@ -3052,8 +3022,8 @@ defmodule PdfElixide.Document do
   Unlike the `:table_detection` option of the `text` functions, the detection
   keys are given *flat* here rather than nested under one key.
 
-  `:region` keeps the detection options you passed rather than loosening them.
-  Pass `preset: :relaxed` to ask for that explicitly.
+  `:region` only filters the detected tables; it does not change how they are
+  detected.
   """
   @type tables_opts :: [
           region: Rect.t() | nil,
@@ -3192,9 +3162,7 @@ defmodule PdfElixide.Document do
     }
   end
 
-  # A `NifMap` decode is total, so every builder emits every key. This is the one
-  # route to each builder's defaults, which `option_defaults_test.exs` compares
-  # against hand-written maps: a changed default is otherwise observable nowhere.
+  # Every builder emits every key: a missing NifMap field is a decode error.
   @doc false
   @spec __option_defaults__(atom()) :: map()
   def __option_defaults__(:open), do: build_open_options([])
@@ -3404,7 +3372,7 @@ defmodule PdfElixide.Document do
       boundaries enclose the whole pattern: under `literal: false`,
       `"cat|dog"` finds *cat* and *dog* as whole words. A word boundary needs
       a word character on the inside, so a pattern that begins or ends in
-      punctuation or whitespace — `"(a)"` on either path — matches only where
+      punctuation or whitespace — `"(a)"`, literal or not — matches only where
       the text has a word character right against it.
     * `:max_results` — stop after this many matches, counted across pages: a
       positive integer, or `nil` for no limit. Defaults to `nil`. This bounds
@@ -3643,7 +3611,7 @@ defmodule PdfElixide.Document do
   Extracts the fonts referenced by the page at the given zero-based index.
 
   Returns `{:ok, []}` when the page references no fonts. Each font is carried as a
-  `PdfElixide.Document.Font` struct with its metadata; the raw embedded font
+  `PdfElixide.Document.Font` struct with its metadata; the embedded font
   program (when present) is pulled on demand with `PdfElixide.Document.Font.data/1`.
 
   A page whose page-tree entry, `/Resources` or `/Font` dictionary, or font

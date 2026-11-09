@@ -97,6 +97,8 @@ The format is detected from the contents rather than a filename. See
 upload boundary straightforward:
 
 ```elixir
+upload = File.read!("upload.docx")
+
 case Office.to_pdf(upload) do
   {:ok, pdf} -> {:ok, pdf}
   {:error, %PdfElixide.Error{reason: :unsupported}} -> {:error, :unsupported_file}

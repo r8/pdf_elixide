@@ -2,7 +2,7 @@ defmodule PdfElixide.Document.Metadata do
   @moduledoc """
   Document Info dictionary metadata — a PDF's classic `/Info` fields.
 
-  Every field is optional and defaults to `nil`; a document with no `/Info`
+  Every field is `nil` when the document does not set it; a document with no `/Info`
   dictionary yields a struct with all fields `nil`. Obtain it with
   `PdfElixide.Document.metadata/1`, or with `PdfElixide.Editor.metadata/1` for a
   document being edited, which also has the setters.

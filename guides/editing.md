@@ -7,12 +7,26 @@ annotations; the [Encryption](encryption.md) guide covers password-protected
 output; [Merging and splitting](merging-and-splitting.md) covers combining
 documents and writing parts of one to new files.
 
+For example, `PdfElixide.Editor.set_rotation/3` turns the first page:
+
+```elixir
+alias PdfElixide.Editor
+
+"path/to/report.pdf"
+|> Editor.open!()
+|> Editor.set_rotation!(0, 90)
+|> Editor.save!("rotated.pdf")
+|> Editor.close()
+```
+
 ## Saving edits
 
 Use `PdfElixide.Editor.save/3` with its default `incremental: false`, or
 `PdfElixide.Editor.to_binary/2`, to write page edits and attachments. Writing
 leaves the editor open for further changes; `PdfElixide.Editor.close/1` discards
 any unsaved edits.
+
+### Incremental saves
 
 **An incremental save carries field values and document information, and refuses
 everything else.** `PdfElixide.Editor.save(editor, path, incremental: true)`
@@ -98,7 +112,6 @@ are bounded by, and it moves as soon as a page is deleted rather than waiting
 for a save:
 
 ```elixir
-alias PdfElixide.Document
 alias PdfElixide.Editor
 
 "path/to/report.pdf"
@@ -107,6 +120,7 @@ alias PdfElixide.Editor
 |> Editor.delete_page!(0)
 |> Editor.save!("reordered.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -148,6 +162,7 @@ moved are left pointing where they were.
 |> Editor.set_rotation!(0, 0)
 |> Editor.save!("upright.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -183,6 +198,7 @@ insetting its media box:
 |> Editor.crop_margins!(left: 36, right: 36, top: 24, bottom: 24)
 |> Editor.save!("trimmed.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -235,18 +251,23 @@ edits](#saving-edits) for the incremental-save refusal.
 `PdfElixide.Editor.erase_region/3` paints a white rectangle over part of a page
 as the file is written, and `PdfElixide.Editor.erase_regions/3` does that for
 several rectangles in one call. A `PdfElixide.Geometry.Rect` from an extractor
-can be handed straight back:
+reporting raw page space can be handed straight back; for a span, pass its
+`:page_bbox`, since its `:bbox` measures a rotated run along its writing axis
+and does not cover it:
 
 ```elixir
+alias PdfElixide.Document
+
 doc = Document.open!("path/to/report.pdf")
 [span | _] = Document.spans!(doc, 0)
 Document.close(doc)
 
 "path/to/report.pdf"
 |> Editor.open!()
-|> Editor.erase_region!(0, span.bbox)
+|> Editor.erase_region!(0, span.page_bbox)
 |> Editor.save!("covered.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -264,9 +285,9 @@ been written; see
 [It discards other pending overlays on the page](redaction.md#it-discards-other-pending-overlays-on-the-page).
 
 The rectangle covers page content only. Annotations — form widgets, stamps,
-links — remain above it, even when flattened on the same editor. To hide an
-annotation whose rectangle is `rect`, flatten, write, reopen what was written,
-and erase there:
+links — remain above it, even when flattened on the same editor. Given an
+annotation rectangle `rect`, flatten, write, reopen what was written, and erase
+there to hide it:
 
 ```elixir
 flattened =
@@ -282,6 +303,7 @@ bytes
 |> Editor.erase_region!(0, rect)
 |> Editor.save!("covered.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -292,10 +314,9 @@ rather than holding one — cannot take an overlay, and
 `{:error, %PdfElixide.Error{reason: :unsupported}}` for it. Such a page can
 still be rotated, moved, deleted and saved.
 
-Coordinates usually use the page's raw, unrotated user space, as reported by
-`PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
-`PdfElixide.Document.paths/1`. Rotated extractor boxes follow the same
-conversion rules as crop boxes above.
+Rectangles are in the page's raw, unrotated user space. On a rotated page not
+every extractor reports in that frame; see
+[Rotated pages and extracted geometry](page-geometry.md#rotated-pages-and-extracted-geometry).
 
 The whiteout inherits the graphics state left by the page content. An active
 transformation can move it, a clipping path can hide part or all of it, and an
@@ -323,11 +344,14 @@ behind a report, the source data behind a chart — and
 attachments included:
 
 ```elixir
+csv = File.read!("figures.csv")
+
 "path/to/report.pdf"
 |> Editor.open!()
 |> Editor.embed_file!("figures.csv", csv, description: "Chart data")
 |> Editor.save!("report-with-data.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -338,7 +362,8 @@ document-level JavaScript. To attach several files, add them in the same editing
 session. The error message names the entries that would be lost.
 
 A `PdfElixide.Editor.sanitize/1` that emptied the name tree lifts the refusal,
-so a document's attachments can be replaced rather than only removed:
+so a document's attachments can be replaced rather than only removed (reusing
+`csv` from above):
 
 ```elixir
 editor = Editor.open!("path/to/received.pdf")
@@ -374,12 +399,14 @@ reads one when another producer declared it, but this editor cannot set one.
 |> Editor.set_modification_date!(DateTime.utc_now())
 |> Editor.save!("titled.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
-Passing `nil` removes an entry. Each setter takes one string; keywords are
-stored as a single comma-separated string, which is how
-`PdfElixide.Document.Metadata` reads them back.
+Passing `nil` removes an entry, and a whitespace-only value is written but
+reads back as `nil`. Each text setter takes one string; keywords are stored as
+a single comma-separated string, which is how `PdfElixide.Document.Metadata`
+reads them back.
 
 ### What a write carries
 
@@ -391,13 +418,14 @@ survive: `/Trapped`, which cannot be set — `PdfElixide.Editor.metadata/1`
 reports the source's value until something clears it — and any non-standard
 `/Info` key.
 
-`PdfElixide.Editor.sanitize/1` is what clears it. With its default
+`PdfElixide.Editor.sanitize/1` is what clears `/Trapped`. With its default
 `scrub_metadata: true` none of those values are carried, `/Trapped` included,
 and `PdfElixide.Editor.metadata/1` answers `nil` for every field afterwards;
-see [Sanitizing](redaction.md#sanitizing). Nothing is stamped for you: the
-producer stays whatever the source named, and `/ModDate` is only what you set,
-so set it yourself when a reader will look at it. A whitespace-only value is
-written but reads back as `nil`.
+see [Sanitizing](redaction.md#sanitizing).
+
+Nothing is stamped for you: the producer stays whatever the source named, and
+`/ModDate` is only what you set, so set it yourself when a reader will look at
+it.
 
 ### Text encoding
 

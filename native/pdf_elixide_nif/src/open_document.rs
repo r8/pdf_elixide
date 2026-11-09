@@ -52,10 +52,10 @@ impl OpenDocument {
         }
     }
 
-    // Every per-document read below claims the process-wide sink first, because
-    // upstream's take drains that sink into whichever document is asked. The
-    // claim stays outside `Buffer::absorb`, which holds the mirror's lock while
-    // `fetch` runs.
+    // Every per-document read below claims this thread's upstream sink into the
+    // process-wide buffer first, because upstream's take would drain it into
+    // whichever document is asked. The claim stays outside `Buffer::absorb`,
+    // which holds the mirror's lock while `fetch` runs.
     pub(crate) fn drain(&self) {
         collect_global();
         self.warnings.absorb(|| self.doc.take_structured_warnings());

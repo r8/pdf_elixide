@@ -56,14 +56,12 @@ pub enum SourceFormatNif {
     Raw,
 }
 
-// The requested output encoding for `image_to_binary` / `image_save`.
 #[derive(NifUnitEnum, Debug)]
 pub enum OutputFormatNif {
     Png,
     Jpeg,
 }
 
-// The layout of raw (uncompressed) pixel data.
 #[derive(NifUnitEnum, Debug)]
 pub enum PixelFormatNif {
     Rgb,
@@ -249,7 +247,6 @@ fn encode_jpeg(image: &PdfImage) -> NifResult<Vec<u8>> {
     Ok(buffer.into_inner())
 }
 
-// Keep this guard aligned with `to_dynamic_image` so no other image takes this path.
 fn ccitt_pixels(image: &PdfImage) -> Option<NifResult<Vec<u8>>> {
     let decoded = decode_ccitt(image)?;
 
@@ -267,6 +264,7 @@ enum CcittFailure {
     NoRows,
 }
 
+// Keep this guard aligned with `to_dynamic_image` so no other image takes this path.
 fn decode_ccitt(image: &PdfImage) -> Option<Result<Vec<u8>, CcittFailure>> {
     let ImageData::Raw { pixels, .. } = image.data() else {
         return None;

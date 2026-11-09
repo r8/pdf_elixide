@@ -37,8 +37,8 @@ pub fn span_to_nif(mut span: TextSpan, page: usize) -> SpanNif {
     span_parts_to_nif(text, font, &span, page)
 }
 
-// The table path borrows spans; copy only the two strings, not the per-glyph
-// vectors retained by the table resource.
+// For borrowed spans (table cells, cached search runs): copy only the two
+// strings, never the per-glyph vectors.
 pub fn span_ref_to_nif(span: &TextSpan, page: usize) -> SpanNif {
     span_parts_to_nif(span.text.clone(), span.font_name.clone(), span, page)
 }

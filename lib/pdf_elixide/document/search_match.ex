@@ -6,15 +6,17 @@ defmodule PdfElixide.Document.SearchMatch do
   `:spans` are the runs of text the match touched, in reading order, each a
   whole `PdfElixide.Document.Span` rather than the extent of the matched
   characters: a match inside a longer run reports that whole run. `:bbox` is
-  the union of their boxes. Draw from the spans' boxes, one per run.
+  the union of their `:bbox`es, which measure a rotated run along its writing
+  axis and so can miss most of it. Draw from each span's `:page_bbox`, one per
+  run.
 
   On a rotated page, use each span's `:rotation` to identify its coordinate
   frame; a match's spans may use different frames. See [Rotated pages and
   extracted
   geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
 
-  The [Text search](guides/text-search.md) guide has the rest, including how
-  far `:bbox` over-covers, why a match can cross what looks like a line break,
+  The [Text search](guides/text-search.md) guide has the rest, including what
+  `:bbox` covers, why a match can cross what looks like a line break,
   and when the spans come back empty.
   """
   alias PdfElixide.Document.Span

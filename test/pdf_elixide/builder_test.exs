@@ -2818,9 +2818,19 @@ defmodule PdfElixide.BuilderTest do
                      Builder.barcode(Builder.new(), :code128, "data", width: 500)
                    end
 
-      assert_raise ArgumentError, ~r/^invalid :height, a 400.0-point QR code does not fit/, fn ->
-        Builder.new() |> Builder.page({800, 500}) |> Builder.qr_code("data", size: 400)
-      end
+      assert_raise ArgumentError,
+                   ~r/^invalid :size, a 400.0-point QR code does not fit the 356.0-point content height/,
+                   fn ->
+                     Builder.new()
+                     |> Builder.page({800, 500})
+                     |> Builder.qr_code("data", size: 400)
+                   end
+
+      assert_raise ArgumentError,
+                   ~r/^invalid layout, a [\d.]+-point barcode does not fit the 468.0-point content width/,
+                   fn ->
+                     Builder.barcode(Builder.new(), :code128, String.duplicate("A", 60))
+                   end
 
       assert_raise ArgumentError,
                    ~r/^invalid height, a 18.0-point barcode leaves no room for bars/,

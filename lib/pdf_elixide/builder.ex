@@ -3,8 +3,7 @@ defmodule PdfElixide.Builder do
   Describes a new PDF as a pipeline of content, then lays it out in one call.
 
   Content operations return the builder for piping. Layout runs with
-  `to_binary/2`, `save/3` or
-  `PdfElixide.Editor.from_builder/1`:
+  `to_binary/2`, `save/3` or `PdfElixide.Editor.from_builder/1`:
 
       PdfElixide.Builder.new(title: "Report")
       |> PdfElixide.Builder.paragraph("Revenue rose on the year.")
@@ -32,53 +31,22 @@ defmodule PdfElixide.Builder do
   Give a run a `:footnote` to add a numbered note; see
   [Footnotes](guides/building-documents.md#footnotes).
 
-  ## Drawing
+  ## Positioned content and document features
 
-  Draw shapes and paths outside the text flow. See
-  [Drawing shapes](guides/building-documents.md#drawing-shapes) for positioning,
-  paint options and redrawing an extracted path.
+  The guide covers features that can be combined with flowing text:
 
-  ## Images
-
-  `image/3` adds a JPEG or PNG image to the flow and `image_in_rect/4` places
-  one outside it. See [Images](guides/building-documents.md#images).
-
-  ## Barcodes
-
-  `barcode/4` and `qr_code/3` add a linear barcode or a QR code to the flow,
-  and `barcode_in_rect/5` and `qr_code_in_rect/4` place one outside it. See
-  [Barcodes](guides/building-documents.md#barcodes).
-
-  ## Links and watermarks
-
-  A run's `:link` option makes its text clickable, `link_in_rect/3` makes an
-  area clickable, and `anchor/2` names a place to link to. `watermark/3` marks
-  a page, or every page. See [Links](guides/building-documents.md#links) and
-  [Watermarks](guides/building-documents.md#watermarks).
-
-  ## Navigation and page furniture
-
-  `bookmark/3`, or a heading's `:bookmark` option, adds to the outline a
-  viewer shows, and `contents/2` adds a table of contents listing them.
-  `page_labels/3` sets the labels a viewer shows for pages, and `header/2`
-  and `footer/2` draw running text in the margins. See
-  [Navigation](guides/building-documents.md#navigation),
-  [Page labels](guides/building-documents.md#page-labels) and
-  [Headers and footers](guides/building-documents.md#headers-and-footers).
-
-  ## Form fields
-
-  `text_field/4`, `check_box/4`, `combo_box/5`, `list_box/5`,
-  `push_button/5` and `signature_field/4` add fillable fields to a page. See
-  [Form fields](guides/building-documents.md#form-fields) for what each kind
-  holds and how viewers draw them.
-
-  ## Scripts
-
-  JavaScript for a viewer to run is written only where it is given as a
-  script: `new/1`'s `:scripts` for the document, `page_scripts/2` for a page,
-  a `{:script, code}` link, and a field's `:scripts`. See
-  [Scripts](guides/building-documents.md#scripts).
+    * [Text at a position](guides/building-documents.md#text-at-a-position),
+      [Text in a box](guides/building-documents.md#text-in-a-box),
+      [Drawing shapes](guides/building-documents.md#drawing-shapes),
+      [Images](guides/building-documents.md#images) and
+      [Barcodes](guides/building-documents.md#barcodes).
+    * [Links](guides/building-documents.md#links),
+      [Watermarks](guides/building-documents.md#watermarks),
+      [Navigation](guides/building-documents.md#navigation),
+      [Page labels](guides/building-documents.md#page-labels) and
+      [Headers and footers](guides/building-documents.md#headers-and-footers).
+    * [Form fields](guides/building-documents.md#form-fields) and
+      [Scripts](guides/building-documents.md#scripts).
 
   ## Fonts
 
@@ -91,7 +59,8 @@ defmodule PdfElixide.Builder do
 
   Invalid arguments raise at the call that receives them. Unsupported content
   returns `{:error, %PdfElixide.Error{reason: :unsupported}}` at build time;
-  bang variants raise. See [Errors](guides/building-documents.md#errors) and
+  bang variants raise. An image that cannot be decoded returns reason `:other`.
+  See [Errors](guides/building-documents.md#errors) and
   [What the builder will not draw](guides/building-documents.md#what-the-builder-will-not-draw).
   """
 
@@ -186,7 +155,7 @@ defmodule PdfElixide.Builder do
       page. The run must end in a character other than whitespace or a soft
       hyphen. Defaults to `nil`, no note. Accepted in `paragraph/3`,
       `heading/4`, list items, `columns/3` and the body rows of `table/3`; see
-      [Footnotes](#module-footnotes).
+      [Footnotes](guides/building-documents.md#footnotes).
 
   Runs are joined as they are written, so a space between two runs belongs
   in one of them.
@@ -322,7 +291,7 @@ defmodule PdfElixide.Builder do
     * `:font_size` — the notes' text size in points. Defaults to four fifths
       of the document's `:font_size`.
 
-  See [Footnotes](#module-footnotes).
+  See [Footnotes](guides/building-documents.md#footnotes).
   """
   @type footnotes_opts :: [font: font(), font_size: number()]
 
@@ -1122,8 +1091,8 @@ defmodule PdfElixide.Builder do
 
       PdfElixide.Builder.paragraph(builder, ["Revenue rose ", {"12%", bold: true}])
 
-  See [Layout](#module-layout) for how lines break and pages turn, and
-  `t:paragraph_opts/0` for the options.
+  See [Flowing text](guides/building-documents.md#flowing-text) for how lines
+  break and pages turn, and `t:paragraph_opts/0` for the options.
   """
   @spec paragraph(t(), text(), paragraph_opts()) :: t()
   def paragraph(%__MODULE__{} = builder, text, opts \\ [])
@@ -1142,8 +1111,9 @@ defmodule PdfElixide.Builder do
   Adds a heading of `level` 1 to 4, set in the bold face of its font family.
 
   `text` is a `t:text/0`; every run is bold. A heading is kept on the page of
-  the line after it; see [Layout](#module-layout). See `t:heading_opts/0` for
-  the options.
+  the line after it; see
+  [Flowing text](guides/building-documents.md#flowing-text). See
+  `t:heading_opts/0` for the options.
 
       PdfElixide.Builder.heading(builder, 1, "Quarterly report")
   """
@@ -1712,10 +1682,11 @@ defmodule PdfElixide.Builder do
     %{width: width, height: height, align: align} = build_barcode_options(opts)
     linear_opts = Keyword.take(opts, @barcode_in_rect_opts_keys)
     {symbol, caption_line} = linear_symbol!(builder, symbology, data, linear_opts)
+    labels = {given_or_layout(width, :width), given_or_layout(height, :height)}
     width = width || (symbol.columns + 2 * symbol.quiet_zone) * @linear_module
     height = height || @linear_bars + caption_line
     validate_bars_fit!(height, caption_line)
-    validate_block_fits!(builder, width, height, "barcode")
+    validate_block_fits!(builder, labels, width, height, "barcode")
 
     op =
       {:barcode,
@@ -1774,8 +1745,9 @@ defmodule PdfElixide.Builder do
     opts = Keyword.validate!(opts, @qr_code_opts_keys)
     %{size: size, align: align} = build_qr_code_options(opts)
     symbol = qr_symbol!(data, Keyword.take(opts, @qr_code_in_rect_opts_keys))
+    label = given_or_layout(size, :size)
     size = size || (symbol.columns + 2 * symbol.quiet_zone) * @qr_module
-    validate_block_fits!(builder, size, size, "QR code")
+    validate_block_fits!(builder, {label, label}, size, size, "QR code")
 
     op =
       {:barcode,
@@ -1795,7 +1767,8 @@ defmodule PdfElixide.Builder do
       alias PdfElixide.Geometry.Rect
 
       rect = %Rect{x: 468.0, y: 648.0, width: 72.0, height: 72.0}
-      PdfElixide.Builder.qr_code_in_rect(builder, rect, "https://example.com", error_correction: :high)
+      url = "https://example.com"
+      PdfElixide.Builder.qr_code_in_rect(builder, rect, url, error_correction: :high)
   """
   @spec qr_code_in_rect(t(), Rect.t(), String.t(), qr_code_in_rect_opts()) :: t()
   def qr_code_in_rect(%__MODULE__{} = builder, %Rect{} = rect, data, opts \\ [])
@@ -1924,9 +1897,8 @@ defmodule PdfElixide.Builder do
   `{:anchor, name}` link.
 
   The anchor points to the top of the next flowing content, on whatever page
-  it lands. With no flowing content
-  after it, it points to where the flow ends. Each anchor needs its own
-  non-empty `name`.
+  it lands. With no flowing content after it, it points to where the flow
+  ends. Each anchor needs its own non-empty `name`.
 
       PdfElixide.Builder.anchor(builder, "appendix")
 
@@ -1984,9 +1956,9 @@ defmodule PdfElixide.Builder do
   Adds a bookmark titled `title` to the document's outline.
 
   By default the bookmark points to the top of the next flowing content,
-  wherever it lands, as `anchor/2` does; `heading/4`'s `:bookmark` option adds one for a heading. Bookmarks
-  appear in the outline in the order they are added. See
-  `t:bookmark_opts/0` for nesting and the options, and
+  wherever it lands, as `anchor/2` does; `heading/4`'s `:bookmark` option adds
+  one for a heading. Bookmarks appear in the outline in the order they are
+  added. See `t:bookmark_opts/0` for nesting and the options, and
   [Navigation](guides/building-documents.md#navigation) for an example.
 
       PdfElixide.Builder.bookmark(builder, "Results", level: 2)
@@ -3930,27 +3902,31 @@ defmodule PdfElixide.Builder do
 
   # The fit and precision checks below are spelled as the native layout spells
   # its own, so both refuse the same blocks.
-  defp validate_image_fits!(key, size, room), do: validate_fits!(key, size, room, "image")
+  defp validate_image_fits!(side, size, room),
+    do: validate_fits!(side, side, size, room, "image")
 
-  defp validate_block_fits!(builder, width, height, noun) do
+  # A size the caller did not give came from the data, so no option is to blame.
+  defp given_or_layout(nil, _key), do: "layout"
+  defp given_or_layout(_value, key), do: key
+
+  defp validate_block_fits!(builder, {width_label, height_label}, width, height, noun) do
     {page_width, page_height} = builder.current_page_size
-    validate_fits!(:width, width, page_width - builder.margin_left - builder.margin_right, noun)
+    room = page_width - builder.margin_left - builder.margin_right
+    validate_fits!(width_label, :width, width, room, noun)
 
-    validate_fits!(
-      :height,
-      height,
-      page_height - builder.margin_top - builder.margin_bottom,
-      noun
-    )
+    room = page_height - builder.margin_top - builder.margin_bottom
+    validate_fits!(height_label, :height, height, room, noun)
   end
 
-  defp validate_fits!(_key, nil, _room, _noun), do: :ok
+  defp validate_fits!(_label, _side, nil, _room, _noun), do: :ok
 
-  defp validate_fits!(key, size, room, noun) do
+  defp validate_fits!(label, side, size, room, noun) do
     if size > room + @fit_tolerance do
+      label = if is_atom(label), do: inspect(label), else: label
+
       raise ArgumentError,
-            "invalid #{inspect(key)}, a #{size}-point #{noun} does not fit the " <>
-              "#{room}-point content #{key}"
+            "invalid #{label}, a #{size}-point #{noun} does not fit the " <>
+              "#{room}-point content #{side}"
     end
   end
 

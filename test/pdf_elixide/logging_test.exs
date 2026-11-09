@@ -86,7 +86,6 @@ defmodule PdfElixide.LoggingTest do
 
       log =
         capture_log(fn ->
-          # Still `:ok` — capture is a diagnostic channel, not an error one.
           assert {:ok, _} = extract(@broken)
           Logging.flush()
         end)
@@ -101,7 +100,7 @@ defmodule PdfElixide.LoggingTest do
       log =
         capture_log(fn ->
           {:ok, doc} = Document.open(@cleartext, password: "secret")
-          # Still `:ok` and empty — the record is the only report.
+          # The log record is the only report of the failure.
           assert {:ok, ""} = Document.text(doc, 1)
           Document.close(doc)
         end)

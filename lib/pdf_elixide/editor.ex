@@ -27,52 +27,30 @@ defmodule PdfElixide.Editor do
 
   ## Creating documents
 
-  `from_markdown/2`, `from_html/2` and `from_plain_text/2` lay text out on new
-  pages and return an editor holding them. They are simple typesetters rather
-  than round-trip conversions: lines are not wrapped, and only a limited
-  Markdown or HTML vocabulary is recognized. `from_images/2` places one JPEG or
-  PNG image on each new page. See the
-  [Creating documents](guides/creating-documents.md) guide for examples,
-  supported input and character limitations. `from_builder/1` lays out a
-  `PdfElixide.Builder` description; see
-  [Building documents](guides/building-documents.md).
+  `from_markdown/2`, `from_html/2` and `from_plain_text/2` lay out unwrapped
+  lines; `from_images/2` places one image per page. See
+  [Creating documents](guides/creating-documents.md) for supported input.
+  For wrapped text, page breaks and custom fonts, use `from_builder/1` with a
+  `PdfElixide.Builder`; see [Building documents](guides/building-documents.md).
 
-  ## Page structure
+  ## Editing workflows
 
-  `delete_page/2`, `move_page/3` and `keep_pages/2` use zero-based indices in
-  the current page order. **Deleting a page is not redaction**, and bookmarks and
-  links are not remapped. See [Page structure](guides/editing.md#page-structure).
+    * [Page structure](guides/editing.md#page-structure) — delete, move or keep
+      pages using indices in the current page order. Deleting a page leaves its
+      content recoverable, and bookmarks and links are not remapped.
+    * [Page rotation](guides/editing.md#page-rotation) and
+      [Page boxes](guides/editing.md#page-boxes) — change display geometry.
+    * [Merging and splitting](guides/merging-and-splitting.md) — combine
+      documents or write selected pages to new binaries.
+    * [Attachments](guides/editing.md#attachments) and
+      [Document information](guides/editing.md#document-information) — change
+      attached files and `/Info` metadata.
 
-  ## Merging and splitting
-
-  `merge/2` and `merge_binary/2` append another document's pages, and
-  refuse a document they cannot carry intact. `extract_pages/2` and
-  `extract_page_ranges/2` write chosen pages to new binaries without changing the
-  editor, and `split_by_bookmarks/2` writes one per bookmarked section. See the
-  [Merging and splitting](guides/merging-and-splitting.md) guide.
-
-  ## Page rotation
-
-  `set_rotation/3`, `rotate_page_by/3` and `rotate_all_by/2` change how a viewer
-  displays pages; `rotation/2` includes pending changes. See
-  [Page rotation](guides/editing.md#page-rotation) for examples and page geometry.
-
-  ## Page boxes
-
-  `media_box/2` and `crop_box/2` read a page's boxes, pending changes included;
-  `set_media_box/3`, `set_crop_box/3` and `crop_margins/2` change them. Setting
-  the media box leaves an existing crop box alone. See
-  [Page boxes](guides/editing.md#page-boxes) for what a viewer does with each box
-  and the limitations.
-
-  ## Erasing regions
-
-  `erase_region/3` and `erase_regions/3` paint white rectangles when the document
-  is written. **Erasing is not redaction**: covered content remains recoverable.
-  Annotations remain above the overlay, and the page's graphics state can change
-  its coverage even when the call succeeds. See
-  [Erasing regions](guides/editing.md#erasing-regions) for coordinates, unsupported
-  pages, verifying coverage, and flattening before erasing.
+  `erase_region/3` and `erase_regions/3` paint white rectangles on the next
+  write. Covered content remains recoverable, annotations stay above it, and
+  the page's graphics state can affect coverage. See
+  [Erasing regions](guides/editing.md#erasing-regions) for coordinates and
+  verification.
 
   ## Redaction
 
@@ -83,22 +61,6 @@ defmodule PdfElixide.Editor do
   graphics in the file. `sanitize/1,2` separately strips document-level metadata,
   JavaScript and attachments without changing page content. See the
   [Redaction](guides/redaction.md) guide for workflows and limitations.
-
-  ## Attachments
-
-  `embed_file/4` adds an attachment and `embedded_files/1` includes pending ones.
-  Attaching to a document with an existing name tree is refused unless a
-  `sanitize/1,2` emptied it. See
-  [Attachments](guides/editing.md#attachments) for the workflow and metadata limits.
-
-  ## Document information
-
-  `set_title/2`, `set_author/2`, `set_subject/2`, `set_keywords/2`,
-  `set_creator/2`, `set_producer/2`, `set_creation_date/2` and
-  `set_modification_date/2` change the `/Info` dictionary; `metadata/1` reads
-  it with pending changes.
-  See [Document information](guides/editing.md#document-information) for what
-  writes preserve and how text, dates, XMP and document identifiers behave.
 
   ## Encryption
 
@@ -843,7 +805,7 @@ defmodule PdfElixide.Editor do
   raises `ArgumentError`. Use `save/3` for incremental writes; see
   [Saving edits](guides/editing.md#saving-edits).
 
-  That includes `:encryption`, which encrypts the returned binary exactly as it
+  `:encryption` is accepted too, and encrypts the returned binary exactly as it
   encrypts a file — including the caveat in
   [A failed encryption is not reported](guides/encryption.md#a-failed-encryption-is-not-reported).
 
@@ -1741,8 +1703,8 @@ defmodule PdfElixide.Editor do
 
   @doc group: "Redaction"
   @doc """
-  Removes the content covered by every queued region, raising an error if it
-  fails.
+  Removes covered page text from marked pages and pages with queued regions,
+  raising an error if it fails.
   """
   @spec apply_redactions!(t(), redaction_opts()) :: RedactionReport.t()
   def apply_redactions!(%__MODULE__{} = editor, opts \\ []) when is_list(opts) do
@@ -2023,8 +1985,7 @@ defmodule PdfElixide.Editor do
   tree by the next **full** write — `save/3` without `:incremental`, or
   `to_binary/2` — and read back with `PdfElixide.Document.embedded_files/1`. It
   is a file the document carries, not page content: nothing about the pages
-  changes and nothing displays it, though
-  a viewer will offer it for saving.
+  changes and nothing displays it, though a viewer will offer it for saving.
 
   `name` must be a non-empty UTF-8 string; anything else raises. Attaching two
   files under the same name is allowed and produces a document declaring both,

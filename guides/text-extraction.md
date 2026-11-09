@@ -10,6 +10,7 @@ differ; on a simple or trustworthy-tagged page they may not.
 
 ```elixir
 alias PdfElixide.Document
+alias PdfElixide.Document.Page
 
 doc = Document.open!("path/to/file.pdf")
 
@@ -137,19 +138,22 @@ page they all agree.
 Both have a whole-document arity, and they join pages differently:
 
 ```elixir
-Document.text!(doc)            # pages separated by a form feed, "\f"
-Document.to_plain_text!(doc)   # pages separated by "\n\n---\n\n"
+# pages separated by a form feed, "\f"
+Document.text!(doc)
+# pages separated by "\n\n---\n\n"
+Document.to_plain_text!(doc)
 ```
 
-For a document with at least one page, a successful `PdfElixide.Document.text/1`
-splits on the form feed into exactly `PdfElixide.Document.page_count/1` parts;
-under `on_page_error: :skip` a page that failed to extract stays as an empty
-part. A zero-page document returns `""`, which `String.split/2` represents as
-one empty part rather than none. The `---` boundary is not as safe:
-`PdfElixide.Document.to_plain_text/2` separates paragraphs with a blank line, so
-a page whose own text has a `---` line between two paragraphs emits the same
-bytes and splits into an extra part, shifting every page after it. Enumerate
-pages when page boundaries must be unambiguous.
+`PdfElixide.Document.text/1` puts one form feed between consecutive pages, and
+under `on_page_error: :skip` a page that failed to extract still keeps its
+separator, so its slot is empty rather than missing. Splitting on `"\f"` is
+still not a reliable way back to pages: a page's own text can contain a form
+feed, which splits into an extra part and shifts every page after it. A
+zero-page document returns `""`, which `String.split/2` represents as one empty
+part rather than none. The `---` boundary has the same flaw and meets it more
+often: `PdfElixide.Document.to_plain_text/2` separates paragraphs with a blank
+line, so a page whose own text has a `---` line between two paragraphs emits
+the same bytes. Enumerate pages when page boundaries must be unambiguous.
 
 Neither bounds memory: each builds the whole result before returning. A document
 is enumerable over its pages, so process each page's result without accumulating
@@ -157,7 +161,7 @@ it to bound memory used by results:
 
 ```elixir
 doc
-|> Stream.map(&PdfElixide.Document.Page.to_plain_text!/1)
+|> Stream.map(&Page.to_plain_text!/1)
 |> Stream.each(&IO.puts/1)
 |> Stream.run()
 ```
@@ -177,8 +181,6 @@ and decide per page. This keeps which page failed and why, so a handle failure
 such as `:closed` or `:panic` is not mistaken for an empty page:
 
 ```elixir
-alias PdfElixide.Document.Page
-
 results = Enum.map(doc, &{&1.index, Page.chars(&1)})
 
 chars =
@@ -260,9 +262,10 @@ Spans on a rotated page may be in the displayed frame; map those back with
 frame](page-geometry.md#bringing-boxes-into-one-frame) describes:
 
 ```elixir
+alias PdfElixide.Editor
 alias PdfElixide.Geometry.Rect
 
-editor = PdfElixide.Editor.open!("path/to/file.pdf")
+editor = Editor.open!("path/to/file.pdf")
 
 editor =
   Enum.reduce(regions, editor, fn {index, spans}, editor ->
@@ -273,16 +276,16 @@ editor =
     boxes =
       for span <- spans do
         if rotation == 180 or span.rotation != 0.0,
-          do: Rect.to_user_space(span.bbox, rotation, media_box),
-          else: span.bbox
+          do: Rect.to_user_space(span.page_bbox, rotation, media_box),
+          else: span.page_bbox
       end
 
-    PdfElixide.Editor.erase_regions!(editor, index, boxes)
+    Editor.erase_regions!(editor, index, boxes)
   end)
 
 editor
-|> PdfElixide.Editor.save!("path/to/without-running-text.pdf")
-|> PdfElixide.Editor.close()
+|> Editor.save!("path/to/without-running-text.pdf")
+|> Editor.close()
 ```
 
 Do this before moving or deleting pages, while the editor's page indices still
@@ -296,8 +299,8 @@ the rectangle does not cover it.
 
   * **Glyphs and geometry.** `PdfElixide.Document.chars/2`,
     `PdfElixide.Document.spans/2`, `PdfElixide.Document.words/2` and
-    `PdfElixide.Document.text_lines/2` return structs with bounding boxes, fonts
-    and colors. Use them to locate text on the page rather than to read it.
+    `PdfElixide.Document.text_lines/2` return structs with bounding boxes;
+    characters and spans also carry font and color, words their font. Use them to locate text on the page rather than to read it.
   * **Typed regions.** `PdfElixide.Document.structured/2` groups a page's spans
     into `PdfElixide.Document.StructuredPage.Region`s — body text with one
     region per column, running header, footer and page number where the PDF

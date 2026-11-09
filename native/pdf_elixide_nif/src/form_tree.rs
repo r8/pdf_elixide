@@ -166,8 +166,8 @@ impl Resolved {
 }
 
 // What this walk resolves and neither upstream source does: `/FT`, `/Ff`,
-// `/MaxLen` and `/Q`, which upstream reads off the own dictionary, and `/Opt`
-// and the widgets' `/AP` `/N` state names, which its forms path never reads.
+// `/MaxLen` and `/Q`, which upstream reads off the own dictionary, and `/Opt`,
+// which its forms path never reads.
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedAttrs<'a> {
     pub field_type: Option<FieldType>,

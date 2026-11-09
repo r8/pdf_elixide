@@ -775,7 +775,8 @@ const MAX_PASSES: usize = 8;
 // `m`s for a large one.
 pub const MAX_ROMAN: u64 = 3999;
 
-// The Elixir side's cap on `:start`: the largest a 32-bit counter holds.
+// The Elixir side's cap on a numbered label: the largest a signed 32-bit
+// integer holds.
 pub const MAX_NUMBER: u64 = 2_147_483_647;
 
 // The labels the contents draws and the width its label column reserves.

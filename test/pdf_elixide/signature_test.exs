@@ -168,9 +168,6 @@ defmodule PdfElixide.SignatureTest do
     head <> <<rem(byte + 1, 256)>> <> rest
   end
 
-  # Walked by tag rather than decoded: `:public_key`'s decoded CMS shape is not
-  # stable across the OTP releases CI runs, so a test written against either
-  # shape passes on one leg and fails on the other.
   defp tlv(<<tag, len, rest::binary>>) when len < 0x80 do
     <<value::binary-size(^len), tail::binary>> = rest
 
@@ -2003,8 +2000,8 @@ defmodule PdfElixide.SignatureTest do
       assert {:error, %Error{reason: :not_found}} = ctx.verify.(@cms_pdf)
     end
 
-    # The retained 9-byte mock fails one step earlier, at the parse, so it can
-    # never reach a verdict.
+    # The B-LT fixture's 9-byte mock token fails at the parse, before any
+    # verdict.
     test "refuses an attribute holding something that is not a token", ctx do
       assert {:error, %Error{reason: :invalid_pdf}} = ctx.verify.(@pades_lt_pdf)
     end

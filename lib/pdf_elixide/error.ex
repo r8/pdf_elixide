@@ -16,7 +16,8 @@ defmodule PdfElixide.Error do
 
     * `:encrypted` — the PDF needs authentication. Supply `:password` when
       opening a document or editor, or call `PdfElixide.Document.authenticate/2`
-      on an open document.
+      on an open document. `PdfElixide.Editor.merge/2` also returns it for an
+      encrypted document being merged in, which it does not accept.
     * `:wrong_password` — an open function's `:password` was rejected, or
       the password given to `PdfElixide.Signature.Certificate.parse_pkcs12/2`
       does not open the file. `PdfElixide.Document.authenticate/2` reports a
@@ -38,7 +39,8 @@ defmodule PdfElixide.Error do
       `PdfElixide.Signature.verify_timestamp/2`, or a file holding no
       certificate is to `PdfElixide.Signature.Certificate.parse_pem/1` and
       `PdfElixide.Signature.Certificate.parse_pkcs12/2`.
-    * `:out_of_range` — the page index is outside the document or editor.
+    * `:out_of_range` — the page index is outside the document or editor, or
+      a `PdfElixide.Document.render/3` `:region` has no area on the page.
     * `:io` — an underlying IO error.
     * `:panic` — the native layer stopped on this input without reporting a
       condition of its own. A handle the call used stays usable, but a panic
@@ -63,7 +65,8 @@ defmodule PdfElixide.Error do
       options argument that is not a list.
     * `ArgumentError` for everything else, and the message names the offending
       key. That covers every way an option can be wrong — an unknown key
-      (`detect_heading:` for `:detect_headings`), a key given twice, a value the
+      (`detect_heading:` for `:detect_headings`), a key given twice (so build
+      option lists with `Keyword.merge/2` rather than `++`), a value the
       native layer cannot decode, a value out of range (`{:min_overlap, 2.0}`) —
       and undecodable values outside an options map, such as a form field value
       that is none of the shapes `PdfElixide.Form.put_value/3` accepts. A *path*
@@ -74,10 +77,9 @@ defmodule PdfElixide.Error do
   Malformed arguments always raise. Do not rely on the exception type or
   message remaining stable across releases.
 
-  Build option lists with `Keyword.merge/2` rather than `++`, since a duplicated
-  key is rejected instead of resolved to the first occurrence. So nothing about
-  the *caller* arrives as a `%PdfElixide.Error{}`; if you get one, the arguments
-  were accepted and the document, the filesystem or the handle is what failed.
+  Nothing about the *caller* therefore arrives as a `%PdfElixide.Error{}`; if
+  you get one, the arguments were accepted and the document, the filesystem or
+  the handle is what failed.
 
   An `ErlangError` from any function, predicates included, reports an unexpected
   native-boundary failure, such as an unloaded library, an uncontained panic or

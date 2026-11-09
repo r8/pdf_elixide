@@ -38,9 +38,9 @@ Under `literal: false`, patterns use the [Rust `regex` crate][regex] rather than
 PCRE. The important differences are:
 
   * There are **no backreferences and no lookaround** — `(?=…)`, `(?<=…)` and
-    `\1` do not compile. In exchange, matching avoids catastrophic backtracking
-    and has worst-case `O(m × n)` time for pattern size `m` and text size `n`.
-    Very large patterns or pages can still take time.
+    `\1` do not compile. In exchange, matching avoids catastrophic
+    backtracking. Very large patterns or pages, or a pattern matching many
+    times on a long page, can still take time.
   * Character classes, alternation, repetition, named groups, the inline flags
     `(?i)` `(?m)` `(?s)` `(?x)` and Unicode properties like `\p{Greek}` all work
     as usual.
@@ -84,14 +84,18 @@ span of the entire line. The search API provides no narrower box.
 **`:bbox` is the union of the spans' boxes.** For a match inside one run they
 are the same rectangle. For a match crossing two runs — including two on
 different lines — the union is a single rectangle covering everything between
-them, including whatever sits in the gap. Draw from each span's `:bbox`, one per
-run, and keep `:bbox` for coarse questions like "which part of the page".
+them, including whatever sits in the gap. It also measures a rotated run along
+its writing axis, so it can miss most of that run's glyphs. Draw from each
+span's `:page_bbox`, one per run, which covers the run however it is drawn, and
+keep `:bbox` for coarse questions like "which part of the page".
 
 **A match can cross a line.** Runs are concatenated before matching, with a
 space inserted after a run only when that run does not already end in one. No
 newline is inserted, so a phrase split across two lines still matches as one.
-The page behaves as a single line: `^` and `$` anchor to the page rather than to
-a line, and `.` never stops at a line end.
+A run's own text can still contain a line break, from a document's
+`/ActualText` for instance, so do not count on the page reading as a single
+line: `.` stops at such a break unless the pattern sets `(?s)`, and under
+`(?m)` `^` and `$` anchor to it. Without `(?m)` they anchor to the page.
 
 A match consisting entirely of inserted spaces — possible with a pattern such
 as `~S"\s+"` — belongs to no run and returns empty `:spans` and a zero-sized
@@ -146,10 +150,9 @@ Two calls control it:
     holds. The document stays usable and a later search rebuilds what it needs.
     `PdfElixide.Document.close/1` releases it too, along with everything else.
   * `PdfElixide.Document.prepare_search/1` builds it, spans included, for every
-    page up front.
-    This does not make searching cheaper overall — it moves the cost off the
-    first `search/2` and onto a call you choose, which is useful when that first
-    search is on a latency path.
+    page up front. This does not make searching cheaper overall — it moves the
+    cost off the first `search/2` and onto a call you choose, which is useful
+    when that first search is on a latency path.
 
 Searching from several processes is supported. If searches may overlap
 `clear_search_index/1`, see the [Concurrency](concurrency.md) guide for the

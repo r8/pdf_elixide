@@ -9,7 +9,8 @@ extractor reports in on a rotated page.
 
 Raw PDF user space has a bottom-left origin, y increasing upward, and units
 measured in points. Extracted boxes may instead use the displayed frame on a
-rotated page; see [Rotated pages and extracted geometry](#rotated-pages-and-extracted-geometry).
+rotated page; see
+[Rotated pages and extracted geometry](#rotated-pages-and-extracted-geometry).
 
 The sheet those coordinates fall on is the page's `/MediaBox`, read with
 `PdfElixide.Document.Page.media_box/1` as a `PdfElixide.Geometry.Rect`. Its
@@ -19,8 +20,16 @@ whose box starts at `{10.0, 20.0}` reports an `x` near `10.0`. Subtract the
 origin yourself when you want offsets from the page corner:
 
 ```elixir
-box = PdfElixide.Document.Page.media_box!(page)
+alias PdfElixide.Document
+alias PdfElixide.Document.Page
+
+doc = Document.open!("path/to/file.pdf")
+page = Document.page!(doc, 0)
+[word | _] = Page.words!(page)
+box = Page.media_box!(page)
 {word.bbox.x - box.x, word.bbox.y - box.y}
+
+Document.close(doc)
 ```
 
 `PdfElixide.Document.Page.width/1` and `PdfElixide.Document.Page.height/1` are
@@ -121,11 +130,19 @@ each given the page's `PdfElixide.Document.Page.rotation/1` and raw
 that takes raw user space — `PdfElixide.Editor.add_redaction/3`,
 `PdfElixide.Editor.erase_region/3`, `PdfElixide.Editor.erase_regions/3`,
 `PdfElixide.Editor.set_crop_box/3` or `PdfElixide.Document.render/3`'s
-`:region` — and only a box that was mapped, since at `90` or `270` the inverse moves a raw
-box. Decide per run: a search match's `:bbox` is the union of its spans' boxes,
-and on a `90`- or `270`-degree page a match can cross from a horizontal run into
-a rotated one, leaving that union in neither frame. Given a document and an
-editor open on the same file:
+`:region` — and only a box that was mapped, since at `90` or `270` the inverse
+moves a raw box. Decide per run: a search match's `:bbox` is the union of its
+spans' boxes, and on a `90`- or `270`-degree page a match can cross from a
+horizontal run into a rotated one, leaving that union in neither frame.
+
+`PdfElixide.Document.text/2`'s `:region` goes the other way: it matches in the
+frame `PdfElixide.Document.words/1` reports in, so a box from `words/1` or
+`PdfElixide.Document.text_lines/1` goes straight in, and a raw box from
+`PdfElixide.Document.chars/1` or `PdfElixide.Document.spans/1` needs
+`PdfElixide.Geometry.Rect.to_display_frame/3` first on a `180`-degree page, or
+for a rotated run on a `90`- or `270`-degree page.
+
+Given a document and an editor open on the same file:
 
 ```elixir
 alias PdfElixide.Document
@@ -141,8 +158,8 @@ box = Document.Page.media_box!(page)
 for span <- match.spans do
   rect =
     if rotation == 180 or span.rotation != 0.0,
-      do: Rect.to_user_space(span.bbox, rotation, box),
-      else: span.bbox
+      do: Rect.to_user_space(span.page_bbox, rotation, box),
+      else: span.page_bbox
 
   Editor.add_redaction!(editor, 0, rect)
 end

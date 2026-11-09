@@ -27,9 +27,8 @@ defmodule PdfElixide.Signature.DSS do
   and `PdfElixide.Signature.certificate/1` draw, and the reason a store's mere
   presence proves nothing about the signatures it accompanies.
 
-  A store also reads as though it were whole. An entry that is not a readable
-  stream is dropped without a trace, so a short list is not evidence that the
-  document is short: it may be a damaged one.
+  Unreadable store entries are skipped without a warning, so returned lists
+  may be incomplete.
 
   ## Decoding a blob
 
@@ -40,12 +39,18 @@ defmodule PdfElixide.Signature.DSS do
       {:ok, certificate} = PdfElixide.Signature.Certificate.parse(der)
       certificate.subject_common_name
 
-  CRLs decode through OTP's `:public_key`:
+  CRLs and OCSP responses decode through OTP's `:public_key`:
 
       [der | _] = dss.crls
       :public_key.der_decode(:CertificateList, der)
 
-  OCSP responses stay opaque here, OTP shipping no decoder for them.
+      [der | _] = dss.ocsp_responses
+      :public_key.der_decode(:OCSPResponse, der)
+
+  An `OCSPResponse` wraps its `BasicOCSPResponse` as bytes in its
+  `responseBytes`; decode those with `:BasicOCSPResponse` to reach the
+  certificate statuses. Decoding is not validation: nothing checks the
+  responder's signature or matches the response to a certificate.
 
   ## Reaching one signature's material
 

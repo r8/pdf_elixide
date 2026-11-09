@@ -9,10 +9,10 @@ defmodule PdfElixide.Document.Font do
   `:custom`, or `{:standard, name}` for a named base encoding such as
   `"WinAnsiEncoding"`.
 
-  The raw embedded font program is not carried on the struct; instead `:ref` is a
+  The embedded font program is not carried on the struct; instead `:ref` is a
   handle to the font, and `data/1` pulls the bytes on demand:
 
-      {:ok, bytes} = PdfElixide.Document.Font.data(font)   # embedded TTF/OTF bytes
+      {:ok, bytes} = PdfElixide.Document.Font.data(font)   # embedded font program
 
   For a non-embedded font (`:embedded?` is `false`, e.g. one of the standard 14)
   `data/1` returns `{:ok, nil}`.
@@ -93,8 +93,11 @@ defmodule PdfElixide.Document.Font do
   end
 
   @doc """
-  Returns the font's raw embedded font-program bytes — the TrueType / OpenType
-  file, suitable for re-embedding elsewhere.
+  Returns the font's embedded font-program bytes: a TrueType program, a Type 1
+  program, or OpenType. A bare CFF program comes back wrapped in a minimal
+  OpenType container, so the bytes are not always the file as the document
+  stores it. An embedded program is often a subset holding only the glyphs the
+  document uses, so it may not serve other text.
 
   Returns `{:ok, nil}` for a non-embedded font (`:embedded?` is `false`).
   """
@@ -104,8 +107,7 @@ defmodule PdfElixide.Document.Font do
   end
 
   @doc """
-  Returns the font's raw embedded font-program bytes, raising an error if it
-  fails.
+  Returns the font's embedded font-program bytes, raising an error if it fails.
   """
   @spec data!(t()) :: binary() | nil
   def data!(%__MODULE__{} = font) do

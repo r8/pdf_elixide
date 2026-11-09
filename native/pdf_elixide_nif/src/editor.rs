@@ -132,7 +132,8 @@ fn editor_from_bytes(bytes: Binary, options: OpenOptionsNif<'_>) -> NifResult<Op
     opened(OpenEditor::new(editor))
 }
 
-// Shared and live because the native call takes `&self` and may change over time.
+// Shared because the native call takes `&self`; live because page edits move
+// the count.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn editor_page_count(resource: ResourceArc<EditorResource>) -> NifResult<usize> {
     resource

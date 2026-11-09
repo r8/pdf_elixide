@@ -18,7 +18,8 @@ defmodule PdfElixide.Logging do
       iex> PdfElixide.Logging.set_level(:warning)
       :ok
 
-  Records are then forwarded to `Logger` at the matching level, tagged with
+  Records are then forwarded to `Logger` at the matching level (`:trace`
+  records arrive at `:debug`, the finest level `Logger` has), tagged with
   `pdf_elixide: true` and the originating module in `:pdf_source` metadata.
   Turn it back off with `set_level(:off)`, which also discards anything
   captured but not yet forwarded.
@@ -30,8 +31,10 @@ defmodule PdfElixide.Logging do
 
   Under concurrent use, a record may be forwarded by a process other than the
   one whose work produced it. Forwarded records therefore omit that process's
-  `Logger` metadata. Use `:pdf_source`, the message and the timestamp instead;
-  the `:pid` added by `Logger` identifies only the forwarding process.
+  `Logger` metadata. Use `:pdf_source` and the message instead; the `:pid`
+  added by `Logger` identifies only the forwarding process, and the timestamp
+  records when the record was forwarded, which can be later than when it was
+  produced.
 
   ## Cost
 

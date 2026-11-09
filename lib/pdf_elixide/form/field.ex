@@ -37,15 +37,15 @@ defmodule PdfElixide.Form.Field do
   The first three also carry a `:kind`, naming the widget the type covers —
   `t:PdfElixide.Form.Field.Text.kind/0`,
   `t:PdfElixide.Form.Field.Button.kind/0` and
-  `t:PdfElixide.Form.Field.Choice.kind/0` each list their own. `Unknown` has none, having no type
-  whose bits would say.
+  `t:PdfElixide.Form.Field.Choice.kind/0` each list their own. `Unknown` has
+  none, having no type whose bits would say.
 
   A parent that carries a name but declares no type is itself reported as a
   field, so a nested form yields a struct for the grouping level as well as for
   each leaf under it.
 
   The "Field kinds and flags" section of the [Forms](guides/forms.md) guide
-  covers both in full.
+  covers kinds and flags in full.
   """
   alias PdfElixide.Form.Field.Button
   alias PdfElixide.Form.Field.Choice

@@ -14,9 +14,9 @@ defmodule PdfElixide.Warning do
   `PdfElixide.Document.structured_warnings/1` lists document-specific
   conditions and reader-level conditions raised by
   `PdfElixide.Document.text/2`, `PdfElixide.Document.to_markdown/2` or
-  `PdfElixide.Document.to_html/2` at any arity. The exception is
-  `PdfElixide.Document.text/3` with `:exclude_layers` or `:exclude_inks`, whose
-  reader-level warnings go to the VM-wide feed.
+  `PdfElixide.Document.to_html/2` at any arity. The exception is `text` given
+  `:exclude_layers` or `:exclude_inks`, for a page or for the whole document,
+  whose reader-level warnings go to the VM-wide feed.
 
   `PdfElixide.Logging.structured_warnings/0` lists reader-level conditions
   from all other calls, including `PdfElixide.Document.to_plain_text/2` and

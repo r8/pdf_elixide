@@ -15,8 +15,8 @@ defmodule PdfElixide.Builder.FontFamily do
       |> PdfElixide.Builder.save!("report.pdf")
 
   Pass single-face TrueType (`.ttf`) or OpenType (`.otf`) font bytes.
-  Only `:regular` is required. Missing styles are refused at build time;
-  bold italic requires its own `:bold_italic` face.
+  Only `:regular` is required. Text set in a style the family has no face for
+  is refused at build time; bold italic requires its own `:bold_italic` face.
 
   Invalid fonts and font collections (`.ttc`) are refused at build time as
   `{:error, %PdfElixide.Error{reason: :unsupported}}`.

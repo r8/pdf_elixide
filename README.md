@@ -11,8 +11,8 @@ Elixir bindings for [pdf_oxide](https://crates.io/crates/pdf_oxide), a
 high-performance PDF library written in Rust. Built with
 [Rustler](https://github.com/rusterlium/rustler).
 
-> ⚠️ **Status:** This project is under active development. 
-> The public API may change between minor versions until the `1.0` release. 
+> ⚠️ **Status:** This project is under active development.
+> The public API may change between minor versions until the `1.0` release.
 
 ## Features
 
@@ -203,11 +203,11 @@ Convert one page or the whole document:
 Options control heading and table detection, images, form fields, reading
 order, and related conversion behavior. The result of `to_html/1,2,3` is an HTML
 fragment rather than a complete document; consult its API documentation before
-rendering untrusted paths through `:image_output_dir`.
+passing an untrusted value as `:image_output_dir`.
 
 ### Search
 
-Searches return matches with page numbers and bounding boxes:
+Searches return matches with their page index and bounding boxes:
 
 ```elixir
 Document.search!(doc, "Figure 3")

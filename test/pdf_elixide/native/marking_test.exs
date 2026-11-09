@@ -3,8 +3,7 @@ defmodule PdfElixide.Native.MarkingTest do
 
   use ExUnit.Case, async: true
 
-  # add_redaction also marks the page, so it must enable the scan; it stays
-  # listed although only the wrapper calls it, in case a NIF reaches upstream's.
+  # add_redaction also marks the page, so it must enable the scan.
   @marking_calls [
     ".apply_page_redactions(",
     ".apply_all_redactions(",

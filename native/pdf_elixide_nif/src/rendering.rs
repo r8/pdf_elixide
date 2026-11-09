@@ -143,7 +143,7 @@ impl RenderOptionsNif {
     }
 
     fn to_upstream(&self) -> RenderOptions {
-        // The private `scale_override` field requires construction through the default.
+        // `scale_override` is crate-private upstream, so no struct literal.
         let mut options = RenderOptions::with_dpi(self.dpi);
         options.format = self.format.into();
         options.background = self.background.as_ref().map(|bg| [bg.r, bg.g, bg.b, bg.a]);
@@ -451,7 +451,7 @@ fn encode_jpeg(image: &RenderedImage, quality: u8) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-// Upstream's own conversion out of `encode_jpeg`: tiny-skia's buffer is
+// The un-premultiply upstream's JPEG encoder applies: tiny-skia's buffer is
 // premultiplied, and a fully transparent pixel becomes black rather than
 // dividing by zero.
 fn straight_rgb(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {

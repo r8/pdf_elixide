@@ -5,8 +5,9 @@ defmodule PdfElixide do
 
   The entry points are:
 
-    * `PdfElixide.Document` — read-only inspection (open, page count,
-      version, text extraction).
+    * `PdfElixide.Document` — read-only access: text and structure
+      extraction, search, conversion to Markdown, HTML and Office formats,
+      and rendering.
     * `PdfElixide.Editor` — mutable, in-memory editor (open, or create
       from Markdown, HTML, plain text or images; mutate; save).
     * `PdfElixide.Builder` — creates new PDFs with wrapped text, automatic

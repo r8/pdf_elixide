@@ -878,8 +878,7 @@ defmodule PdfElixide.FormTest do
     test "returns the editor it was given" do
       editor = Editor.open!(@form_pdf)
 
-      # The same handle, not a copy: an editor is mutable, so a pipeline
-      # sequences effects rather than threading a value.
+      # The same handle, not a copy.
       assert {:ok, ^editor} = Form.put_value(editor, "full_name", "Jane Doe")
     end
 
@@ -1144,8 +1143,7 @@ defmodule PdfElixide.FormTest do
     test "raises ArgumentError for each invalid value shape, and writes nothing" do
       editor = Editor.open!(@form_pdf)
 
-      # The same set `put_value/3` rejects at the NIF boundary, refused here in
-      # Elixir instead so that nothing has been written by the time it raises.
+      # The same shapes `put_value/3` rejects.
       for bad <- [42, :yes, ["a", 5], {:text, "x"}, {:name, "Export1"}, %{}] do
         assert_raise ArgumentError, ~r/invalid value for field "full_name"/, fn ->
           Form.put_values(editor, [{"full_name", bad}])
@@ -1387,8 +1385,7 @@ defmodule PdfElixide.FormTest do
       assert {:error, %Error{reason: :not_found}} = Form.put_value(editor, "inherited.leaf", nil)
       assert {:ok, ^editor} = Form.put_value(editor, "plain", "written")
 
-      # The `/V` is an indirect reference, so an unguarded write would replace it
-      # with `null` and the default garbage collection would drop the dictionary.
+      # As above, the marker surviving shows the guard held across the save.
       bytes = Editor.to_binary!(editor, compress: false)
       assert bytes =~ "CAFEBABE"
 

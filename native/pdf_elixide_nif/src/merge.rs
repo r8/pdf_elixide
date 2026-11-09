@@ -54,7 +54,7 @@ pub(crate) enum MergeError {
     // destination's instead.
     CollidesWithStructure { page: usize },
     // Upstream's import recurses without a limit, so a page nested past
-    // `MAX_IMPORT_DEPTH` would overflow even the import thread's stack and abort
+    // `MAX_IMPORT_DEPTH` is refused before it can overflow the stack and abort
     // the process.
     TooDeep { page: usize },
     NoPages,
@@ -87,12 +87,11 @@ const MAX_PAGE_GRAPH_NODES: usize = 10_000_000;
 // quarter of what `IMPORT_STACK_SIZE` holds.
 const MAX_IMPORT_DEPTH: usize = 4096;
 
-// A dirty scheduler's stack holds a few hundred of those frames.
+// The stack the import is left with when no deep segment can be allocated.
 const IMPORT_STACK_SIZE: usize = 16 * 1024 * 1024;
 
-// Upstream's merge work, on the stack `MAX_IMPORT_DEPTH` was set against. A
-// panic is resumed on the calling thread, where the editor's `Closable`
-// contains it.
+// Upstream's merge work on a thread of its own. A panic is resumed on the
+// calling thread, where the editor's `Closable` contains it.
 pub(crate) fn on_import_stack<T: Send>(
     work: impl FnOnce() -> Result<T, MergeError> + Send,
 ) -> Result<T, MergeError> {

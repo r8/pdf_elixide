@@ -80,7 +80,8 @@ stricter; see
 [Damaged documents are refused, not stepped over](signatures.md#damaged-documents-are-refused-not-stepped-over).
 
 `PdfElixide.Form.flatten/2` validates the hierarchy when marking a page and
-returns the errors above. `PdfElixide.Form.flatten/1` skips hierarchy validation.
+returns the errors above. `PdfElixide.Form.flatten/1` skips hierarchy
+validation.
 
 ## Field kinds and flags
 
@@ -107,10 +108,8 @@ defaults above. Many real forms declare no `/Ff` at all.
 
 A field inherits `/Ff` from its ancestors. A radio-group parent can therefore
 supply the flags for kids that carry none, and each kid still reports `:radio`.
-A kid's own `/Ff` replaces the inherited value instead of merging bit by bit, so
-a `:push` button under a `:radio` parent stays a push button.
-[What a nested field inherits](#what-a-nested-field-inherits) below lists the
-other inherited keys.
+[What a nested field inherits](#what-a-nested-field-inherits) below has the
+rule and the other inherited keys.
 
 `:flags` carries the whole entry decoded, one boolean per bit the specification
 names for that type, plus `:raw` for anything it does not:
@@ -229,8 +228,7 @@ end)
 empty list. An entry the PDF spells as neither a string, a name nor a pair is
 skipped, and the options around it are still reported.
 
-Options follow the inheritance rules above. A field's own `/Opt` replaces the
-inherited list rather than extending it.
+Options follow the inheritance rules above.
 
 `PdfElixide.Document.Annotation` also reports a widget's options, but as export
 values only — `["FR", "DE", "IT"]` for the field above. A field's `:options` is
@@ -276,8 +274,10 @@ produced from it — written back, or exported.
 
 ## Filling a form
 
-Open the file as an editor, write values, then persist. Form-writing calls
-return the editor, so filling and saving compose as a pipeline:
+Open the file as an editor, write values, then save. Form-writing calls
+return the same mutable handle: earlier bindings see later edits too. Reopen
+the source when you need an independent editor. Filling and saving compose as
+a pipeline:
 
 ```elixir
 editor = Editor.open!("path/to/form.pdf")
@@ -292,13 +292,35 @@ try do
 after
   Editor.close(editor)
 end
+
 #=> :ok
 ```
 
 The values are the plain terms `PdfElixide.Form.fields/1` returns — no wrapper
 or tag. Fields are addressed by name, and only existing fields can be written.
 An unknown name is an error; this API cannot add fields. To make a new form,
-see [Form fields](building-documents.md#form-fields).
+see [Form fields](building-documents.md#form-fields). The
+[Concurrency](concurrency.md) guide covers sharing editors across processes.
+
+### Handling returned errors
+
+Non-bang form-writing functions return `{:ok, editor}` or
+`{:error, %PdfElixide.Error{}}`. Use `with/1` to stop at the first error:
+
+```elixir
+with {:ok, editor} <- Editor.open("path/to/form.pdf") do
+  try do
+    with {:ok, editor} <- Form.put_values(editor, %{"full_name" => "Jane Doe"}),
+         {:ok, _editor} <- Editor.save(editor, "path/to/filled.pdf") do
+      :ok
+    end
+  after
+    Editor.close(editor)
+  end
+end
+
+#=> :ok
+```
 
 ### Text a field cannot hold
 
@@ -316,26 +338,6 @@ Use a plain space for a nonbreaking space, and leave the others out. The same
 rule applies to the names, values, options, captions and tooltips of fields made
 with `PdfElixide.Builder`.
 
-## The tuple-returning half
-
-The non-bang functions are uniform in the same way — each returns
-`{:ok, editor}` — so they read as one `with/1` with no shape changes in the
-middle:
-
-```elixir
-with {:ok, editor} <- Editor.open("path/to/form.pdf") do
-  try do
-    with {:ok, editor} <- Form.put_values(editor, %{"full_name" => "Jane Doe"}),
-         {:ok, _editor} <- Editor.save(editor, "path/to/filled.pdf") do
-      :ok
-    end
-  after
-    Editor.close(editor)
-  end
-end
-#=> :ok
-```
-
 ## Several fields at once
 
 `PdfElixide.Form.put_values/2` takes a map with string keys, or a list of
@@ -343,7 +345,12 @@ end
 unknown names, duplicates, names that are not strings and values outside
 `t:PdfElixide.Form.Field.value/0` are all caught up front.
 
+The examples from here through [Saving](#saving) reuse the `editor` opened
+below; close it after the incremental-save example.
+
 ```elixir
+editor = Editor.open!("path/to/form.pdf")
+
 {:ok, editor} = Form.put_values(editor, %{"full_name" => "Jane Doe", "subscribe" => true})
 
 # A list when the order matters — a map is applied in `Enum` order, which is unspecified.
@@ -361,10 +368,11 @@ current value and writing back whatever it returns:
 {:ok, editor} = Form.update_value(editor, "full_name", &String.upcase/1)
 
 # A field carrying no value hands `fun` a nil.
-{:ok, editor} = Form.update_value(editor, "country", fn
-  nil -> ["FR"]
-  other -> other
-end)
+{:ok, editor} =
+  Form.update_value(editor, "country", fn
+    nil -> ["FR"]
+    other -> other
+  end)
 ```
 
 This is not an atomic read-modify-write; see the [Concurrency](concurrency.md)
@@ -374,21 +382,22 @@ guide.
 
 Nothing is written until `PdfElixide.Editor.save/3` writes a file or
 `PdfElixide.Editor.to_binary/2` hands back the bytes, and neither consumes the
-editor: keep editing and write again. `close/1` **discards unsaved edits**, so
-write before you close.
+editor: keep editing and write again. `PdfElixide.Editor.close/1` **discards
+unsaved edits**, so write before you close.
 
 ```elixir
 {:ok, editor} = Editor.save(editor, "path/to/filled.pdf")
 {:ok, bytes} = Editor.to_binary(editor)
 ```
 
-Both accept `t:PdfElixide.Editor.save_opts/0`, including `:encryption`; see
-[Encryption](encryption.md). For an editor opened from a file, an incremental
-save can append field values and document information while retaining the
-original AcroForm structure:
+Both accept `t:PdfElixide.Editor.save_opts/0`, including `:encryption` (see
+[Encryption](encryption.md)); only `save/3` takes `incremental: true`. For an
+editor opened from a file, an incremental save can append field values and
+document information while retaining the original AcroForm structure:
 
 ```elixir
 {:ok, editor} = Editor.save(editor, "path/to/filled.pdf", incremental: true)
+:ok = Editor.close(editor)
 ```
 
 Other pending changes, including flatten marks, require a full rewrite. See
@@ -505,9 +514,12 @@ comes into a form.
 Flattening draws a field's appearance into the page content and takes the
 interactive field away, so the written PDF shows the filled values but can no
 longer be edited. `PdfElixide.Form.flatten/1` covers the whole document,
-`PdfElixide.Form.flatten/2` one page:
+`PdfElixide.Form.flatten/2` one page. The flattening examples reuse the
+`editor` opened here; close it after reading the warnings.
 
 ```elixir
+editor = Editor.open!("path/to/form.pdf")
+
 editor
 |> Form.put_value!("full_name", "Jane Roe")
 |> Form.flatten!()
@@ -586,6 +598,8 @@ write you care about:
 for warning <- Editor.flatten_warnings!(editor) do
   Logger.warning("flatten: #{warning}")
 end
+
+:ok = Editor.close(editor)
 ```
 
 **Treat an empty list as "nothing was reported", not as "nothing was lost".**
@@ -600,7 +614,7 @@ Reported cases include:
     filled in this editor receive no text warning; the text limitation in
     [Flattening](#flattening) still applies.
 
-    Such a warning may suggest enabling wider font support; this package has
+    Such a warning may suggest enabling wider font support; this library has
     no such option. Take the warning to mean the field did not flatten legibly,
     and handle it in your own code — leave the form unflattened, substitute a
     value the field's font can render, or draw the text yourself before
@@ -611,22 +625,6 @@ Reported cases include:
     appearances at all, nothing on it is drawn or removed.
   * **An XFA form left as it was** after a per-page flatten, whose XFA data may
     still reference widgets that are now gone.
-
-## An editor is a handle, not a value
-
-The editor returned by a mutating call is the same handle that went in:
-
-```elixir
-editor = Editor.open!("path/to/form.pdf")
-filled = Form.put_value!(editor, "full_name", "Jane")
-# `editor` and `filled` are the same handle — the original is filled too.
-:ok = Editor.close(editor)
-```
-
-A pipeline therefore sequences effects; an earlier binding does not preserve
-the document's previous state. Reopen the source when a separate state is
-needed. The [Concurrency](concurrency.md) guide describes sharing editor and
-form handles across processes.
 
 ## Signature fields
 

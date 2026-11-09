@@ -69,10 +69,11 @@ the difference.
 
 These operations return `{:error, %PdfElixide.Error{reason: :unsupported}}`:
 
-  * `PdfElixide.Editor.apply_redactions/1`, and
-    `PdfElixide.Editor.add_redaction/3` with it
-  * `PdfElixide.Editor.flatten_annotations/1`
-  * `PdfElixide.Form.flatten/1`
+  * [`PdfElixide.Editor.apply_redactions/1,2`](`PdfElixide.Editor.apply_redactions/1`),
+    and [`PdfElixide.Editor.add_redaction/3,4`](`PdfElixide.Editor.add_redaction/3`)
+    with it
+  * [`PdfElixide.Editor.flatten_annotations/1,2`](`PdfElixide.Editor.flatten_annotations/1`)
+  * [`PdfElixide.Form.flatten/1,2`](`PdfElixide.Form.flatten/1`)
   * a save with `incremental: true`; see [Incremental saves](#incremental-saves)
 
 A rewrite is also refused when an encrypted source stores its XMP metadata in
@@ -80,11 +81,13 @@ the clear. Remove the metadata deliberately before writing:
 
 ```elixir
 editor = Editor.open!("path/to/searchable-metadata.pdf", password: "open-me")
+
 Editor.sanitize!(editor,
   scrub_metadata: true,
   remove_javascript: false,
   remove_embedded_files: false
 )
+
 Editor.save!(editor, "path/to/out.pdf")
 Editor.close(editor)
 ```
@@ -171,8 +174,9 @@ password holds everything needed to ignore them. Treat them as a statement of
 intent, not as access control. Encryption protects the bytes from someone
 without the password; permissions do not protect them from someone with it.
 
-`PdfElixide.Document.permissions/1` returns `nil` for an unencrypted document,
-so flags without a password are not expressible — writing them means encrypting.
+`PdfElixide.Document.permissions/1` answers `{:ok, nil}` for an unencrypted
+document, so flags without a password are not expressible — writing them means
+encrypting.
 
 ### They are independent, with one exception
 

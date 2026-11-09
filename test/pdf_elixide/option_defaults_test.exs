@@ -11,7 +11,7 @@ defmodule PdfElixide.OptionDefaultsTest do
 
   @fixtures Path.join([__DIR__, "..", "fixtures"])
   @extraction_pdf Path.join(@fixtures, "extraction.pdf")
-  # The largest fixture, so compression has something to bite on.
+  # Large enough that compression changes the output size.
   @fonts_pdf Path.join(@fixtures, "fonts.pdf")
 
   # Page indices within @extraction_pdf.

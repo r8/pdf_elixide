@@ -232,10 +232,8 @@ defmodule PdfElixide.ExtractionOptionsTest do
 
     test ":span_merging merge_tm_tj_runs false returns the runs in stream order",
          %{doc: doc} do
-      # The two columns are far enough apart that the default no longer merges a
-      # row into one span, so both settings yield the eight original runs and
-      # what the option still moves is their order: the default pairs them by
-      # baseline, and splitting on Tm returns them column by column, as drawn.
+      # The columns are too far apart for either setting to merge a row, so
+      # the option only changes the order.
       assert texts(Document.spans!(doc, @columns)) == [
                "Alpha one",
                "Beta one",
@@ -291,7 +289,7 @@ defmodule PdfElixide.ExtractionOptionsTest do
       end
     end
 
-    test ":reading_order rejects the former spans-only spelling", %{doc: doc} do
+    test ":reading_order rejects :structure", %{doc: doc} do
       assert_raise ArgumentError, ~r/:reading_order/, fn ->
         Document.spans(doc, @columns, reading_order: :structure)
       end

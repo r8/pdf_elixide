@@ -768,8 +768,8 @@ mod tests {
         }
     }
 
-    // The fixture spends 2 048 iterations on its MAC and 2 048 on its
-    // certificate safe; decrypting its key bag would take a third 2 048.
+    // The fixture spends 2048 iterations on its MAC and 2048 on its
+    // certificate safe; decrypting its key bag would take a third 2048.
     #[test]
     fn pkcs12_derives_keys_only_for_the_mac_and_the_certificates() {
         let data = fixture_bytes("certificate_chain.p12");

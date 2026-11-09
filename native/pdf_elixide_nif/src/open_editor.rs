@@ -865,8 +865,6 @@ impl OpenEditor {
         self.info.as_ref()
     }
 
-    // Never `get_info`: `upstream_still_ignores_a_direct_info_dictionary` and its
-    // two `*_info_*` siblings in `editor.rs` say why.
     pub(crate) fn seeded_info(&self) -> MetadataNif {
         self.info
             .clone()

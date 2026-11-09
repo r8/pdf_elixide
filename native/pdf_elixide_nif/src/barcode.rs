@@ -82,8 +82,10 @@ fn name(symbology: SymbologyNif) -> &'static str {
 // Bound variable-length input to keep encoder checksum arithmetic within range.
 const MAX_LINEAR_LENGTH: usize = 256;
 
-// Code 93 shift characters require pairs; only checksums may use them alone.
 const CODE39_PUNCTUATION: &str = "-. $/+%";
+// Code 93's four shift characters are valid only in pairs, so input is limited
+// to the 43 data characters; a check character may still be one, hence 47
+// patterns.
 const CODE93_CHARS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%";
 const CODE93_PATTERNS: [u16; 47] = [
     0b100010100,
@@ -672,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn dark_runs_merge_each_rows_neighbours() {
+    fn dark_runs_merge_each_rows_neighbors() {
         assert_eq!(
             dark_runs(4, &[1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1]),
             vec![(0, 0, 2), (3, 0, 1), (0, 2, 4)]

@@ -223,8 +223,8 @@ defmodule PdfElixide.UpstreamDriftTest do
       end
     end
 
-    test "an adaptive sub-config is still accepted with its documented default", %{doc: doc} do
-      # 1.0 is the documented threshold; 100.0 is the actual config default.
+    test "an adaptive sub-config is still accepted", %{doc: doc} do
+      # Upstream's comments say 1.0; its config default is 100.0.
       for max <- [1.0, 100.0] do
         assert is_list(
                  Document.spans!(doc, @kerned,
@@ -612,7 +612,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert length(Document.search!(doc, "aa")) == 1
     end
 
-    test "an unparseable pattern arrives as InvalidPdf with a known prefix",
+    test "an unparseable pattern is still recognized by its message prefix",
          %{doc: doc} do
       assert {:error, %Error{reason: :invalid_pattern, message: message}} =
                Document.search(doc, "(", literal: false)
@@ -669,8 +669,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert Document.search!(doc, "Slugline") == []
     end
 
-    # chars/2 does not share that boundary, which is why the Document moduledoc
-    # tells callers not to assemble text from it.
+    # chars/2 does not share that boundary.
     test "chars/2 still reports the cropped-away glyphs" do
       doc = open(@cropped_text_pdf)
       text = Document.chars!(doc, 0) |> Enum.map_join(& &1.text)
@@ -1724,13 +1723,11 @@ defmodule PdfElixide.UpstreamDriftTest do
   end
 
   describe "where the destructive redaction block lands" do
-    # The pruned body is wrapped in its own outer q/Q before the overlays are
-    # drawn, so neither a leaked transform nor a leaked clip reaches the block.
-    # The erase overlay has no such wrapper, which is what makes the two paths
-    # differ; its canaries are in "where the erase overlay lands" above.
+    # Unlike the erase overlay ("where the erase overlay lands" above), the
+    # block is drawn after the page content's graphics state is restored.
 
     # The same leaked `1 0 0 1 100 50 cm` the erase canary uses.
-    test "a transform the content leaves active no longer moves the block" do
+    test "a transform the content leaves active does not move the block" do
       source = Document.open!(@leaked_cm_pdf)
       on_exit(fn -> Document.close(source) end)
       [word] = Document.words!(source, 0)
@@ -1760,7 +1757,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     # origin. Only a render shows whether the block survives it: the path
     # extractor tracks no clipping state, so `rects/2` reports the block at its
     # requested position either way.
-    test "a clipping path the content leaves active no longer hides the block" do
+    test "a clipping path the content leaves active does not hide the block" do
       source = Document.open!(@leaked_clip_pdf)
       on_exit(fn -> Document.close(source) end)
       [word] = Document.words!(source, 0)

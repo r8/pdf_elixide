@@ -23,7 +23,8 @@ des = "0.9"
 hmac = "0.13"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log = "0.4"
-# Keep aligned with the version `pdf_oxide` resolves; used only to detect a package's format.
+# Deliberately newer than the version `pdf_oxide` locks; do not lower it to match.
+# Used directly only to detect a package's format.
 office_oxide = { version = "=0.1.11", default-features = false }
 pdf_oxide = { version = "=0.3.78", features = ["signatures", "rendering"] }
 pkcs12 = { version = "=0.2.0-pre.0", features = ["kdf"] }
@@ -31,9 +32,10 @@ pkcs5 = { version = "0.8", features = ["alloc", "pbes2"] }
 qrcode = { version = "=0.14.1", default-features = false }
 rc2 = "0.9"
 rustler = "0.37.4"
-# Keep aligned with the version `pdf_oxide` resolves; reads a font's PostScript name.
+# Keep aligned with the version `pdf_oxide` resolves; reads an embedded font's name,
+# cmap coverage and outlines.
 ttf-parser = "0.25"
-# RFC 3161 message-imprint hashing.
+# Signature and timestamp digests; the PKCS#12 MAC and key derivation.
 sha1 = "0.11"
 sha2 = "0.11"
 # Larger stacks for deeply nested PDFs.

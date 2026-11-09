@@ -38,7 +38,7 @@ Other detected problems stay in the report. In particular:
   * Missing fonts remain unembedded unless `embed_fonts: true` is given.
   * A level `a` target needs a tagged document, and conversion adds no tags.
 
-Conversion can also leave violations unreported, even with `compliant?: true`; see
+Some violations remain unreported even with `compliant?: true`. See
 [What a report establishes](`m:PdfElixide.Compliance#module-what-a-report-establishes`).
 
 The conversion succeeds even when findings remain. Check
@@ -66,8 +66,9 @@ Convert after merging, extracting pages and making other edits:
 If edits after conversion are unavoidable, validate the bytes you write rather
 than relying on the conversion report.
 
-Sanitizing with `scrub_metadata: true` removes the PDF/A declaration and lifts
-the associated write restrictions.
+[`PdfElixide.Editor.sanitize/1,2`](`PdfElixide.Editor.sanitize/1`) with
+`scrub_metadata: true` removes the PDF/A declaration and lifts the associated
+write restrictions.
 
 An editor opened with a password converts to an unencrypted document. Conversion
 is refused, without changing the editor, when the editor has no pages, when
@@ -85,11 +86,23 @@ metadata, because the existing stream would remain compressed. Remove it first
 when replacing its properties is acceptable:
 
 ```elixir
-Editor.sanitize!(editor,
-  scrub_metadata: true,
-  remove_javascript: false,
-  remove_embedded_files: false
-)
+editor = Editor.open!("path/to/report.pdf")
+
+try do
+  Editor.sanitize!(editor,
+    scrub_metadata: true,
+    remove_javascript: false,
+    remove_embedded_files: false
+  )
+
+  conversion = Compliance.convert!(editor, :pdf_a_1b)
+
+  if conversion.report.compliant? do
+    Editor.save!(editor, "report-pdfa.pdf", compress: false)
+  end
+after
+  Editor.close(editor)
+end
 ```
 
 When conversion changes the document, its information dictionary is not

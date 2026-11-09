@@ -18,9 +18,9 @@ defmodule PdfElixide.Document.Page do
   page, taking the same options, except `PdfElixide.Document.running_regions/2`,
   which compares pages and so needs the whole document. The comprehension above
   collects every page's result. To bound memory used by results, consume pages
-  without accumulating
-  their results — see the streaming example and handle-release guidance in the
-  "Whole-document extraction and memory" section of `PdfElixide.Document`.
+  without accumulating their results — see the streaming example and
+  handle-release guidance in the "Whole-document extraction and memory" section
+  of `PdfElixide.Document`.
 
   A page whose `:index` is not a page of the document — only reachable from a
   hand-built `%Page{}` — yields

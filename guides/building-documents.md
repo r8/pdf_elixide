@@ -29,8 +29,9 @@ A description is laid out in one of three ways:
     builder does not do, such as merging, attachments, keywords or filling form
     fields.
 
-`to_binary/2` and `save/3` take the save options of an editor, including
-`:encryption`, and close the editor they use. An editor from
+`to_binary/2` and `save/3` take an editor's save options except `:incremental`
+(see `t:PdfElixide.Builder.output_opts/0`), including `:encryption`, and close
+the editor they use. An editor from
 `from_builder/1` is yours to save and close:
 
 ```elixir
@@ -83,8 +84,8 @@ U+202F) render as spaces without collapsing or separating words. Soft hyphens
 A paragraph is followed by space half its font size tall.
 `PdfElixide.Builder.space/2` adds more before the next block. Both are dropped
 when a page break comes first, so a page's first line always sits at its top
-margin. A paragraph,
-heading or list with no text adds nothing, neither space nor a page.
+margin. A paragraph, heading or list with no text adds nothing, neither space
+nor a page.
 
 Accents and italic overhangs can reach a little past a line's box into the
 margins. With narrow margins they could reach past the edge of the page, so
@@ -92,8 +93,7 @@ such a line is refused when the document is built.
 
 `PdfElixide.Builder.heading/4` takes a level from 1 to 4 and sets the text in
 the bold face of its font; `t:PdfElixide.Builder.heading_opts/0` lists the text
-sizes.
-A heading is never left alone at the bottom of a page: if it does not fit there
+sizes. A heading is never left alone at the bottom of a page: if it does not fit there
 with the first line of what follows, it starts the next page. Consecutive
 headings move together. A heading that cannot fit on one page with the start
 of what follows, and any footnotes they reference, is refused when the document
@@ -126,7 +126,7 @@ Builder.paragraph(builder, [
 `:bold` and `:italic` choose the face of the run's font family, and `:color`
 takes RGB components from `0.0` to `1.0`. Runs are joined exactly as written,
 so the space between two runs belongs inside one of them. A run can also be a
-link; see [Links](#links), or carry a footnote; see [Footnotes](#footnotes).
+link (see [Links](#links)) or carry a footnote (see [Footnotes](#footnotes)).
 
 ## Fonts
 
@@ -196,9 +196,7 @@ box = %Rect{x: 340, y: 600, width: 200, height: 60}
 
 Builder.new()
 |> Builder.rect(box, stroke_width: 0.5)
-|> Builder.text_in_rect(box, ["Total for the year\n", {"12%", bold: true}],
-  align: :right
-)
+|> Builder.text_in_rect(box, ["Total for the year\n", {"12%", bold: true}], align: :right)
 ```
 
 The first line starts at the box's top edge, and each line takes a box
@@ -320,8 +318,7 @@ Builder.new()
 A cell is a text, like a paragraph's, or `PdfElixide.Builder.cell/2` for a
 cell with its own span, alignment or background. Each cell's text wraps within
 its column, inside `:padding` points on every side, with lines as tall as a
-paragraph's.
-A row is as tall as its tallest cell, and a row with no text is one line tall.
+paragraph's. A row is as tall as its tallest cell, and a row with no text is one line tall.
 The grid is drawn around every cell unless `stroke_color: nil`.
 
 ### Column widths
@@ -408,10 +405,12 @@ arc angles and direction.
 
 Closed shapes (`PdfElixide.Builder.rect/3`, `PdfElixide.Builder.circle/4`,
 `PdfElixide.Builder.ellipse/4`, `PdfElixide.Builder.polygon/3` and
-`PdfElixide.Builder.path/3`) take an outline and a fill; lines, arcs and curves
-take an outline only. To
-fill without an outline, pass `stroke_color: nil` with a `:fill_color`.
-`t:PdfElixide.Builder.shape_opts/0` lists paint options and defaults.
+`PdfElixide.Builder.path/3`) take an outline and a fill;
+`PdfElixide.Builder.line/4`, `PdfElixide.Builder.arc/6` and
+`PdfElixide.Builder.bezier/6` take an outline only. To fill without an outline,
+pass `stroke_color: nil` with a `:fill_color`.
+`t:PdfElixide.Builder.shape_opts/0` and `t:PdfElixide.Builder.line_opts/0` list
+paint options and defaults.
 Where an outline crosses itself, the inside is filled by the nonzero winding
 rule.
 
@@ -446,9 +445,9 @@ builder =
 A `:stroke_width` without an outline is refused, so a fill-only path is
 given `stroke_color: nil` alone.
 
-Extraction does not report dash patterns, and line ends and corners are always
-square and mitered here, so a redrawn outline is solid and square-ended whatever
-the source drew.
+Extraction does not report dash patterns, and the builder always draws butt
+line ends and mitered corners, so a redrawn outline is solid, with `:butt` ends
+and `:miter` joins, whatever the source's `:line_cap` and `:line_join`.
 
 An extracted path or `bbox` lands where it was on the source page only when
 that page has no rotation and its media box starts at `{0.0, 0.0}`. Otherwise
@@ -530,8 +529,7 @@ See `t:PdfElixide.Builder.barcode_opts/0` and
 `t:PdfElixide.Builder.qr_code_opts/0` for flow sizing, and
 `t:PdfElixide.Builder.barcode_in_rect_opts/0` and
 `t:PdfElixide.Builder.qr_code_in_rect_opts/0` for captions, colors and quiet
-zones.
-A caption wider than the symbol is refused when the document is built.
+zones. A caption wider than the symbol is refused when the document is built.
 
 Scanners need clear quiet zones, sufficient module size and good contrast.
 Keep black symbols on a light page, or set `:background` when drawing over a
@@ -574,8 +572,8 @@ see [Flowing text](#flowing-text).
 
 Footnotes can be set in paragraphs, headings, list items, columns and the
 body rows of a table; anywhere else, including table header rows, they
-raise `ArgumentError`. In columns, the page's notes span every column below
-the columns. In a table, a row split across pages takes each note to the page
+raise `ArgumentError`. Notes referenced from columns are set at the full width
+between the margins, below the columns. In a table, a row split across pages takes each note to the page
 of the line that references it.
 
 Text extraction reads a number back as digits after its word, or on a line of
@@ -765,9 +763,11 @@ Builder.new()
   tooltip: "Your full name"
 )
 |> Builder.text_at({72, 664}, "Country")
-|> Builder.combo_box("country", %Rect{x: 150, y: 660, width: 200, height: 20},
-  ["France", "Germany", "Italy"]
-)
+|> Builder.combo_box("country", %Rect{x: 150, y: 660, width: 200, height: 20}, [
+  "France",
+  "Germany",
+  "Italy"
+])
 |> Builder.check_box("subscribe", %Rect{x: 150, y: 620, width: 14, height: 14})
 |> Builder.signature_field("signature", %Rect{x: 150, y: 500, width: 200, height: 50})
 |> Builder.save!("application.pdf")
@@ -980,7 +980,9 @@ cannot encode raise `ArgumentError`.
 Unsupported content is reported when the description is built, as
 `{:error, %PdfElixide.Error{reason: :unsupported}}` from `to_binary/2`,
 `save/3` or `PdfElixide.Editor.from_builder/1`. The message names the
-operation and page (both numbered from 0), what was refused and what to change:
+operation by its position in the pipeline, counted from 0 after `new/1` (a
+heading with `:bookmark` counts as two), and the page, also from 0, where one
+applies. It then says what was refused and what to change:
 
 ```elixir
 {:error, %PdfElixide.Error{reason: :unsupported, message: message}} =

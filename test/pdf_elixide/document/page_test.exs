@@ -58,9 +58,7 @@ defmodule PdfElixide.Document.PageTest do
     end
 
     test "normalizes a box whose corners are written in reverse" do
-      # `[612 792 0 0]`. Upstream hands the corners back in file order; the
-      # binding normalizes, because `%Rect{}` promises non-negative dimensions
-      # and `width/1`/`height/1` are these fields.
+      # The box is written `[612 792 0 0]`.
       doc = Document.open!(@media_box_pdf)
 
       assert {:ok, %Rect{x: +0.0, y: +0.0, width: 612.0, height: 792.0}} =
@@ -395,8 +393,7 @@ defmodule PdfElixide.Document.PageTest do
     end
 
     test "reports a /Rotate that is not a multiple of 90 as 0, not the nearest one" do
-      # /Rotate 45 is invalid per §7.7.3.3. Upstream returns 0 rather than
-      # flooring to 90, and a caller matching on 0/90/180/270 depends on that.
+      # Page 3 declares /Rotate 45.
       doc = Document.open!(@rotation_pdf)
       assert {:ok, 0} = Page.rotation(Document.page!(doc, 3))
     end
@@ -428,7 +425,6 @@ defmodule PdfElixide.Document.PageTest do
   end
 
   describe "has_text_layer/1" do
-    # text_layer.pdf includes pages with and without text-layer resources.
     test "answers true for a page with fonts and a text object" do
       doc = Document.open!(@text_layer_pdf)
       assert {:ok, true} = Page.has_text_layer(Document.page!(doc, 0))
@@ -478,9 +474,7 @@ defmodule PdfElixide.Document.PageTest do
 
     test "returns {:error, reason} for a page that does not resolve" do
       # `broken_page.pdf`'s /Count claims three pages where the tree holds two,
-      # so index 2 clears the bounds check and then fails to resolve. The only
-      # way to reach this error branch through the *document* rather than the
-      # handle — upstream swallows every other failure inside the probe.
+      # so index 2 clears the bounds check and then fails to resolve.
       doc = Document.open!(@broken_page_pdf)
 
       assert {:error, %Error{reason: :invalid_pdf}} =

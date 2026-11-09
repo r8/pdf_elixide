@@ -94,7 +94,6 @@ pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> F
     }
 }
 
-// Keep BEAM-independent discovery separate from ResourceArc construction.
 pub fn page_font_set(doc: &PdfDocument, page_index: usize) -> Result<Vec<(String, Arc<FontInfo>)>> {
     let resources = page_resources(doc, page_index)?;
 

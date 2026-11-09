@@ -23,7 +23,9 @@ two megapixels, with four bytes per pixel in `:rgba8` format.
 ```elixir
 doc
 |> Stream.with_index()
-|> Stream.map(fn {page, i} -> File.write!("page#{i}.png", Document.Page.render!(page).data) end)
+|> Stream.each(fn {page, i} ->
+  File.write!("page#{i}.png", Document.Page.render!(page).data)
+end)
 |> Stream.run()
 ```
 
@@ -64,9 +66,10 @@ Document.render(doc, 0, dpi: 20_000)
 
 Match on `:unsupported` and retry with a lower `:dpi` or smaller `:fit` box.
 On 32-bit builds the limit is roughly 64 million pixels. The budget counts
-every full-page buffer, not just the visible one, so a CMYK-profiled document
-with spot inks reaches the limit at a lower DPI than an ordinary page of the
-same size; the message names that buffer count when it is more than one.
+every full-page buffer, not just the visible one, so a document with a CMYK
+output profile reaches the limit at a lower DPI than an ordinary page of the
+same size, and lower again for each spot ink on the page; the message names
+that buffer count when it is more than one.
 
 By default, a page that exceeds the limit is refused rather than quietly scaled
 down. Set `:max_output_pixels` when a smaller image is preferable:
@@ -134,7 +137,9 @@ space goes straight back in — render the span you just found, or the image,
 without computing anything:
 
 ```elixir
-[%{bbox: %PdfElixide.Geometry.Rect{} = bbox} | _] = Document.images!(doc, 0)
+alias PdfElixide.Geometry.Rect
+
+[%{bbox: %Rect{} = bbox} | _] = Document.spans!(doc, 0)
 Document.render!(doc, 0, region: bbox, dpi: 200)
 ```
 
@@ -164,7 +169,7 @@ worth checking `width` and `height` if the size matters to you. A rectangle with
 no area on the page at all is an error rather than a sliver:
 
 ```elixir
-region = %PdfElixide.Geometry.Rect{x: 5_000.0, y: 0.0, width: 100.0, height: 80.0}
+region = %Rect{x: 5_000.0, y: 0.0, width: 100.0, height: 80.0}
 Document.render(doc, 0, region: region)
 #=> {:error, %PdfElixide.Error{reason: :out_of_range}}
 ```
@@ -172,7 +177,7 @@ Document.render(doc, 0, region: region)
 **Cropping does not make a render cheaper.** The page is rasterized in full and
 the result is then cut down, so both the time and the size limit are the whole
 page's however small the region is. `:region` also cannot be combined with
-`format: :rgba8`, and with `:fit`; both raise `ArgumentError`. A
+`format: :rgba8` or with `:fit`; either raises `ArgumentError`. A
 `:max_output_pixels` low enough to shrink the page returns `:unsupported`
 instead, for the reason given under [Sizing the output](#sizing-the-output).
 
@@ -192,8 +197,10 @@ to opaque white; `nil` paints nothing at all, so everything the page does not
 cover stays transparent:
 
 ```elixir
-Document.Page.render!(page, background: nil)                              # transparent PNG
-Document.Page.render!(page, background: %PdfElixide.Color.RGB{r: 0.9, g: 0.9, b: 1.0})
+alias PdfElixide.Color.RGB
+
+Document.Page.render!(page, background: nil)
+Document.Page.render!(page, background: %RGB{r: 0.9, g: 0.9, b: 1.0})
 ```
 
 Components run from `0.0` to `1.0`, as everywhere else in this library. One
@@ -248,8 +255,7 @@ can come out substituted or missing while the rest of the page is unaffected. If
 byte-identical output across machines matters, install a known font set, or
 check that your documents embed their fonts.
 
-A font the page does not embed is matched to an installed font by family name.
-A font named with a style suffix is not matched to its own family: it renders
+Matching is by family name. A font named with a style suffix is not matched to its own family: it renders
 in a substitute face, in the requested weight and slant. That includes the bold
 and oblique standard fonts, such as `Helvetica-Bold` and `Courier-Oblique`, and
 names like `Arial-BoldMT`. On a host with no font named exactly `Helvetica` or
@@ -280,9 +286,9 @@ Enum.map(plates, & &1.ink)
 The four process inks are always present, followed by every spot ink reachable
 from the page — the list `PdfElixide.Document.inks/3` reports with
 `deep: true`, less any spot ink that shares a process ink's name. An ink the
-page declares but never actually paints comes back as
-an all-zero plate rather than being left out, so the list is stable for a page
-and a returned plate is not evidence the ink is used.
+page declares but never actually paints comes back as an all-zero plate rather
+than being left out, so the list is stable for a page and a returned plate is
+not evidence the ink is used.
 
 See `PdfElixide.Document.SeparationPlate` for the byte layout, ink-coverage
 values and how to display a plate.
@@ -307,9 +313,8 @@ File.write!("flat.pdf", Document.rasterize!(doc, dpi: 200))
 Everything underneath the pixels is gone — the text layer, form fields,
 annotations, links, outline and tagging — replaced by one picture per page.
 
-Note what this is *not*: it is not redaction. Content that was visible is still
-visible, just as pixels; it is the structure underneath that is destroyed, not
-anything the page showed.
+Visible content remains readable in the pixels, so rasterization cannot
+redact it.
 
 **It does not preserve the original's page geometry.** Look at one before you
 adopt it:
@@ -319,8 +324,7 @@ adopt it:
   * the rendered page is scaled into a **one-inch margin** on all four sides and
     centered, so a full-bleed original ends up as a smaller picture with a white
     border around it;
-  * page rotation is baked into the pixels and `/Rotate` resets to `0` — the one
-    part of this that is faithful, since the raster is already turned.
+  * page rotation is baked into the pixels and `/Rotate` resets to `0`.
 
 To preserve page sizes, render the pages with `PdfElixide.Document.render/3`
 and assemble them with a tool that lets you set the page box.
@@ -339,11 +343,9 @@ or set `TMPDIR` to a directory of your own.
 On Windows, the staging directory inherits its parent's permissions. Keep
 `TEMP` private to prevent other users from reading the page images.
 
+See the [Concurrency](concurrency.md) guide for parallel page rendering and
+node-wide serialization of `PdfElixide.Document.rasterize/2` calls.
+
 ```elixir
 :ok = Document.close(doc)
 ```
-
-## Concurrency
-
-See the [Concurrency](concurrency.md) guide for parallel page rendering and
-node-wide serialization of `PdfElixide.Document.rasterize/2` calls.

@@ -17,7 +17,6 @@ struct Params {
     rise: f32,
 }
 
-// One reading of the page.
 #[derive(Clone)]
 struct Reading {
     params: Params,
@@ -65,9 +64,9 @@ impl Reading {
     }
 }
 
-// `true` when the page shows text the engine would measure with a restored
-// state. Unparseable bytes answer `false` so upstream's own parse error stays
-// the one the caller sees.
+// `true` when the page shows text after a `Q` whose restored text state
+// differs from the unstacked state the engine measures with. Unparseable bytes
+// answer `false` so upstream's own parse error stays the one the caller sees.
 pub fn measures_restored_text_state(content: &[u8]) -> bool {
     let Ok(ops) = parse_content_stream(content) else {
         return false;

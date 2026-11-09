@@ -65,8 +65,8 @@ fn export(
     options: OfficeOptionsNif,
 ) -> NifResult<OwnedBinary> {
     resource.doc.with_read(|doc| {
-        // Flow export can swallow per-page failures, so authenticate first
-        // rather than returning a blank package.
+        // Flow export can swallow per-page failures, so refuse an
+        // unauthenticated document rather than return a blank package.
         if !doc.is_authenticated() {
             return Err(tagged_err(
                 atoms::encrypted(),

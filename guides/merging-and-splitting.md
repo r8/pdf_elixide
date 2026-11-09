@@ -40,6 +40,7 @@ alias PdfElixide.Editor
 |> Editor.merge!("path/to/chapter_2.pdf")
 |> Editor.save!("book.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -123,6 +124,9 @@ it was:
     `PdfElixide.Editor.apply_redactions/1` failed is refused too: discard it and
     reopen the source.
   * **An editor with no pages.** Merge before deleting the last page.
+  * **An editor whose encrypted source stores its XMP metadata unencrypted.**
+    See
+    [What an encrypted source cannot do](encryption.md#what-an-encrypted-source-cannot-do).
   * **An editor converted to PDF/A-1** with `PdfElixide.Compliance.convert/3`.
     The merge would compress the document's XMP metadata, which PDF/A-1 forbids.
     Merge first, then convert; see the [PDF/A conversion](pdf-a-conversion.md)
@@ -150,6 +154,7 @@ Editor.close(source)
 |> Editor.merge_binary!(second_page)
 |> Editor.save!("report-with-appendix.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 

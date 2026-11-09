@@ -317,9 +317,9 @@ fn editor_signature_count(resource: ResourceArc<EditorResource>) -> NifResult<us
         .with_read(|editor| signature_count(editor.source()))
 }
 
-// Shared, like every signature read above: `read_dss` takes `&PdfDocument` and its walk over
-// the catalog is one level deep, with nothing of the `/Kids` recursion that
-// `form_tree` exists to bound.
+// Shared, like every signature read above: `read_dss` takes `&PdfDocument`
+// and its walk over the catalog is one level deep, with nothing of the `/Kids`
+// recursion that `form_tree` exists to bound.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_dss<'a>(
     env: Env<'a>,
@@ -2386,8 +2386,8 @@ mod tests {
             ("SubFilter", "ETSI.RFC3161"),
         ])));
 
-        // An ordinary document timestamp field's sub-filter on a signature: the
-        // pair the byte scan cannot tell from the real thing.
+        // A signature carrying the timestamp sub-filter: the pair a scan for
+        // the bare `/SubFilter` bytes cannot tell from a document timestamp.
         assert!(!is_doctimestamp_dict(&dict(&[
             ("Type", "Sig"),
             ("SubFilter", "ETSI.RFC3161"),
@@ -2799,7 +2799,7 @@ mod tests {
 
     // Shapes no fixture carries: a `/Contents` of no bytes at all, and a DER
     // header promising more than it holds. Neither may read as carrying no
-    // timestamp. The marker blob is Elixir's, reaching the same answer.
+    // timestamp.
     #[test]
     fn refuses_contents_that_are_not_a_cms_blob() {
         for blob in [b"".as_slice(), b"\x30\x82\x01\x00".as_slice()] {

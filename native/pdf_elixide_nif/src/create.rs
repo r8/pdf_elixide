@@ -274,8 +274,9 @@ fn ensure_pixel_budget(what: &str, width: u32, height: u32) -> NifResult<()> {
     Ok(())
 }
 
-// The decode reserves its whole buffer against this limit before reading a
-// pixel, so this keeps a 16-bit color PNG under the pixel cap `:unsupported`.
+// The decoder reserves its whole buffer against this limit before reading a
+// pixel. Checking it here reports a 16-bit color PNG that passes the pixel cap
+// as `:unsupported` rather than as a decode failure.
 fn ensure_png_buffer(what: &str, width: u32, height: u32, total_bytes: u64) -> NifResult<()> {
     let max_alloc = Limits::default().max_alloc.unwrap_or(u64::MAX);
 

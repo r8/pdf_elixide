@@ -109,8 +109,7 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@encrypted_pdf)
 
       # This fixture's page tree resolves unauthenticated, so the count caches
-      # like any other document; a fixture whose tree did not would cache `nil`
-      # and take the fallback clause above.
+      # like any other document; the test above covers one whose tree does not.
       assert %Document{page_count: count} = doc
       assert is_integer(count)
       assert {:ok, ^count} = Document.page_count(doc)
@@ -699,7 +698,7 @@ defmodule PdfElixide.DocumentTest do
       refute all =~ ~s(<div class="page" data-page="1" style)
     end
 
-    test "preserve_layout: true drops tables, which upstream emits only in semantic mode" do
+    test "preserve_layout: true drops tables" do
       doc = Document.open!(@table_pdf)
       assert {:ok, html} = Document.to_html(doc, preserve_layout: true, extract_tables: true)
       refute html =~ "<table"
@@ -790,14 +789,11 @@ defmodule PdfElixide.DocumentTest do
     end
 
     @tag :tmp_dir
-    # Skipped on Windows because `"` is not a legal filename character there, so
-    # the directory cannot be created and the test never reaches its assertion.
-    # That is a limit on expressing the case, not a difference in behavior.
     @tag skip: match?({:win32, _}, :os.type()) and "a Windows filename cannot contain a quote"
     test "an image_output_dir is not attribute-escaped in src", %{tmp_dir: tmp_dir} do
       doc = Document.open!(@markdown_pdf)
-      # A double quote is a legal filename character, and upstream interpolates
-      # the path into src="…" unescaped, so it closes the attribute.
+      # The path is written into src="…" unescaped, so the quote closes the
+      # attribute.
       quoted = Elixir.Path.join(tmp_dir, ~s(img"dir))
 
       assert {:ok, html} =
@@ -1875,8 +1871,7 @@ defmodule PdfElixide.DocumentTest do
       assert {:error, %Error{reason: :invalid_pattern}} =
                Document.search(doc, "(", literal: false)
 
-      # Escaping makes this character literal on the default path. Compilation
-      # size limits can still reject a sufficiently large literal pattern.
+      # The default path escapes the pattern, so the same character is a literal.
       assert Document.search!(doc, "(") |> Enum.map(& &1.text) == ["("]
     end
 
@@ -1896,7 +1891,7 @@ defmodule PdfElixide.DocumentTest do
     test ":max_results caps the total across pages" do
       doc = Document.open!(@valid_pdf)
       assert length(Document.search!(doc, "Page", max_results: 2)) == 2
-      # 0 means unlimited, not "none".
+      # nil is unlimited; 0 is refused rather than read as "none".
       assert length(Document.search!(doc, "Page", max_results: nil)) == 3
 
       for bad <- [0, -1, 1.5] do
@@ -2374,9 +2369,9 @@ defmodule PdfElixide.DocumentTest do
       assert {:ok, [%Document.Image{format: :jpeg} | _]} = Document.images(doc, 0)
     end
 
-    # A /JPXDecode image whose codestream cannot be decoded is dropped from the
-    # list rather than reported, so this asserts against an empty list, not an
-    # error. The 16x16 raster clears ImageExtractFilter's 8x8 floor.
+    # An undecodable /JPXDecode image is omitted rather than reported, so a
+    # regression shows as [] and not as an error. The fixture is 16x16 because
+    # images under 8x8 are skipped.
     test "decodes a JPEG 2000 image rather than omitting it" do
       doc = Document.open!(@image_jpx_pdf)
 
@@ -3283,11 +3278,11 @@ defmodule PdfElixide.DocumentTest do
       doc = Document.open!(@valid_pdf)
       assert {:error, %Error{reason: :out_of_range, message: message}} = Document.page(doc, 99)
 
-      # `text/2` reaches `ensure_page_in_range` in the NIF; `page/2` answers from the
-      # cached count and formats its own. Both must word it identically.
+      # `page/2` formats this message in Elixir and `text/2` in the NIF; they
+      # must match.
       assert {:error, %Error{reason: :out_of_range, message: ^message}} = Document.text(doc, 99)
 
-      # Guards the degenerate fix where both sides drift to the same generic string.
+      # Two identical generic strings would not do.
       assert message =~ "99"
     end
 

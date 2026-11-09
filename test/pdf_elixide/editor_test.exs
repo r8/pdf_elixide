@@ -2501,7 +2501,6 @@ defmodule PdfElixide.EditorTest do
   @widest_box %Rect{x: -1.0e18, y: -1.0e18, width: 2.0e18, height: 2.0e18}
   @all_sides [left: 10, right: 10, top: 10, bottom: 10]
 
-  # A malformed crop box reports its reason so the whole document stays listable.
   defp saved_boxes(editor) do
     doc = Document.from_binary!(Editor.to_binary!(editor))
     boxes = Enum.map(doc, &{Document.Page.media_box!(&1), saved_crop(&1)})
@@ -2516,6 +2515,7 @@ defmodule PdfElixide.EditorTest do
     end
   end
 
+  # A malformed crop box reports its reason so the whole document stays listable.
   defp saved_crop(page) do
     case Document.Page.crop_box(page) do
       {:ok, rect} -> rect
@@ -3569,8 +3569,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@redact_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      # Page 0 carries `/Redact` annotations; page 1, used above, carries none,
-      # which is why that test sees a write change nothing.
+      # Page 0 carries `/Redact` annotations; page 1 carries none.
       Editor.add_redaction!(editor, 0, @quad_rect, @red)
 
       assert Editor.marked_for_redaction?(editor, 0)
@@ -3721,8 +3720,8 @@ defmodule PdfElixide.EditorTest do
 
       Editor.mark_redactions!(editor, 0)
 
-      # The message is upstream's and says "composite" for an undefined font
-      # too, so it is not what this pins.
+      # The message is not pinned: it does not tell an undefined font from a
+      # composite one.
       assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
       assert page_text(editor, 0) == "Unknown"
     end
@@ -3814,8 +3813,7 @@ defmodule PdfElixide.EditorTest do
 
       assert {:error, %Error{reason: :unsupported}} = Editor.apply_redactions(editor)
 
-      # Upstream walks source pages ascending and commits each before the next
-      # one errors, so the refusal is not the all-or-nothing it reads as.
+      # Page 0 was committed before page 1 was refused.
       doc = written(editor)
       assert Document.text!(doc, 0) |> String.trim() == ""
       assert Document.text!(doc, 1) |> String.trim() == "Late"
@@ -3886,8 +3884,7 @@ defmodule PdfElixide.EditorTest do
       editor = Editor.open!(@sanitize_indirect_info_pdf)
       on_exit(fn -> Editor.close(editor) end)
 
-      # The indirect /Title is what upstream would leave behind in its own
-      # object while reporting a scrub.
+      # The fixture's /Title is an indirect object.
       assert %{title: "INDIRECT SECRET"} = Editor.metadata!(editor)
 
       assert {:error, %Error{reason: :unsupported}} = Editor.sanitize(editor)

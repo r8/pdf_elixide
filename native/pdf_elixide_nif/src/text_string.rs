@@ -72,7 +72,6 @@ mod tests {
 
     #[test]
     fn falls_back_to_lossy_utf8_on_an_unpaired_surrogate() {
-        // Record the shared decoder's lossy fallback for an unpaired surrogate.
         assert_eq!(
             decode(b"\xFE\xFF\xD8\x3D\x00A"),
             "\u{FFFD}\u{FFFD}\u{FFFD}=\u{0}A"

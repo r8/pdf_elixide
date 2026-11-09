@@ -51,9 +51,9 @@ in-flight native calls on that handle and block new ones for their duration.
 `PdfElixide.Document.rasterize/2` runs one at a time **across the whole node**,
 whatever document each caller uses. Other *reads* on the same handle are
 unaffected; it holds that handle's shared guard for the whole render, so the
-exclusive calls above wait for it.
-Queued callers wait in their own processes without occupying scheduler threads;
-under contention, the wait can add a few seconds beyond the rendering time.
+exclusive calls above wait for it. Queued callers wait in their own processes
+without occupying scheduler threads; under contention, the wait can add a few
+seconds beyond the rendering time.
 Calling `rasterize/2` from one process avoids this contention. The other
 [Rendering](rendering.md) operations take ordinary shared reads and can run
 concurrently by page.
@@ -99,7 +99,9 @@ or fails. `PdfElixide.Document.structured_warnings/1` reads only that handle's
 warnings. Both reads leave their lists intact, so several processes can read
 them. See `PdfElixide.Warning` for which calls populate each feed.
 
-## The other handles
+## Sharing other handles
+
+### Editors
 
 `PdfElixide.Editor` is different in kind, because it mutates. Every call that
 writes or changes the document takes the handle exclusively, so concurrent
@@ -124,10 +126,20 @@ These `PdfElixide.Editor` calls read without sharing:
 serializes against every other call on that editor, even though none of them
 changes its pages or pending edits.
 
+### Forms
+
 `PdfElixide.Form.fields/1` and `PdfElixide.Form.export/3` inherit whichever
 source they are handed — a shared read on a document, the editor's exclusive
 lock on an editor — so reading fields from an editor serializes even though it
 only reads.
+
+`PdfElixide.Form.put_values/2` holds the editor exclusively for the whole batch,
+so no other call on that editor runs between two of its writes.
+`PdfElixide.Form.update_value/3` is a read followed by a write, each taking the
+lock on its own, so another process holding the same editor can write in
+between.
+
+### Signatures
 
 `PdfElixide.Signature.list/1`, `PdfElixide.Signature.unsigned_fields/1`,
 `PdfElixide.Signature.count/1` and `PdfElixide.Signature.dss/1` are shared reads
@@ -142,11 +154,7 @@ closing the document does not stop it answering. Certificates and timestamps
 reached from a signature are plain values too, so their operations are lock-free
 for the same reason.
 
-`PdfElixide.Form.put_values/2` holds the editor exclusively for the whole batch,
-so no other call on that editor runs between two of its writes.
-`PdfElixide.Form.update_value/3` is a read followed by a write, each taking the
-lock on its own, so another process holding the same editor can write in
-between.
+### Images, fonts and tables
 
 `PdfElixide.Document.Image`, `PdfElixide.Document.Font` and
 `PdfElixide.Document.Table` handles are shareable the same way as a document,

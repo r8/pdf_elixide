@@ -85,6 +85,8 @@ bytes and never a handle, which is why it still works after the document is
 closed.
 
 ```elixir
+bytes = File.read!(path)
+
 case Signature.verify(signature, bytes) do
   {:ok, :valid} -> :covered_bytes_are_intact
   {:ok, :invalid} -> :do_not_trust
@@ -139,9 +141,10 @@ answers `{:ok, :invalid}`.
     checks below.
 
 `PdfElixide.Signature.verify_signer/1` checks only whether the blob is
-internally consistent and needs no document bytes. It cannot detect appended
-document changes: the altered document above still answers `:valid` because its
-signature blob did not change. Use `verify/2` whenever the file is available.
+internally consistent and needs no document bytes. It cannot detect any change
+to the document: the altered document above still answers `:valid` here,
+because its signature blob did not change. Use `verify/2` whenever the file is
+available.
 
 ## Algorithm policies
 
@@ -204,15 +207,18 @@ makes a trust decision: the "Nothing here is a trust decision" section of
 covers how `:subject` and `:issuer` are rendered.
 
 To check whether a document was signed with a certificate you hold, read yours
-with `parse_pem/1` or `parse_pkcs12/2` and compare the DER. Both return every
-certificate in the file, so look for the signer's among them rather than
-relying on its position:
+with `PdfElixide.Signature.Certificate.parse_pem/1` or
+`PdfElixide.Signature.Certificate.parse_pkcs12/2` and compare the DER. Both
+return every certificate in the file, so look for the signer's among them
+rather than relying on its position:
 
 ```elixir
+alias PdfElixide.Signature.Certificate
+
 {:ok, mine} =
   "signer.p12"
   |> File.read!()
-  |> PdfElixide.Signature.Certificate.parse_pkcs12("passphrase")
+  |> Certificate.parse_pkcs12("passphrase")
 
 Enum.any?(mine, &(&1.der == certificate.der))
 #=> true
@@ -240,7 +246,8 @@ A timestamp involves three technical checks plus a separate trust decision:
 | Was it made over *this* signature? | `PdfElixide.Signature.verify_timestamp/2` |
 | Is that authority one to trust? | Nothing here — yours to decide |
 
-Authority validation and signature-imprint validation are independent:
+Authority validation and signature-imprint validation are independent. For a
+signature whose token was issued over something else, the two answers differ:
 
 ```elixir
 alias PdfElixide.Signature.Timestamp
@@ -266,8 +273,9 @@ than a verdict.
 
 ## PAdES baseline levels
 
-The three arities of `pades_level` differ by available input. Lower arities can
-report fewer levels:
+The three arities of
+[`PdfElixide.Signature.pades_level/1,2,3`](`PdfElixide.Signature.pades_level/1`)
+differ by available input. Lower arities can report fewer levels:
 
 ```elixir
 doc = Document.open!(path)
@@ -277,9 +285,12 @@ doc = Document.open!(path)
 
 bytes = File.read!(path)
 
-Signature.pades_level(signature)               #=> {:ok, :b_t}    — signature alone
-Signature.pades_level(signature, dss)          #=> {:ok, :b_lt}   — plus the store
-Signature.pades_level(signature, dss, bytes)   #=> {:ok, :b_lta}  — plus the bytes
+Signature.pades_level(signature)
+#=> {:ok, :b_t}    — signature alone
+Signature.pades_level(signature, dss)
+#=> {:ok, :b_lt}   — plus the store
+Signature.pades_level(signature, dss, bytes)
+#=> {:ok, :b_lta}  — plus the bytes
 ```
 
 So `PdfElixide.Signature.pades_level/1` cannot report above `:b_t` however
@@ -297,6 +308,8 @@ OCSP responses that were current when it was signed.
 a plain value that outlives the handle.
 
 ```elixir
+alias PdfElixide.Signature.DSS
+
 doc = Document.open!(path)
 {:ok, dss} = Signature.dss(doc)
 :ok = Document.close(doc)
@@ -305,16 +318,15 @@ dss.certificates
 #=> [<<48, 130, ...>>]
 
 # One signature's slice of the store.
-PdfElixide.Signature.DSS.vri_for(dss, signature)
+DSS.vri_for(dss, signature)
 #=> %PdfElixide.Signature.DSS.VRI{...}
 ```
 
-`{:ok, nil}` means no material reached the reader, which is not the same as the
-document carrying none — `PdfElixide.Signature.dss/1` separates the cases. A
-store is also read tolerantly, so a short list is not evidence that the document
-is short. Nothing in it is validated: the "Nothing here is validated" section of
-`PdfElixide.Signature.DSS` says what that means, and "Decoding a blob" covers
-getting a certificate or CRL out of one.
+`{:ok, nil}` can mean an absent or unreadable store; see
+`PdfElixide.Signature.dss/1` for the cases it covers. Unreadable store entries
+are skipped, so returned lists may be incomplete. Nothing in them is validated;
+see "Nothing here is validated" and "Decoding a blob" in
+`PdfElixide.Signature.DSS` for the trust boundary and decoding examples.
 
 ## The document's archival timestamp
 

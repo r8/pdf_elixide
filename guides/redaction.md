@@ -92,8 +92,8 @@ none. For a document you did not produce, render the written result and look at
 it; see [Verifying](#verifying).
 
 **The removal itself is never affected.** Glyph boxes and the region you queue
-are compared in the same frame, so the text inside the region goes whatever the
-page leaves active.
+are compared in the same frame, so text inside the region is removed regardless
+of the graphics state left active by the page.
 
 **Erasing behaves differently here.** `PdfElixide.Editor.erase_region/3` paints
 its whiteout in whatever graphics state the content leaves behind, so all three
@@ -151,7 +151,10 @@ has. Mark and queue after the deletions, or reopen the source.
 `PdfElixide.Editor.add_redaction/3` is how to redact an area the document does
 not already annotate, and `PdfElixide.Editor.add_redaction/4` takes the color of
 the block drawn over it. A `PdfElixide.Geometry.Rect` from an extractor
-reporting raw page space can be handed straight back:
+reporting raw page space can be handed straight back. For a span, pass its
+`:page_bbox`, which covers the run however it is drawn: its `:bbox` measures a
+rotated run along its writing axis, so it leaves most of that run's glyphs
+outside the region.
 
 ```elixir
 doc = Document.open!("path/to/report.pdf")
@@ -159,7 +162,7 @@ doc = Document.open!("path/to/report.pdf")
 Document.close(doc)
 
 editor = Editor.open!("path/to/report.pdf")
-Editor.add_redaction!(editor, 0, span.bbox)
+Editor.add_redaction!(editor, 0, span.page_bbox)
 Editor.apply_redactions!(editor)
 Editor.save!(editor, "redacted.pdf")
 Editor.close(editor)
@@ -172,21 +175,19 @@ need converting and how. Nothing detects a frame mismatch: the region is applied
 wherever it lands and reported as a success, so it can quietly redact the wrong
 area.
 
-The queued rectangle reaches no writer but
-`PdfElixide.Editor.apply_redactions/1`, and **cannot be withdrawn** once added:
-`PdfElixide.Editor.unmark_redactions/2` does not remove it and nothing else
-does. Reopen the source if you change your mind. One consequence is that the
-first queued region ends incremental saving for that editor — the refusal it
-causes is one of the ones nothing lifts; see
-[Saving edits](editing.md#saving-edits).
+Only `PdfElixide.Editor.apply_redactions/1` applies queued regions. A region
+**cannot be withdrawn** once added, including with
+`PdfElixide.Editor.unmark_redactions/2`; reopen the source if you change your
+mind. Once a region is queued, incremental saving remains unavailable for that
+editor; see [Saving edits](editing.md#saving-edits).
 
 Queuing a region does, however, **mark the page** exactly as
 `PdfElixide.Editor.mark_redactions/2` would. On a page that carries `/Redact`
-annotations of its own, a write between the `PdfElixide.Editor.add_redaction!/3`
-and the `PdfElixide.Editor.apply_redactions!/1` therefore paints *their*
-rectangles and drops every
-annotation on the page. On a page with none — the usual case for a region taken
-from an extractor, as above — a write changes nothing.
+annotations of its own, a write between the `PdfElixide.Editor.add_redaction/3`
+and the `PdfElixide.Editor.apply_redactions/1` therefore paints *their*
+rectangles and drops every annotation on the page. On a page with none — the
+usual case for a region taken from an extractor, as above — a write changes
+nothing.
 
 Regions are cleared with a margin — `:edge_padding` points past each edge, or
 2% of the region's height, whichever is larger — so that an anti-aliased sliver
@@ -224,14 +225,16 @@ redactions, write, reopen what was written, and erase there, reusing the `span`
 from the example above:
 
 ```elixir
+alias PdfElixide.Geometry.Rect
+
 editor = Editor.open!("path/to/report.pdf")
-Editor.add_redaction!(editor, 0, span.bbox)
+Editor.add_redaction!(editor, 0, span.page_bbox)
 Editor.apply_redactions!(editor)
 bytes = Editor.to_binary!(editor)
 Editor.close(editor)
 
 written = Document.from_binary!(bytes)
-[%{bbox: %PdfElixide.Geometry.Rect{} = box} | _] = Document.images!(written, 0)
+[%{bbox: %Rect{} = box} | _] = Document.images!(written, 0)
 Document.close(written)
 
 covered = Editor.from_binary!(bytes)
@@ -267,11 +270,15 @@ object itself is still written, and a link's URI or a `/FileAttachment`'s bytes
 stay readable to anything that walks the file. Redaction erases *page text*; for
 anything carried by an annotation, rebuild the document from the pages you want.
 
-### Keeping the annotations: flatten first
+### Keeping annotation appearances
 
 There is no way to keep some and drop others; the choice is per page. If the
 annotations matter, flatten them first so their appearances survive as page
-content. Which call to use, and whether it can share the editor, differ.
+content. The workflow depends on whether you are marking or removing text.
+
+#### Cosmetic marking
+
+The next two recipes only paint boxes; covered text stays recoverable.
 
 `PdfElixide.Editor.flatten_annotations/1` can share the editor. Its
 appearances are painted *under* the redaction box, which is where they belong:
@@ -283,6 +290,7 @@ appearances are painted *under* the redaction box, which is where they belong:
 |> Editor.mark_redactions!(0)
 |> Editor.save!("marked.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -301,6 +309,7 @@ bytes
 |> Editor.mark_redactions!(0)
 |> Editor.save!("marked.pdf")
 |> Editor.close()
+
 #=> :ok
 ```
 
@@ -312,14 +321,20 @@ outright — the `/Redact` ones included — so a document written by it has not
 left for `PdfElixide.Editor.mark_redactions/2` to paint, and the second pass
 would produce a file with no box at all.
 
-Both recipes above only *mark* the page. **A destructive pass needs one more
-step**, because `PdfElixide.Editor.flatten_annotations/1` does not survive
-`PdfElixide.Editor.apply_redactions/1` on the same editor, where it does survive
-a mark. The flattened appearances are dropped from every page the pass rewrites,
-along with every other pending overlay: the annotations are still unlinked, but
-what they drew is gone rather than baked in. Flatten in one editor, write it,
-and redact the reopened result — see
+#### Destructive redaction
+
+Before calling `PdfElixide.Editor.apply_redactions/1`, flatten in a separate
+editor, write the result, and reopen it. An annotation flatten on the same
+editor loses its pending appearances when the destructive pass rewrites the
+page; see
 [It discards other pending overlays on the page](#it-discards-other-pending-overlays-on-the-page).
+
+An annotation flatten removes the `/Redact` annotations too, so queue regions
+with `PdfElixide.Editor.add_redaction/3` on the reopened result. A form flatten
+keeps those annotations, so they can still be marked there. Flattening does not
+make text inside form XObjects removable; the limits under
+[It removes text, and only the text the page draws itself](#it-removes-text-and-only-the-text-the-page-draws-itself)
+still apply.
 
 ## What is refused, and why
 
@@ -329,8 +344,10 @@ and redact the reopened result — see
 `{:error, %PdfElixide.Error{reason: :unsupported}}` and removes nothing. Write
 the document out first and redact the result — see
 [What an encrypted source cannot do](encryption.md#what-an-encrypted-source-cannot-do).
-Marking is unaffected: `PdfElixide.Editor.mark_redactions/1` draws its overlay
-rather than reading what is beneath it.
+`PdfElixide.Editor.add_redaction/3` is refused the same way, so the error
+arrives when the region is queued. Marking is unaffected:
+`PdfElixide.Editor.mark_redactions/1` draws its overlay rather than reading
+what is beneath it.
 
 **A page whose glyph boundaries cannot be computed.** Simple single-byte fonts
 are redacted, and so are horizontal Identity-H composite (Type 0) fonts, whose
@@ -351,11 +368,10 @@ moves to a new line, after the restore, the call returns
 `{:error, %PdfElixide.Error{reason: :unsupported}}` and removes nothing from any
 page. Such text cannot be measured reliably, so a region over it could match
 nothing while the call reported success and left the text in place. A page that
-re-sets what the block changed
-before drawing is measured correctly and is not refused, so this does not reject
-the ordinary `q … BT /F1 10 Tf … ET Q` shape. Unlike the font refusal above this
-one is checked **before any page is rewritten**, so the editor is left untouched
-and can still be saved or marked.
+resets what the block changed before drawing is measured correctly and is not
+refused, so this does not reject the ordinary `q … BT /F1 10 Tf … ET Q` shape.
+Unlike the font refusal above, this check runs **before any page is rewritten**,
+so the editor is left untouched and can still be saved or marked.
 
 **The font refusal is the one that is per page, and it does not undo the pages
 before it.** Pages are processed in order, so a document whose page 4 is refused
@@ -406,11 +422,11 @@ garbage collection, the default. This refusal is specific to sanitizing:
 `garbage_collect: false` after `PdfElixide.Editor.apply_redactions/1` is
 allowed, because cleared page content is dropped whatever the setting.
 
-### Refused by both, on different terms
+### Indirect content streams
 
 A page storing its content streams in an indirect object that is not itself a
-stream — an array, most often. Both calls return
-`{:error, %PdfElixide.Error{reason: :unsupported}}`.
+stream — an array, most often — may be refused when queuing or marking a
+redaction. The error is `{:error, %PdfElixide.Error{reason: :unsupported}}`.
 
 `PdfElixide.Editor.add_redaction/3` refuses such a page whether or not it
 carries annotations, because a queued region reaches only
@@ -442,8 +458,10 @@ It is a separate call, not a part of the other one:
 JavaScript or embedded files, and a document that must give up both needs both.
 
 ```elixir
+alias PdfElixide.Geometry.Rect
+
 editor = Editor.open!("path/to/report.pdf")
-region = %PdfElixide.Geometry.Rect{x: 72.0, y: 700.0, width: 228.0, height: 20.0}
+region = %Rect{x: 72.0, y: 700.0, width: 228.0, height: 20.0}
 
 editor
 |> Editor.add_redaction!(0, region)
@@ -486,13 +504,18 @@ there — but every page the pass did not reach keeps the filter it arrived with
 and most PDFs store content `/FlateDecode`-compressed. A `:nomatch` therefore
 cannot tell a redaction that worked from a page that was never marked — the
 failure a report of zeros exists to signal. Run it only on output whose streams
-are uncompressed, and only as a second check:
+are uncompressed, and only as a second check. Given an open `editor` after
+a successful destructive pass:
 
 ```elixir
 bytes = Editor.to_binary!(editor, compress: false)
 :binary.match(bytes, "Secret")
 #=> :nomatch
 ```
+
+`compress: false` only keeps this write from compressing streams. It does not
+decompress a stream the source stored compressed, so a `:nomatch` still says
+nothing about a page the pass did not rewrite.
 
 Neither check settles a document you did not produce: text can be present as an
 image — which a destructive pass does not remove at all — and

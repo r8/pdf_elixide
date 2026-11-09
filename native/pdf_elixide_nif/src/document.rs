@@ -346,14 +346,14 @@ fn document_structured_warnings(
     })
 }
 
-// This route drops every setting but the region; Elixir refuses a non-default
-// sibling before the call reaches here, so the fallback is never observable.
 fn extract_text_page(
     doc: &PdfDocument,
     page_index: usize,
     options: &TextOptions,
 ) -> Result<String> {
     if options.filtered() {
+        // The filtered extractors take only the region. Elixir refuses any
+        // other non-default option beside a filter, so nothing is dropped here.
         let layers: HashSet<String> = options.exclude_layers.iter().cloned().collect();
         let inks: HashSet<String> = options.exclude_inks.iter().cloned().collect();
         return match &options.region {
@@ -399,7 +399,7 @@ fn all_pages<T, N>(
 }
 
 // Insert the form feed before extraction so a skipped page still leaves an
-// empty slot. Any non-empty document then splits into `page_count` parts.
+// empty slot.
 fn extract_all_text_pages(doc: &PdfDocument, options: &TextOptions) -> NifResult<String> {
     let count = doc.page_count().map_err(to_nif_err)?;
     let mut text = String::new();

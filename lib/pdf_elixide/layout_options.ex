@@ -8,6 +8,8 @@ defmodule PdfElixide.LayoutOptions do
   # out of that range would become an infinity or a zero. Numbers come back as
   # floats: native decoding reads an integer only within 64 bits. A label is an
   # option's key (an atom, shown as `:key`) or an argument's name (a string).
+  # Each validator checks range only: a value of the wrong shape is returned
+  # unchanged for the caller's own clause.
 
   @max_f32 3.402_823_466_385_288_6e38
   @min_normal_f32 1.175_494_35e-38
@@ -19,7 +21,6 @@ defmodule PdfElixide.LayoutOptions do
 
   @type label :: atom() | String.t()
 
-  # Range only; a value that is not a number is left to the caller.
   @spec non_negative!(label(), term()) :: term()
   def non_negative!(label, value) when is_number(value) and (value < 0 or value > @max_f32) do
     raise ArgumentError,
@@ -30,7 +31,8 @@ defmodule PdfElixide.LayoutOptions do
   def non_negative!(_label, value) when is_number(value), do: value * 1.0
   def non_negative!(_label, value), do: value
 
-  # Below the smallest normal f32 a positive value reaches the layout as zero.
+  # A positive value must be a normal f32; a subnormal loses precision on the
+  # way to the layout, and the smallest of them become zero.
   @spec positive!(label(), term()) :: term()
   def positive!(label, value)
       when is_number(value) and (value < @min_normal_f32 or value > @max_f32) do
@@ -42,7 +44,6 @@ defmodule PdfElixide.LayoutOptions do
   def positive!(_label, value) when is_number(value), do: value * 1.0
   def positive!(_label, value), do: value
 
-  # Range only; a point of another shape is left to the caller.
   @spec point!(label(), term()) :: term()
   def point!(label, {x, y} = point)
       when is_number(x) and is_number(y) and (abs(x) > @max_f32 or abs(y) > @max_f32) do
@@ -66,7 +67,7 @@ defmodule PdfElixide.LayoutOptions do
   @spec writable?(number()) :: boolean()
   def writable?(value), do: abs(value) <= @max_written
 
-  # Dimensions and corners must each fit f32.
+  # Two corners that fit can still be further apart than a width can hold.
   @spec rect!(label(), term()) :: term()
   def rect!(label, %Rect{x: x, y: y, width: width, height: height} = rect)
       when is_number(x) and is_number(y) and is_number(width) and is_number(height) do
@@ -88,7 +89,7 @@ defmodule PdfElixide.LayoutOptions do
   def rect!(_label, rect), do: rect
 
   # The writer clamps a component into range rather than reporting it, so the
-  # range is checked here. Anything but an `RGB` struct is left to the caller.
+  # range is checked here.
   @spec rgb!(label(), term()) :: term()
   def rgb!(label, %RGB{r: r, g: g, b: b} = color) do
     unless Enum.all?([r, g, b], &(is_number(&1) and &1 >= 0 and &1 <= 1)) do
@@ -101,8 +102,7 @@ defmodule PdfElixide.LayoutOptions do
 
   def rgb!(_label, color), do: color
 
-  # Text reaches the writer as a Rust string. A value that is not a binary is
-  # left to the caller.
+  # Text reaches the writer as a Rust string.
   @spec utf8!(label(), term()) :: term()
   def utf8!(label, value) when is_binary(value) do
     if not String.valid?(value) do
@@ -136,9 +136,9 @@ defmodule PdfElixide.LayoutOptions do
 
   def text_string!(_label, value), do: value
 
-  # Form field text, bookmark titles and page label prefixes are written one
-  # byte per character where they can be, and PDFDocEncoding gives these bytes
-  # other characters, or none.
+  # Form field text, tooltips, scripts, bookmark titles and page label prefixes
+  # are written one byte per character where they can be, and PDFDocEncoding
+  # gives these bytes other characters, or none.
   @spec field_text!(label(), term(), String.t()) :: term()
   def field_text!(label, value, holder \\ "a form field")
 
