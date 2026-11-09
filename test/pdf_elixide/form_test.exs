@@ -1129,6 +1129,18 @@ defmodule PdfElixide.FormTest do
       end
     end
 
+    test "raises FunctionClauseError for anything but a map or a list" do
+      editor = Editor.open!(@form_pdf)
+      pairs = [{"full_name", "Jane Doe"}]
+
+      for values <- [42, MapSet.new(pairs), Stream.map(pairs, & &1), 1..2] do
+        assert_raise FunctionClauseError, fn -> Form.put_values(editor, untyped(values)) end
+        assert_raise FunctionClauseError, fn -> Form.put_values!(editor, untyped(values)) end
+      end
+
+      refute Editor.modified?(editor)
+    end
+
     test "raises ArgumentError for each invalid value shape, and writes nothing" do
       editor = Editor.open!(@form_pdf)
 

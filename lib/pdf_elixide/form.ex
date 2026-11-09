@@ -253,7 +253,8 @@ defmodule PdfElixide.Form do
   @doc """
   Writes several form field values on the given editor, and returns the editor.
 
-  Takes a map with string keys, or a list of `{name, value}` pairs.
+  Takes a map with string keys or a list of `{name, value}` pairs. Structs and
+  other inputs raise `FunctionClauseError`.
 
   Everything is validated before anything is written. A duplicated name, a name
   that is not a UTF-8 string, a value outside
@@ -273,9 +274,12 @@ defmodule PdfElixide.Form do
 
   See the [Concurrency](guides/concurrency.md) guide for what it locks.
   """
-  @spec put_values(Editor.t(), Enumerable.t({String.t(), Field.value()})) ::
-          {:ok, Editor.t()} | {:error, Error.t()}
-  def put_values(%Editor{} = editor, values) do
+  @spec put_values(
+          Editor.t(),
+          %{String.t() => Field.value()} | [{String.t(), Field.value()}]
+        ) :: {:ok, Editor.t()} | {:error, Error.t()}
+  def put_values(%Editor{} = editor, values)
+      when is_list(values) or (is_map(values) and not is_struct(values)) do
     pairs = Enum.to_list(values)
     validate_pairs!(pairs)
     write_values(editor, pairs)
@@ -285,8 +289,12 @@ defmodule PdfElixide.Form do
   Writes several form field values on the given editor, raising an error if it
   fails.
   """
-  @spec put_values!(Editor.t(), Enumerable.t({String.t(), Field.value()})) :: Editor.t()
-  def put_values!(%Editor{} = editor, values) do
+  @spec put_values!(
+          Editor.t(),
+          %{String.t() => Field.value()} | [{String.t(), Field.value()}]
+        ) :: Editor.t()
+  def put_values!(%Editor{} = editor, values)
+      when is_list(values) or (is_map(values) and not is_struct(values)) do
     editor |> put_values(values) |> Wrap.unwrap!()
   end
 
