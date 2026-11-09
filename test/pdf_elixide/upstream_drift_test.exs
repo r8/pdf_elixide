@@ -28,6 +28,7 @@ defmodule PdfElixide.UpstreamDriftTest do
   @table_pdf Path.join(@fixtures, "table.pdf")
   @metadata_encodings_pdf Path.join(@fixtures, "metadata_encodings.pdf")
   @broken_page_pdf Path.join(@fixtures, "broken_page.pdf")
+  @fonts_unresolved_pdf Path.join(@fixtures, "fonts_unresolved.pdf")
   @image_pdf Path.join(@fixtures, "image.pdf")
   @encrypted_pdf Path.join(@fixtures, "encrypted.pdf")
   @encrypted_cleartext_pdf Path.join(@fixtures, "encrypted_cleartext.pdf")
@@ -86,6 +87,7 @@ defmodule PdfElixide.UpstreamDriftTest do
     rects: [],
     lines: [],
     images: [],
+    fonts: [],
     annotations: [],
     search: ["One"],
     to_markdown: [],
@@ -291,6 +293,20 @@ defmodule PdfElixide.UpstreamDriftTest do
     end
   end
 
+  describe "fonts on a page with damaged resources" do
+    test "fonts treat a missing or malformed resource entry as absent" do
+      doc = open(@fonts_unresolved_pdf)
+
+      assert {:ok, [%{resource_name: "F1"}]} = Document.fonts(doc, 5)
+
+      for page_index <- 0..4 do
+        assert {:ok, []} = Document.fonts(doc, page_index), "page #{page_index}"
+      end
+
+      assert [{5, "F1"}] = doc |> Document.fonts!() |> Enum.map(&{&1.page, &1.resource_name})
+    end
+  end
+
   describe "whole-document text on a page that fails" do
     test "a failed page still costs only its own slot" do
       doc = open(@broken_page_pdf)
@@ -301,18 +317,7 @@ defmodule PdfElixide.UpstreamDriftTest do
       assert String.split(Document.text!(doc, on_page_error: :skip), "\f") == ["One", "Two", ""]
     end
 
-    test "fonts tolerate the same page, alone among the other extractors" do
-      doc = open(@broken_page_pdf)
-
-      # Keep the page unresolvable so the tolerance checks below are meaningful.
-      assert {:error, %Error{reason: :invalid_pdf}} = Document.text(doc, @unreachable)
-
-      assert {:ok, []} = Document.fonts(doc, @unreachable)
-
-      assert [0, 1] = doc |> Document.fonts!() |> Enum.map(& &1.page)
-    end
-
-    test "every other whole-document call fails on the same page" do
+    test "every whole-document call fails on the same page" do
       doc = open(@broken_page_pdf)
 
       assert {:error, %Error{reason: :invalid_pdf}} = Document.text(doc, @unreachable)

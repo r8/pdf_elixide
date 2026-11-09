@@ -21,7 +21,7 @@ use crate::{
         TablesOptions, TablesOptionsNif, TextOptions, TextOptionsNif, WordsOptions,
         WordsOptionsNif,
     },
-    fonts::{extract_page_fonts, FontNif},
+    fonts::{font_to_nif, page_font_set, FontNif},
     form::{document_form_field_to_nif, export_bytes, is_exportable, FieldNif, FormDataFormatNif},
     form_tree,
     fs_path::path_arg,
@@ -1088,19 +1088,22 @@ fn document_fonts(
     resource.doc.with_read(|doc| {
         ensure_page_in_range(doc, page_index)?;
 
-        Ok(extract_page_fonts(doc, page_index))
+        let fonts = page_font_set(doc, page_index).map_err(to_nif_err)?;
+        Ok(fonts
+            .into_iter()
+            .map(|(resource_name, font)| font_to_nif(resource_name, font, page_index))
+            .collect())
     })
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_all_fonts(resource: ResourceArc<DocumentResource>) -> NifResult<Vec<FontNif>> {
     resource.doc.with_read(|doc| {
-        let count = doc.page_count().map_err(to_nif_err)?;
-        let mut fonts = Vec::new();
-        for page_index in 0..count {
-            fonts.extend(extract_page_fonts(doc, page_index));
-        }
-        Ok(fonts)
+        all_pages(
+            doc,
+            |page_index| page_font_set(doc, page_index),
+            |(resource_name, font), page_index| font_to_nif(resource_name, font, page_index),
+        )
     })
 }
 

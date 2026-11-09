@@ -75,15 +75,14 @@ defmodule PdfElixide.Document do
   ### When a page cannot be read
 
   A whole-document extractor or converter that reaches a page it cannot read
-  fails with `{:error, %PdfElixide.Error{}}`. `fonts/1` is the exception and
-  always skips such a page; `text/1` skips one only when given
-  `on_page_error: :skip`. A capped `search/2` may stop before reaching a later
-  unreadable page; if it reaches one, it fails. See `t:search_opts/0`.
+  fails with `{:error, %PdfElixide.Error{}}`. `text/1` skips one only when
+  given `on_page_error: :skip`. A capped `search/2` may stop before reaching a
+  later unreadable page; if it reaches one, it fails. See `t:search_opts/0`.
 
   `text/1`, `chars/1`, `words/1`, `text_lines/1`, `spans/1`, `tables/1`,
   `structured/1`, `classify/1`, `paths/1`, `rects/1`, `lines/1`, `images/1`,
-  `annotations/1` and `prepare_search/1` start that error's message with the
-  failing page's zero-based index, as in `page 2: …`.
+  `fonts/1`, `annotations/1` and `prepare_search/1` start that error's message
+  with the failing page's zero-based index, as in `page 2: …`.
 
   Most damaged pages extract as *empty* rather than failing; see the
   `:on_page_error` section of `t:text_opts/0`.
@@ -1274,9 +1273,9 @@ defmodule PdfElixide.Document do
   stream, missing fonts, a scan with no text layer and an undecryptable
   document all extract as `""`. All it can catch is a page whose page-tree entry
   does not resolve at all — the same page every other whole-document call
-  but `fonts/1` fails on, as the "When a page cannot be read" section of
-  `PdfElixide.Document` describes. Nor do those conditions
-  leave a warning behind: neither `structured_warnings/1` nor
+  fails on, as the "When a page cannot be read" section of
+  `PdfElixide.Document` describes. Nor do those conditions leave a warning
+  behind: neither `structured_warnings/1` nor
   `PdfElixide.Logging.structured_warnings/0` records them, and only
   `PdfElixide.Logging` capture makes them visible. The one exception is a
   page whose object ran into the end of the file before it could be read: it
@@ -3617,11 +3616,7 @@ defmodule PdfElixide.Document do
   as `PdfElixide.Document.Font` structs. A font used on several pages appears once
   per page.
 
-  A page whose fonts cannot be read contributes nothing and does not fail the
-  call — see `fonts/2` for what that covers. This is the only whole-document
-  extractor that tolerates such a page by default, and it has no option to say
-  otherwise; the "When a page cannot be read" section of `PdfElixide.Document`
-  has the rule for the rest.
+  Fails if any page fails; see `fonts/2` for errors and omitted fonts.
 
   Each returned font holds the embedded font program behind its handle until
   `PdfElixide.Document.Font.close/1` or GC, one handle per page per font — see
@@ -3651,10 +3646,12 @@ defmodule PdfElixide.Document do
   `PdfElixide.Document.Font` struct with its metadata; the raw embedded font
   program (when present) is pulled on demand with `PdfElixide.Document.Font.data/1`.
 
-  **An empty list also covers a page that could not be read** — one whose
-  page-tree entry, `/Resources` reference or fonts do not resolve yields no
-  fonts rather than an error. Only an out-of-range index and a failed handle are
-  errors, and there is no strict variant that reports the difference.
+  A page whose page-tree entry, `/Resources` or `/Font` dictionary, or font
+  reference cannot be read returns `{:error, %PdfElixide.Error{}}`.
+
+  Missing resource or font objects, non-dictionary `/Resources` or `/Font`
+  values, and fonts that cannot be parsed are omitted. An empty list therefore
+  does not prove that the page uses no fonts.
   """
   @spec fonts(t(), non_neg_integer()) :: {:ok, [Font.t()]} | {:error, Error.t()}
   def fonts(%__MODULE__{ref: ref}, page_index)

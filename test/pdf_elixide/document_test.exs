@@ -223,6 +223,7 @@ defmodule PdfElixide.DocumentTest do
             :rects,
             :lines,
             :images,
+            :fonts,
             :annotations
           ] do
         assert {:error, %Error{message: message}} = apply(Document, name, [doc])
@@ -2173,6 +2174,12 @@ defmodule PdfElixide.DocumentTest do
     test "returns {:error, reason} for an out-of-range page index" do
       doc = Document.open!(@valid_pdf)
       assert {:error, %Error{reason: :out_of_range}} = Document.fonts(doc, 99)
+    end
+
+    test "returns {:error, reason} for a page that cannot be read" do
+      doc = Document.open!(@broken_page_pdf)
+      assert {:ok, [_ | _]} = Document.fonts(doc, 0)
+      assert {:error, %Error{reason: :invalid_pdf}} = Document.fonts(doc, @unreachable_page)
     end
 
     test "raises FunctionClauseError for negative page index" do

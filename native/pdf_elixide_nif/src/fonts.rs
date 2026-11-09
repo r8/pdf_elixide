@@ -4,7 +4,7 @@ use pdf_oxide::{
     extractors::TextExtractor,
     fonts::{Encoding, FontInfo},
     object::Object,
-    PdfDocument,
+    Error, PdfDocument, Result,
 };
 use rustler::{Encoder, Env, NifMap, NifResult, ResourceArc, Term};
 
@@ -94,47 +94,30 @@ pub fn font_to_nif(resource_name: String, font: Arc<FontInfo>, page: usize) -> F
     }
 }
 
-// Font discovery is intentionally tolerant: an unreadable page, resources
-// dictionary or font contributes no result rather than failing the call.
-pub fn extract_page_fonts(doc: &PdfDocument, page_index: usize) -> Vec<FontNif> {
-    page_font_set(doc, page_index)
-        .into_iter()
-        .map(|(resource_name, font)| font_to_nif(resource_name, font, page_index))
-        .collect()
-}
-
 // Keep BEAM-independent discovery separate from ResourceArc construction.
-fn page_font_set(doc: &PdfDocument, page_index: usize) -> Vec<(String, Arc<FontInfo>)> {
-    let resources = page_resources(doc, page_index);
+pub fn page_font_set(doc: &PdfDocument, page_index: usize) -> Result<Vec<(String, Arc<FontInfo>)>> {
+    let resources = page_resources(doc, page_index)?;
 
     let mut extractor = TextExtractor::new();
-    if doc.load_fonts_public(&resources, &mut extractor).is_err() {
-        return Vec::new();
-    }
+    doc.load_fonts_public(&resources, &mut extractor)?;
 
-    // `get_font_set` iterates a `HashMap`, whose order Rust randomizes per
-    // process. Sort by resource name (unique within a page) so extraction is
-    // deterministic across calls.
+    // Resource names are unique within a page; sort for deterministic results.
     let mut fonts = extractor.get_font_set();
     fonts.sort_by(|(a, _), (b, _)| a.cmp(b));
-    fonts
+    Ok(fonts)
 }
 
-// Resolves a page's Resources dictionary via the public `get_page` /
-// `load_object` path (so it works without the upstream `rendering` feature),
-// falling back to an empty dictionary on any failure.
-fn page_resources(doc: &PdfDocument, page_index: usize) -> Object {
-    let empty = || Object::Dictionary(HashMap::new());
+fn page_resources(doc: &PdfDocument, page_index: usize) -> Result<Object> {
+    let page = doc.get_page(page_index)?;
+    let dict = page.as_dict().ok_or_else(|| Error::ParseError {
+        offset: 0,
+        reason: "Page is not a dictionary".to_string(),
+    })?;
 
-    let Ok(page) = doc.get_page(page_index) else {
-        return empty();
-    };
-    let Some(dict) = page.as_dict() else {
-        return empty();
-    };
-    let resources = dict.get("Resources").cloned().unwrap_or_else(empty);
-
-    doc.resolve_object(&resources).unwrap_or_else(|_| empty())
+    match dict.get("Resources") {
+        Some(resources) => doc.resolve_object(resources),
+        None => Ok(Object::Dictionary(HashMap::new())),
+    }
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -215,23 +198,28 @@ mod tests {
             let upstream = doc.page_font_face_lookups().expect("upstream lookups");
 
             for (page_index, expected) in upstream.iter().enumerate() {
-                let ours: Vec<String> = page_font_set(&doc, page_index)
-                    .into_iter()
-                    .map(|(resource_name, _)| resource_name)
-                    .collect();
                 let mut theirs: Vec<String> = expected.keys().cloned().collect();
                 theirs.sort();
 
-                // `page_font_set` already sorts by resource name, which is the
-                // determinism `Document.fonts/2` promises; only upstream's
-                // `HashMap` needs ordering here.
+                let Ok(fonts) = page_font_set(&doc, page_index) else {
+                    assert!(theirs.is_empty(), "{name} page {page_index}");
+                    continue;
+                };
+                let ours: Vec<String> = fonts
+                    .into_iter()
+                    .map(|(resource_name, _)| resource_name)
+                    .collect();
+
                 assert_eq!(ours, theirs, "{name} page {page_index}");
             }
         }
 
-        // Precondition: at least one fixture page really does carry fonts, so
-        // the comparison above cannot pass by both sides being empty everywhere.
+        // Prevent a vacuous comparison of empty font sets.
         let fonts_doc = PdfDocument::open(fixture("fonts.pdf")).expect("fixture opens");
-        assert!(!page_font_set(&fonts_doc, 0).is_empty());
+        assert!(!page_font_set(&fonts_doc, 0).unwrap().is_empty());
+
+        // Exercise the error branch above.
+        let broken = PdfDocument::open(fixture("broken_page.pdf")).expect("fixture opens");
+        assert!(page_font_set(&broken, 2).is_err());
     }
 }
