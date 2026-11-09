@@ -55,12 +55,13 @@ defmodule PdfElixide.Signature do
   @type sub_filter :: :pkcs7_detached | :pkcs7_sha1 | :cades_detached | :rfc3161 | nil
 
   @typedoc """
-  What a verification call concluded. [Verifying one](guides/signatures.md#verifying-one)
-  says what each one does and does not establish.
+  What a verification call concluded.
+  [Verifying one](guides/signatures.md#verifying-one) says what each one does
+  and does not establish.
 
   `:unknown` is always "the check could not run" rather than a doubt about the
   document, but what stopped it differs by call: `verify/2` has several causes,
-  listed under "Verifying one" in the [Signatures](guides/signatures.md) guide;
+  listed under [Verifying one](guides/signatures.md#verifying-one);
   `verify_signer/1` a signature algorithm or digest this library cannot handle;
   and `verify_timestamp/2` a timestamp naming a digest algorithm it cannot
   compute. Treat it as unverified either way.
@@ -243,10 +244,10 @@ defmodule PdfElixide.Signature do
   order. On a well-formed form, the two calls account for every named place to
   sign; a cleared value counts as unsigned.
 
-  Grouping and unnamed fields are omitted, as are fields holding something
-  other than a signature dictionary. The "Damaged documents are refused, not
-  stepped over" section of the [Signatures](guides/signatures.md) guide covers
-  malformed fields and the damaged hierarchies this call refuses.
+  Grouping and unnamed fields are omitted, as are fields holding something other
+  than a signature dictionary.
+  [Damaged documents are refused, not stepped over](guides/signatures.md#damaged-documents-are-refused-not-stepped-over)
+  covers malformed fields and the damaged hierarchies this call refuses.
 
   Reading from an editor reads the document as it was opened; no editor call
   adds or fills a signature field. An editor from
@@ -326,7 +327,8 @@ defmodule PdfElixide.Signature do
 
   The verdict covers the range in `:byte_range` and nothing else, so
   `{:ok, :valid}` is not "this file is unchanged": pair it with
-  `covers_whole_document?/2`. See [Verifying one](guides/signatures.md#verifying-one).
+  `covers_whole_document?/2`. See
+  [Verifying one](guides/signatures.md#verifying-one).
 
   The gap between the ranges must contain only `:contents`, encoded as one
   unbroken hexadecimal string; otherwise the verdict is `{:ok, :invalid}`.
@@ -533,8 +535,8 @@ defmodule PdfElixide.Signature do
       PdfElixide.Signature.verify_timestamp(signature, File.read!("signed.pdf"))
       #=> {:ok, :valid}
 
-  Attachment is one of the three questions a timestamp raises; [Timestamp
-  checks are independent](guides/signatures.md#timestamp-checks-are-independent)
+  Attachment is one of the three questions a timestamp raises;
+  [Timestamp checks are independent](guides/signatures.md#timestamp-checks-are-independent)
   says what the other two are and which call answers each.
 
   Reports `%PdfElixide.Error{reason: :not_found}` when the signature carries no

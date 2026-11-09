@@ -23,15 +23,17 @@ defmodule PdfElixide.Form.Field do
   whose widgets are separate objects.
 
   Beyond those, `Text` carries `:max_length` and `:alignment`, `Button`
-  `:on_states`, and `Choice` `:alignment` and `:options`. The "What else a
-  field reports" section of the [Forms](guides/forms.md) guide covers all of it.
+  `:on_states`, and `Choice` `:alignment` and `:options`.
+  [What else a field reports](guides/forms.md#what-else-a-field-reports) covers
+  all of it.
 
   A field nested under a parent inherits the parent's *type* — so it is that
   type's struct rather than `Unknown` — along with `:flags`, `:options`,
   `:alignment` and `:max_length`, wherever it declares none of its own. It does
-  **not** inherit `:value` or `:default_value` — each is read off the field's own
-  dictionary, so a field whose parent carries the value and which carries none
-  itself reports `nil`. The "What a nested field inherits" section of the guide
+  **not** inherit `:value` or `:default_value` — each is read off the field's
+  own dictionary, so a field whose parent carries the value and which carries
+  none itself reports `nil`.
+  [What a nested field inherits](guides/forms.md#what-a-nested-field-inherits)
   says what to do instead.
 
   The first three also carry a `:kind`, naming the widget the type covers —
@@ -44,7 +46,7 @@ defmodule PdfElixide.Form.Field do
   field, so a nested form yields a struct for the grouping level as well as for
   each leaf under it.
 
-  The "Field kinds and flags" section of the [Forms](guides/forms.md) guide
+  [Field kinds and flags](guides/forms.md#field-kinds-and-flags)
   covers kinds and flags in full.
   """
   alias PdfElixide.Form.Field.Button

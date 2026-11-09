@@ -14,11 +14,10 @@ defmodule PdfElixide.Form.Field.Button do
   widgets, once and in widget order. `[]` means no state was found.
 
   `PdfElixide.Form.put_value/3` can write only `/Yes` and `/Off`, so writing a
-  button's value back is not always faithful. See the "Check boxes and radio
-  groups" section of the [Forms](guides/forms.md) guide before round-tripping
-  one.
-  See `PdfElixide.Form.Field` for how fields are named and what every struct
-  carries.
+  button's value back is not always faithful. See
+  [Check boxes and radio groups](guides/forms.md#check-boxes-and-radio-groups)
+  before round-tripping one. See `PdfElixide.Form.Field` for how fields are
+  named and what every struct carries.
   """
   alias PdfElixide.Form.Field
   alias PdfElixide.Geometry.Rect

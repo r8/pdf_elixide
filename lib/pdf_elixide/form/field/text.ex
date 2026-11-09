@@ -14,8 +14,9 @@ defmodule PdfElixide.Form.Field.Text do
   `:max_length` is the `/MaxLen` cap on how many characters may be entered,
   where `0` is a declared zero rather than an absence. `:alignment` says how the
   text is justified inside `:rect`. Both are inherited from a parent field, as
-  `:flags` is; the "What a nested field inherits" section of the
-  [Forms](guides/forms.md) guide says which keys are and which are not.
+  `:flags` is;
+  [What a nested field inherits](guides/forms.md#what-a-nested-field-inherits)
+  says which keys are and which are not.
 
   See `PdfElixide.Form.Field` for how fields are named and what every struct
   carries.

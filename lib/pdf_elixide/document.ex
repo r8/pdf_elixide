@@ -6,15 +6,16 @@ defmodule PdfElixide.Document do
 
   A `%Document{}` is safe to pass to other processes. Operations that read the
   native document take its handle lock shared, so N processes extracting from
-  one document — or rendering different pages of it — do not queue on that
-  lock. `version/1`, `source_path/1` and, normally, `page_count/1` read cached
-  struct fields instead and take no native lock. `authenticate/2`,
+  one document — or rendering different pages of it — do not queue on that lock.
+  `version/1`, `source_path/1` and, normally, `page_count/1` read cached struct
+  fields instead and take no native lock. `authenticate/2`,
   `clear_search_index/1` and `close/1` take the handle lock exclusively, as does
   `PdfElixide.Compliance.validate/2` on a document that needs a password, and
   `rasterize/2` serializes against itself across the node. The
   [Concurrency](guides/concurrency.md) guide has the rest, including contention
-  inside the PDF reader and [The `/ActualText` hazard](guides/concurrency.md#the-actualtext-hazard)
-  that makes fanning out *by page* the shape to prefer.
+  inside the PDF reader and
+  [The `/ActualText` hazard](guides/concurrency.md#the-actualtext-hazard) that
+  makes fanning out *by page* the shape to prefer.
 
   ## Whole-document extraction and memory
 
@@ -87,9 +88,10 @@ defmodule PdfElixide.Document do
   Most damaged pages extract as *empty* rather than failing; see the
   `:on_page_error` section of `t:text_opts/0`.
 
-  To tolerate one with any other extractor, work a page at a time and decide
-  per page, keeping which page failed and why; the "When a page fails" section
-  of the [Text extraction](guides/text-extraction.md) guide has the recipe.
+  To tolerate one with any other extractor, work a page at a time and decide per
+  page, keeping which page failed and why;
+  [When a page fails](guides/text-extraction.md#when-a-page-fails) has the
+  recipe.
 
   ## Choosing an extractor for search and matching
 
@@ -821,8 +823,9 @@ defmodule PdfElixide.Document do
     * `:region` — a `PdfElixide.Geometry.Rect` in PDF points in the page's raw,
       unrotated user space, clipped to the page. An empty intersection returns
       `{:error, %PdfElixide.Error{reason: :out_of_range}}`. There is no
-      `:region_mode`. See [Cropping with `:region`](guides/rendering.md#cropping-with-region)
-      for using extractor boxes on rotated pages;
+      `:region_mode`. See
+      [Cropping with `:region`](guides/rendering.md#cropping-with-region) for
+      using extractor boxes on rotated pages;
       `PdfElixide.Geometry.Rect.to_user_space/3` maps a displayed box back.
     * `:max_output_pixels` — a positive pixel budget. When set, scales an
       oversized render down instead of refusing it. It can only lower the
@@ -1201,8 +1204,9 @@ defmodule PdfElixide.Document do
   Options accepted by the `text` and `text!` functions.
 
     * `:extract_tables` — detect tables and render each inline from its
-      cells, one row per line with cells separated by single spaces. Defaults to `true`; with it off, a recognized table's values
-      come back as ordinary flow text. See "Tables inside a text result" in
+      cells, one row per line with cells separated by single spaces. Defaults
+      to `true`; with it off, a recognized table's values come back as
+      ordinary flow text. See "Tables inside a text result" in
       the [Text extraction](guides/text-extraction.md) guide.
     * `:expand_ligatures` — expand `U+FB00`–`U+FB06` ligatures to their
       component letters (`ﬁ` to `fi`, and so on). Defaults to `false`.
@@ -1266,8 +1270,8 @@ defmodule PdfElixide.Document do
 
   There is a second way to read a page as text — `to_plain_text/2`, which
   returns reflowed paragraphs rather than the page's visual lines and takes a
-  different, smaller set of options. The [Text
-  extraction](guides/text-extraction.md) guide compares the two.
+  different, smaller set of options. The
+  [Text extraction](guides/text-extraction.md) guide compares the two.
   """
   @type text_opts :: [
           extract_tables: boolean(),
@@ -1846,9 +1850,10 @@ defmodule PdfElixide.Document do
         document.
       * `:auto` uses `:layout` for short documents and `:flow` for long ones.
 
-  See [Choosing a mode](guides/office.md#choosing-a-mode) in the Office conversion guide
-  for the trade-off, and [Round trips](guides/office.md#round-trips) before
-  converting the result back to PDF.
+  See [Choosing a mode](guides/office.md#choosing-a-mode) in the Office
+  conversion guide for the trade-off, and
+  [Round trips](guides/office.md#round-trips) before converting the result back
+  to PDF.
 
   An unknown key, or a `:mode` other than those three, raises `ArgumentError`.
   """
@@ -1953,9 +1958,9 @@ defmodule PdfElixide.Document do
       and always includes them.
 
   `:reading_order` and `:include_form_fields` have no effect when a trustworthy
-  structure tree supplies the reading order. The [Text
-  extraction](guides/text-extraction.md) guide covers that case and compares
-  these options with `t:text_opts/0`.
+  structure tree supplies the reading order. The
+  [Text extraction](guides/text-extraction.md) guide covers that case and
+  compares these options with `t:text_opts/0`.
 
   Calling `to_plain_text/1` is equivalent to `to_plain_text/2` with no options.
 
@@ -1982,9 +1987,9 @@ defmodule PdfElixide.Document do
   Converts the document to plain text.
 
   This generally reflows prose paragraphs and orders them by detected column;
-  tables and some columnar layouts retain internal line breaks. `text/2`
-  instead preserves inferred visual rows. The [Text
-  extraction](guides/text-extraction.md) guide compares the two.
+  tables and some columnar layouts retain internal line breaks. `text/2` instead
+  preserves inferred visual rows. The
+  [Text extraction](guides/text-extraction.md) guide compares the two.
 
   With a keyword list (or nothing) as the second argument, converts the whole
   document, joining pages with `"\\n\\n---\\n\\n"` — close to the `---` break
@@ -2772,9 +2777,9 @@ defmodule PdfElixide.Document do
   Classifies every page by how its text should be obtained: extracted, read by
   OCR, both, or neither.
 
-  Returns one `PdfElixide.Document.PageClassification` per page, in page
-  order. Use `needs_ocr?` to select pages for OCR; the [Text
-  extraction](guides/text-extraction.md) guide has an example.
+  Returns one `PdfElixide.Document.PageClassification` per page, in page order.
+  Use `needs_ocr?` to select pages for OCR; the
+  [Text extraction](guides/text-extraction.md) guide has an example.
 
   Classifying a page costs about as much as extracting its text, and this
   walks every page — see the "Whole-document extraction and memory" section of
@@ -2869,18 +2874,17 @@ defmodule PdfElixide.Document do
   first page's copy.
 
   The spans use the same coordinate-frame rules as the spans of a `search/2`
-  match. See [Rotated pages and extracted
-  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
+  match. See
+  [Rotated pages and extracted geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry).
 
   Every page is read, so a page that cannot be read fails the call. Like any
   span extraction, the call can change what a later extraction returns on a
   document with competing `/ActualText` replacements; see "The `/ActualText`
   hazard" in the [Concurrency](guides/concurrency.md) guide.
 
-  See `t:running_regions_opts/0` for the available options, and the "Running
-  headers and footers" section of the
-  [Text extraction](guides/text-extraction.md) guide for removing the text
-  from extraction or from a saved copy.
+  See `t:running_regions_opts/0` for the available options, and
+  [Running headers and footers](guides/text-extraction.md#running-headers-and-footers)
+  for removing the text from extraction or from a saved copy.
   """
   @spec running_regions(t(), running_regions_opts()) ::
           {:ok, %{non_neg_integer() => [Span.t()]}} | {:error, Error.t()}

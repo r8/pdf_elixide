@@ -16,7 +16,7 @@ defmodule PdfElixide.Form.Field.Flags do
     * `:no_export` — the field is omitted from a submission.
     * `:raw` — the undecoded `/Ff` integer, for bits this struct does not name.
 
-  See the "Field kinds and flags" section of the [Forms](guides/forms.md) guide.
+  See [Field kinds and flags](guides/forms.md#field-kinds-and-flags).
   """
 
   @enforce_keys [:read_only, :required, :no_export, :raw]

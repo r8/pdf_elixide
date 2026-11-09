@@ -187,7 +187,8 @@ defmodule PdfElixide.Editor do
 
   Encrypted bytes need a password, as in `open/2`.
 
-  Incremental saves are unsupported; see [Saving edits](guides/editing.md#saving-edits).
+  Incremental saves are unsupported; see
+  [Saving edits](guides/editing.md#saving-edits).
   """
   @spec from_binary(binary(), open_opts()) :: {:ok, t()} | {:error, Error.t()}
   def from_binary(bytes, opts \\ []) when is_binary(bytes) and is_list(opts) do
@@ -843,8 +844,9 @@ defmodule PdfElixide.Editor do
   Deletes the page at the given zero-based index, and returns the editor.
 
   Every later page moves down one index, and `page_count/1` reflects the removal
-  at once — no save is needed. See [Page structure](guides/editing.md#page-structure)
-  and [Saving edits](guides/editing.md#saving-edits) for the deletion's security
+  at once — no save is needed. See
+  [Page structure](guides/editing.md#page-structure) and
+  [Saving edits](guides/editing.md#saving-edits) for the deletion's security
   limitation and the incremental-save refusal.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the page does
@@ -879,9 +881,9 @@ defmodule PdfElixide.Editor do
   The pages it passes over shift by one to fill the gap; nothing else changes.
 
   Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if either index
-  does not exist. See [Page structure](guides/editing.md#page-structure) for what
-  a move does not update and [Saving edits](guides/editing.md#saving-edits) for
-  the incremental-save refusal.
+  does not exist. See [Page structure](guides/editing.md#page-structure) for
+  what a move does not update and [Saving edits](guides/editing.md#saving-edits)
+  for the incremental-save refusal.
   """
   @spec move_page(t(), non_neg_integer(), non_neg_integer()) ::
           {:ok, t()} | {:error, Error.t()}
@@ -1584,10 +1586,9 @@ defmodule PdfElixide.Editor do
 
   `rect` is in raw, unrotated page space, as returned by
   `PdfElixide.Document.chars/1`, `PdfElixide.Document.spans/1` and
-  `PdfElixide.Document.paths/1`. For other extractors, see [Rotated pages and
-  extracted
-  geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry); a
-  rectangle in the wrong frame is accepted without error.
+  `PdfElixide.Document.paths/1`. For other extractors, see
+  [Rotated pages and extracted geometry](guides/page-geometry.md#rotated-pages-and-extracted-geometry);
+  a rectangle in the wrong frame is accepted without error.
 
   **Saving alone does not apply the queued rectangle.** Queuing also marks the
   page: if it has `/Redact` annotations, a full write paints their rectangles
@@ -1601,12 +1602,13 @@ defmodule PdfElixide.Editor do
 
   Reversed corners are normalized. A rectangle whose corners do not fit a 32-bit
   float raises `ArgumentError`, and so does a `fill` component outside
-  `0.0..1.0`. Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if the
-  page does not exist, and `{:error, %PdfElixide.Error{reason: :unsupported}}`,
-  queuing nothing, if the page stores its content in an indirect object that is
-  not itself a content stream, or if the editor was opened from an encrypted
-  document. Unlike `mark_redactions/2`, both restrictions apply even when the
-  page has no redaction annotations. See
+  `0.0..1.0`. Returns `{:error, %PdfElixide.Error{reason: :out_of_range}}` if
+  the page does not exist, and
+  `{:error, %PdfElixide.Error{reason: :unsupported}}`, queuing nothing, if the
+  page stores its content in an indirect object that is not itself a content
+  stream, or if the editor was opened from an encrypted document. Unlike
+  `mark_redactions/2`, both restrictions apply even when the page has no
+  redaction annotations. See
   [What an encrypted source cannot do](guides/encryption.md#what-an-encrypted-source-cannot-do).
   """
   @spec add_redaction(t(), non_neg_integer(), Rect.t(), RGB.t() | nil) ::
@@ -1669,11 +1671,11 @@ defmodule PdfElixide.Editor do
   content readable. Metadata, JavaScript and embedded files require a separate
   `sanitize/1,2` call.
 
-  Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` for undefined fonts,
-  composite fonts other than horizontal Identity-H, or text measured with state
-  discarded by a `q` … `Q` restore. **A font refusal can leave earlier pages
-  rewritten: discard the editor and reopen the source.** The text-state check
-  leaves the editor unchanged. See
+  Returns `{:error, %PdfElixide.Error{reason: :unsupported}}` for undefined
+  fonts, composite fonts other than horizontal Identity-H, or text measured with
+  state discarded by a `q` … `Q` restore. **A font refusal can leave earlier
+  pages rewritten: discard the editor and reopen the source.** The text-state
+  check leaves the editor unchanged. See
   [Refused by `apply_redactions/1,2`](guides/redaction.md#refused-by-apply_redactions-1-2).
 
   ## Options
@@ -2342,8 +2344,7 @@ defmodule PdfElixide.Editor do
   `PdfElixide.Form.flatten/1,2`: where appearances are produced, the two marks
   are applied independently and fields can be drawn twice.
 
-  Returns the editor. See the "Flattening" section of the
-  [Forms](guides/forms.md) guide.
+  Returns the editor. See [Flattening](guides/forms.md#flattening).
   """
   @spec flatten_annotations(t()) :: {:ok, t()} | {:error, Error.t()}
   def flatten_annotations(%__MODULE__{ref: ref} = editor) do
@@ -2371,8 +2372,7 @@ defmodule PdfElixide.Editor do
   encrypted source for the same reason.
 
   Returns the editor, or `{:error, %PdfElixide.Error{reason: :out_of_range}}` if
-  the page does not exist. See the "Flattening" section of the
-  [Forms](guides/forms.md) guide.
+  the page does not exist. See [Flattening](guides/forms.md#flattening).
   """
   @spec flatten_annotations(t(), non_neg_integer()) :: {:ok, t()} | {:error, Error.t()}
   def flatten_annotations(%__MODULE__{ref: ref} = editor, page_index)
@@ -2411,7 +2411,7 @@ defmodule PdfElixide.Editor do
 
   **The list is a best effort, not an inventory.** Some losses are recorded
   nowhere, so an empty list is not proof that the written document matches the
-  original. The "Flattening" section of the [Forms](guides/forms.md) guide says
+  original. [Flattening](guides/forms.md#flattening) says
   which, and what each warning means.
   """
   @spec flatten_warnings(t()) :: {:ok, [String.t()]} | {:error, Error.t()}

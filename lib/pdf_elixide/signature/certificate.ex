@@ -12,9 +12,8 @@ defmodule PdfElixide.Signature.Certificate do
       certificate.subject_common_name
       #=> "pdf_elixide test signer"
 
-  The "The signer's certificate" section of the
-  [Signatures](guides/signatures.md) guide puts this in sequence with the rest
-  of a signature check.
+  [The signer's certificate](guides/signatures.md#the-signer-s-certificate) puts
+  this in sequence with the rest of a signature check.
 
   ## Nothing here is a trust decision
 

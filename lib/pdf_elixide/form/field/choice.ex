@@ -16,13 +16,14 @@ defmodule PdfElixide.Form.Field.Choice do
   `:options` is what the field permits, in the order the PDF lists them, or
   `nil` when it declares none — each entry a `t:PdfElixide.Form.Field.option/0`,
   so `{"DE", "Germany"}` is one option and not two. It and `:alignment` are both
-  inherited from a parent field, as `:flags` is; the "What a nested field
-  inherits" section of the [Forms](guides/forms.md) guide says which keys are
-  and which are not.
+  inherited from a parent field, as `:flags` is;
+  [What a nested field inherits](guides/forms.md#what-a-nested-field-inherits)
+  says which keys are and which are not.
 
   See `PdfElixide.Form.Field` for how fields are named and what every struct
-  carries, and the "What else a field reports" section of the
-  [Forms](guides/forms.md) guide for working with the option list.
+  carries, and
+  [What else a field reports](guides/forms.md#what-else-a-field-reports) for
+  working with the option list.
   """
   alias PdfElixide.Form.Field
   alias PdfElixide.Geometry.Rect

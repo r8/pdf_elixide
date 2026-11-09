@@ -20,7 +20,7 @@ defmodule PdfElixide.Form.Field.Text.Flags do
     * `:rich_text` — the value is rich text.
     * `:raw` — the undecoded `/Ff` integer, for bits this struct does not name.
 
-  See the "Field kinds and flags" section of the [Forms](guides/forms.md) guide.
+  See [Field kinds and flags](guides/forms.md#field-kinds-and-flags).
   """
 
   @enforce_keys [

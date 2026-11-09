@@ -17,10 +17,10 @@ defmodule PdfElixide.Form.Field.Button.Flags do
       name are selected and cleared together.
     * `:raw` — the undecoded `/Ff` integer, for bits this struct does not name.
 
-  `:radio` and `:push_button` are the two bits
-  `PdfElixide.Form.Field.Button`'s `:kind` reports, with `:push_button` taking
-  precedence over `:radio` on a field that sets both. See the "Field kinds and
-  flags" section of the [Forms](guides/forms.md) guide.
+  `:radio` and `:push_button` are the two bits `PdfElixide.Form.Field.Button`'s
+  `:kind` reports, with `:push_button` taking precedence over `:radio` on a
+  field that sets both. See
+  [Field kinds and flags](guides/forms.md#field-kinds-and-flags).
   """
 
   @enforce_keys [

@@ -32,9 +32,9 @@ defmodule PdfElixide.Form do
   `:on_states` before writing it back; see
   [Check boxes and radio groups](guides/forms.md#check-boxes-and-radio-groups).
 
-  Operations that read the field hierarchy reject cycles and excessive depth
-  or size, and so does `flatten/2`. `flatten/1` does not validate that
-  hierarchy; see [Field hierarchy errors](guides/forms.md#field-hierarchy-errors).
+  Operations that read the field hierarchy reject cycles and excessive depth or
+  size, and so does `flatten/2`. `flatten/1` does not validate that hierarchy;
+  see [Field hierarchy errors](guides/forms.md#field-hierarchy-errors).
 
   Which lock a call takes follows its source: a shared read on a
   `PdfElixide.Document`, and the editor's exclusive lock on a
@@ -61,9 +61,9 @@ defmodule PdfElixide.Form do
   The encoding `export/3` writes.
 
   `:fdf` is the binary Forms Data Format of ISO 32000-1 §12.7.7; `:xfdf` is its
-  XML counterpart. They are not interchangeable for every value — see the
-  "Exporting field data" section of the [Forms](guides/forms.md) guide. Any other
-  value raises `ArgumentError`.
+  XML counterpart. They are not interchangeable for every value — see
+  [Exporting field data](guides/forms.md#exporting-field-data). Any other value
+  raises `ArgumentError`.
   """
   @type export_format :: :fdf | :xfdf
 
@@ -74,9 +74,9 @@ defmodule PdfElixide.Form do
       output so a reader can pair the two. It is a label, not a path. Defaults
       to `nil`, which leaves it out.
 
-  Unknown keys and an invalid `:file_spec` raise `ArgumentError`. See the
-  "Exporting field data" section of the [Forms](guides/forms.md) guide for the
-  accepted characters.
+  Unknown keys and an invalid `:file_spec` raise `ArgumentError`. See
+  [Exporting field data](guides/forms.md#exporting-field-data) for the accepted
+  characters.
   """
   @type export_opts :: [file_spec: String.t() | nil]
 
@@ -183,9 +183,9 @@ defmodule PdfElixide.Form do
   a `PdfElixide.Editor` that includes values written with `put_value/3` but not
   yet saved, so filling and exporting need no write in between.
 
-  Prefer `:xfdf` when values may contain non-ASCII text. The "Exporting field
-  data" section of the [Forms](guides/forms.md) guide covers both formats and
-  their field-value limitations.
+  Prefer `:xfdf` when values may contain non-ASCII text.
+  [Exporting field data](guides/forms.md#exporting-field-data) covers both
+  formats and their field-value limitations.
   """
   @spec export(source(), export_format(), export_opts()) ::
           {:ok, binary()} | {:error, Error.t()}
@@ -352,7 +352,7 @@ defmodule PdfElixide.Form do
 
   Returns the editor. Check `PdfElixide.Editor.flatten_warnings/1` after the
   write: a field value can be flattened wrongly and still produce a valid PDF.
-  See the "Flattening" section of the [Forms](guides/forms.md) guide.
+  See [Flattening](guides/forms.md#flattening).
   """
   @spec flatten(Editor.t()) :: {:ok, Editor.t()} | {:error, Error.t()}
   def flatten(%Editor{ref: ref} = editor) do
@@ -383,8 +383,8 @@ defmodule PdfElixide.Form do
 
   Returns the editor, or `{:error, %PdfElixide.Error{reason: :out_of_range}}` if
   the page does not exist. Validates the field hierarchy before marking; see
-  [Field hierarchy errors](guides/forms.md#field-hierarchy-errors). See the
-  "Flattening" section of the [Forms](guides/forms.md) guide.
+  [Field hierarchy errors](guides/forms.md#field-hierarchy-errors). See
+  [Flattening](guides/forms.md#flattening).
   """
   @spec flatten(Editor.t(), non_neg_integer()) :: {:ok, Editor.t()} | {:error, Error.t()}
   def flatten(%Editor{ref: ref} = editor, page_index)

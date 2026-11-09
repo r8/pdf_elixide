@@ -15,8 +15,8 @@ defmodule PdfElixide.Signature.Timestamp do
       PdfElixide.Signature.Timestamp.verify(timestamp)
       #=> {:ok, :valid}
 
-  The "Timestamp checks are independent" section of the
-  [Signatures](guides/signatures.md) guide sets out which call answers which.
+  [Timestamp checks are independent](guides/signatures.md#timestamp-checks-are-independent)
+  sets out which call answers which.
 
   ## What a verdict proves
 
