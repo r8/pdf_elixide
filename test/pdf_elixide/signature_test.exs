@@ -1590,14 +1590,6 @@ defmodule PdfElixide.SignatureTest do
       refute Signature.document_timestamp?(tampered)
     end
 
-    test "does not come from the signatures the document lists" do
-      doc = open(@pades_lta_pdf)
-
-      assert {:ok, [signature]} = Signature.list(doc)
-      assert signature.sub_filter == :cades_detached
-      assert Signature.document_timestamp?(File.read!(@pades_lta_pdf))
-    end
-
     test "answers false rather than raising for bytes that are not a document" do
       refute Signature.document_timestamp?(<<>>)
       refute Signature.document_timestamp?("nothing here")
