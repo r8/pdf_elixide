@@ -5,6 +5,45 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.26.0](https://github.com/r8/pdf_elixide/compare/v0.25.0...v0.26.0) (2026-11-09)
+
+
+
+
+### Features:
+
+* expose declared signature algorithms by [@r8](https://github.com/r8)
+
+### Bug Fixes:
+
+* accept only maps and lists for multiple form values by [@r8](https://github.com/r8)
+
+* report unreadable pages from font extraction by [@r8](https://github.com/r8)
+
+* improve error reporting for dates and rectangles by [@r8](https://github.com/r8)
+
+* raise for an incremental request to Editor.to_binary by [@r8](https://github.com/r8)
+
+* secure rasterization temp files by [@r8](https://github.com/r8)
+
+* widen the default barcode quiet zone to meet EAN-13 minimum by [@r8](https://github.com/r8)
+
+* validate rule placement, reject empty page searches and guard ink options by [@r8](https://github.com/r8)
+
+* bound Roman page labels and prevent decimal label overflow by [@r8](https://github.com/r8)
+
+* reject a signature with mismatched certificate by [@r8](https://github.com/r8)
+
+* handle Unicode breaks, no-break spaces and soft hyphens in text by [@r8](https://github.com/r8)
+
+* tolerate deeper PDF nesting by [@r8](https://github.com/r8)
+
+* refuse incremental saves from non-UTF-8 source paths by [@r8](https://github.com/r8)
+
+* keep the original file when a save fails by [@r8](https://github.com/r8)
+
+* report a signature as invalid when unsigned data sits beside its value by [@r8](https://github.com/r8)
+
 ## [v0.25.0](https://github.com/r8/pdf_elixide/compare/v0.24.0...v0.25.0) (2026-11-04)
 
 
