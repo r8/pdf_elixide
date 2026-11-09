@@ -71,6 +71,13 @@ defmodule PdfElixide do
   file. Process untrusted documents in a separate operating-system process,
   such as a node started with `:peer`, to protect your application.
 
+  Memory use is unbounded per call and across the node; allocation failure can
+  also terminate the OS process. Limit concurrent calls, for example with a pool.
+  See [Rendering](guides/rendering.md#sizing-the-output),
+  [Office conversion](guides/office.md#memory-and-concurrency) and
+  "Whole-document extraction and memory" in `PdfElixide.Document` for ways to
+  manage memory use.
+
   ## File paths
 
   A path is whatever the operating system calls one, handed to it unchanged. On

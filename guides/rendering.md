@@ -83,6 +83,11 @@ refused with `:unsupported` naming `:max_output_pixels`, so it is not a way to
 render past the ceiling. A `:region` render returns `:unsupported` if the
 budget would require scaling the page before cropping it.
 
+The pixel limit does not bound memory use: complex pages can need several
+full-page buffers. Set `:max_output_pixels` to the largest image you need and
+limit concurrent renders. For untrusted documents, use a separate
+operating-system process; see "Untrusted documents" in `PdfElixide`.
+
 `PdfElixide.Document.separations/3`, `PdfElixide.Document.separation/4` and
 `PdfElixide.Document.rasterize/2` instead have a fixed limit of 16 million
 pixels — the highest `:dpi` a US Letter page fits in is 413. Retry with a lower
