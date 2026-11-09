@@ -55,8 +55,10 @@ held every page:
     are drawn, and their warnings stay available from
     `PdfElixide.Editor.flatten_warnings/1`. Pending redactions are refused
     instead; see below.
-  * Attachments become part of the document, so `PdfElixide.Editor.embed_file/4`
-    is refused from then on; see [Attachments](editing.md#attachments).
+  * Attachments added before the merge become part of the document. A document
+    that already holds attachments refuses `PdfElixide.Editor.embed_file/4`, so
+    add every attachment either before the merge or after it, not both; see
+    [Attachments](editing.md#attachments).
   * `PdfElixide.Editor.modified?/1` reports `true` until the next full write,
     and an incremental save is refused.
 
